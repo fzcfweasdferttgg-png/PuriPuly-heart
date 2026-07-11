@@ -186,7 +186,9 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         async with self._load_lock:
             if self._recognizer is not None:
                 return self._recognizer
-            await asyncio.to_thread(validate_local_stt_runtime_ready, self.model_dir)
+            from puripuly_heart.core.local_stt_assets import load_local_stt_asset_manifest
+            manifest = load_local_stt_asset_manifest(self.model_dir.name)
+            await asyncio.to_thread(validate_local_stt_runtime_ready, self.model_dir, manifest=manifest)
             self._recognizer = await asyncio.to_thread(self._create_recognizer)
             return self._recognizer
 

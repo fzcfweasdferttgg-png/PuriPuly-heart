@@ -745,6 +745,7 @@ class GuiController:
         return settings.provider.stt in (
             STTProviderName.DEEPGRAM,
             STTProviderName.LOCAL_QWEN,
+            STTProviderName.LOCAL_QWEN_17B,
             STTProviderName.SONIOX,
         )
 
@@ -780,7 +781,7 @@ class GuiController:
     ) -> tuple[bool, tuple[str, ...]]:
         if not self._stt_provider_applies_custom_vocabulary(settings):
             return False, ()
-        if settings.provider.stt == STTProviderName.LOCAL_QWEN:
+        if settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
             from puripuly_heart.core.stt.custom_vocab import get_effective_local_qwen_hotwords
 
             return (
@@ -822,10 +823,14 @@ class GuiController:
 
     def _build_self_stt_provider_signature(self, settings: AppSettings) -> tuple[object, ...]:
         local_qwen_identity = None
-        if settings.provider.stt == STTProviderName.LOCAL_QWEN:
+        if settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
             from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
 
-            local_qwen_identity = str(default_local_stt_model_dir())
+            _MODEL_DIRS = {
+                STTProviderName.LOCAL_QWEN: "qwen3-asr-0.6b-int8-sherpa",
+                STTProviderName.LOCAL_QWEN_17B: "qwen3-asr-1.7b-int8-sherpa",
+            }
+            local_qwen_identity = str(default_local_stt_model_dir(_MODEL_DIRS[settings.provider.stt]))
 
         return (
             settings.provider.stt,
@@ -3526,7 +3531,7 @@ class GuiController:
         if (
             enabled
             and self.settings is not None
-            and self.settings.provider.stt == STTProviderName.LOCAL_QWEN
+            and self.settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B)
         ):
             current_status = self._current_local_stt_runtime_status()
             if current_status == "downloading":
@@ -3656,7 +3661,7 @@ class GuiController:
         resolved_settings = settings or self.settings
         return bool(
             resolved_settings is not None
-            and resolved_settings.provider.peer_stt == STTProviderName.LOCAL_QWEN
+            and resolved_settings.provider.peer_stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B)
             and self._peer_translation_activation_requested_for(resolved_settings)
         )
 
@@ -3669,7 +3674,7 @@ class GuiController:
     def _clear_local_stt_pending_enable_if_provider_switched_away(self) -> None:
         if self.settings is None:
             return
-        if self.settings.provider.stt != STTProviderName.LOCAL_QWEN:
+        if self.settings.provider.stt not in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
             self._reset_local_stt_pending_enable_after_install()
         if not self._peer_local_stt_requested(self.settings):
             self._reset_local_stt_pending_peer_enable_after_install()
@@ -3681,7 +3686,7 @@ class GuiController:
         status = self._current_local_stt_runtime_status()
         should_show = status == "downloading" or (
             (
-                self.settings.provider.stt == STTProviderName.LOCAL_QWEN
+                self.settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B)
                 or self._peer_local_stt_requested(self.settings)
             )
             and status != "ready"
@@ -3748,7 +3753,7 @@ class GuiController:
         should_resume_self_local_stt = (
             origin == "manual"
             and self.settings is not None
-            and self.settings.provider.stt == STTProviderName.LOCAL_QWEN
+            and self.settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B)
             and self._local_stt_pending_enable_after_install
         )
         should_resume_peer_local_stt = (
@@ -3802,7 +3807,7 @@ class GuiController:
         return False
 
     async def _ensure_local_stt_ready(self) -> bool:
-        if self.settings is None or self.settings.provider.stt != STTProviderName.LOCAL_QWEN:
+        if self.settings is None or self.settings.provider.stt not in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
             return True
         current_status = self._current_local_stt_runtime_status()
         if current_status == "downloading":
@@ -3968,7 +3973,7 @@ class GuiController:
                     if (
                         self.hub is not None
                         and self.hub.stt is not None
-                        and self._selected_stt_provider() != STTProviderName.LOCAL_QWEN
+                        and self._selected_stt_provider() not in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B)
                     ):
                         with contextlib.suppress(Exception):
                             await self.hub.stt.warmup()
@@ -4731,7 +4736,7 @@ class GuiController:
             f"channel={notification.channel} "
             f"utterance_id={str(notification.utterance_id)[:8]}"
         )
-        if notification.stt_provider_name is STTProviderName.LOCAL_QWEN:
+        if notification.stt_provider_name in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
             self._record_local_qwen_hallucination_guidance_detection(notification)
 
     def _record_local_qwen_hallucination_guidance_detection(

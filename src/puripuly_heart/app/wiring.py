@@ -775,13 +775,17 @@ def create_stt_backend(
 ) -> STTBackend:
     effective_terms = get_effective_custom_terms(settings, settings.languages.source_language)
 
-    if settings.provider.stt == STTProviderName.LOCAL_QWEN:
+    if settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
         from puripuly_heart.core.language import get_local_qwen_language_hint
         from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
         from puripuly_heart.providers.stt.local_qwen_sherpa import LocalQwenSherpaSTTBackend
 
+        _LOCAL_QWEN_MODEL_DIRS = {
+            STTProviderName.LOCAL_QWEN: "qwen3-asr-0.6b-int8-sherpa",
+            STTProviderName.LOCAL_QWEN_17B: "qwen3-asr-1.7b-int8-sherpa",
+        }
         return LocalQwenSherpaSTTBackend(
-            model_dir=default_local_stt_model_dir(),
+            model_dir=default_local_stt_model_dir(_LOCAL_QWEN_MODEL_DIRS[settings.provider.stt]),
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             stream_label="self",
             language_hint=get_local_qwen_language_hint(settings.languages.source_language),
@@ -879,7 +883,7 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
             soniox_trailing_silence_ms=settings.soniox_stt.trailing_silence_ms,
         )
 
-    if provider == STTProviderName.LOCAL_QWEN:
+    if provider in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
         return ResolvedPeerSTTConfig(
             provider=provider,
             source_language=peer_source_language,
@@ -971,13 +975,17 @@ def create_peer_stt_backend(
             context_terms=resolved.keyterms,
         )
 
-    if resolved.provider == STTProviderName.LOCAL_QWEN:
+    if resolved.provider in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
         from puripuly_heart.core.language import get_local_qwen_language_hint
         from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
         from puripuly_heart.providers.stt.local_qwen_sherpa import LocalQwenSherpaSTTBackend
 
+        _LOCAL_QWEN_MODEL_DIRS = {
+            STTProviderName.LOCAL_QWEN: "qwen3-asr-0.6b-int8-sherpa",
+            STTProviderName.LOCAL_QWEN_17B: "qwen3-asr-1.7b-int8-sherpa",
+        }
         return LocalQwenSherpaSTTBackend(
-            model_dir=default_local_stt_model_dir(),
+            model_dir=default_local_stt_model_dir(_LOCAL_QWEN_MODEL_DIRS[resolved.provider]),
             sample_rate_hz=resolved.sample_rate_hz,
             stream_label="peer",
             language_hint=get_local_qwen_language_hint(resolved.source_language),

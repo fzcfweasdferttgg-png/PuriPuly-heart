@@ -16,6 +16,12 @@ LOCAL_STT_INSTALLED_MANIFEST_FILENAME = "installed-manifest.json"
 LOCAL_STT_MANIFEST_RELATIVE_PATH = f"data/models/{LOCAL_STT_INSTALL_DIRNAME}.manifest.json"
 
 
+LOCAL_STT_MANIFEST_REGISTRY: dict[str, str] = {
+    "qwen3-asr-0.6b-int8-sherpa": "data/models/qwen3-asr-0.6b-int8-sherpa.manifest.json",
+    "qwen3-asr-1.7b-int8-sherpa": "data/models/qwen3-asr-1.7b-int8-sherpa.manifest.json",
+}
+
+
 class LocalSTTAssetError(RuntimeError):
     """Base error for local STT asset contract failures."""
 
@@ -209,8 +215,9 @@ def default_local_stt_model_root() -> Path:
     return paths.default_models_dir()
 
 
-def default_local_stt_model_dir() -> Path:
-    return default_local_stt_model_root() / LOCAL_STT_INSTALL_DIRNAME
+def default_local_stt_model_dir(model_id: str | None = None) -> Path:
+    resolved = model_id or LOCAL_STT_INSTALL_DIRNAME
+    return default_local_stt_model_root() / resolved
 
 
 def default_local_stt_installed_manifest_path(model_dir: Path | None = None) -> Path:
@@ -225,8 +232,12 @@ def default_local_stt_source_for_locale(locale: str | None) -> str:
     return "huggingface"
 
 
-def load_local_stt_asset_manifest() -> LocalSTTAssetManifest:
-    manifest_path = resources.files("puripuly_heart").joinpath(LOCAL_STT_MANIFEST_RELATIVE_PATH)
+def load_local_stt_asset_manifest(model_id: str | None = None) -> LocalSTTAssetManifest:
+    resolved_id = model_id or LOCAL_STT_MODEL_ID
+    relative_path = LOCAL_STT_MANIFEST_REGISTRY.get(resolved_id)
+    if relative_path is None:
+        raise LocalSTTManifestInvalidError(f"unknown local STT model_id: {resolved_id}")
+    manifest_path = resources.files("puripuly_heart").joinpath(relative_path)
     with manifest_path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):

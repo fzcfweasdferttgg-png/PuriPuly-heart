@@ -150,6 +150,7 @@ def normalize_managed_claim_sources(value: object) -> tuple[str, ...]:
 
 class STTProviderName(str, Enum):
     LOCAL_QWEN = "local_qwen"
+    LOCAL_QWEN_17B = "local_qwen_17b"
     DEEPGRAM = "deepgram"
     QWEN_ASR = "qwen_asr"
     SONIOX = "soniox"

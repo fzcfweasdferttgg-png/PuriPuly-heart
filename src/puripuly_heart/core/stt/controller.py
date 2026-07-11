@@ -646,7 +646,7 @@ class ManagedSTTProvider:
 
     def _should_suppress_final_transcript(self, text: str) -> bool:
         return (
-            self.stt_provider_name is STTProviderName.LOCAL_QWEN
+            self.stt_provider_name in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B)
             and is_known_local_qwen_hallucination(text)
         )
 
@@ -696,7 +696,7 @@ class ManagedSTTProvider:
         utterance_id: UUID,
     ) -> None:
         provider_name = self.stt_provider_name
-        if provider_name is not STTProviderName.LOCAL_QWEN:
+        if provider_name not in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
             return
 
         notification_status = "not_configured"
