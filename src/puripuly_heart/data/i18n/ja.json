@@ -529,5 +529,7 @@
   "settings.chatbox_source.off": "翻訳のみ",
   "settings.section.peer_stt": "相手音声認識",
   "settings.dashboard_language_redirect": "セルフと相手の言語の組み合わせはダッシュボードの言語カードで変更してください。",
-  "settings.peer_stt_provider": "相手STTプロバイダー"
+  "settings.peer_stt_provider": "相手STTプロバイダー",
+  "provider.local_qwen_17b": "Qwen ASR 1.7B (Local)",
+  "provider.local_qwen_17b.description": "コンピューターのCPUが直接モデルを駆動します。VRAMを占有しません"
 }

@@ -529,5 +529,7 @@
   "settings.chatbox_source.off": "Translation Only",
   "settings.section.peer_stt": "Peer Speech Recognition",
   "settings.dashboard_language_redirect": "Change self and peer language pairs from the Dashboard language card.",
-  "settings.peer_stt_provider": "Peer STT Provider"
+  "settings.peer_stt_provider": "Peer STT Provider",
+  "provider.local_qwen_17b": "Qwen ASR 1.7B (Local)",
+  "provider.local_qwen_17b.description": "Larger model with better accuracy. Runs on CPU, doesn't use VRAM"
 }

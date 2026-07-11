@@ -1,0 +1,49 @@
+{
+  "manifest_version": 1,
+  "installed_manifest_version": 1,
+  "model_id": "qwen3-asr-1.7b-int8-sherpa",
+  "engine": "sherpa-onnx",
+  "upstream_repo": "ilmina/qwen3-asr-1.7b-sherpa-onnx",
+  "install_dirname": "qwen3-asr-1.7b-int8-sherpa",
+  "installed_manifest_filename": "installed-manifest.json",
+  "sources": {
+    "huggingface": {
+      "name": "huggingface",
+      "repo_id": "ilmina/qwen3-asr-1.7b-sherpa-onnx",
+      "revision": "main",
+      "download_url_template": "https://huggingface.co/ilmina/qwen3-asr-1.7b-sherpa-onnx/resolve/main/{path}"
+    }
+  },
+  "files": [
+    {
+      "relative_path": "conv_frontend.onnx",
+      "sha256": "fa894a4ba53da6a4238f2a6ca0b09362e505d39cecbd646051b033e2e8d7e2fb",
+      "size_bytes": 48080441
+    },
+    {
+      "relative_path": "decoder.int8.onnx",
+      "sha256": "c43c853fa6e97d08365cb8a5502b360b595cd43c00dc60e4d8ca7cc18cad460b",
+      "size_bytes": 2037458645
+    },
+    {
+      "relative_path": "encoder.int8.onnx",
+      "sha256": "436fbd910a0c8914851e5ac1354e807be9f283d08a5da728adaa609731c41469",
+      "size_bytes": 314222162
+    },
+    {
+      "relative_path": "tokenizer/merges.txt",
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+      "size_bytes": 1671853
+    },
+    {
+      "relative_path": "tokenizer/tokenizer_config.json",
+      "sha256": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c",
+      "size_bytes": 12487
+    },
+    {
+      "relative_path": "tokenizer/vocab.json",
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "size_bytes": 2776833
+    }
+  ]
+}
