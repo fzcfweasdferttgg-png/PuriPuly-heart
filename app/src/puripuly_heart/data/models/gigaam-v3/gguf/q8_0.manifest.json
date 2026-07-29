@@ -1,0 +1,24 @@
+{
+  "manifest_version": 1,
+  "installed_manifest_version": 1,
+  "model_id": "gigaam-v3-e2e-rnnt-gguf",
+  "engine": "transcribecpp",
+  "upstream_repo": "handy-computer/gigaam-v3-e2e-rnnt-gguf",
+  "install_dirname": "gigaam-v3/gguf/q8_0",
+  "installed_manifest_filename": "installed-manifest.json",
+  "sources": {
+    "huggingface": {
+      "name": "huggingface",
+      "repo_id": "handy-computer/gigaam-v3-e2e-rnnt-gguf",
+      "revision": "main",
+      "download_url_template": "https://huggingface.co/handy-computer/gigaam-v3-e2e-rnnt-gguf/resolve/main/{path}"
+    }
+  },
+  "files": [
+    {
+      "relative_path": "gigaam-v3-e2e-rnnt-Q8_0.gguf",
+      "sha256": "78d63b47723b7f8d78c6113a6ef983b5a86e2a86f6c273e1f5cb6967b1c4467a",
+      "size_bytes": 273724832
+    }
+  ]
+}

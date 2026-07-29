@@ -1,0 +1,24 @@
+{
+  "manifest_version": 1,
+  "installed_manifest_version": 1,
+  "model_id": "parakeet-tdt-0.6b-v3-gguf",
+  "engine": "transcribecpp",
+  "upstream_repo": "handy-computer/parakeet-tdt-0.6b-v3-gguf",
+  "install_dirname": "parakeet-tdt-0.6b-v3/gguf/q8_0",
+  "installed_manifest_filename": "installed-manifest.json",
+  "sources": {
+    "huggingface": {
+      "name": "huggingface",
+      "repo_id": "handy-computer/parakeet-tdt-0.6b-v3-gguf",
+      "revision": "main",
+      "download_url_template": "https://huggingface.co/handy-computer/parakeet-tdt-0.6b-v3-gguf/resolve/main/{path}"
+    }
+  },
+  "files": [
+    {
+      "relative_path": "parakeet-tdt-0.6b-v3-Q8_0.gguf",
+      "sha256": "5859f77944efcd8eafa23a6350731960b2b55b2203df51f319665c807d802cc7",
+      "size_bytes": 739508576
+    }
+  ]
+}

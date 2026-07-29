@@ -1,0 +1,287 @@
+PuriPuly Heart license and third-party notices
+
+PuriPuly Heart's own source code is licensed under AGPL-3.0-or-later.
+Full project license text is provided in the root LICENSE file.
+The third-party components listed below remain under their respective upstream licenses.
+This notice file is provided for source and binary distributions of PuriPuly Heart.
+
+----
+
+Shipped/runtime component license summary
+
+This notice file focuses on components that are bundled, shipped, installed, or used by the runtime/broker service. Build-only and test-only dependency inventory is recorded in the AGPL transition ADR and verification log instead of being treated as shipped notice text.
+
+The technical metadata review performed for the AGPL transition found no obvious license blocker to licensing PuriPuly Heart's own code under AGPL-3.0-or-later. This is a repository metadata review, not legal advice.
+
+Notable shipped/runtime license families include MIT, Apache-2.0, BSD-3-Clause, MPL-2.0, LGPL-2.1-or-later, SIL Open Font License 1.1, and GPL-2.0-or-later WITH Bootloader-exception for PyInstaller-built binaries.
+
+Runtime/bundled notice-sensitive components:
+- soxr / libsoxr: LGPL-2.1-or-later. Windows releases include the LGPL compliance bundle described below. The source-tree license text is `src/puripuly_heart/data/licenses/COPYING.LGPL-2.1.txt`; installed releases stage it under the soxr compliance bundle.
+- certifi: MPL-2.0.
+- NumPy binary wheels may include OpenBLAS, LAPACK, and GCC runtime library exception notices.
+- OpenVR runtime DLL: BSD-3-Clause.
+- Noto Sans CJK Medium TTC: SIL Open Font License 1.1.
+- Silero VAD ONNX model: MIT.
+- Bundled fonts: SIL Open Font License 1.1.
+- PyInstaller bootloader/runtime packaging: GPL-2.0-or-later WITH Bootloader-exception.
+
+Broker runtime direct dependency:
+- Hono: MIT.
+
+----
+
+License text pointers for package-managed/runtime components
+
+For package-managed dependencies, the authoritative license texts are distributed with their source or wheel/npm/crate packages. Key upstream license references include:
+- AGPL-3.0-or-later: https://www.gnu.org/licenses/agpl-3.0.txt
+- Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
+- BSD-2-Clause and BSD-3-Clause: https://opensource.org/license/bsd-2-clause/ , https://opensource.org/license/bsd-3-clause/
+- MIT: https://opensource.org/license/mit/
+- ISC: https://opensource.org/license/isc-license-txt/
+- MPL-2.0: https://www.mozilla.org/en-US/MPL/2.0/
+- LGPL-2.1-or-later: source-tree copy at src/puripuly_heart/data/licenses/COPYING.LGPL-2.1.txt; installed release copy in the soxr compliance bundle.
+- SIL Open Font License 1.1: included below for bundled fonts.
+- PyInstaller bootloader exception: https://github.com/pyinstaller/pyinstaller/blob/develop/COPYING.txt
+
+----
+
+Qwen3-ASR local model assets (optional download)
+Official upstream sources: https://huggingface.co/Qwen/Qwen3-ASR-0.6B , https://github.com/QwenLM/Qwen3-ASR
+Manifest mirror sources used by the app: https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25 , https://modelscope.cn/models/zengshuishui/Qwen3-ASR-onnx
+License: Apache-2.0
+
+The local Qwen ASR model is not committed directly to this repository. The app manifest identifies pinned downloadable ONNX/tokenizer assets for local ASR setup.
+Official upstream Qwen3-ASR assets are Apache-2.0. The mirror or converted assets referenced by the manifest may not expose complete license metadata, so pinned mirror provenance and license metadata must be verified before release.
+
+----
+
+Silero VAD (v6.2.1)
+Source: https://github.com/snakers4/silero-vad
+License: MIT
+
+This application bundles the Silero VAD ONNX model file for offline Voice Activity Detection.
+
+----
+
+MIT License
+
+Copyright (c) 2020-present Silero Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----
+
+Python-SoXR / libsoxr runtime pair
+Sources: https://pypi.org/project/soxr/ , https://sourceforge.net/projects/soxr/
+License: LGPL-2.1-or-later
+Bundled runtime: soxr.dll
+Installed compliance bundle: third_party\soxr\
+Installed compliance files: COPYING.LGPL-2.1.txt ; PuriPulyHeart-soxr-third-party-source-bundle.zip
+
+Windows release packaging stages a custom system-linked Python-SoXR 1.0.0 extension
+module together with a matching soxr.dll runtime under soxr/.
+
+Installed releases include an LGPL compliance bundle under third_party\soxr\ in the installed app tree.
+That installed bundle includes COPYING.LGPL-2.1.txt and the
+PuriPulyHeart-soxr-third-party-source-bundle.zip source bundle.
+
+The bundled source bundle exists to provide the exact python-soxr 1.0.0 and libsoxr 0.1.3 source archives used to build the packaged soxr.dll runtime pair,
+together with a manifest describing the staged wheel and source inputs.
+
+----
+
+OpenVR client binding library (openvr_api.dll)
+Upstream pin: ValveSoftware/openvr@v2.15.6
+DLL source: https://raw.githubusercontent.com/ValveSoftware/openvr/v2.15.6/bin/win64/openvr_api.dll
+LICENSE source: https://raw.githubusercontent.com/ValveSoftware/openvr/v2.15.6/LICENSE
+License: BSD-3-Clause
+Bundled runtime: openvr_api.dll
+Packaging source bundle: third_party\openvr\
+Packaging source files: LICENSE ; README.md ; win64\openvr_api.dll ; win64\openvr_api.dll.sha256
+
+This application bundles the Windows x64 OpenVR client binding library as an app-private dependency for the packaged overlay/runtime path.
+
+Installed builds load this DLL from the application's own tree. The vendored bundle pinned from ValveSoftware/openvr@v2.15.6 under third_party\openvr\ is the packaging source for that app-private DLL, so packaged and installed builds do not depend on a shared SteamVR system copy.
+
+----
+
+BSD 3-Clause License
+
+Copyright (c) 2015, Valve Corporation
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+----
+
+Noto Sans CJK Medium TTC
+Upstream repository: notofonts/noto-cjk (GitHub may redirect to googlefonts/noto-cjk)
+Upstream tag/version: Sans2.004 / Noto Sans CJK v2.004
+Upstream path: Sans/OTC/NotoSansCJK-Medium.ttc
+Source URL: https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTC/NotoSansCJK-Medium.ttc
+License: SIL Open Font License 1.1
+Bundled runtime: NotoSansCJK-Medium.ttc
+Bundled source path: src\puripuly_heart\data\fonts\NotoSansCJK-Medium.ttc
+Bundled runtime path: puripuly_heart\data\fonts\NotoSansCJK-Medium.ttc
+Source/provenance bundle: third_party\noto-sans-cjk\
+Source/provenance files: OFL.txt ; README.md ; SHA256SUMS.txt
+Byte length: 18,354,360
+SHA256: 197d5e1e019faca33a4d55931c7d68b8056f3b97cb862049f5cb8de9efdfb8ce
+
+This application bundles the official static Medium Noto Sans CJK TTC for the native VR Subtitle Overlay. The TTC provides Korean, Japanese, Simplified Chinese, Traditional Chinese, and Hong Kong faces under the SIL Open Font License 1.1. The source-tree app font asset is checked against the provenance bundle's tag-pinned upstream source, license text, byte length, and SHA256 during release staging and installer integrity checks.
+
+----
+
+NanumSquareRound
+Source: https://help.naver.com/service/30016/contents/18088?osType=PC&lang=ko
+License: SIL Open Font License 1.1
+
+Copyright (c) 2010 NAVER Corporation (https://www.navercorp.com/)
+with Reserved Font Name Nanum, Naver Nanum, NanumGothic, Naver NanumGothic,
+NanumMyeongjo, Naver NanumMyeongjo, NanumBrush, Naver NanumBrush, NanumPen,
+Naver NanumPen, Naver NanumGothicEco, NanumGothicEco, Naver NanumMyeongjoEco,
+NanumMyeongjoEco, Naver NanumGothicLight, NanumGothicLight, NanumBarunGothic,
+Naver NanumBarunGothic, NanumSquareRound, NanumBarunPen, MaruBuri,
+NanumSquareNeo.
+
+----
+
+M PLUS Rounded 1c
+Source: https://github.com/google/fonts/tree/main/ofl/mplusrounded1c
+License: SIL Open Font License 1.1
+
+Copyright (c) 2016 The Rounded M+ Project Authors.
+
+----
+
+Resource Han Rounded CN
+Source: https://github.com/CyanoHao/Resource-Han-Rounded
+License: SIL Open Font License 1.1
+
+Copyright (c) 2018-2022 Cyano Hao.
+Portions (c) 2014-2021 Adobe (http://www.adobe.com/),
+with Reserved Font Name "Source".
+
+----
+
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply to any
+document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting in part or in whole any of the components of the Original
+Version, by changing formats or by porting the Font Software to a new
+environment.
+
+"Author" refers to any designer, engineer, programmer, technical writer
+or other person who contributed to the Font Software.
+
+PERMISSION AND CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components, in
+Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or in
+the appropriate machine-readable metadata fields within text or binary
+files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name
+as presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any Modified
+Version, except to acknowledge the contribution(s) of the Copyright
+Holder(s) and the Author(s) or with their explicit written permission.
+
+5) The Font Software, modified or unmodified, in part or in whole, must
+be distributed entirely under this license, and must not be distributed
+under any other license. The requirement for fonts to remain under this
+license does not apply to any document created using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are not
+met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
+DEALINGS IN THE FONT SOFTWARE.

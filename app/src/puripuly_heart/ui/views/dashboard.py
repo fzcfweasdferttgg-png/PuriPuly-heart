@@ -1,0 +1,669 @@
+from typing import Callable
+
+import flet as ft
+
+from puripuly_heart.core.language import get_all_language_options
+from puripuly_heart.ui.components.display_card import DisplayCard
+from puripuly_heart.ui.components.glow import create_background_glow_stack
+from puripuly_heart.ui.components.language_card import LanguageCard
+from puripuly_heart.ui.components.language_modal import LanguageModal
+from puripuly_heart.ui.components.power_button import PowerButton
+from puripuly_heart.ui.fonts import font_for_language
+from puripuly_heart.ui.i18n import get_locale, language_name, t
+from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
+
+DASHBOARD_LAYOUT_GAP = 12
+DASHBOARD_CONTROL_REGION_EXPAND = 45
+DASHBOARD_INFO_REGION_EXPAND = 55
+DASHBOARD_DISPLAY_CARD_EXPAND = 1
+DASHBOARD_LANGUAGE_CARD_EXPAND = 1
+DASHBOARD_POWER_BUTTON_ICON_SIZE = 80
+DASHBOARD_POWER_BUTTON_LABEL_SIZE = 32
+OVERLAY_FAILURE_REASON_ONLY_NOTICE_REASONS = {"steamvr_not_running"}
+
+
+class DashboardView(ft.Column):
+    """Main dashboard tuned for the 4:3 VR-friendly shell layout."""
+
+    _LANG_OPTIONS = get_all_language_options()
+
+    def __init__(self):
+        super().__init__(expand=True, spacing=16)
+
+        # State
+        self.is_connected = False
+        self.is_power_on = False
+        self.is_translation_on = False
+        self.is_stt_on = False
+        self.translation_needs_key = False
+        self.stt_needs_key = False
+        self.last_sent_text = t("dashboard.ready")
+        self.history_items = []
+
+        # Warning state for UI feedback
+        self._translation_showing_warning = False
+        self._stt_showing_warning = False
+        self._managed_auth_pending = False
+        self._local_stt_notice_status: str | None = None
+        self._local_stt_notice_percent: int | None = None
+        self._overlay_peer_contract: OverlayPeerConsumerContract | None = None
+
+        # Current language settings
+        self._source_lang_code = "ko"
+        self._target_lang_code = "en"
+        self._second_target_lang_code = ""
+        self._peer_source_lang_code = "en"
+        self._peer_target_lang_code = "ko"
+        self._message_input_focused = False
+
+        # Recent languages (max 3 each)
+        self._recent_source_langs: list[str] = []
+        self._recent_target_langs: list[str] = []
+
+        # Callbacks (assigned by App)
+        self.on_send_message = None
+        self.on_toggle_translation = None
+        self.on_toggle_stt = None
+        self.on_toggle_overlay = None
+        self.on_toggle_peer_translation = None
+        self.on_language_change = None
+        self.on_recent_languages_change = None  # For persistence
+        self.on_message_input_activity = None
+        self.runtime_log_detailed: Callable[..., bool | None] | None = None
+
+        self._build_ui()
+
+    def _build_ui(self):
+        # Left-side control grid
+        self.stt_button = PowerButton(
+            label=t("dashboard.stt_label"),
+            icon=ft.Icons.MIC,
+            on_click=self._toggle_stt,
+            icon_size=DASHBOARD_POWER_BUTTON_ICON_SIZE,
+            label_size=DASHBOARD_POWER_BUTTON_LABEL_SIZE,
+        )
+        self.peer_button = PowerButton(
+            label=t("dashboard.peer_label"),
+            icon=ft.Icons.RECORD_VOICE_OVER,
+            on_click=self._toggle_peer_translation,
+            icon_size=DASHBOARD_POWER_BUTTON_ICON_SIZE,
+            label_size=DASHBOARD_POWER_BUTTON_LABEL_SIZE,
+        )
+        self.trans_button = PowerButton(
+            label=t("dashboard.trans_label"),
+            icon=ft.Icons.TRANSLATE,
+            on_click=self._toggle_translation,
+            icon_size=DASHBOARD_POWER_BUTTON_ICON_SIZE,
+            label_size=DASHBOARD_POWER_BUTTON_LABEL_SIZE,
+        )
+        self.overlay_button = PowerButton(
+            label=t("dashboard.overlay_label"),
+            icon=ft.Icons.SUBTITLES,
+            on_click=self._toggle_overlay,
+            icon_size=DASHBOARD_POWER_BUTTON_ICON_SIZE,
+            label_size=DASHBOARD_POWER_BUTTON_LABEL_SIZE,
+        )
+        self._sync_stt_button_state()
+        self._sync_translation_button_state()
+        self._sync_overlay_peer_buttons()
+
+        # Right-side information stack
+        self.display_card = DisplayCard(
+            on_submit=self._on_submit,
+            on_input_focus_change=self._set_message_input_focused,
+            on_input_activity=self._on_message_input_activity,
+        )
+        self.language_card = LanguageCard(
+            on_self_source_click=self._open_source_dialog,
+            on_self_target_click=self._open_target_dialog,
+            on_self_swap_click=self._swap_languages,
+            on_peer_source_click=self._open_peer_source_dialog,
+            on_peer_target_click=self._open_peer_target_dialog,
+            on_peer_swap_click=self._swap_peer_languages,
+            on_second_target_click=self._open_second_target_dialog,
+        )
+        self.language_card.set_row_labels(
+            t("dashboard.language.self"),
+            t("dashboard.language.peer"),
+            t("dashboard.language.second_target", default="Second language"),
+        )
+        self._refresh_language_card()
+        self._update_input_font()
+
+        self.top_controls = ft.Row(
+            [
+                ft.Container(content=self.stt_button, expand=True),
+                ft.Container(content=self.peer_button, expand=True),
+            ],
+            spacing=DASHBOARD_LAYOUT_GAP,
+            expand=True,
+        )
+        self.bottom_controls = ft.Row(
+            [
+                ft.Container(content=self.trans_button, expand=True),
+                ft.Container(content=self.overlay_button, expand=True),
+            ],
+            spacing=DASHBOARD_LAYOUT_GAP,
+            expand=True,
+        )
+
+        self.control_grid = ft.Column(
+            [self.top_controls, self.bottom_controls],
+            spacing=DASHBOARD_LAYOUT_GAP,
+            expand=True,
+        )
+        self.display_card_slot = ft.Container(
+            content=self.display_card,
+            expand=DASHBOARD_DISPLAY_CARD_EXPAND,
+        )
+        self.language_card_slot = ft.Container(
+            content=self.language_card,
+            expand=DASHBOARD_LANGUAGE_CARD_EXPAND,
+        )
+        self.info_stack = ft.Column(
+            [
+                self.display_card_slot,
+                self.language_card_slot,
+            ],
+            spacing=DASHBOARD_LAYOUT_GAP,
+            expand=True,
+        )
+
+        self.control_region = ft.Container(
+            content=self.control_grid,
+            expand=DASHBOARD_CONTROL_REGION_EXPAND,
+        )
+        self.info_region = ft.Container(
+            content=self.info_stack,
+            expand=DASHBOARD_INFO_REGION_EXPAND,
+        )
+        self.main_surface = ft.Row(
+            [
+                self.control_region,
+                self.info_region,
+            ],
+            spacing=DASHBOARD_LAYOUT_GAP,
+            expand=True,
+        )
+
+        self.shell_content = ft.Column(
+            [self.main_surface],
+            spacing=DASHBOARD_LAYOUT_GAP,
+            expand=True,
+        )
+        self.controls = [create_background_glow_stack(self.shell_content)]
+
+    def _toggle_overlay(self) -> None:
+        enabled = True
+        if self._overlay_peer_contract is not None:
+            enabled = not self._overlay_peer_contract.overlay.intent_enabled
+        if self.on_toggle_overlay:
+            self.on_toggle_overlay(enabled)
+
+    def _toggle_peer_translation(self) -> None:
+        enabled = True
+        if self._overlay_peer_contract is not None:
+            enabled = not self._overlay_peer_contract.peer.intent_enabled
+        if self.on_toggle_peer_translation:
+            self.on_toggle_peer_translation(enabled)
+
+    def _sync_stt_button_state(self) -> None:
+        self.stt_button.set_state(
+            self.is_stt_on,
+            needs_key=self._stt_showing_warning,
+        )
+
+    def _sync_translation_button_state(self) -> None:
+        self.trans_button.set_state(
+            self.is_translation_on,
+            needs_key=self._translation_showing_warning,
+        )
+
+    def _sync_overlay_peer_buttons(self) -> None:
+        contract = self._overlay_peer_contract
+        if contract is None:
+            self.peer_button.set_state(False)
+            self.overlay_button.set_state(False)
+            self._sync_notice()
+            return
+
+        self.peer_button.set_state(
+            contract.peer.state == "on",
+            needs_key=contract.peer.state == "warning",
+        )
+        self.overlay_button.set_state(
+            contract.overlay.state == "on",
+            needs_key=contract.overlay.state == "warning",
+        )
+        self._sync_notice()
+
+    def _toggle_stt(self):
+        if self.is_stt_on:
+            self.is_stt_on = False
+            self._stt_showing_warning = False
+        elif self._stt_showing_warning:
+            self._stt_showing_warning = False
+        elif self.stt_needs_key:
+            self._stt_showing_warning = True
+            self.set_display_text(t("dashboard.warn_stt_key"))
+        else:
+            self.is_stt_on = True
+            self._stt_showing_warning = False
+
+        self._sync_stt_button_state()
+
+        if self.on_toggle_stt:
+            self.on_toggle_stt(self.is_stt_on)
+
+    def _toggle_translation(self):
+        if self.is_translation_on:
+            self.is_translation_on = False
+            self._translation_showing_warning = False
+        elif self._translation_showing_warning:
+            self._translation_showing_warning = False
+        elif self.translation_needs_key:
+            self._translation_showing_warning = True
+            self.set_display_text(t("dashboard.warn_llm_key"))
+        else:
+            self.is_translation_on = True
+            self._translation_showing_warning = False
+
+        self._sync_translation_button_state()
+
+        self.is_power_on = self.is_translation_on
+        if self.on_toggle_translation:
+            self.on_toggle_translation(self.is_translation_on)
+
+    def _on_submit(self, text: str):
+        self.set_display_text(text, language_code=self._source_lang_code)
+        if self.on_send_message:
+            self.on_send_message("You", text)
+
+    def _set_message_input_focused(self, focused: bool) -> None:
+        self._message_input_focused = bool(focused)
+        if not self._message_input_focused:
+            self._on_message_input_activity(False)
+
+    def _on_message_input_activity(self, has_text: bool) -> None:
+        if self.on_message_input_activity:
+            self.on_message_input_activity(bool(has_text))
+
+    def handle_message_input_tab_key(self) -> bool:
+        if not self._message_input_focused:
+            return False
+
+        self._swap_languages()
+        self.display_card.focus_input()
+        return True
+
+    def _open_source_dialog(self):
+        modal = LanguageModal(
+            page=self.page,
+            languages=self._LANG_OPTIONS,
+            on_select=self._on_source_select,
+        )
+        modal.open(current=self._source_lang_code, recent=self._recent_source_langs)
+
+    def _open_target_dialog(self):
+        modal = LanguageModal(
+            page=self.page,
+            languages=self._LANG_OPTIONS,
+            on_select=self._on_target_select,
+        )
+        modal.open(current=self._target_lang_code, recent=self._recent_target_langs)
+
+    def _open_peer_source_dialog(self):
+        modal = LanguageModal(
+            page=self.page,
+            languages=self._LANG_OPTIONS,
+            on_select=self._on_peer_source_select,
+        )
+        modal.open(
+            current=self._effective_peer_source_lang_code(), recent=self._recent_source_langs
+        )
+
+    def _open_peer_target_dialog(self):
+        modal = LanguageModal(
+            page=self.page,
+            languages=self._LANG_OPTIONS,
+            on_select=self._on_peer_target_select,
+        )
+        modal.open(
+            current=self._effective_peer_target_lang_code(), recent=self._recent_target_langs
+        )
+
+    def _on_source_select(self, lang_code: str):
+        """Handle source language selection."""
+        self._source_lang_code = lang_code
+        self._add_to_recent(lang_code, is_source=True)
+        self._update_input_font()
+        self._refresh_language_card()
+        self._notify_language_change()
+
+    def _on_target_select(self, lang_code: str):
+        """Handle target language selection."""
+        self._target_lang_code = lang_code
+        self._add_to_recent(lang_code, is_source=False)
+        self._refresh_language_card()
+        self._notify_language_change()
+
+    def _on_peer_source_select(self, lang_code: str):
+        self._peer_source_lang_code = "" if lang_code == self._source_lang_code else lang_code
+        self._add_to_recent(lang_code, is_source=True)
+        self._refresh_language_card()
+        self._notify_language_change()
+
+    def _on_peer_target_select(self, lang_code: str):
+        self._peer_target_lang_code = "" if lang_code == self._target_lang_code else lang_code
+        self._add_to_recent(lang_code, is_source=False)
+        self._refresh_language_card()
+        self._notify_language_change()
+
+    def _swap_languages(self):
+        """Swap source and target languages."""
+        self._source_lang_code, self._target_lang_code = (
+            self._target_lang_code,
+            self._source_lang_code,
+        )
+        self._update_input_font()
+        self._refresh_language_card()
+        self._notify_language_change()
+
+    def _swap_peer_languages(self):
+        current_peer_source = self._effective_peer_source_lang_code()
+        current_peer_target = self._effective_peer_target_lang_code()
+        self._peer_source_lang_code = current_peer_target
+        self._peer_target_lang_code = current_peer_source
+        self._refresh_language_card()
+        self._notify_language_change()
+
+    def _open_second_target_dialog(self):
+        modal = LanguageModal(
+            page=self.page,
+            languages=self._LANG_OPTIONS,
+            on_select=self._on_second_target_select,
+        )
+        modal.open(
+            current=self._second_target_lang_code,
+            recent=self._recent_target_langs,
+            none_option=t("dashboard.language.second_target_disabled", default="Disabled"),
+        )
+
+    def _on_second_target_select(self, lang_code: str):
+        # Guard: second target must differ from source and target
+        if lang_code and (lang_code == self._source_lang_code or lang_code == self._target_lang_code):
+            lang_code = ""
+        self._second_target_lang_code = lang_code
+        if lang_code:
+            self._add_to_recent(lang_code, is_source=False)
+        self._refresh_language_card()
+        self._notify_language_change()
+
+    def _add_to_recent(self, lang_code: str, is_source: bool) -> None:
+        """Add language to recent list, maintaining max 6 unique entries."""
+        recent = self._recent_source_langs if is_source else self._recent_target_langs
+        if lang_code in recent:
+            recent.remove(lang_code)
+        recent.insert(0, lang_code)
+        if len(recent) > 6:
+            recent.pop()
+        if self.on_recent_languages_change:
+            self.on_recent_languages_change(self._recent_source_langs, self._recent_target_langs)
+
+    def _notify_language_change(self):
+        if self.on_language_change:
+            self.on_language_change(
+                self._source_lang_code,
+                self._target_lang_code,
+                self._peer_source_lang_code,
+                self._peer_target_lang_code,
+                self._second_target_lang_code,
+            )
+
+    def _effective_peer_source_lang_code(self) -> str:
+        return self._peer_source_lang_code or self._source_lang_code
+
+    def _effective_peer_target_lang_code(self) -> str:
+        return self._peer_target_lang_code or self._target_lang_code
+
+    def _refresh_language_card(self) -> None:
+        self.language_card.set_languages(
+            language_name(self._source_lang_code),
+            language_name(self._target_lang_code),
+            language_name(self._effective_peer_source_lang_code()),
+            language_name(self._effective_peer_target_lang_code()),
+        )
+        self.language_card.set_second_target_visible(True)
+        if self._second_target_lang_code:
+            self.language_card.set_second_target_name(language_name(self._second_target_lang_code))
+        else:
+            self.language_card.set_second_target_name(
+                t("dashboard.language.second_target_disabled", default="Disabled")
+            )
+
+    def set_status(self, status: str) -> None:
+        self.is_connected = status == "connected"
+        self.display_card.set_status(status, font_family=self._ui_font())
+
+    def set_languages_from_codes(
+        self,
+        source_code: str,
+        target_code: str,
+        peer_source_code: str = "",
+        peer_target_code: str = "",
+        second_target_code: str = "",
+    ) -> None:
+        self._source_lang_code = source_code
+        self._target_lang_code = target_code
+        self._second_target_lang_code = second_target_code
+        self._peer_source_lang_code = peer_source_code
+        self._peer_target_lang_code = peer_target_code
+        self._update_input_font()
+        self._refresh_language_card()
+
+    def set_translation_enabled(self, enabled: bool) -> None:
+        self.is_translation_on = bool(enabled)
+        if self.is_translation_on:
+            self._translation_showing_warning = False
+        self._sync_translation_button_state()
+
+    def set_stt_enabled(self, enabled: bool) -> None:
+        self.is_stt_on = bool(enabled)
+        if self.is_stt_on:
+            self._stt_showing_warning = False
+        self._sync_stt_button_state()
+
+    def set_overlay_peer_contract(self, contract: OverlayPeerConsumerContract) -> None:
+        self._overlay_peer_contract = contract
+        self._sync_overlay_peer_buttons()
+
+    def set_translation_needs_key(self, needs_key: bool, *, update_ui: bool = True) -> None:
+        self.translation_needs_key = bool(needs_key)
+        if update_ui and not self.is_translation_on:
+            self._translation_showing_warning = bool(needs_key)
+            self._sync_translation_button_state()
+
+    def set_stt_needs_key(self, needs_key: bool, *, update_ui: bool = True) -> None:
+        self.stt_needs_key = bool(needs_key)
+        if update_ui and not self.is_stt_on:
+            self._stt_showing_warning = bool(needs_key)
+            self._sync_stt_button_state()
+
+    def set_display_text(
+        self,
+        text: str,
+        *,
+        language_code: str | None = None,
+        is_error: bool = False,
+        update_id: str | None = None,
+        origin_wall_clock_ms: int | None = None,
+        utterance_id: object | None = None,
+        channel: str | None = None,
+        source_text_len: int | None = None,
+        transcript_kind: str | None = None,
+        should_log: bool = False,
+        debug_prefix: str | None = None,
+    ) -> None:
+        """Update the display card primary line with new text."""
+        font_family = font_for_language(language_code) if language_code else self._ui_font()
+        self.display_card.set_display(
+            text,
+            is_error=is_error,
+            font_family=font_family,
+            runtime_log_detailed=self.runtime_log_detailed,
+            update_id=update_id,
+            origin_wall_clock_ms=origin_wall_clock_ms,
+            utterance_id=utterance_id,
+            channel=channel,
+            source_text_len=source_text_len,
+            transcript_kind=transcript_kind,
+            should_log=should_log,
+            debug_prefix=debug_prefix,
+        )
+
+    def set_display_translation_text(
+        self,
+        text: str | None,
+        *,
+        language_code: str | None = None,
+        update_id: str | None = None,
+        origin_wall_clock_ms: int | None = None,
+        utterance_id: object | None = None,
+        channel: str | None = None,
+        session_scope: str | None = None,
+        source_text_hash: str | None = None,
+        source_text_len: int | None = None,
+        logical_turn_key: str | None = None,
+        debug_prefix: str | None = None,
+    ) -> None:
+        """Update the display card translation line."""
+        font_family = font_for_language(language_code) if language_code else self._ui_font()
+        self.display_card.set_display_translation(
+            text,
+            font_family=font_family,
+            runtime_log_detailed=self.runtime_log_detailed,
+            update_id=update_id,
+            origin_wall_clock_ms=origin_wall_clock_ms,
+            utterance_id=utterance_id,
+            channel=channel,
+            session_scope=session_scope,
+            source_text_hash=source_text_hash,
+            source_text_len=source_text_len,
+            logical_turn_key=logical_turn_key,
+            debug_prefix=debug_prefix,
+        )
+
+    def set_managed_auth_pending(self, pending: bool) -> None:
+        self._managed_auth_pending = bool(pending)
+        self._sync_notice()
+
+    def set_local_stt_notice(self, status: str | None, percent: int | None = None) -> None:
+        self._local_stt_notice_status = status
+        self._local_stt_notice_percent = percent if status == "downloading" else None
+
+        self._sync_notice()
+
+    def _current_local_stt_notice(self) -> tuple[str | None, str | None]:
+        status = self._local_stt_notice_status
+        if status is None:
+            return None, None
+
+        notice_key_by_status = {
+            "missing": "dashboard.local_stt_notice_missing",
+            "invalid": "dashboard.local_stt_notice_invalid",
+            "downloading": "dashboard.local_stt_notice_downloading",
+            "download_failed": "dashboard.local_stt_notice_download_failed",
+        }
+        tone_by_status = {
+            "missing": "warning",
+            "invalid": "warning",
+            "downloading": "info",
+            "download_failed": "error",
+        }
+        notice_key = notice_key_by_status.get(status)
+        if notice_key is None:
+            return None, None
+        notice_text = (
+            t(
+                "dashboard.local_stt_notice_downloading_progress",
+                percent=self._local_stt_notice_percent,
+            )
+            if status == "downloading" and self._local_stt_notice_percent is not None
+            else t(notice_key)
+        )
+        return notice_text, tone_by_status.get(status)
+
+    def _current_overlay_failure_notice(self) -> tuple[str | None, str | None]:
+        contract = self._overlay_peer_contract
+        if contract is None:
+            return None, None
+
+        overlay = contract.overlay
+        if overlay.state != "warning" or not overlay.failure_reason:
+            return None, None
+
+        status_text = t("settings.overlay.status.failed", default="failed")
+        reason_text = t(
+            f"settings.overlay.failure.{overlay.failure_reason}",
+            default=overlay.failure_reason,
+        )
+        if overlay.failure_reason in OVERLAY_FAILURE_REASON_ONLY_NOTICE_REASONS:
+            return reason_text, "error"
+        return (
+            t(
+                "settings.overlay.status.failed_with_reason",
+                status=status_text,
+                reason=reason_text,
+                default=f"{status_text}: {reason_text}",
+            ),
+            "error",
+        )
+
+    def _sync_notice(self) -> None:
+        if not hasattr(self, "display_card"):
+            return
+        if self._managed_auth_pending:
+            self.display_card.set_notice(t("dashboard.managed_auth_pending"), "info")
+            return
+        notice_text, tone = self._current_local_stt_notice()
+        if notice_text is not None:
+            self.display_card.set_notice(notice_text, tone)
+            return
+        notice_text, tone = self._current_overlay_failure_notice()
+        self.display_card.set_notice(notice_text, tone)
+
+    def apply_locale(self) -> None:
+        self.stt_button.set_label(t("dashboard.stt_label"))
+        self.peer_button.set_label(t("dashboard.peer_label"))
+        self.trans_button.set_label(t("dashboard.trans_label"))
+        self.overlay_button.set_label(t("dashboard.overlay_label"))
+        self._sync_stt_button_state()
+        self._sync_translation_button_state()
+        self._sync_overlay_peer_buttons()
+        self.display_card.apply_locale(
+            display_font_family=self._ui_font(),
+            input_font_family=font_for_language(self._source_lang_code),
+        )
+        self.language_card.set_row_labels(
+            t("dashboard.language.self"),
+            t("dashboard.language.peer"),
+            t("dashboard.language.second_target", default="Second language"),
+        )
+        self._refresh_language_card()
+        if self._stt_showing_warning:
+            self.set_display_text(t("dashboard.warn_stt_key"))
+        elif self._translation_showing_warning:
+            self.set_display_text(t("dashboard.warn_llm_key"))
+
+    def set_recent_languages(self, source: list[str], target: list[str]) -> None:
+        """Set recent languages from settings (for persistence)."""
+        self._recent_source_langs = list(source)
+        self._recent_target_langs = list(target)
+        self._recent_source_langs = self._recent_source_langs[:6]
+        self._recent_target_langs = self._recent_target_langs[:6]
+
+    def _update_input_font(self) -> None:
+        self.display_card.set_input_font(font_for_language(self._source_lang_code))
+
+    def _ui_font(self) -> str | None:
+        return font_for_language(get_locale())

@@ -1,0 +1,23 @@
+{
+  "manifest_version": 1,
+  "installed_manifest_version": 1,
+  "model_id": "qwen3-asr-1.7b-gguf-q6k",
+  "engine": "transcribecpp",
+  "upstream_repo": "handy-computer",
+  "install_dirname": "qwen3-asr-1.7b/gguf/q6_k",
+  "installed_manifest_filename": "installed-manifest.json",
+  "sources": {
+    "huggingface": {
+      "name": "huggingface",
+      "repo_id": "handy-computer",
+      "revision": "main"
+    }
+  },
+  "files": [
+    {
+      "relative_path": "Qwen3-ASR-1.7B-Q6_K.gguf",
+      "sha256": "",
+      "size_bytes": 1692554208
+    }
+  ]
+}

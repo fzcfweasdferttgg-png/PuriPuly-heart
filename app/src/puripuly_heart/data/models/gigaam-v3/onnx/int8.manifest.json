@@ -1,0 +1,51 @@
+{
+  "manifest_version": 1,
+  "installed_manifest_version": 1,
+  "model_id": "gigaam-v3-e2e-rnnt",
+  "engine": "sherpa-onnx",
+  "upstream_repo": "Smirnov75/GigaAM-v3-sherpa-onnx",
+  "install_dirname": "gigaam-v3/onnx/int8",
+  "installed_manifest_filename": "installed-manifest.json",
+  "sources": {
+    "huggingface": {
+      "name": "huggingface",
+      "repo_id": "Smirnov75/GigaAM-v3-sherpa-onnx",
+      "revision": "main",
+      "download_url_template": "https://huggingface.co/Smirnov75/GigaAM-v3-sherpa-onnx/resolve/main/{path}"
+    }
+  },
+  "files": [
+    {
+      "relative_path": "encoder.onnx",
+      "sha256": "2cac62d0c270bd128f898f2be1a2d34780d524a6e9483888ebac7b00f97410f1",
+      "size_bytes": 318995997,
+      "source_path_overrides": {
+        "huggingface": "gigaam_v3_e2e_rnnt_encoder_int8.onnx"
+      }
+    },
+    {
+      "relative_path": "decoder.onnx",
+      "sha256": "781971998e6a355d6a714f6932a30eab295e7ba0d14fd7e0f78c83b87e811860",
+      "size_bytes": 4600058,
+      "source_path_overrides": {
+        "huggingface": "gigaam_v3_e2e_rnnt_decoder.onnx"
+      }
+    },
+    {
+      "relative_path": "joint.onnx",
+      "sha256": "602ff7017a93311aad34df1437c8d7f49911353c13d6eae7a6ee7b041339465c",
+      "size_bytes": 2712896,
+      "source_path_overrides": {
+        "huggingface": "gigaam_v3_e2e_rnnt_joint.onnx"
+      }
+    },
+    {
+      "relative_path": "tokens.txt",
+      "sha256": "7ddf22514c42c531358182c81446a8159771e9921019f09ae743ea622d40221d",
+      "size_bytes": 13353,
+      "source_path_overrides": {
+        "huggingface": "gigaam_v3_e2e_rnnt_tokens.txt"
+      }
+    }
+  ]
+}
