@@ -221,7 +221,8 @@ class DeepSeekLLMProvider:
                     },
                 )
                 return response.status_code == 200
-        except Exception:
+        except Exception as exc:
+            logger.error("[KeyVerify] DeepSeek API key verification failed: %s", exc)
             return False
 
 

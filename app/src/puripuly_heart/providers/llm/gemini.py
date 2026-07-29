@@ -71,6 +71,25 @@ def _log_basic_missing_text(
     logger.error(message)
 
 
+def _log_basic_request_failure(
+    *,
+    runtime_logging: SessionRuntimeLoggingService | None,
+    operation: str,
+    status: int | None = None,
+    message: str = "",
+) -> None:
+    parts = ["[Basic][LLM] Gemini request failed", f"[{operation}]"]
+    if status is not None:
+        parts.append(f"status={status}")
+    if message:
+        parts.append(f"message={message}")
+    rendered = " ".join(parts)
+    if runtime_logging is not None:
+        runtime_logging.emit_basic(rendered, level=logging.ERROR)
+        return
+    logger.error(rendered)
+
+
 class GeminiClient(Protocol):
     async def translate(
         self,
@@ -156,7 +175,8 @@ class GeminiLLMProvider:
                 if not requested_model or _model_entry_matches(entry, requested_model):
                     return True
             return False
-        except Exception:
+        except Exception as exc:
+            logger.error("[KeyVerify] Gemini API key verification failed: %s", exc)
             return False
 
 

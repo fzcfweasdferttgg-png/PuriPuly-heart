@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from puripuly_heart.config.paths import default_settings_path, default_vad_model_path
 from puripuly_heart.core.runtime_logging import configure_main_logging
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -95,11 +98,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _print_initialization_error(component: str, exc: Exception) -> int:
+    logger.error("Error: failed to initialize %s: %s", component, exc)
     print(f"Error: failed to initialize {component}: {exc}", flush=True)
     return 2
 
 
 def _print_runtime_error(component: str, exc: Exception) -> int:
+    logger.error("Error: failed to verify %s: %s", component, exc)
     print(f"Error: failed to verify {component}: {exc}", flush=True)
     return 2
 

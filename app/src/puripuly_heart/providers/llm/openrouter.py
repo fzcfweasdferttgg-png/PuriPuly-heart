@@ -274,7 +274,8 @@ class OpenRouterLLMProvider:
                     headers={"Authorization": f"Bearer {api_key}"},
                 )
                 return response.status_code == 200
-        except Exception:
+        except Exception as exc:
+            logger.error("[KeyVerify] OpenRouter API key verification failed: %s", exc)
             return False
 
     @staticmethod

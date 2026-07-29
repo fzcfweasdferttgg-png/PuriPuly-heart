@@ -934,7 +934,8 @@ class GuiController:
                 secrets=secrets,
                 request_intent="TRANS",
             )
-        except Exception:
+        except Exception as exc:
+            self.log_basic(f"[ManagedAuth] Credential resolution failed: {exc}", level=logging.WARNING)
             return True
         return resolution.api_key is None
 
@@ -975,7 +976,8 @@ class GuiController:
                 secrets=secrets,
                 request_intent="TRANS",
             )
-        except Exception:
+        except Exception as exc:
+            self.log_basic(f"[ManagedAuth] Local key check failed: {exc}", level=logging.WARNING)
             return False
         has_key = resolution.api_key is not None
         if self._is_managed_china_connection():
@@ -2067,7 +2069,8 @@ class GuiController:
         try:
             secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
             resolution = resolve_openrouter_credentials(self.settings, secrets=secrets)
-        except Exception:
+        except Exception as exc:
+            self.log_basic(f"[ManagedTrial] Credential resolution failed: {exc}", level=logging.WARNING)
             resolution = None
 
         usage_metadata: OpenRouterKeyMetadata | None = None
@@ -6540,8 +6543,9 @@ class GuiController:
                 else:
                     # Assume valid for others or if no key usage known
                     llm_valid = True
-            except Exception:
+            except Exception as exc:
                 llm_valid = False
+                self._log_error(f"[KeyVerify] LLM key verification failed for {provider_name}: {exc}")
 
         llm_requires_secret = self._llm_provider_requires_secret(self.settings.provider.llm)
         # If LLM verification failed, only key-backed providers should show needs-key state.
@@ -6576,8 +6580,9 @@ class GuiController:
                     stt_valid = await SonioxRealtimeSTTBackend.verify_api_key(key)
                 else:
                     stt_valid = True
-            except Exception:
+            except Exception as exc:
                 stt_valid = False
+                self._log_error(f"[KeyVerify] STT key verification failed for {provider_name}: {exc}")
 
         if not stt_valid:
             dash.set_stt_needs_key(stt_requires_secret)

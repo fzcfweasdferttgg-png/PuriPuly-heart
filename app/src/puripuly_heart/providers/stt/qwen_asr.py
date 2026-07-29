@@ -63,7 +63,11 @@ class QwenASRRealtimeSTTBackend(STTBackend):
         # Use the same verification as Qwen LLM (shared API key)
         from puripuly_heart.providers.llm.qwen import QwenLLMProvider
 
-        return await QwenLLMProvider.verify_api_key(api_key)
+        try:
+            return await QwenLLMProvider.verify_api_key(api_key)
+        except Exception as exc:
+            logger.error("[KeyVerify] Qwen ASR API key verification failed: %s", exc)
+            return False
 
 
 _STOP = object()
@@ -140,7 +144,7 @@ class _QwenASRSession(STTBackendSession):
                     cb_self.parent._connected.set()
 
                 def on_close(cb_self, code, msg):
-                    logger.debug(f"Qwen ASR: Connection closed, code: {code}, msg: {msg}")
+                    logger.debug("Qwen ASR: Connection closed, code: %s, msg: %s", code, msg)
                     if not cb_self.parent._stopped:
                         cb_self.parent._report_error(
                             RuntimeError(f"Qwen ASR connection closed: {code} {msg}")
@@ -154,13 +158,13 @@ class _QwenASRSession(STTBackendSession):
 
                         if event_type == "session.created":
                             session_id = response.get("session", {}).get("id", "unknown")
-                            logger.debug(f"Qwen ASR: Session created: {session_id}")
+                            logger.debug("Qwen ASR: Session created: %s", session_id)
 
                         elif event_type == "conversation.item.input_audio_transcription.completed":
                             # Final transcript
                             transcript = response.get("transcript", "").strip()
                             if transcript:
-                                logger.info(f"[STT] Transcript: '{transcript}' (final)")
+                                logger.info("[STT] Transcript: '%s' (final)", transcript)
                                 event = STTBackendTranscriptEvent(text=transcript, is_final=True)
                                 cb_self.parent._put_event(event)
 
@@ -170,7 +174,7 @@ class _QwenASRSession(STTBackendSession):
                             stash = response.get("stash", "").strip()
                             if text or stash:
                                 logger.debug(
-                                    f"Qwen ASR: Intermediate text='{text}', stash='{stash}'"
+                                    "Qwen ASR: Intermediate text='%s', stash='%s'", text, stash
                                 )
 
                         elif event_type == "input_audio_buffer.committed":
@@ -178,7 +182,7 @@ class _QwenASRSession(STTBackendSession):
 
                         elif event_type == "error":
                             error_msg = response.get("error", {}).get("message", "Unknown error")
-                            logger.warning(f"Qwen ASR error: {error_msg}")
+                            logger.warning("Qwen ASR error: %s", error_msg)
                             if not cb_self.parent._stopped:
                                 cb_self.parent._report_error(
                                     RuntimeError(f"Qwen ASR error: {error_msg}")
@@ -187,7 +191,7 @@ class _QwenASRSession(STTBackendSession):
                                 cb_self.parent._signal_stop()
 
                     except Exception as e:
-                        logger.debug(f"Qwen ASR callback error: {e}")
+                        logger.debug("Qwen ASR callback error: %s", e)
 
             callback = Callback(self)
 
@@ -233,7 +237,7 @@ class _QwenASRSession(STTBackendSession):
                 audio_b64 = base64.b64encode(silence).decode("ascii")
                 conversation.append_audio(audio_b64)
                 last_activity = time.monotonic()
-                logger.debug(f"[STT] Keepalive silence sent ({SILENCE_DURATION_MS}ms)")
+                logger.debug("[STT] Keepalive silence sent (%sms)", SILENCE_DURATION_MS)
 
             # Audio sending loop
             audio_chunks_sent = 0
@@ -248,11 +252,11 @@ class _QwenASRSession(STTBackendSession):
                         try:
                             send_keepalive_silence()
                         except Exception as e:
-                            logger.warning(f"Keepalive failed: {e}")
+                            logger.warning("Keepalive failed: %s", e)
                     continue
 
                 if data is _STOP:
-                    logger.debug(f"Qwen ASR: Stop signal received after {audio_chunks_sent} chunks")
+                    logger.debug("Qwen ASR: Stop signal received after %s chunks", audio_chunks_sent)
                     break
 
                 if data is _COMMIT:
@@ -260,7 +264,7 @@ class _QwenASRSession(STTBackendSession):
                         conversation.commit()
                         logger.info("[STT] Commit sent to Qwen ASR (finalize)")
                     except Exception as e:
-                        logger.warning(f"Failed to send commit: {e}")
+                        logger.warning("Failed to send commit: %s", e)
                     continue
 
                 if isinstance(data, bytes):
@@ -272,19 +276,19 @@ class _QwenASRSession(STTBackendSession):
                         last_activity = time.monotonic()  # Update activity time
                         if audio_chunks_sent == 1:
                             logger.info(
-                                f"[STT] First audio chunk sent to Qwen ASR ({len(data)} bytes)"
+                                "[STT] First audio chunk sent to Qwen ASR (%s bytes)", len(data)
                             )
                         elif audio_chunks_sent % 50 == 0:
-                            logger.debug(f"[STT] Audio chunks sent: {audio_chunks_sent}")
+                            logger.debug("[STT] Audio chunks sent: %s", audio_chunks_sent)
                     except Exception as e:
-                        logger.warning(f"Failed to send audio: {e}")
+                        logger.warning("Failed to send audio: %s", e)
                         break
 
             # Close conversation
             try:
                 conversation.close()
             except Exception as e:
-                logger.debug(f"Error closing conversation: {e}")
+                logger.debug("Error closing conversation: %s", e)
 
         except BaseException as exc:
             logger.exception("Qwen ASR SDK thread error")

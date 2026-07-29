@@ -217,7 +217,8 @@ class QwenLLMProvider:
                         },
                     )
                     return response.status_code == 200
-            except Exception:
+            except Exception as exc:
+                logger.error("[KeyVerify] Qwen API key verification failed: %s", exc)
                 return False
 
         try:
@@ -234,11 +235,13 @@ class QwenLLMProvider:
                         result_format="message",
                     )
                     return response.status_code == 200
-                except Exception:
+                except Exception as exc:
+                    logger.error("[KeyVerify] Qwen dashscope verification failed: %s", exc)
                     return False
 
             return await asyncio.to_thread(_check)
-        except Exception:
+        except Exception as exc:
+            logger.error("[KeyVerify] Qwen API key verification failed: %s", exc)
             return False
 
 

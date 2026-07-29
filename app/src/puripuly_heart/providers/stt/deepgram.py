@@ -80,7 +80,11 @@ class DeepgramRealtimeSTTBackend(STTBackend):
             except Exception as e:
                 raise Exception(f"Connection failed: {e}")
 
-        return await asyncio.to_thread(_check)
+        try:
+            return await asyncio.to_thread(_check)
+        except Exception as exc:
+            logger.error("[KeyVerify] Deepgram API key verification failed: %s", exc)
+            return False
 
 
 _STOP = object()
@@ -220,10 +224,10 @@ class _DeepgramSDKSession(STTBackendSession):
                         if event is not None:
                             self._put_event(event)
                     except Exception as e:
-                        logger.debug(f"Deepgram parse error: {e}")
+                        logger.warning("Deepgram parse error: %s", e)
 
                 def on_error(error: Any) -> None:
-                    logger.warning(f"Deepgram error: {error}")
+                    logger.warning("Deepgram error: %s", error)
                     if not self._stopped:
                         self._report_error(RuntimeError(f"Deepgram error: {error}"))
                         self._stopped = True
@@ -261,7 +265,7 @@ class _DeepgramSDKSession(STTBackendSession):
                     try:
                         connection.start_listening()
                     except Exception as e:
-                        logger.debug(f"Listening thread ended: {e}")
+                        logger.debug("Listening thread ended: %s", e)
 
                 listen_thread = threading.Thread(target=listening_thread, daemon=True)
                 listen_thread.start()
@@ -278,7 +282,7 @@ class _DeepgramSDKSession(STTBackendSession):
                             connection.send_control(ListenV1ControlMessage(type="KeepAlive"))
                             logger.debug("[STT] KeepAlive sent")
                         except Exception as e:
-                            logger.debug(f"KeepAlive failed: {e}")
+                            logger.debug("KeepAlive failed: %s", e)
                             break
 
                 ka_thread = threading.Thread(target=keepalive_thread, daemon=True)
@@ -296,7 +300,7 @@ class _DeepgramSDKSession(STTBackendSession):
 
                     if data is _STOP:
                         logger.debug(
-                            f"Deepgram: Stop signal received after {audio_chunks_sent} chunks"
+                            "Deepgram: Stop signal received after %s chunks", audio_chunks_sent
                         )
                         self._put_event(None)  # Signal consumer immediately before SDK cleanup
                         break
@@ -306,7 +310,7 @@ class _DeepgramSDKSession(STTBackendSession):
                             connection.send_control(ListenV1ControlMessage(type="Finalize"))
                             logger.info("[STT] Finalize message sent to Deepgram")
                         except Exception as e:
-                            logger.warning(f"Failed to send Finalize: {e}")
+                            logger.warning("Failed to send Finalize: %s", e)
                         continue
 
                     if isinstance(data, bytes):
@@ -315,12 +319,12 @@ class _DeepgramSDKSession(STTBackendSession):
                             audio_chunks_sent += 1
                             if audio_chunks_sent == 1:
                                 logger.info(
-                                    f"[STT] First audio chunk sent to Deepgram ({len(data)} bytes)"
+                                    "[STT] First audio chunk sent to Deepgram (%s bytes)", len(data)
                                 )
                             elif audio_chunks_sent % 50 == 0:
-                                logger.debug(f"[STT] Audio chunks sent: {audio_chunks_sent}")
+                                logger.debug("[STT] Audio chunks sent: %s", audio_chunks_sent)
                         except Exception as e:
-                            logger.warning(f"Failed to send audio: {e}")
+                            logger.warning("Failed to send audio: %s", e)
                             break
 
         except BaseException as exc:

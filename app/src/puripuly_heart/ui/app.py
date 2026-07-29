@@ -224,7 +224,8 @@ class TranslatorApp:
         from puripuly_heart.config.settings import load_settings, new_settings_for_first_run
         try:
             _initial_settings = load_settings(self.config_path) if self.config_path.exists() else new_settings_for_first_run()
-        except Exception:
+        except Exception as exc:
+            logger.warning("[UI] Failed to load initial settings: %s", exc)
             _initial_settings = None
         # Set locale BEFORE creating SettingsView so t() returns translated labels
         from puripuly_heart.ui.i18n import set_locale as _early_set_locale
@@ -1198,7 +1199,8 @@ class TranslatorApp:
         if callable(is_managed_china):
             try:
                 return bool(is_managed_china())
-            except Exception:
+            except Exception as exc:
+                logger.warning("[UI] Managed China connection check failed: %s", exc)
                 return False
         return False
 
@@ -1208,13 +1210,15 @@ class TranslatorApp:
         if callable(availability):
             try:
                 return bool(availability())
-            except Exception:
+            except Exception as exc:
+                logger.warning("[UI] Managed OpenRouter local key check failed: %s", exc)
                 return False
         qq_availability = getattr(controller, "_managed_qq_key_available", None)
         if callable(qq_availability):
             try:
                 return bool(qq_availability())
-            except Exception:
+            except Exception as exc:
+                logger.warning("[UI] Managed QQ key check failed: %s", exc)
                 return False
         return False
 
@@ -1887,8 +1891,8 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     async def _on_close(_e):
         try:
             await asyncio.wait_for(app.controller.stop(), timeout=10.0)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("[UI] Controller shutdown failed: %s", exc)
 
     page.on_close = _on_close
     page.on_disconnect = _on_close

@@ -659,7 +659,8 @@ class ManagedOpenRouterReleaseService:
         try:
             try:
                 bundle = load_existing_managed_identity_bundle(self.settings, self.secrets)
-            except Exception:
+            except Exception as exc:
+                logger.warning("[ManagedRelease] Failed to load managed identity bundle: %s", exc)
                 return ManagedOpenRouterStatusRefreshResult(
                     referral_id=observed_referral_id,
                     succeeded=False,
@@ -677,7 +678,8 @@ class ManagedOpenRouterReleaseService:
                     timestamp=signed_request["timestamp"],
                     signature=signed_request["signature"],
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning("[ManagedRelease] Status refresh sign/request failed: %s", exc)
                 return ManagedOpenRouterStatusRefreshResult(
                     referral_id=normalize_owned_referral_id(
                         self.settings.managed_identity.referral_id
@@ -718,7 +720,8 @@ class ManagedOpenRouterReleaseService:
                 self.settings.managed_identity.referral_id = returned_referral_id
                 try:
                     self.persist_settings(self.settings)
-                except Exception:
+                except Exception as exc:
+                    logger.error("[ManagedRelease] Failed to persist referral_id update: %s", exc)
                     self.settings.managed_identity.referral_id = previous_referral_id
                     return ManagedOpenRouterStatusRefreshResult(
                         referral_id=latest_referral_id,
@@ -845,7 +848,8 @@ class ManagedOpenRouterReleaseService:
                 hardware_hash = await self._resolve_hardware_hash(
                     fingerprint_salt=start_response.fingerprint_salt,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.error("[ManagedRelease] Failed to resolve hardware hash: %s", exc)
                 self._clear_retry_after()
                 return ManagedOpenRouterReleaseResult(
                     behavior=ManagedOpenRouterReleaseBehavior.STOP,
@@ -956,7 +960,8 @@ class ManagedOpenRouterReleaseService:
     ) -> ManagedOpenRouterReleaseResult:
         try:
             self.secrets.set(secret_key, issue_response.openrouter_api_key)
-        except Exception:
+        except Exception as exc:
+            logger.error("[ManagedRelease] Failed to store managed API key: %s", exc)
             previous_release_token = self.settings.managed_identity.release_token
             previous_release_token_expires_at = (
                 self.settings.managed_identity.release_token_expires_at
@@ -967,12 +972,14 @@ class ManagedOpenRouterReleaseService:
             )
             try:
                 self.secrets.delete(secret_key)
-            except Exception:
+            except Exception as exc2:
+                logger.error("[ManagedRelease] Failed to clean up key after store failure: %s", exc2)
                 pass
             clear_temporary_managed_release_state(self.settings)
             try:
                 self.persist_settings(self.settings)
-            except Exception:
+            except Exception as exc3:
+                logger.error("[ManagedRelease] Failed to persist settings after store failure: %s", exc3)
                 self.settings.managed_identity.release_token = previous_release_token
                 self.settings.managed_identity.release_token_expires_at = (
                     previous_release_token_expires_at
@@ -1009,7 +1016,8 @@ class ManagedOpenRouterReleaseService:
         if issue_response.delivery_ack is not None:
             try:
                 self._store_pending_delivery_ack(issue_response.delivery_ack)
-            except Exception:
+            except Exception as exc:
+                logger.error("[ManagedRelease] Failed to store pending delivery ack: %s", exc)
                 self._delete_secret_safely(secret_key)
                 self._clear_pending_delivery_ack_state(delete_token=True)
                 self._clear_retry_after()
@@ -1020,7 +1028,8 @@ class ManagedOpenRouterReleaseService:
         clear_temporary_managed_release_state(self.settings)
         try:
             self.persist_settings(self.settings)
-        except Exception:
+        except Exception as exc:
+            logger.error("[ManagedRelease] Failed to persist settings after issue success: %s", exc)
             self._delete_secret_safely(secret_key)
             self._clear_pending_delivery_ack_state(delete_token=True)
             self._clear_retry_after()
@@ -1055,10 +1064,12 @@ class ManagedOpenRouterReleaseService:
     ) -> ManagedOpenRouterReleaseResult:
         try:
             self.secrets.set(OPENROUTER_MANAGED_QQ_API_KEY_SECRET, api_key)
-        except Exception:
+        except Exception as exc:
+            logger.error("[ManagedRelease] Failed to store QQ managed API key: %s", exc)
             try:
                 self.secrets.delete(OPENROUTER_MANAGED_QQ_API_KEY_SECRET)
-            except Exception:
+            except Exception as exc2:
+                logger.error("[ManagedRelease] Failed to clean up QQ key after store failure: %s", exc2)
                 pass
             self._clear_retry_after()
             return ManagedOpenRouterReleaseResult(
@@ -1075,7 +1086,8 @@ class ManagedOpenRouterReleaseService:
         if issue_response.delivery_ack is not None:
             try:
                 self._store_pending_delivery_ack(issue_response.delivery_ack)
-            except Exception:
+            except Exception as exc:
+                logger.error("[ManagedRelease] QQ: Failed to store pending delivery ack: %s", exc)
                 self._delete_secret_safely(OPENROUTER_MANAGED_QQ_API_KEY_SECRET)
                 self._clear_pending_delivery_ack_state(delete_token=True)
                 self._clear_retry_after()
@@ -1085,7 +1097,8 @@ class ManagedOpenRouterReleaseService:
                 )
         try:
             self.persist_settings(self.settings)
-        except Exception:
+        except Exception as exc:
+            logger.error("[ManagedRelease] QQ: Failed to persist settings after issue success: %s", exc)
             self._delete_secret_safely(OPENROUTER_MANAGED_QQ_API_KEY_SECRET)
             self._clear_pending_delivery_ack_state(delete_token=True)
             self._clear_retry_after()
@@ -1184,7 +1197,8 @@ class ManagedOpenRouterReleaseService:
                 local_key_available=True,
                 pending_issue=True,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("[ManagedRelease] Delivery ack request failed (will retry): %s", exc)
             self._clear_retry_after()
             return ManagedOpenRouterReleaseResult(
                 behavior=ManagedOpenRouterReleaseBehavior.RETRY,
@@ -1312,7 +1326,8 @@ class ManagedOpenRouterReleaseService:
         self._clear_pending_delivery_ack_state(delete_token=False)
         try:
             self.persist_settings(self.settings)
-        except Exception:
+        except Exception as exc:
+            logger.error("[ManagedRelease] Failed to persist delivery ack state cleanup: %s", exc)
             self.settings.managed_identity.pending_delivery_ack_source = previous_source
             self.settings.managed_identity.pending_delivery_ack_id = previous_id
             self.settings.managed_identity.pending_delivery_ack_managed_credential_ref = (
@@ -1333,7 +1348,8 @@ class ManagedOpenRouterReleaseService:
     def _delete_secret_safely(self, key: str) -> None:
         try:
             self.secrets.delete(key)
-        except Exception:
+        except Exception as exc:
+            logger.debug("[ManagedRelease] Failed to delete secret key=%s: %s", key, exc)
             pass
 
     def _ready_with_api_key(self, api_key: str) -> ManagedOpenRouterReleaseResult:
@@ -1361,7 +1377,8 @@ class ManagedOpenRouterReleaseService:
                     self.secrets,
                     persist_settings=self.persist_settings,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.error("[ManagedRelease] Failed to regenerate identity bundle after binding mismatch: %s", exc)
                 self._clear_retry_after()
                 return ManagedOpenRouterReleaseResult(
                     behavior=ManagedOpenRouterReleaseBehavior.STOP,
@@ -1598,7 +1615,8 @@ class ManagedOpenRouterUserFacingError(RuntimeError):
 
         try:
             return t(self.message_key, **dict(self.message_kwargs))
-        except Exception:
+        except Exception as exc:
+            logger.warning("[ManagedRelease] i18n translation failed for key=%s: %s", self.message_key, exc)
             return self.message_key
 
 

@@ -1,4 +1,4 @@
 python312.zip
 .
-import site
+Lib\site-packages
 ..\app\src

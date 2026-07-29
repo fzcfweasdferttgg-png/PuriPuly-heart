@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from enum import Enum
 
 from puripuly_heart.config.settings import (
     AppSettings,
@@ -30,19 +29,6 @@ class OpenRouterCredentialResolution:
     selected_source: OpenRouterCredentialSource
     api_key: str | None
     requires_managed_challenge: bool = False
-
-
-class OpenRouterManagedRecoveryAction(str, Enum):
-    STOP = "stop"
-    RESTART_CHALLENGE = "restart_challenge"
-
-
-@dataclass(frozen=True, slots=True)
-class OpenRouterManagedRecoveryResult:
-    action: OpenRouterManagedRecoveryAction
-    reason: str
-    selected_source: OpenRouterCredentialSource
-    managed_availability: str | None = None
 
 
 def resolve_openrouter_credentials(
@@ -190,57 +176,11 @@ def clear_temporary_managed_release_state(settings: AppSettings) -> None:
     settings.managed_identity.verified_hardware_hash_salt_version = None
 
 
-def handle_managed_availability(
-    settings: AppSettings,
-    *,
-    managed_availability: str,
-) -> OpenRouterManagedRecoveryResult:
-    normalized_managed_availability = _normalize_managed_availability(managed_availability)
-    if normalized_managed_availability not in {"not_eligible", "unavailable"}:
-        raise ValueError("unsupported managed availability")
-    clear_temporary_managed_release_state(settings)
-    return OpenRouterManagedRecoveryResult(
-        action=OpenRouterManagedRecoveryAction.STOP,
-        reason=normalized_managed_availability,
-        selected_source=settings.openrouter.selected_source,
-        managed_availability=normalized_managed_availability,
-    )
-
-
-def handle_managed_release_error(
-    settings: AppSettings,
-    *,
-    error_code: str,
-) -> OpenRouterManagedRecoveryResult:
-    normalized_error_code = _normalize_required_text(error_code)
-    if normalized_error_code not in {"challenge_expired", "security_fail"}:
-        raise ValueError("unsupported managed release error")
-    clear_temporary_managed_release_state(settings)
-    return OpenRouterManagedRecoveryResult(
-        action=OpenRouterManagedRecoveryAction.RESTART_CHALLENGE,
-        reason=normalized_error_code,
-        selected_source=settings.openrouter.selected_source,
-    )
-
-
 def _get_byok_api_key(secrets: SecretStore) -> str | None:
     stored_key = _normalize_secret(secrets.get(OPENROUTER_BYOK_API_KEY_SECRET))
     if stored_key is not None:
         return stored_key
     return _normalize_secret(os.getenv(OPENROUTER_BYOK_API_KEY_ENV))
-
-
-def _normalize_managed_availability(value: str) -> str:
-    return _normalize_required_text(value)
-
-
-def _normalize_required_text(value: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError("value must be a string")
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError("value must be non-empty")
-    return normalized
 
 
 def _normalize_secret(value: str | None) -> str | None:

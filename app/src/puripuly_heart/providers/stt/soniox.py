@@ -117,7 +117,11 @@ class SonioxRealtimeSTTBackend(STTBackend):
             except Exception as exc:
                 raise Exception(f"Connection failed: {exc}") from exc
 
-        return await _check()
+        try:
+            return await _check()
+        except Exception as exc:
+            logger.error("[KeyVerify] Soniox API key verification failed: %s", exc)
+            return False
 
 
 @dataclass(slots=True)
@@ -252,7 +256,7 @@ class _SonioxSession(STTBackendSession):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.debug(f"Soniox keepalive failed: {exc}")
+            logger.debug("Soniox keepalive failed: %s", exc)
 
     def _handle_message(self, message: str | bytes) -> None:
         if isinstance(message, bytes):
