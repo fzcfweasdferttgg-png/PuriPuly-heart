@@ -44,7 +44,6 @@ SETTINGS_SCHEMA_VERSION = 30
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
 MAX_CUSTOM_VOCAB_TERMS = 100
-DEFAULT_OPENROUTER_BROKER_BASE_URL = "https://puripuly-heart-broker.kapitalismho.workers.dev"
 REFERRAL_ID_LENGTH = 6
 REFERRAL_ID_ALPHABET = frozenset("23456789ABCDEFGHJKMNPQRSTUVWXYZ")
 OVERLAY_TARGET_STEAMVR = "steamvr"
@@ -735,7 +734,6 @@ class OpenRouterSettings:
     fallback_selection_alias: OpenRouterFallbackSelectionAlias = (
         OpenRouterFallbackSelectionAlias.NONE
     )
-    broker_base_url: str = DEFAULT_OPENROUTER_BROKER_BASE_URL
 
     def __post_init__(self) -> None:
         (
@@ -765,8 +763,6 @@ class OpenRouterSettings:
             raise ValueError("openrouter selection alias is required for active sources")
         if not isinstance(self.fallback_selection_alias, OpenRouterFallbackSelectionAlias):
             raise ValueError("invalid openrouter fallback selection alias")
-        if not isinstance(self.broker_base_url, str) or not self.broker_base_url.strip():
-            raise ValueError("invalid openrouter broker base url")
 
 
 @dataclass(slots=True)
@@ -1344,7 +1340,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "selected_source": normalized_openrouter_selected_source.value,
             "selection_alias": normalized_openrouter_selection_alias_value,
             "fallback_selection_alias": settings.openrouter.fallback_selection_alias.value,
-            "broker_base_url": settings.openrouter.broker_base_url,
         },
         "qwen": {
             "region": settings.qwen.region.value,
@@ -1623,14 +1618,6 @@ def _resolve_openrouter_runtime_main_selection(
         _parse_openrouter_credential_source(normalized_profile.openrouter_source),
         normalized_selection_alias,
     )
-
-
-def _parse_openrouter_broker_base_url(value: object) -> str:
-    if isinstance(value, str):
-        normalized = value.strip()
-        if normalized:
-            return normalized
-    return DEFAULT_OPENROUTER_BROKER_BASE_URL
 
 
 def _parse_local_llm_backend(value: object) -> LocalLLMBackend:
@@ -2657,19 +2644,6 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         version = 11
 
     if version < 12:
-        openrouter_data = data.get("openrouter")
-        if not isinstance(openrouter_data, dict):
-            openrouter_data = {}
-            data["openrouter"] = openrouter_data
-            changed = True
-
-        normalized_broker_base_url = _parse_openrouter_broker_base_url(
-            openrouter_data.get("broker_base_url")
-        )
-        if openrouter_data.get("broker_base_url") != normalized_broker_base_url:
-            openrouter_data["broker_base_url"] = normalized_broker_base_url
-            changed = True
-
         version = 12
 
     if version < 14:
@@ -2965,14 +2939,6 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     )
     if raw_fallback_selection_alias != normalized_fallback_selection_alias.value:
         openrouter_data["fallback_selection_alias"] = normalized_fallback_selection_alias.value
-        changed = True
-
-    raw_openrouter_broker_base_url = openrouter_data.get("broker_base_url")
-    normalized_openrouter_broker_base_url = _parse_openrouter_broker_base_url(
-        raw_openrouter_broker_base_url
-    )
-    if raw_openrouter_broker_base_url != normalized_openrouter_broker_base_url:
-        openrouter_data["broker_base_url"] = normalized_openrouter_broker_base_url
         changed = True
 
     qwen_data = data.get("qwen")
@@ -3416,9 +3382,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             selection_alias=openrouter_selection_alias,
             fallback_selection_alias=_parse_openrouter_fallback_selection_alias(
                 openrouter_raw.get("fallback_selection_alias")
-            ),
-            broker_base_url=_parse_openrouter_broker_base_url(
-                openrouter_raw.get("broker_base_url")
             ),
         ),
         qwen=qwen_settings,

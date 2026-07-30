@@ -101,8 +101,7 @@
     "provider_routing": "default",
     "selected_source": "byok",
     "selection_alias": "gemma4_byok",
-    "fallback_selection_alias": "none",
-    "broker_base_url": "https://puripuly-heart-broker.kapitalismho.workers.dev"
+    "fallback_selection_alias": "none"
   },
   "qwen": {
     "region": "beijing",
