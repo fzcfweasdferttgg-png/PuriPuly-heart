@@ -1121,19 +1121,6 @@ def _nearest_desktop_flet_size_preset(width_value: object, height_value: object)
     return tied[0]
 
 
-def _normalize_desktop_flet_outline_width(value: object) -> float | None:
-    if value is None:
-        return None
-    number = _finite_non_bool_number(value)
-    if number is None or number <= 0:
-        return None
-    return _clamp_float(
-        number,
-        minimum=DESKTOP_FLET_MIN_OUTLINE_WIDTH,
-        maximum=DESKTOP_FLET_MAX_OUTLINE_WIDTH,
-    )
-
-
 def _parse_desktop_flet_bounds(value: object) -> DesktopFletOverlayBounds:
     if isinstance(value, DesktopFletOverlayBounds):
         bounds = copy.deepcopy(value)
@@ -1213,21 +1200,6 @@ def _parse_desktop_flet_settings(value: object) -> DesktopFletOverlaySettings:
         locked=False,
         visual=_parse_desktop_flet_visual(data.get("visual")),
     )
-
-
-def _desktop_flet_bounds_to_dict(
-    bounds: DesktopFletOverlayBounds,
-) -> dict[str, int | float | None]:
-    if not isinstance(bounds, DesktopFletOverlayBounds):
-        bounds = DesktopFletOverlayBounds()
-    bounds = copy.deepcopy(bounds)
-    bounds.validate()
-    return {
-        "x": bounds.x,
-        "y": bounds.y,
-        "width": bounds.width,
-        "height": bounds.height,
-    }
 
 
 def _desktop_flet_visual_to_dict(
@@ -1538,23 +1510,6 @@ def _derive_openrouter_selection_alias(
     if alias is None:
         alias = OpenRouterSelectionAlias.GEMMA4_BYOK.value
     return OpenRouterSelectionAlias(alias)
-
-
-def _parse_openrouter_selection_alias(
-    value: object,
-    *,
-    llm_model: OpenRouterLLMModel,
-    selected_source: OpenRouterCredentialSource,
-) -> OpenRouterSelectionAlias:
-    profile = _parse_openrouter_selection_alias_profile(value)
-    if profile is not None and profile.openrouter_model is not None:
-        canonical_alias = openrouter_alias_for_fields(
-            model=profile.openrouter_model,
-            source=profile.openrouter_source,
-        )
-        if canonical_alias is not None:
-            return OpenRouterSelectionAlias(canonical_alias)
-    return _derive_openrouter_selection_alias(llm_model, selected_source)
 
 
 def _parse_openrouter_fallback_selection_alias(value: object) -> OpenRouterFallbackSelectionAlias:
@@ -2409,13 +2364,6 @@ def _normalize_internal_sample_rate_hz(value: object) -> int:
     return normalized
 
 
-def _parse_optional_str(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    return normalized or None
-
-
 def _parse_bool(value: object, fallback: bool = False) -> bool:
     if isinstance(value, bool):
         return value
@@ -2446,24 +2394,6 @@ def _parse_utc_iso8601_timestamp(value: object) -> str | None:
     if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
         return None
     return normalized
-
-
-def _parse_optional_float(value: object) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_optional_int(value: object) -> int | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
 
 
 def _normalize_peer_block(data: dict[str, Any], key: str, default_block: dict[str, Any]) -> bool:

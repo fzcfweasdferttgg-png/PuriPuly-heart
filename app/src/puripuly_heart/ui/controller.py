@@ -75,12 +75,6 @@ from puripuly_heart.core.local_stt_assets import (
     LocalSTTModelMissingError,
     inspect_local_stt_install_state,
 )
-from puripuly_heart.core.local_stt_runtime_installer import (
-    LocalSTTRuntimeInstallCancelled,
-    LocalSTTRuntimeInstallError,
-    RuntimeLocalSTTStatusUpdate,
-    ensure_local_stt_installed,
-)
 from puripuly_heart.core.openrouter_credentials import (
     OPENROUTER_BYOK_API_KEY_SECRET,
     resolve_openrouter_credentials,
@@ -661,12 +655,6 @@ class GuiController:
             tuple(get_effective_custom_terms(settings, settings.languages.source_language)),
         )
 
-    def _peer_stt_runtime_custom_vocabulary_signature(
-        self, settings: AppSettings
-    ) -> tuple[bool, tuple[str, ...]]:
-        _ = settings
-        return (False, ())
-
     def _build_self_stt_runtime_signature(self, settings: AppSettings) -> tuple[object, ...]:
         custom_vocab_enabled, custom_terms = self._stt_runtime_custom_vocabulary_signature(settings)
         return (
@@ -707,9 +695,6 @@ class GuiController:
             settings.provider.stt_compute,
             settings.provider.stt_quant,
         )
-
-    def _build_stt_runtime_signature(self, settings: AppSettings) -> tuple[object, ...]:
-        return self._build_self_stt_runtime_signature(settings)
 
     def _build_peer_stt_runtime_signature(self, settings: AppSettings) -> tuple[object, ...]:
         return self._build_peer_runtime_config(settings).runtime_signature
@@ -2594,90 +2579,6 @@ class GuiController:
                 percent=self._local_stt_download_percent if status == "downloading" else None,
             )
 
-    def _start_local_stt_download(self, *, origin: str) -> bool:
-        task = self._local_stt_download_task
-        if task is not None and not task.done():
-            return False
-        self._local_stt_download_origin = origin
-        self._local_stt_download_percent = 0
-        self._local_stt_download_cancel_event = threading.Event()
-        self._local_stt_download_task = asyncio.create_task(
-            self._run_local_stt_download(origin=origin)
-        )
-        return True
-
-    async def _run_local_stt_download(self, *, origin: str) -> None:
-        current_task = asyncio.current_task()
-        cancel_event = self._local_stt_download_cancel_event
-        if self.settings is None:
-            return
-        self._local_stt_runtime_status = "downloading"
-        self._local_stt_download_percent = 0
-        self._sync_local_stt_notice()
-        try:
-            installed = await ensure_local_stt_installed(
-                locale=self.settings.ui.locale,
-                on_status=self._handle_local_stt_download_status,
-                cancel_event=cancel_event,
-            )
-        except (asyncio.CancelledError, LocalSTTRuntimeInstallCancelled):
-            return
-        except LocalSTTRuntimeInstallError as exc:
-            self._local_stt_runtime_status = "download_failed"
-            self._local_stt_download_percent = None
-            self._sync_local_stt_notice()
-            if origin == "manual":
-                self._show_short_stt_message("local_stt.download_failed")
-            self._log_error(f"Local STT download failed: {exc}")
-            return
-        finally:
-            if self._local_stt_download_task is current_task:
-                self._local_stt_download_task = None
-            if self._local_stt_download_cancel_event is cancel_event:
-                self._local_stt_download_cancel_event = None
-            if self._local_stt_download_origin == origin:
-                self._local_stt_download_origin = None
-
-        self._local_stt_install_state = LocalSTTInstallState(
-            status="ready",
-            installed_manifest=installed,
-        )
-        self._local_stt_runtime_status = "ready"
-        self._local_stt_download_percent = None
-        self._clear_local_stt_pending_enable_if_provider_switched_away()
-        self._sync_local_stt_notice()
-
-        should_resume_self_local_stt = (
-            origin == "manual"
-            and self.settings is not None
-            and self.settings.provider.stt in self._LOCAL_STT_PROVIDERS
-            and self._local_stt_pending_enable_after_install
-        )
-        should_resume_peer_local_stt = (
-            origin == "manual"
-            and self.settings is not None
-            and self._peer_local_stt_requested(self.settings)
-            and self._local_stt_pending_peer_enable_after_install
-        )
-
-        if should_resume_self_local_stt:
-            self._reset_local_stt_pending_enable_after_install()
-            await self._rebuild_stt_provider()
-            self._stt_desired = True
-            dash = getattr(self.app, "view_dashboard", None)
-            if dash is not None:
-                dash.set_stt_enabled(True)
-            await self._ensure_stt_switch()
-
-        if should_resume_peer_local_stt:
-            self._reset_local_stt_pending_peer_enable_after_install()
-            await self._refresh_overlay_runtime_dependencies()
-
-    async def _handle_local_stt_download_status(self, update: RuntimeLocalSTTStatusUpdate) -> None:
-        self._local_stt_runtime_status = update.status
-        self._local_stt_download_percent = update.percent
-        self._sync_local_stt_notice()
-
     def _handle_local_stt_unavailable(
         self,
         status: str,
@@ -3893,72 +3794,6 @@ class GuiController:
         self._last_peer_stt_desired_active = desired_active
         self._sync_effective_hub_flags(self.settings)
         self.log_basic("[Settings] Peer STT provider replacement completed")
-
-    async def _rebuild_pipeline(self, *, rebuild_stt: bool) -> None:
-        self.log_detailed(
-            f"[Settings] Rebuilding pipeline detail: rebuild_stt={rebuild_stt} overlay_state={self.overlay_state}"
-        )
-        _ = rebuild_stt
-        restore_stt_enabled = self._stt_desired
-        if self._bridge_task:
-            self._bridge_task.cancel()
-            await asyncio.gather(self._bridge_task, return_exceptions=True)
-            self._bridge_task = None
-
-        peer_runtime = self._peer_runtime
-        if peer_runtime is not None:
-            with contextlib.suppress(Exception):
-                await peer_runtime.close()
-            self._peer_runtime = None
-
-        await self.set_stt_enabled(False)
-        await self._configure_vrc_mic_receiver(enabled=False)
-        await self._reset_manual_typing_state()
-        if self.hub is not None:
-            with contextlib.suppress(Exception):
-                await self.hub.stop()
-        if self.sender is not None:
-            with contextlib.suppress(Exception):
-                self.sender.close()
-        self.sender = None
-        self.osc = None
-        self.hub = None
-        await self._init_pipeline()
-        assert self.hub is not None
-        presenter = self._overlay_presenter
-        if presenter is not None:
-            self.hub.overlay_sink = presenter
-
-        dash = getattr(self.app, "view_dashboard", None)
-        if dash is not None:
-            dash.set_translation_needs_key(
-                (self.hub.llm is None)
-                and self._llm_provider_requires_secret(self.settings.provider.llm)
-            )
-            dash.set_stt_needs_key(False)
-
-            self.hub.translation_enabled = (
-                bool(getattr(dash, "is_translation_on", True)) and self.hub.llm is not None
-            )
-            dash.set_translation_enabled(self.hub.translation_enabled)
-
-        await self.hub.start(auto_flush_osc=True)
-
-        bridge = UIEventBridge(
-            app=self.app,
-            event_queue=self.hub.ui_events,
-            runtime_logging=self.runtime_logging,
-        )
-        self._bridge_task = asyncio.create_task(bridge.run())
-
-        if self.overlay_state == "connected" and presenter is not None:
-            await self._refresh_overlay_runtime_dependencies()
-
-        if restore_stt_enabled:
-            await self.set_stt_enabled(True)
-
-        # Trigger background verification to sync button colors
-        asyncio.create_task(self._verify_and_update_status())
 
     async def _init_pipeline(self) -> None:
         assert self.settings is not None
@@ -5232,129 +5067,3 @@ class GuiController:
             base_url=base_url,
             model=runtime_model,
         )
-
-    async def _verify_and_update_status(self) -> None:
-        """Background task to verify keys and update dashboard status."""
-        if self.settings is None:
-            return
-
-        dash = getattr(self.app, "view_dashboard", None)
-        if dash is None:
-            return
-
-        secrets = None
-        with contextlib.suppress(Exception):
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-
-        alibaba_selected_valid_cache: bool | None = None
-        alibaba_any_valid_cache: bool | None = None
-
-        async def _verify_alibaba_selected() -> bool:
-            nonlocal alibaba_selected_valid_cache
-            if alibaba_selected_valid_cache is not None:
-                return alibaba_selected_valid_cache
-            if secrets is None:
-                alibaba_selected_valid_cache = False
-                return False
-            key, base_url = self._get_qwen_key_and_base_url(secrets)
-            selected_model = self.settings.qwen.llm_model.value
-            alibaba_selected_valid_cache = await self._verify_qwen_llm_api_key(
-                key,
-                base_url=base_url,
-                model=selected_model,
-            )
-            return alibaba_selected_valid_cache
-
-        async def _verify_alibaba_any_model() -> bool:
-            nonlocal alibaba_any_valid_cache
-            if alibaba_any_valid_cache is not None:
-                return alibaba_any_valid_cache
-            if await _verify_alibaba_selected():
-                alibaba_any_valid_cache = True
-                return True
-            if secrets is None:
-                alibaba_any_valid_cache = False
-                return False
-            key, base_url = self._get_qwen_key_and_base_url(secrets)
-            selected_model = self.settings.qwen.llm_model.value
-            for fallback_model in (
-                model.value for model in QwenLLMModel if model.value != selected_model
-            ):
-                if await self._verify_qwen_llm_api_key(
-                    key,
-                    base_url=base_url,
-                    model=fallback_model,
-                ):
-                    alibaba_any_valid_cache = True
-                    return True
-            alibaba_any_valid_cache = False
-            return False
-
-        # 1. Verify LLM
-        llm_valid = False
-        if self.hub and self.hub.llm:
-            # It was created, but is the key valid?
-            try:
-                provider_name = self.settings.provider.llm
-                key = ""
-                if provider_name == "gemini":
-                    key = secrets.get("google_api_key") or "" if secrets is not None else ""
-                    llm_valid = await GeminiLLMProvider.verify_api_key(
-                        key,
-                        model=self.settings.gemini.llm_model.value,
-                    )
-                elif provider_name == LLMProviderName.OPENROUTER:
-                    resolution = (
-                        resolve_openrouter_credentials(self.settings, secrets=secrets)
-                        if secrets is not None
-                        else None
-                    )
-                    key = (
-                        resolution.api_key
-                        if resolution is not None and resolution.api_key
-                        else ""
-                    )
-                    llm_valid = bool(key) and await OpenRouterLLMProvider.verify_api_key(key)
-                elif provider_name == LLMProviderName.DEEPSEEK:
-                    key = (
-                        (secrets.get("deepseek_api_key") if secrets is not None else None)
-                        or os.getenv("DEEPSEEK_API_KEY")
-                        or ""
-                    )
-                    llm_valid = bool(key) and await DeepSeekLLMProvider.verify_api_key(key)
-                elif provider_name == LLMProviderName.CEREBRAS:
-                    key = (
-                        (secrets.get("cerebras_api_key") if secrets is not None else None)
-                        or os.getenv("CEREBRAS_API_KEY")
-                        or ""
-                    )
-                    llm_valid = bool(key) and await CerebrasLLMProvider.verify_api_key(key)
-                elif provider_name == "qwen":
-                    llm_valid = await _verify_alibaba_selected()
-                elif provider_name == LLMProviderName.LOCAL_LLM:
-                    llm_valid = True
-                else:
-                    # Assume valid for others or if no key usage known
-                    llm_valid = True
-            except Exception as exc:
-                llm_valid = False
-                self._log_error(f"[KeyVerify] LLM key verification failed for {provider_name}: {exc}")
-
-        llm_requires_secret = self._llm_provider_requires_secret(self.settings.provider.llm)
-        # If LLM verification failed, only key-backed providers should show needs-key state.
-        if not llm_valid:
-            dash.set_translation_needs_key(llm_requires_secret)
-            # If it was enabled, we potentially disable it or just let the warning show on next interaction
-            # User request: "Validation Fail -> Orange". Implicitly, if it's ON and fails, maybe we should turn it OFF?
-            # For now, setting needs_key=True ensures that if they try to toggle, it warns.
-            # If it is currently ON, we might want to flag it.
-            if self.hub:
-                self.hub.translation_enabled = False  # Disable internally
-            dash.set_translation_enabled(False)  # Visually turn off
-        else:
-            dash.set_translation_needs_key(False)
-            if self.settings.provider.llm == LLMProviderName.LOCAL_LLM and self.hub is not None:
-                dash.set_translation_enabled(bool(self.hub.translation_enabled))
-
-        # 2. Verify STT — no network providers, always valid
-        dash.set_stt_needs_key(False)
