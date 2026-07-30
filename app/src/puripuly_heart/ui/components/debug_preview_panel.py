@@ -45,25 +45,16 @@ class DebugPreviewPanel(ft.Container):
     def __init__(
         self,
         *,
-        on_brake_notice: Callable[[], None],
-        on_revoked_notice: Callable[[], None],
         on_founder_letter: Callable[[], None],
         on_pkce_failure: Callable[[], None],
-        on_discord_auth: Callable[[], None],
-        on_qq_auth: Callable[[], None],
-        on_discord_callback_page: Callable[[], None],
         on_peer_translation_eula: Callable[[], None],
         on_local_qwen_hallucination_modal: Callable[[], None],
-        on_telemetry_consent_modal: Callable[[], None],
-        on_talk_together_pass_invite_progress: Callable[[], None],
         on_capture_fault_cycle: Callable[[], None],
         on_stt_fault_cycle: Callable[[], None],
         on_audio_fault_clear: Callable[[], None],
         on_github_star_snackbar: Callable[[], None],
     ) -> None:
         self._actions = (
-            _PreviewAction("brake_notice", "debug_preview.brake_notice", on_brake_notice),
-            _PreviewAction("revoked_notice", "debug_preview.revoked_notice", on_revoked_notice),
             _PreviewAction(
                 "github_star_snackbar",
                 "debug_preview.github_star_snackbar",
@@ -71,13 +62,6 @@ class DebugPreviewPanel(ft.Container):
             ),
             _PreviewAction("founder_letter", "debug_preview.founder_letter", on_founder_letter),
             _PreviewAction("pkce_failure", "debug_preview.pkce_failure", on_pkce_failure),
-            _PreviewAction("discord_auth", "debug_preview.discord_auth", on_discord_auth),
-            _PreviewAction("qq_auth", "debug_preview.qq_auth", on_qq_auth),
-            _PreviewAction(
-                "discord_callback_page",
-                "debug_preview.discord_callback_page",
-                on_discord_callback_page,
-            ),
             _PreviewAction(
                 "peer_translation_eula",
                 "debug_preview.peer_translation_eula",
@@ -87,16 +71,6 @@ class DebugPreviewPanel(ft.Container):
                 "local_qwen_hallucination_modal",
                 "debug_preview.local_qwen_hallucination_modal",
                 on_local_qwen_hallucination_modal,
-            ),
-            _PreviewAction(
-                "telemetry_consent_modal",
-                "debug_preview.telemetry_consent_modal",
-                on_telemetry_consent_modal,
-            ),
-            _PreviewAction(
-                "talk_together_pass_invite_progress",
-                "debug_preview.talk_together_pass_invite_progress",
-                on_talk_together_pass_invite_progress,
             ),
             _PreviewAction(
                 "capture_fault_cycle",

@@ -8,9 +8,8 @@ from collections import OrderedDict
 
 import flet as ft
 
-from puripuly_heart.core.managed_openrouter_release import ManagedOpenRouterUserFacingError
 from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
-from puripuly_heart.domain.events import STTSessionState, UIEvent, UIEventType
+from puripuly_heart.domain.events import UIEvent, UIEventType
 from puripuly_heart.domain.models import OSCMessage, Transcript, Translation
 from puripuly_heart.ui.i18n import t
 
@@ -147,16 +146,6 @@ class UIEventBridge:
         with contextlib.suppress(Exception):
             scheduler()
 
-    def _schedule_translation_success_telemetry(self, translation: Translation) -> None:
-        if not translation.text.strip():
-            return
-        controller = getattr(self.app, "controller", None)
-        scheduler = getattr(controller, "schedule_translation_success_telemetry", None)
-        if not callable(scheduler):
-            return
-        with contextlib.suppress(Exception):
-            scheduler()
-
     def report_overlay_state(
         self,
         state: str,
@@ -277,7 +266,6 @@ class UIEventBridge:
             if add_history is not None:
                 add_history(source, translation.text, translated=True, language_code=target_lang)
             self._schedule_github_star_prompt_translation_success(translation)
-            self._schedule_translation_success_telemetry(translation)
             return
 
         if event.type == UIEventType.OSC_SENT:
@@ -303,32 +291,7 @@ class UIEventBridge:
                     logger.error(text)
             except Exception:
                 logger.error(text)
-            if isinstance(payload, ManagedOpenRouterUserFacingError):
-                clear_pending = (
-                    getattr(controller, "clear_managed_auth_pending_state", None)
-                    if controller is not None
-                    else None
-                )
-                if callable(clear_pending):
-                    with contextlib.suppress(Exception):
-                        clear_pending()
-                show_snackbar = getattr(self.app, "_show_snackbar", None)
-                if callable(show_snackbar):
-                    with contextlib.suppress(Exception):
-                        show_snackbar(text, ft.Colors.ORANGE_700)
-                        return
             dash = getattr(self.app, "view_dashboard", None)
             if dash is not None:
-                msg_lower = text.lower()
-                controller = getattr(self.app, "controller", None)
-                hub = getattr(controller, "hub", None)
-                stt = getattr(hub, "stt", None)
-                stt_state = getattr(stt, "state", None)
-                if (
-                    "soniox" in msg_lower
-                    and "400" in msg_lower
-                    and stt_state in (STTSessionState.DRAINING, STTSessionState.DISCONNECTED)
-                ):
-                    return
                 dash.set_display_text(text, is_error=True)
             return

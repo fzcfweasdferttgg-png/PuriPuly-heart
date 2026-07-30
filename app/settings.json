@@ -7,10 +7,10 @@
   },
   "translation": {
     "model": "gemma4",
-    "connection": "managed",
+    "connection": "openrouter",
     "fallback_selection_alias": "none",
     "connection_history": {
-      "gemma4": "managed"
+      "gemma4": "openrouter"
     }
   },
   "languages": {
@@ -92,19 +92,6 @@
       ]
     }
   },
-  "deepgram_stt": {
-    "model": "nova-3"
-  },
-  "qwen_asr_stt": {
-    "model": "qwen3-asr-flash-realtime",
-    "endpoint": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
-  },
-  "soniox_stt": {
-    "model": "stt-rt-v5",
-    "endpoint": "wss://stt-rt.soniox.com/transcribe-websocket",
-    "keepalive_interval_s": 10.0,
-    "trailing_silence_ms": 100
-  },
   "gemini": {
     "llm_model": "gemini-3.1-flash-lite"
   },
@@ -112,8 +99,8 @@
     "llm_model": "google/gemma-4-26b-a4b-it",
     "routing_mode": "latency",
     "provider_routing": "default",
-    "selected_source": "managed",
-    "selection_alias": "gemma4_managed",
+    "selected_source": "byok",
+    "selection_alias": "gemma4_byok",
     "fallback_selection_alias": "none",
     "broker_base_url": "https://puripuly-heart-broker.kapitalismho.workers.dev"
   },
@@ -165,35 +152,12 @@
     "github_star_prompt_eligible_launch_count": 0
   },
   "api_key_verified": {
-    "deepgram": false,
-    "soniox": false,
     "google": false,
     "openrouter": false,
     "deepseek": false,
     "alibaba_beijing": false,
     "alibaba_singapore": false,
     "cerebras": false
-  },
-  "managed_identity": {
-    "installation_id": "",
-    "release_token": null,
-    "release_token_expires_at": null,
-    "verified_hardware_hash": null,
-    "verified_hardware_hash_salt_version": null,
-    "active_managed_credential_ref": null,
-    "active_managed_expires_at": null,
-    "founder_letter_seen_credential_ref": null,
-    "referral_id": null,
-    "local_managed_claim_sources": [],
-    "pending_delivery_ack_source": null,
-    "pending_delivery_ack_id": null,
-    "pending_delivery_ack_managed_credential_ref": null,
-    "pending_delivery_ack_expires_at": null
-  },
-  "telemetry": {
-    "consent": "unknown",
-    "identifier": null,
-    "sent_utc_dates": []
   },
   "system_prompt": ""
 }

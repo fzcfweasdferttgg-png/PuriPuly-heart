@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import copy
 import inspect
 import logging
 import tempfile
@@ -9,38 +8,20 @@ from pathlib import Path
 
 import flet as ft
 
-from puripuly_heart.config.llm_profiles import (
-    get_openrouter_selection_alias_for_model_and_source,
-    profile_for_alias,
-)
 from puripuly_heart.config.settings import (
     AppSettings,
     LLMProviderName,
-    OpenRouterCredentialSource,
-    OpenRouterLLMModel,
-    OpenRouterProviderRouting,
-    OpenRouterSelectionAlias,
-    TelemetryConsent,
-    TranslationConnection,
     save_settings,
 )
-from puripuly_heart.core.discord_oauth_loopback import (
-    render_discord_oauth_callback_completion_page,
-)
 from puripuly_heart.core.language import get_stt_compatibility_warning
-from puripuly_heart.core.managed_openrouter_release import TalkTogetherPassStatus
-from puripuly_heart.core.updater import check_for_update
 from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
-from puripuly_heart.ui.components.discord_managed_auth_dialog import DiscordManagedAuthDialog
 from puripuly_heart.ui.components.founder_letter_dialog import FounderLetterDialog
 from puripuly_heart.ui.components.local_qwen_hallucination_dialog import (
     LocalQwenHallucinationDialog,
 )
 from puripuly_heart.ui.components.microphone_test_dialog import MicrophoneTestDialog
 from puripuly_heart.ui.components.peer_translation_eula_dialog import PeerTranslationEulaDialog
-from puripuly_heart.ui.components.qq_managed_auth_dialog import QqManagedAuthDialog
-from puripuly_heart.ui.components.telemetry_consent_dialog import TelemetryConsentDialog
 from puripuly_heart.ui.components.title_bar import TitleBar
 from puripuly_heart.ui.controller import GuiController
 from puripuly_heart.ui.fonts import font_for_language, register_fonts
@@ -80,7 +61,6 @@ FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE = {
     "ja": "自分のapiキーを使う",
 }
 FOUNDER_README_DEFAULT_API_KEYS_ANCHOR = "using-your-own-api-keys"
-DEBUG_PREVIEW_TALK_TOGETHER_PASS_ID = "7KQ9M2"
 GITHUB_STAR_REPOSITORY_URL = "https://github.com/kapitalismho/PuriPuly-heart"
 GITHUB_STAR_PROMPT_DELAY_S = 2.5
 GITHUB_STAR_PROMPT_DURATION_MS = 8000
@@ -104,19 +84,6 @@ def founder_readme_url_for_locale(locale: str | None) -> str:
     return f"{FOUNDER_README_BASE_URL}/{readme_path}#{anchor}"
 
 
-def _write_discord_callback_preview_page(locale: str | None) -> str:
-    html = render_discord_oauth_callback_completion_page(locale)
-    with tempfile.NamedTemporaryFile(
-        "wb",
-        prefix="puripuly-discord-callback-",
-        suffix=".html",
-        delete=False,
-    ) as handle:
-        handle.write(html)
-        path = Path(handle.name)
-    return path.as_uri()
-
-
 class TranslatorApp:
     def __init__(self, page: ft.Page, *, config_path, debug_ui_preview: bool = False):
         self.page = page
@@ -131,19 +98,12 @@ class TranslatorApp:
         self.debug_ui_preview = bool(debug_ui_preview)
         self.debug_preview_panel: DebugPreviewPanel | None = None
         self._openrouter_pkce_request_active = False
-        self._discord_managed_auth_generation = 0
-        self._discord_managed_auth_cancelled = False
-        self._discord_managed_auth_task_handle = None
-        self._qq_managed_auth_generation = 0
-        self._qq_managed_auth_cancelled = False
-        self._qq_managed_auth_task_handle = None
         self._github_star_prompt_launch_pending = True
         self._launch_high_priority_feedback_shown = False
         self._launch_high_priority_feedback_reason: str | None = None
         self._launch_high_priority_snackbar = None
         self._github_star_prompt_shown_this_launch = False
         self._microphone_test_dialog: MicrophoneTestDialog | None = None
-        self._telemetry_consent_dialog: TelemetryConsentDialog | None = None
         self._setup_page()
         self._build_layout()
 
@@ -279,19 +239,10 @@ class TranslatorApp:
 
     def _build_debug_preview_panel(self) -> DebugPreviewPanel:
         return DebugPreviewPanel(
-            on_brake_notice=self._preview_brake_notice,
-            on_revoked_notice=self._preview_revoked_notice,
             on_founder_letter=self._preview_founder_letter,
             on_pkce_failure=self._preview_pkce_failure,
-            on_discord_auth=self._preview_discord_auth,
-            on_qq_auth=self._preview_qq_auth,
-            on_discord_callback_page=self._preview_discord_callback_page,
             on_peer_translation_eula=self._preview_peer_translation_eula,
             on_local_qwen_hallucination_modal=self._preview_local_qwen_hallucination_modal,
-            on_telemetry_consent_modal=self._preview_telemetry_consent_modal,
-            on_talk_together_pass_invite_progress=(
-                self._preview_talk_together_pass_invite_progress
-            ),
             on_capture_fault_cycle=self._preview_capture_fault_cycle,
             on_stt_fault_cycle=self._preview_stt_fault_cycle,
             on_audio_fault_clear=self._preview_audio_fault_clear,
@@ -457,12 +408,6 @@ class TranslatorApp:
         snackbar = self._build_github_star_prompt_snackbar(_open_repository)
         self.page.open(snackbar)
 
-    def _preview_brake_notice(self) -> None:
-        self._show_snackbar(t("managed_release.brake"), ft.Colors.ORANGE_700)
-
-    def _preview_revoked_notice(self) -> None:
-        self._show_snackbar(t("managed_release.revoked_contact"), ft.Colors.ORANGE_700)
-
     def _debug_preview_noop(self) -> None:
         return None
 
@@ -474,46 +419,11 @@ class TranslatorApp:
     def _preview_pkce_failure(self) -> None:
         self._show_snackbar(t("openrouter.pkce.failed"), ft.Colors.ORANGE_700)
 
-    def _preview_discord_auth(self) -> None:
-        self.show_discord_managed_auth_dialog(preview=True)
-
-    def _preview_qq_auth(self) -> None:
-        self.show_qq_managed_auth_dialog(preview=True)
-
-    def _preview_discord_callback_page(self) -> None:
-        webbrowser.open(_write_discord_callback_preview_page(get_locale()))
-
     def _preview_peer_translation_eula(self) -> None:
         self._show_peer_translation_eula(self._debug_preview_noop)
 
     def _preview_local_qwen_hallucination_modal(self) -> None:
         self.show_local_qwen_hallucination_dialog()
-
-    def _preview_telemetry_consent_modal(self) -> None:
-        dialog = TelemetryConsentDialog(
-            self.page,
-            on_allow=self._debug_preview_noop,
-            on_decline=self._debug_preview_noop,
-        )
-        self._telemetry_consent_dialog = dialog
-        dialog.open()
-
-    def _preview_talk_together_pass_invite_progress(self) -> None:
-        set_managed_key_state = getattr(self.view_settings, "set_managed_key_state", None)
-        if not callable(set_managed_key_state):
-            return
-        set_managed_key_state(
-            visible=True,
-            remaining_percent=100,
-            referral_id=DEBUG_PREVIEW_TALK_TOGETHER_PASS_ID,
-            remember_referral_id=False,
-            pass_status=TalkTogetherPassStatus(
-                pass_id=DEBUG_PREVIEW_TALK_TOGETHER_PASS_ID,
-                invite_count=1,
-                invite_limit=5,
-                bonus_translations_per_friend=200,
-            ),
-        )
 
     def _preview_capture_fault_cycle(self) -> None:
         profile = self.controller.cycle_debug_capture_fault_profile()
@@ -546,36 +456,6 @@ class TranslatorApp:
             on_open_guide=self._open_local_qwen_guide,
         )
         self._local_qwen_hallucination_dialog = dialog
-        dialog.open()
-
-    def show_telemetry_consent_dialog(self) -> None:
-        settings = getattr(self.controller, "settings", None)
-        if settings is None or settings.telemetry.consent != TelemetryConsent.UNKNOWN:
-            return
-
-        def _persist(allow: bool) -> None:
-            async def _task() -> None:
-                updated = copy.deepcopy(self.controller.settings)
-                if updated is None:
-                    return
-                if allow:
-                    updated.telemetry.allow()
-                else:
-                    updated.telemetry.decline()
-                await self.controller.apply_settings(updated)
-                view_settings = getattr(self, "view_settings", None)
-                sync_telemetry = getattr(view_settings, "sync_telemetry_consent", None)
-                if callable(sync_telemetry) and self.controller.settings is not None:
-                    sync_telemetry(self.controller.settings)
-
-            self._queue_settings_mutation_task(_task)
-
-        dialog = TelemetryConsentDialog(
-            self.page,
-            on_allow=lambda: _persist(True),
-            on_decline=lambda: _persist(False),
-        )
-        self._telemetry_consent_dialog = dialog
         dialog.open()
 
     def _open_local_qwen_guide(self) -> None:
@@ -869,16 +749,6 @@ class TranslatorApp:
             except Exception:
                 logger.exception("Failed to update dashboard translation toggle")
 
-    def _dashboard_managed_auth_action(self) -> str:
-        action = getattr(self.controller, "dashboard_managed_auth_action", None)
-        if not callable(action):
-            return "continue"
-        try:
-            return str(action())
-        except Exception:
-            logger.exception("Failed to evaluate managed auth dashboard gate")
-            return "prompt"
-
     def _on_translation_toggle(self, enabled: bool) -> bool:
         self._log_basic(f"[Dashboard] Translation toggle requested: enabled={enabled}")
         self._log_detailed(
@@ -886,26 +756,11 @@ class TranslatorApp:
             f"dashboard_state={getattr(getattr(self, 'view_dashboard', None), 'is_translation_on', None)} "
             f"overlay_state={getattr(self, 'overlay_state', 'unknown')}"
         )
-        if enabled:
-            managed_auth_action = self._dashboard_managed_auth_action()
-            logger.info(
-                "[ManagedAuth] _on_translation_toggle: action=%s enabled=%s",
-                managed_auth_action,
-                enabled,
-            )
-            if managed_auth_action in {"prompt", "in_progress"}:
-                self._revert_dashboard_translation_toggle()
-                if managed_auth_action == "prompt":
-                    if self._is_managed_china_connection():
-                        logger.info("[QQAuth] Showing QQ auth dialog (China mode)")
-                        self.show_qq_managed_auth_dialog(preview=False)
-                    else:
-                        logger.info("[ManagedAuth] Showing Discord auth dialog (non-China mode)")
-                        self.show_discord_managed_auth_dialog(preview=False)
-                return False
 
         async def _task():
-            await self.controller.set_translation_enabled(enabled)
+            result = await self.controller.set_translation_enabled(enabled)
+            if not result and self.view_dashboard is not None:
+                self.view_dashboard.set_translation_enabled(False)
 
         self.page.run_task(_task)
         return True
@@ -1187,426 +1042,6 @@ class TranslatorApp:
 
         self._queue_settings_mutation_task(_task)
 
-    def _close_discord_managed_auth_dialog(self) -> None:
-        dialog = getattr(self, "_discord_managed_auth_dialog", None)
-        close = getattr(dialog, "close", None)
-        if callable(close):
-            close()
-
-    def _is_managed_china_connection(self) -> bool:
-        controller = getattr(self, "controller", None)
-        is_managed_china = getattr(controller, "_is_managed_china_connection", None)
-        if callable(is_managed_china):
-            try:
-                return bool(is_managed_china())
-            except Exception as exc:
-                logger.warning("[UI] Managed China connection check failed: %s", exc)
-                return False
-        return False
-
-    def _managed_openrouter_local_key_available(self) -> bool:
-        controller = getattr(self, "controller", None)
-        availability = getattr(controller, "_managed_openrouter_local_key_available", None)
-        if callable(availability):
-            try:
-                return bool(availability())
-            except Exception as exc:
-                logger.warning("[UI] Managed OpenRouter local key check failed: %s", exc)
-                return False
-        qq_availability = getattr(controller, "_managed_qq_key_available", None)
-        if callable(qq_availability):
-            try:
-                return bool(qq_availability())
-            except Exception as exc:
-                logger.warning("[UI] Managed QQ key check failed: %s", exc)
-                return False
-        return False
-
-    def _close_qq_managed_auth_dialog(self) -> None:
-        dialog = getattr(self, "_qq_managed_auth_dialog", None)
-        close = getattr(dialog, "close", None)
-        if callable(close):
-            close()
-
-    def show_qq_managed_auth_dialog(self, preview: bool = False) -> None:
-        if not preview:
-            self._mark_launch_high_priority_feedback_shown("auth_required")
-        if preview:
-            on_submit = self._close_qq_managed_auth_dialog
-            on_close = self._close_qq_managed_auth_dialog
-            on_cancel = self._close_qq_managed_auth_dialog
-        else:
-            on_submit = self._start_qq_managed_auth
-            on_close = self._close_qq_managed_auth_dialog
-            on_cancel = self._cancel_qq_managed_auth
-
-        dialog = QqManagedAuthDialog(
-            self.page,
-            on_submit=on_submit,
-            on_close=on_close,
-            on_cancel=on_cancel,
-            on_completion_message=self._show_qq_managed_auth_completion_message,
-        )
-        self._qq_managed_auth_dialog = dialog
-        dialog.open()
-
-    def _show_qq_managed_auth_completion_message(self, message_key: str) -> None:
-        color = COLOR_SUCCESS if message_key == "qq_auth.success" else ft.Colors.ORANGE_700
-        self._show_snackbar(t(message_key), color)
-
-    def _qq_managed_auth_result_is_success(self, result: object) -> bool:
-        if result is True:
-            return True
-        behavior = getattr(result, "behavior", None)
-        behavior_name = getattr(behavior, "name", None)
-        behavior_value = getattr(behavior, "value", behavior)
-        behavior_text = str(behavior_value).upper() if behavior_value is not None else ""
-        return bool(
-            getattr(result, "local_key_available", False)
-            and (behavior_name == "READY" or behavior_text == "READY")
-        )
-
-    def _qq_managed_auth_result_message_key(self, result: object) -> str:
-        message_key = getattr(result, "message_key", None)
-        if not isinstance(message_key, str) or not message_key:
-            return "qq_auth.error.retry"
-        if message_key not in {
-            "qq_auth.error.invalid_input",
-            "qq_auth.error.credential_mismatch",
-            "qq_auth.error.lifetime_used",
-            "qq_auth.error.retry",
-            "qq_auth.error.key_unavailable",
-        }:
-            return "qq_auth.error.retry"
-        return message_key
-
-    def _qq_managed_auth_result_clear_credential(self, result: object) -> bool:
-        diagnostics = getattr(result, "diagnostics", None)
-        subcode = getattr(diagnostics, "subcode", None)
-        return subcode in {"qq_credential_invalid", "qq_credential_mismatch"}
-
-    def _qq_managed_auth_result_message_kwargs(self, result: object) -> dict[str, object]:
-        retry_after_ms = None
-        message_kwargs = getattr(result, "message_kwargs", None)
-        get_message_kwarg = getattr(message_kwargs, "get", None)
-        if callable(get_message_kwarg):
-            retry_after_ms = get_message_kwarg("retry_after_ms")
-        if retry_after_ms is None:
-            diagnostics = getattr(result, "diagnostics", None)
-            retry_after_ms = getattr(diagnostics, "retry_after_ms", None)
-        retry_after_ms = self._sanitize_qq_managed_auth_retry_after_ms(retry_after_ms)
-        if retry_after_ms is None:
-            return {}
-        return {"retry_after_ms": retry_after_ms}
-
-    def _sanitize_qq_managed_auth_retry_after_ms(self, value: object) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        try:
-            retry_after_ms = int(value)
-        except (TypeError, ValueError):
-            return None
-        return max(0, min(retry_after_ms, 86_400_000))
-
-    def _next_qq_managed_auth_generation(self) -> int:
-        generation = int(getattr(self, "_qq_managed_auth_generation", 0)) + 1
-        self._qq_managed_auth_generation = generation
-        self._qq_managed_auth_cancelled = False
-        return generation
-
-    def _is_current_qq_managed_auth_generation(self, generation: int) -> bool:
-        return bool(
-            generation == getattr(self, "_qq_managed_auth_generation", None)
-            and not getattr(self, "_qq_managed_auth_cancelled", False)
-        )
-
-    def _set_qq_managed_auth_recoverable_error(
-        self,
-        dialog: object,
-        message_key: str,
-        *,
-        clear_credential: bool,
-        message_kwargs: dict[str, object] | None = None,
-        generation: int | None = None,
-    ) -> bool:
-        set_recoverable_error = getattr(dialog, "set_recoverable_error", None)
-        if callable(set_recoverable_error):
-            return bool(
-                set_recoverable_error(
-                    message_key,
-                    clear_credential=clear_credential,
-                    message_kwargs=message_kwargs or {},
-                    generation=generation,
-                )
-            )
-        self._show_snackbar(t(message_key), ft.Colors.ORANGE_700)
-        return True
-
-    def _handle_qq_managed_auth_failure_result(
-        self,
-        dialog: object,
-        result: object,
-        *,
-        generation: int | None,
-    ) -> bool:
-        message_key = self._qq_managed_auth_result_message_key(result)
-        if message_key == "qq_auth.error.key_unavailable":
-            complete_key_unavailable = getattr(dialog, "complete_key_unavailable", None)
-            if callable(complete_key_unavailable):
-                return bool(complete_key_unavailable(generation=generation))
-            self._show_snackbar(t(message_key), ft.Colors.ORANGE_700)
-            self._close_qq_managed_auth_dialog()
-            return True
-        return self._set_qq_managed_auth_recoverable_error(
-            dialog,
-            message_key,
-            clear_credential=self._qq_managed_auth_result_clear_credential(result),
-            message_kwargs=self._qq_managed_auth_result_message_kwargs(result),
-            generation=generation,
-        )
-
-    def _complete_qq_managed_auth_success(
-        self,
-        dialog: object,
-        *,
-        generation: int | None,
-    ) -> bool:
-        complete_success = getattr(dialog, "complete_success", None)
-        if callable(complete_success):
-            return bool(complete_success(generation=generation))
-        self._show_snackbar(t("qq_auth.success"), COLOR_SUCCESS)
-        self._close_qq_managed_auth_dialog()
-        return True
-
-    def _complete_qq_managed_auth_translation_enable_failed(
-        self,
-        dialog: object,
-        *,
-        generation: int | None,
-    ) -> bool:
-        complete_translation_enable_failed = getattr(
-            dialog,
-            "complete_translation_enable_failed",
-            None,
-        )
-        if callable(complete_translation_enable_failed):
-            return bool(complete_translation_enable_failed(generation=generation))
-        self._show_snackbar(t("qq_auth.error.retry"), ft.Colors.ORANGE_700)
-        self._close_qq_managed_auth_dialog()
-        return True
-
-    def _is_current_qq_managed_auth_dialog(
-        self,
-        dialog: object,
-        generation: int | None,
-    ) -> bool:
-        if getattr(self, "_qq_managed_auth_dialog", None) is not dialog:
-            return False
-        if generation is not None and getattr(dialog, "auth_generation", None) != generation:
-            return False
-        return getattr(dialog, "is_open", True) is not False
-
-    def _is_current_qq_managed_auth_completion(
-        self,
-        app_generation: int,
-        dialog: object,
-        dialog_generation: int | None,
-    ) -> bool:
-        return bool(
-            self._is_current_qq_managed_auth_generation(app_generation)
-            and self._is_current_qq_managed_auth_dialog(dialog, dialog_generation)
-        )
-
-    def _cancel_qq_managed_auth(self) -> None:
-        self._qq_managed_auth_cancelled = True
-        task_handle = getattr(self, "_qq_managed_auth_task_handle", None)
-        cancel = getattr(task_handle, "cancel", None)
-        if callable(cancel):
-            with contextlib.suppress(Exception):
-                cancel()
-        self._qq_managed_auth_task_handle = None
-        controller = getattr(self, "controller", None)
-        cancel_auth = getattr(controller, "cancel_qq_managed_auth", None)
-        if callable(cancel_auth):
-            result = cancel_auth()
-            if inspect.isawaitable(result):
-
-                async def _task() -> None:
-                    await result
-
-                self.page.run_task(_task)
-        self._close_qq_managed_auth_dialog()
-
-    def _start_qq_managed_auth(self) -> None:
-        dialog = getattr(self, "_qq_managed_auth_dialog", None)
-        raw_qq_identity = getattr(dialog, "qq_identity", "")
-        raw_credential = getattr(dialog, "credential", "")
-        qq_identity = raw_qq_identity.strip() if isinstance(raw_qq_identity, str) else ""
-        credential = raw_credential if isinstance(raw_credential, str) else ""
-        if not qq_identity or not credential:
-            self._show_snackbar(t("qq_auth.error.invalid_input"), ft.Colors.ORANGE_700)
-            return
-        set_waiting = getattr(dialog, "set_waiting", None)
-        if callable(set_waiting):
-            set_waiting()
-        app_generation = self._next_qq_managed_auth_generation()
-        dialog_generation = getattr(dialog, "auth_generation", None)
-
-        async def _task() -> None:
-            controller = getattr(self, "controller", None)
-            start_auth = getattr(controller, "start_qq_managed_auth_from_dialog", None)
-            if not callable(start_auth):
-                return
-            try:
-                auth_result = await start_auth(
-                    qq_identity=qq_identity,
-                    credential=credential,
-                )
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                if not self._is_current_qq_managed_auth_completion(
-                    app_generation,
-                    dialog,
-                    dialog_generation,
-                ):
-                    return
-                logger.error("QQ managed auth start failed")
-                self._set_qq_managed_auth_recoverable_error(
-                    dialog,
-                    "qq_auth.error.retry",
-                    clear_credential=False,
-                    message_kwargs={},
-                    generation=dialog_generation,
-                )
-                return
-
-            if not self._is_current_qq_managed_auth_completion(
-                app_generation,
-                dialog,
-                dialog_generation,
-            ):
-                return
-            if not self._qq_managed_auth_result_is_success(auth_result):
-                self._handle_qq_managed_auth_failure_result(
-                    dialog,
-                    auth_result,
-                    generation=dialog_generation,
-                )
-                return
-
-            enable_translation = getattr(controller, "set_translation_enabled", None)
-            if not callable(enable_translation):
-                self._complete_qq_managed_auth_translation_enable_failed(
-                    dialog,
-                    generation=dialog_generation,
-                )
-                return
-            try:
-                enable_result = await enable_translation(True)
-                translation_enabled = self._translation_enable_succeeded(
-                    controller,
-                    enable_result,
-                )
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                if not self._is_current_qq_managed_auth_completion(
-                    app_generation,
-                    dialog,
-                    dialog_generation,
-                ):
-                    return
-                logger.error("QQ managed auth translation enable failed")
-                self._complete_qq_managed_auth_translation_enable_failed(
-                    dialog,
-                    generation=dialog_generation,
-                )
-                return
-            if not self._is_current_qq_managed_auth_completion(
-                app_generation,
-                dialog,
-                dialog_generation,
-            ):
-                return
-            if not translation_enabled:
-                self._complete_qq_managed_auth_translation_enable_failed(
-                    dialog,
-                    generation=dialog_generation,
-                )
-                return
-            if not self._complete_qq_managed_auth_success(
-                dialog,
-                generation=dialog_generation,
-            ):
-                return
-            self._set_dashboard_translation_visual_state(True)
-            if self._is_current_qq_managed_auth_generation(app_generation):
-                self._qq_managed_auth_task_handle = None
-
-        self._qq_managed_auth_task_handle = self.page.run_task(_task)
-
-    def show_discord_managed_auth_dialog(self, preview: bool = False) -> None:
-        if not preview:
-            self._mark_launch_high_priority_feedback_shown("auth_required")
-        if preview:
-            on_continue = self._close_discord_managed_auth_dialog
-            on_byok = self._close_discord_managed_auth_dialog
-            on_close = self._close_discord_managed_auth_dialog
-            on_reopen_browser = self._close_discord_managed_auth_dialog
-            on_cancel = self._close_discord_managed_auth_dialog
-        else:
-            on_continue = self._start_discord_managed_auth
-            on_byok = self._on_discord_managed_auth_byok
-            on_close = self._close_discord_managed_auth_dialog
-            on_reopen_browser = (
-                self._reopen_discord_managed_auth_browser
-                if self._supports_discord_managed_auth_reopen()
-                else None
-            )
-            on_cancel = self._cancel_discord_managed_auth
-
-        dialog = DiscordManagedAuthDialog(
-            self.page,
-            on_continue=on_continue,
-            on_byok=on_byok,
-            on_close=on_close,
-            on_reopen_browser=on_reopen_browser,
-            on_cancel=on_cancel,
-        )
-        self._discord_managed_auth_dialog = dialog
-        dialog.open()
-
-    def _run_optional_discord_auth_controller_hook(self, hook_name: str) -> None:
-        controller = getattr(self, "controller", None)
-        hook = getattr(controller, hook_name, None)
-        if not callable(hook):
-            return
-        result = hook()
-        if inspect.isawaitable(result):
-
-            async def _task() -> None:
-                await result
-
-            self.page.run_task(_task)
-
-    def _supports_discord_managed_auth_reopen(self) -> bool:
-        controller = getattr(self, "controller", None)
-        reopen = getattr(controller, "reopen_discord_managed_auth_browser", None)
-        return callable(reopen)
-
-    def _next_discord_managed_auth_generation(self) -> int:
-        generation = int(getattr(self, "_discord_managed_auth_generation", 0)) + 1
-        self._discord_managed_auth_generation = generation
-        self._discord_managed_auth_cancelled = False
-        return generation
-
-    def _is_current_discord_managed_auth_generation(self, generation: int) -> bool:
-        return bool(
-            generation == getattr(self, "_discord_managed_auth_generation", None)
-            and not getattr(self, "_discord_managed_auth_cancelled", False)
-        )
-
     def _translation_enable_succeeded(self, controller: object, result: object) -> bool:
         if result is False:
             return False
@@ -1616,143 +1051,6 @@ class TranslatorApp:
                 getattr(hub, "llm", None) is not None and getattr(hub, "translation_enabled", False)
             )
         return result is True
-
-    def _start_discord_managed_auth(self) -> None:
-        dialog = getattr(self, "_discord_managed_auth_dialog", None)
-        raw_referral_id = getattr(dialog, "referral_id", "")
-        referral_id = (
-            raw_referral_id if isinstance(raw_referral_id, str) and raw_referral_id else None
-        )
-        set_waiting = getattr(dialog, "set_waiting", None)
-        if callable(set_waiting):
-            set_waiting()
-        generation = self._next_discord_managed_auth_generation()
-
-        async def _task() -> None:
-            controller = getattr(self, "controller", None)
-            start_auth = getattr(controller, "start_discord_managed_auth_from_dialog", None)
-            if not callable(start_auth):
-                return
-
-            def _mark_callback_received() -> None:
-                self.mark_discord_managed_auth_callback_received(generation)
-
-            try:
-                ok = await start_auth(
-                    on_callback_received=_mark_callback_received,
-                    referral_id=referral_id,
-                )
-                if not ok or not self._is_current_discord_managed_auth_generation(generation):
-                    return
-                enable_translation = getattr(controller, "set_translation_enabled", None)
-                if not callable(enable_translation):
-                    return
-                enable_result = await enable_translation(True)
-                if not self._is_current_discord_managed_auth_generation(generation):
-                    return
-                if not self._translation_enable_succeeded(controller, enable_result):
-                    return
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                logger.exception("Discord managed auth task failed")
-                return
-            self._close_discord_managed_auth_dialog()
-            self._show_snackbar(t("discord_auth.success"), COLOR_SUCCESS)
-            if (
-                getattr(controller, "last_discord_managed_auth_referral_bonus_applied", False)
-                is True
-            ):
-                self._show_snackbar(t("discord_auth.referral_reward_applied"), COLOR_SUCCESS)
-            self._set_dashboard_translation_visual_state(True)
-            if self._is_current_discord_managed_auth_generation(generation):
-                self._discord_managed_auth_task_handle = None
-
-        self._discord_managed_auth_task_handle = self.page.run_task(_task)
-
-    def mark_discord_managed_auth_callback_received(self, generation: int | None = None) -> None:
-        if generation is not None and not self._is_current_discord_managed_auth_generation(
-            generation
-        ):
-            return
-        dialog = getattr(self, "_discord_managed_auth_dialog", None)
-        if getattr(dialog, "is_open", True) is False:
-            return
-        if getattr(dialog, "is_waiting", True) is False:
-            return
-        set_callback_received = getattr(dialog, "set_callback_received", None)
-        if callable(set_callback_received):
-            set_callback_received()
-
-    def _reopen_discord_managed_auth_browser(self) -> None:
-        self._run_optional_discord_auth_controller_hook("reopen_discord_managed_auth_browser")
-
-    def _cancel_discord_managed_auth(self) -> None:
-        self._discord_managed_auth_cancelled = True
-        task_handle = getattr(self, "_discord_managed_auth_task_handle", None)
-        cancel = getattr(task_handle, "cancel", None)
-        if callable(cancel):
-            with contextlib.suppress(Exception):
-                cancel()
-        self._discord_managed_auth_task_handle = None
-        self._close_discord_managed_auth_dialog()
-
-    def _build_managed_openrouter_byok_target_settings(self) -> AppSettings | None:
-        current_settings = getattr(getattr(self, "controller", None), "settings", None)
-        if current_settings is None:
-            return None
-        if current_settings.provider.llm != LLMProviderName.OPENROUTER:
-            return None
-        if current_settings.openrouter.selected_source != OpenRouterCredentialSource.MANAGED:
-            return None
-
-        openrouter_model = None
-        selection_alias = current_settings.openrouter.selection_alias
-        if selection_alias is not None:
-            try:
-                profile = profile_for_alias(selection_alias.value)
-            except KeyError:
-                profile = None
-            if profile is not None:
-                openrouter_model = profile.openrouter_model
-        if openrouter_model is None:
-            openrouter_model = current_settings.openrouter.llm_model.value
-
-        alias_value = get_openrouter_selection_alias_for_model_and_source(
-            openrouter_model,
-            OpenRouterCredentialSource.BYOK.value,
-        )
-        if alias_value is None:
-            return None
-
-        target_settings = copy.deepcopy(current_settings)
-        target_settings.provider.llm = LLMProviderName.OPENROUTER
-        target_settings.openrouter.selection_alias = OpenRouterSelectionAlias(alias_value)
-        target_settings.openrouter.selected_source = OpenRouterCredentialSource.BYOK
-        target_settings.openrouter.llm_model = OpenRouterLLMModel(openrouter_model)
-        target_settings.openrouter.provider_routing = OpenRouterProviderRouting.DEFAULT
-        target_settings.translation.connection = TranslationConnection.OPENROUTER
-        target_settings.translation.connection_history[target_settings.translation.model.value] = (
-            TranslationConnection.OPENROUTER
-        )
-        return target_settings
-
-    def _build_founder_letter_target_settings(self) -> AppSettings | None:
-        return self._build_managed_openrouter_byok_target_settings()
-
-    def _on_discord_managed_auth_byok(self) -> None:
-        target_settings = self._build_managed_openrouter_byok_target_settings()
-        if target_settings is None:
-            self._show_snackbar(t("openrouter.pkce.failed"), ft.Colors.ORANGE_700)
-            return
-        self._on_request_openrouter_pkce(target_settings, launch_source="discord_auth")
-
-    def _on_founder_letter_connect(self) -> None:
-        target_settings = self._build_founder_letter_target_settings()
-        if target_settings is None:
-            self._show_snackbar(t("openrouter.pkce.failed"), ft.Colors.ORANGE_700)
-            return
-        self._on_request_openrouter_pkce(target_settings, launch_source="letter")
 
     def _on_founder_letter_contact(self) -> None:
         webbrowser.open(FOUNDER_CONTACT_URL)
@@ -1768,8 +1066,6 @@ class TranslatorApp:
 
     def _api_key_verification_matches_current_field(self, provider: str, key: str) -> bool:
         field_by_provider = {
-            "deepgram": "_deepgram_key",
-            "soniox": "_soniox_key",
             "google": "_google_key",
             "openrouter": "_openrouter_key",
             "deepseek": "_deepseek_key",
@@ -1802,9 +1098,7 @@ class TranslatorApp:
         save_settings(self.controller.config_path, self.controller.settings)
 
         # Sync verification result with dashboard needs_key flags (UI update on user click)
-        if provider in ("deepgram", "soniox", "qwen_asr"):
-            self.view_dashboard.set_stt_needs_key(not success, update_ui=False)
-        elif provider in (
+        if provider in (
             "google",
             "openrouter",
             "deepseek",
@@ -1820,8 +1114,6 @@ class TranslatorApp:
         """Reset verification status when API key is cleared."""
         # Map secret key name to provider name
         key_to_provider = {
-            "deepgram_api_key": "deepgram",
-            "soniox_api_key": "soniox",
             "google_api_key": "google",
             "openrouter_api_key": "openrouter",
             "deepseek_api_key": "deepseek",
@@ -1836,9 +1128,7 @@ class TranslatorApp:
             save_settings(self.controller.config_path, self.controller.settings)
 
             # Update dashboard needs_key flag
-            if provider in ("deepgram", "soniox"):
-                self.view_dashboard.set_stt_needs_key(True, update_ui=False)
-            elif provider in (
+            if provider in (
                 "google",
                 "openrouter",
                 "deepseek",
@@ -1897,88 +1187,6 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     page.on_close = _on_close
     page.on_disconnect = _on_close
 
-    # Check for updates in background
-    update_kwargs = {"log_detailed": app._log_detailed}
-    try:
-        update_parameters = inspect.signature(_check_and_notify_update).parameters
-    except (TypeError, ValueError):
-        update_parameters = {}
-    if "on_launch_snackbar_shown" in update_parameters or any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in update_parameters.values()
-    ):
-        update_kwargs["on_launch_snackbar_shown"] = (
-            lambda snackbar: app._mark_launch_high_priority_feedback_shown("update", snackbar)
-        )
-    await _check_and_notify_update(page, **update_kwargs)
-
     show_github_star_prompt = getattr(app, "maybe_show_github_star_prompt_after_launch", None)
     if callable(show_github_star_prompt):
         await show_github_star_prompt()
-
-
-async def _check_and_notify_update(
-    page: ft.Page,
-    log_detailed=None,
-    on_launch_snackbar_shown=None,
-) -> None:
-    """Check for updates and show notification as a toast."""
-    try:
-        update_info = await check_for_update()
-        if update_info is None:
-            return
-
-        def _open_download(_e):
-            webbrowser.open(update_info.download_url)
-            snackbar.open = False
-            page.update()
-
-        snackbar = ft.SnackBar(
-            content=ft.Row(
-                controls=[
-                    ft.Icon(
-                        name=ft.Icons.SYSTEM_UPDATE,
-                        color=ft.Colors.WHITE,
-                        size=28,
-                    ),
-                    ft.Text(
-                        t("update.available", version=update_info.version),
-                        color=ft.Colors.WHITE,
-                        size=18,
-                        font_family=font_for_language(get_locale()),
-                        expand=True,
-                    ),
-                    ft.TextButton(
-                        text=t("update.download"),
-                        on_click=_open_download,
-                        style=ft.ButtonStyle(
-                            color=ft.Colors.WHITE,
-                            text_style=ft.TextStyle(
-                                size=18,
-                                font_family=font_for_language(get_locale()),
-                            ),
-                            overlay_color=COLOR_PRIMARY,
-                        ),
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
-            ),
-            bgcolor=COLOR_SUCCESS,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            margin=ft.margin.only(bottom=90),
-            padding=20,
-            duration=30000,  # 30초
-            show_close_icon=True,
-            close_icon_color=ft.Colors.WHITE,
-        )
-        page.open(snackbar)
-        if callable(on_launch_snackbar_shown):
-            on_launch_snackbar_shown(snackbar)
-
-    except Exception as exc:
-        message = f"[Update] Check notification failed: {exc}"
-        if callable(log_detailed):
-            log_detailed(message)
-            return
-        logger.debug(message)

@@ -25,13 +25,10 @@ from puripuly_heart.config.llm_profiles import (
     OPENROUTER_MODEL_GEMINI_3_FLASH,
     OPENROUTER_MODEL_GEMINI_31_FLASH_LITE,
     OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_BYOK,
-    OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_MANAGED,
     OPENROUTER_SELECTION_ALIAS_GEMINI3_FLASH_BYOK,
     OPENROUTER_SELECTION_ALIAS_GEMINI31_FLASH_LITE_BYOK,
     OPENROUTER_SELECTION_ALIAS_GEMMA4_BYOK,
-    OPENROUTER_SELECTION_ALIAS_GEMMA4_MANAGED,
     OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_BYOK,
-    OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_MANAGED,
     get_openrouter_llm_profile,
     get_openrouter_selection_alias_for_model_and_source,
     normalize_openrouter_fallback_selection_alias,
@@ -44,13 +41,6 @@ from puripuly_heart.config.vad_defaults import (
 from puripuly_heart.ui.overlay_calibration import OverlayCalibration
 
 SETTINGS_SCHEMA_VERSION = 30
-MANAGED_AUTH_CLAIM_SOURCE_DISCORD = "discord"
-MANAGED_AUTH_CLAIM_SOURCE_QQ = "qq"
-MANAGED_AUTH_CLAIM_SOURCES = (
-    MANAGED_AUTH_CLAIM_SOURCE_DISCORD,
-    MANAGED_AUTH_CLAIM_SOURCE_QQ,
-)
-TELEMETRY_IDENTIFIER_BYTES = 24
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
 MAX_CUSTOM_VOCAB_TERMS = 100
@@ -132,22 +122,6 @@ def normalize_owned_referral_id(value: object) -> str | None:
     return normalized
 
 
-def normalize_managed_claim_sources(value: object) -> tuple[str, ...]:
-    if isinstance(value, str):
-        candidates: tuple[object, ...] = (value,)
-    elif isinstance(value, (list, tuple, set, frozenset)):
-        candidates = tuple(value)
-    else:
-        candidates = ()
-
-    normalized = {
-        item.strip().lower()
-        for item in candidates
-        if isinstance(item, str) and item.strip().lower() in MANAGED_AUTH_CLAIM_SOURCES
-    }
-    return tuple(source for source in MANAGED_AUTH_CLAIM_SOURCES if source in normalized)
-
-
 class STTProviderName(str, Enum):
     LOCAL_QWEN = "local_qwen"
     LOCAL_QWEN_17B = "local_qwen_17b"
@@ -157,9 +131,6 @@ class STTProviderName(str, Enum):
     LOCAL_PARAKEET_TDT_GGUF = "local_parakeet_tdt_gguf"
     LOCAL_QWEN3_ASR_GGUF = "local_qwen3_asr_gguf"
     LOCAL_QWEN_17B_GGUF = "local_qwen_17b_gguf"
-    DEEPGRAM = "deepgram"
-    QWEN_ASR = "qwen_asr"
-    SONIOX = "soniox"
 
 
 class LLMProviderName(str, Enum):
@@ -233,16 +204,12 @@ class OpenRouterProviderRouting(str, Enum):
 
 class OpenRouterCredentialSource(str, Enum):
     NONE = "none"
-    MANAGED = "managed"
     BYOK = "byok"
 
 
 class OpenRouterSelectionAlias(str, Enum):
-    GEMMA4_MANAGED = OPENROUTER_SELECTION_ALIAS_GEMMA4_MANAGED
     GEMMA4_BYOK = OPENROUTER_SELECTION_ALIAS_GEMMA4_BYOK
-    QWEN35_FLASH_MANAGED = OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_MANAGED
     QWEN35_FLASH_BYOK = OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_BYOK
-    DEEPSEEK_V4_FLASH_MANAGED = OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_MANAGED
     DEEPSEEK_V4_FLASH_BYOK = OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_BYOK
     GEMINI3_FLASH_BYOK = OPENROUTER_SELECTION_ALIAS_GEMINI3_FLASH_BYOK
     GEMINI31_FLASH_LITE_BYOK = OPENROUTER_SELECTION_ALIAS_GEMINI31_FLASH_LITE_BYOK
@@ -275,123 +242,15 @@ class TranslationModel(str, Enum):
 
 
 class TranslationConnection(str, Enum):
-    MANAGED = "managed"
-    MANAGED_CHINA = "managed_china"
     OPENROUTER = "openrouter"
     OFFICIAL_BYOK = "official_byok"
     OLLAMA = "ollama"
 
 
-class TelemetryConsent(str, Enum):
-    UNKNOWN = "unknown"
-    ALLOW = "allow"
-    DECLINE = "decline"
-
-
-def _new_telemetry_identifier() -> str:
-    return secrets.token_urlsafe(TELEMETRY_IDENTIFIER_BYTES)
-
-
-def _parse_telemetry_consent(value: object) -> TelemetryConsent:
-    if isinstance(value, TelemetryConsent):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"enabled", "true", "yes", "on"}:
-            return TelemetryConsent.ALLOW
-        if normalized in {"disabled", "false", "no", "off"}:
-            return TelemetryConsent.DECLINE
-        try:
-            return TelemetryConsent(normalized)
-        except ValueError:
-            pass
-    if value is True:
-        return TelemetryConsent.ALLOW
-    if value is False:
-        return TelemetryConsent.DECLINE
-    return TelemetryConsent.UNKNOWN
-
-
-def _parse_telemetry_identifier(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    if len(normalized) < 16 or len(normalized) > 256:
-        return None
-    return normalized
-
-
-def _parse_telemetry_sent_dates(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    dates: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        normalized = item.strip()
-        try:
-            datetime.strptime(normalized, "%Y-%m-%d")
-        except ValueError:
-            continue
-        dates.append(normalized)
-    return sorted(dict.fromkeys(dates))
-
-
-@dataclass(slots=True)
-class TelemetrySettings:
-    consent: TelemetryConsent = TelemetryConsent.UNKNOWN
-    identifier: str | None = None
-    sent_utc_dates: list[str] = field(default_factory=list)
-
-    @property
-    def is_send_eligible(self) -> bool:
-        return self.consent == TelemetryConsent.ALLOW and self.identifier is not None
-
-    def allow(self) -> None:
-        self.consent = TelemetryConsent.ALLOW
-        if self.identifier is None:
-            self.identifier = _new_telemetry_identifier()
-
-    def decline(self) -> None:
-        self.consent = TelemetryConsent.DECLINE
-        self.identifier = None
-        self.sent_utc_dates = []
-
-    def validate(self) -> None:
-        self.consent = _parse_telemetry_consent(self.consent)
-        self.sent_utc_dates = _parse_telemetry_sent_dates(self.sent_utc_dates)
-        if self.consent != TelemetryConsent.ALLOW:
-            self.identifier = None
-            self.sent_utc_dates = []
-            return
-        self.identifier = _parse_telemetry_identifier(self.identifier)
-
-
-def telemetry_settings_to_dict(settings: TelemetrySettings) -> dict[str, Any]:
-    settings = copy.deepcopy(settings)
-    settings.validate()
-    return {
-        "consent": settings.consent.value,
-        "identifier": settings.identifier,
-        "sent_utc_dates": settings.sent_utc_dates,
-    }
-
-
-def telemetry_settings_from_dict(value: object) -> TelemetrySettings:
-    data = value if isinstance(value, dict) else {}
-    settings = TelemetrySettings(
-        consent=_parse_telemetry_consent(data.get("consent")),
-        identifier=_parse_telemetry_identifier(data.get("identifier")),
-        sent_utc_dates=_parse_telemetry_sent_dates(data.get("sent_utc_dates")),
-    )
-    settings.validate()
-    return settings
-
-
 @dataclass(slots=True)
 class TranslationSettings:
     model: TranslationModel = TranslationModel.GEMMA4
-    connection: TranslationConnection = TranslationConnection.MANAGED
+    connection: TranslationConnection = TranslationConnection.OPENROUTER
     fallback_selection_alias: TranslationFallbackSelectionAlias = (
         TranslationFallbackSelectionAlias.NONE
     )
@@ -422,12 +281,9 @@ class TranslationSettings:
 
 TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnection, ...]] = {
     TranslationModel.GEMMA4: (
-        TranslationConnection.MANAGED,
         TranslationConnection.OPENROUTER,
     ),
     TranslationModel.DEEPSEEK_V4_FLASH: (
-        TranslationConnection.MANAGED,
-        TranslationConnection.MANAGED_CHINA,
         TranslationConnection.OPENROUTER,
         TranslationConnection.OFFICIAL_BYOK,
     ),
@@ -445,7 +301,6 @@ TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnec
     TranslationModel.GEMMA4_31B_CEREBRAS: (TranslationConnection.OFFICIAL_BYOK,),
 }
 TRANSLATION_CONNECTION_PRIORITY: tuple[TranslationConnection, ...] = (
-    TranslationConnection.MANAGED,
     TranslationConnection.OPENROUTER,
     TranslationConnection.OFFICIAL_BYOK,
 )
@@ -478,7 +333,7 @@ def _default_translation_connection(model: TranslationModel) -> TranslationConne
 
 
 def _default_translation_connection_history() -> dict[str, TranslationConnection]:
-    return {TranslationModel.GEMMA4.value: TranslationConnection.MANAGED}
+    return {TranslationModel.GEMMA4.value: TranslationConnection.OPENROUTER}
 
 
 def _parse_translation_model(value: object) -> TranslationModel | None:
@@ -567,13 +422,6 @@ def _translation_connection_from_openrouter_source(
     model: TranslationModel,
     provider_routing: OpenRouterProviderRouting = OpenRouterProviderRouting.DEFAULT,
 ) -> TranslationConnection:
-    if selected_source == OpenRouterCredentialSource.MANAGED:
-        if (
-            model == TranslationModel.DEEPSEEK_V4_FLASH
-            and provider_routing == OpenRouterProviderRouting.DEEPSEEK_ONLY
-        ):
-            return TranslationConnection.MANAGED_CHINA
-        return TranslationConnection.MANAGED
     if selected_source == OpenRouterCredentialSource.BYOK:
         return TranslationConnection.OPENROUTER
     return _default_translation_connection(model)
@@ -603,10 +451,10 @@ def _translation_settings_to_dict(settings: TranslationSettings) -> dict[str, An
 def _default_translation_settings_dict() -> dict[str, Any]:
     return {
         "model": TranslationModel.GEMMA4.value,
-        "connection": TranslationConnection.MANAGED.value,
+        "connection": TranslationConnection.OPENROUTER.value,
         "fallback_selection_alias": TranslationFallbackSelectionAlias.NONE.value,
         "connection_history": {
-            TranslationModel.GEMMA4.value: TranslationConnection.MANAGED.value,
+            TranslationModel.GEMMA4.value: TranslationConnection.OPENROUTER.value,
         },
     }
 
@@ -713,75 +561,6 @@ class STTSettings:
             for term in terms:
                 if not isinstance(term, str):
                     raise ValueError("custom_terms values must be lists of strings")
-
-
-@dataclass(slots=True)
-class DeepgramSTTSettings:
-    model: str = "nova-3"
-
-    def validate(self) -> None:
-        if not self.model:
-            raise ValueError("model must be non-empty")
-
-
-@dataclass(slots=True)
-class QwenASRSTTSettings:
-    model: str = "qwen3-asr-flash-realtime"
-    endpoint: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
-
-    def validate(self) -> None:
-        if not self.model:
-            raise ValueError("model must be non-empty")
-        if not self.endpoint:
-            raise ValueError("endpoint must be non-empty")
-
-
-@dataclass(slots=True)
-class SonioxSTTSettings:
-    model: str = "stt-rt-v5"
-    endpoint: str = "wss://stt-rt.soniox.com/transcribe-websocket"
-    keepalive_interval_s: float = 10.0
-    trailing_silence_ms: int = 100
-
-    def validate(self) -> None:
-        if not self.model:
-            raise ValueError("model must be non-empty")
-        if not self.endpoint:
-            raise ValueError("endpoint must be non-empty")
-        if self.keepalive_interval_s <= 0:
-            raise ValueError("keepalive_interval_s must be > 0")
-        if self.trailing_silence_ms < 0:
-            raise ValueError("trailing_silence_ms must be >= 0")
-
-
-@dataclass(slots=True)
-class PeerQwenASRSTTSettings:
-    model: str | None = None
-    region: QwenRegion | None = None
-
-    def validate(self) -> None:
-        if self.model is not None and not self.model:
-            raise ValueError("peer qwen asr model override must be non-empty")
-        if self.region is not None and not isinstance(self.region, QwenRegion):
-            raise ValueError("invalid peer qwen asr region")
-
-
-@dataclass(slots=True)
-class PeerSonioxSTTSettings:
-    model: str | None = None
-    endpoint: str | None = None
-    keepalive_interval_s: float | None = None
-    trailing_silence_ms: int | None = None
-
-    def validate(self) -> None:
-        if self.model is not None and not self.model:
-            raise ValueError("peer soniox model override must be non-empty")
-        if self.endpoint is not None and not self.endpoint:
-            raise ValueError("peer soniox endpoint override must be non-empty")
-        if self.keepalive_interval_s is not None and self.keepalive_interval_s <= 0:
-            raise ValueError("peer soniox keepalive override must be > 0")
-        if self.trailing_silence_ms is not None and self.trailing_silence_ms < 0:
-            raise ValueError("peer soniox trailing silence override must be >= 0")
 
 
 @dataclass(slots=True)
@@ -951,7 +730,7 @@ class OpenRouterSettings:
     llm_model: OpenRouterLLMModel = OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
     routing_mode: OpenRouterRoutingMode = OpenRouterRoutingMode.LATENCY
     provider_routing: OpenRouterProviderRouting = OpenRouterProviderRouting.DEFAULT
-    selected_source: OpenRouterCredentialSource = OpenRouterCredentialSource.MANAGED
+    selected_source: OpenRouterCredentialSource = OpenRouterCredentialSource.BYOK
     selection_alias: OpenRouterSelectionAlias | None = None
     fallback_selection_alias: OpenRouterFallbackSelectionAlias = (
         OpenRouterFallbackSelectionAlias.NONE
@@ -1154,8 +933,6 @@ class OverlaySettings:
 class ApiKeyVerificationSettings:
     """Stores API key verification status for each provider."""
 
-    deepgram: bool = False
-    soniox: bool = False
     google: bool = False
     openrouter: bool = False
     deepseek: bool = False
@@ -1168,75 +945,6 @@ class ApiKeyVerificationSettings:
 
 
 @dataclass(slots=True)
-class ManagedIdentitySettings:
-    installation_id: str = ""
-    release_token: str | None = None
-    release_token_expires_at: str | None = None
-    verified_hardware_hash: str | None = None
-    verified_hardware_hash_salt_version: int | None = None
-    active_managed_credential_ref: str | None = None
-    active_managed_expires_at: str | None = None
-    founder_letter_seen_credential_ref: str | None = None
-    referral_id: str | None = None
-    local_managed_claim_sources: tuple[str, ...] = field(default_factory=tuple)
-    pending_delivery_ack_source: str | None = None
-    pending_delivery_ack_id: str | None = None
-    pending_delivery_ack_managed_credential_ref: str | None = None
-    pending_delivery_ack_expires_at: str | None = None
-
-    def validate(self) -> None:
-        if not isinstance(self.installation_id, str):
-            raise ValueError("managed installation_id must be a string")
-        if self.release_token is not None and not isinstance(self.release_token, str):
-            raise ValueError("managed release_token must be a string or None")
-        if self.release_token_expires_at is not None and not isinstance(
-            self.release_token_expires_at, str
-        ):
-            raise ValueError("managed release_token_expires_at must be a string or None")
-        if self.verified_hardware_hash is not None and not isinstance(
-            self.verified_hardware_hash, str
-        ):
-            raise ValueError("managed verified_hardware_hash must be a string or None")
-        if isinstance(self.verified_hardware_hash_salt_version, bool) or (
-            self.verified_hardware_hash_salt_version is not None
-            and not isinstance(self.verified_hardware_hash_salt_version, int)
-        ):
-            raise ValueError("managed verified_hardware_hash_salt_version must be an int or None")
-        if self.active_managed_credential_ref is not None and not isinstance(
-            self.active_managed_credential_ref, str
-        ):
-            raise ValueError("managed active_managed_credential_ref must be a string or None")
-        if self.active_managed_expires_at is not None and not isinstance(
-            self.active_managed_expires_at, str
-        ):
-            raise ValueError("managed active_managed_expires_at must be a string or None")
-        if self.founder_letter_seen_credential_ref is not None and not isinstance(
-            self.founder_letter_seen_credential_ref, str
-        ):
-            raise ValueError("managed founder_letter_seen_credential_ref must be a string or None")
-        self.referral_id = normalize_owned_referral_id(self.referral_id)
-        self.local_managed_claim_sources = normalize_managed_claim_sources(
-            self.local_managed_claim_sources
-        )
-        if self.pending_delivery_ack_source not in (None, "discord", "qq"):
-            raise ValueError("managed pending_delivery_ack_source must be discord, qq, or None")
-        if self.pending_delivery_ack_id is not None and not isinstance(
-            self.pending_delivery_ack_id, str
-        ):
-            raise ValueError("managed pending_delivery_ack_id must be a string or None")
-        if self.pending_delivery_ack_managed_credential_ref is not None and not isinstance(
-            self.pending_delivery_ack_managed_credential_ref, str
-        ):
-            raise ValueError(
-                "managed pending_delivery_ack_managed_credential_ref must be a string or None"
-            )
-        if self.pending_delivery_ack_expires_at is not None and not isinstance(
-            self.pending_delivery_ack_expires_at, str
-        ):
-            raise ValueError("managed pending_delivery_ack_expires_at must be a string or None")
-
-
-@dataclass(slots=True)
 class AppSettings:
     settings_version: int = SETTINGS_SCHEMA_VERSION
     provider: ProviderSettings = field(default_factory=ProviderSettings)
@@ -1246,11 +954,6 @@ class AppSettings:
     desktop_audio: DesktopAudioSettings = field(default_factory=DesktopAudioSettings)
     overlay: OverlaySettings = field(default_factory=OverlaySettings)
     stt: STTSettings = field(default_factory=STTSettings)
-    deepgram_stt: DeepgramSTTSettings = field(default_factory=DeepgramSTTSettings)
-    qwen_asr_stt: QwenASRSTTSettings = field(default_factory=QwenASRSTTSettings)
-    soniox_stt: SonioxSTTSettings = field(default_factory=SonioxSTTSettings)
-    peer_qwen_asr_stt: PeerQwenASRSTTSettings = field(default_factory=PeerQwenASRSTTSettings)
-    peer_soniox_stt: PeerSonioxSTTSettings = field(default_factory=PeerSonioxSTTSettings)
     gemini: GeminiSettings = field(default_factory=GeminiSettings)
     openrouter: OpenRouterSettings = field(default_factory=OpenRouterSettings)
     qwen: QwenSettings = field(default_factory=QwenSettings)
@@ -1262,8 +965,6 @@ class AppSettings:
     secrets: SecretsSettings = field(default_factory=SecretsSettings)
     ui: UiSettings = field(default_factory=UiSettings)
     api_key_verified: ApiKeyVerificationSettings = field(default_factory=ApiKeyVerificationSettings)
-    managed_identity: ManagedIdentitySettings = field(default_factory=ManagedIdentitySettings)
-    telemetry: TelemetrySettings = field(default_factory=TelemetrySettings)
     system_prompt: str = ""
     system_prompts: dict[str, str] = field(default_factory=dict)
 
@@ -1285,11 +986,6 @@ class AppSettings:
         self.desktop_audio.validate()
         self.overlay.validate()
         self.stt.validate()
-        self.deepgram_stt.validate()
-        self.qwen_asr_stt.validate()
-        self.soniox_stt.validate()
-        self.peer_qwen_asr_stt.validate()
-        self.peer_soniox_stt.validate()
         self.gemini.validate()
         self.openrouter.validate()
         self.qwen.validate()
@@ -1301,8 +997,6 @@ class AppSettings:
         self.secrets.validate()
         self.ui.validate()
         self.api_key_verified.validate()
-        self.managed_identity.validate()
-        self.telemetry.validate()
         for key, value in self.system_prompts.items():
             if not isinstance(key, str):
                 raise ValueError("system_prompts keys must be strings")
@@ -1640,19 +1334,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "custom_vocabulary_enabled": settings.stt.custom_vocabulary_enabled,
             "custom_terms": _parse_custom_terms(settings.stt.custom_terms),
         },
-        "deepgram_stt": {
-            "model": settings.deepgram_stt.model,
-        },
-        "qwen_asr_stt": {
-            "model": settings.qwen_asr_stt.model,
-            "endpoint": settings.qwen.get_asr_endpoint(),
-        },
-        "soniox_stt": {
-            "model": settings.soniox_stt.model,
-            "endpoint": settings.soniox_stt.endpoint,
-            "keepalive_interval_s": settings.soniox_stt.keepalive_interval_s,
-            "trailing_silence_ms": settings.soniox_stt.trailing_silence_ms,
-        },
         "gemini": {
             "llm_model": settings.gemini.llm_model.value,
         },
@@ -1717,8 +1398,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             ),
         },
         "api_key_verified": {
-            "deepgram": settings.api_key_verified.deepgram,
-            "soniox": settings.api_key_verified.soniox,
             "google": settings.api_key_verified.google,
             "openrouter": settings.api_key_verified.openrouter,
             "deepseek": settings.api_key_verified.deepseek,
@@ -1726,37 +1405,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "alibaba_singapore": settings.api_key_verified.alibaba_singapore,
             "cerebras": settings.api_key_verified.cerebras,
         },
-        "managed_identity": {
-            "installation_id": settings.managed_identity.installation_id,
-            "release_token": settings.managed_identity.release_token,
-            "release_token_expires_at": settings.managed_identity.release_token_expires_at,
-            "verified_hardware_hash": settings.managed_identity.verified_hardware_hash,
-            "verified_hardware_hash_salt_version": (
-                settings.managed_identity.verified_hardware_hash_salt_version
-            ),
-            "active_managed_credential_ref": (
-                settings.managed_identity.active_managed_credential_ref
-            ),
-            "active_managed_expires_at": settings.managed_identity.active_managed_expires_at,
-            "founder_letter_seen_credential_ref": (
-                settings.managed_identity.founder_letter_seen_credential_ref
-            ),
-            "referral_id": normalize_owned_referral_id(settings.managed_identity.referral_id),
-            "local_managed_claim_sources": list(
-                normalize_managed_claim_sources(
-                    settings.managed_identity.local_managed_claim_sources
-                )
-            ),
-            "pending_delivery_ack_source": settings.managed_identity.pending_delivery_ack_source,
-            "pending_delivery_ack_id": settings.managed_identity.pending_delivery_ack_id,
-            "pending_delivery_ack_managed_credential_ref": (
-                settings.managed_identity.pending_delivery_ack_managed_credential_ref
-            ),
-            "pending_delivery_ack_expires_at": (
-                settings.managed_identity.pending_delivery_ack_expires_at
-            ),
-        },
-        "telemetry": telemetry_settings_to_dict(settings.telemetry),
         "system_prompt": settings.system_prompt,
     }
     return _enum_to_value(data)  # type: ignore[return-value]
@@ -1764,12 +1412,10 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
 
 def _parse_stt_provider(value: str) -> STTProviderName:
     """Parse STT provider, mapping legacy values to supported providers."""
-    if value == "alibaba":
-        return STTProviderName.QWEN_ASR
     try:
         return STTProviderName(value)
     except ValueError:
-        return STTProviderName.DEEPGRAM
+        return STTProviderName.LOCAL_QWEN
 
 
 def _parse_peer_stt_provider(value: str) -> STTProviderName:
@@ -1895,11 +1541,7 @@ def _derive_openrouter_selection_alias(
         selected_source.value,
     )
     if alias is None:
-        alias = (
-            OpenRouterSelectionAlias.GEMMA4_MANAGED.value
-            if selected_source == OpenRouterCredentialSource.MANAGED
-            else OpenRouterSelectionAlias.GEMMA4_BYOK.value
-        )
+        alias = OpenRouterSelectionAlias.GEMMA4_BYOK.value
     return OpenRouterSelectionAlias(alias)
 
 
@@ -2325,11 +1967,7 @@ def materialize_translation_settings(settings: AppSettings) -> AppSettings:
         settings.provider.llm = LLMProviderName.OPENROUTER
         settings.openrouter.llm_model = OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
         settings.openrouter.provider_routing = OpenRouterProviderRouting.DEFAULT
-        settings.openrouter.selected_source = (
-            OpenRouterCredentialSource.MANAGED
-            if connection == TranslationConnection.MANAGED
-            else OpenRouterCredentialSource.BYOK
-        )
+        settings.openrouter.selected_source = OpenRouterCredentialSource.BYOK
         settings.openrouter.selection_alias = _derive_openrouter_selection_alias(
             settings.openrouter.llm_model,
             settings.openrouter.selected_source,
@@ -2344,16 +1982,8 @@ def materialize_translation_settings(settings: AppSettings) -> AppSettings:
             return settings
         settings.provider.llm = LLMProviderName.OPENROUTER
         settings.openrouter.llm_model = OpenRouterLLMModel.DEEPSEEK_V4_FLASH
-        settings.openrouter.provider_routing = (
-            OpenRouterProviderRouting.DEEPSEEK_ONLY
-            if connection == TranslationConnection.MANAGED_CHINA
-            else OpenRouterProviderRouting.DEFAULT
-        )
-        settings.openrouter.selected_source = (
-            OpenRouterCredentialSource.MANAGED
-            if connection in (TranslationConnection.MANAGED, TranslationConnection.MANAGED_CHINA)
-            else OpenRouterCredentialSource.BYOK
-        )
+        settings.openrouter.provider_routing = OpenRouterProviderRouting.DEFAULT
+        settings.openrouter.selected_source = OpenRouterCredentialSource.BYOK
         settings.openrouter.selection_alias = _derive_openrouter_selection_alias(
             settings.openrouter.llm_model,
             settings.openrouter.selected_source,
@@ -2455,11 +2085,7 @@ def _apply_materialized_translation_to_data(
     )
 
     if translation.model == TranslationModel.GEMMA4:
-        selected_source = (
-            OpenRouterCredentialSource.MANAGED
-            if translation.connection == TranslationConnection.MANAGED
-            else OpenRouterCredentialSource.BYOK
-        )
+        selected_source = OpenRouterCredentialSource.BYOK
         selection_alias = _derive_openrouter_selection_alias(
             OpenRouterLLMModel.GEMMA_4_26B_A4B_IT,
             selected_source,
@@ -2493,17 +2119,8 @@ def _apply_materialized_translation_to_data(
                 DeepSeekLLMModel.DEEPSEEK_V4_FLASH.value,
             )
             return changed
-        selected_source = (
-            OpenRouterCredentialSource.MANAGED
-            if translation.connection
-            in (TranslationConnection.MANAGED, TranslationConnection.MANAGED_CHINA)
-            else OpenRouterCredentialSource.BYOK
-        )
-        provider_routing = (
-            OpenRouterProviderRouting.DEEPSEEK_ONLY
-            if translation.connection == TranslationConnection.MANAGED_CHINA
-            else OpenRouterProviderRouting.DEFAULT
-        )
+        selected_source = OpenRouterCredentialSource.BYOK
+        provider_routing = OpenRouterProviderRouting.DEFAULT
         selection_alias = _derive_openrouter_selection_alias(
             OpenRouterLLMModel.DEEPSEEK_V4_FLASH,
             selected_source,
@@ -2747,31 +2364,6 @@ def resolve_first_run_ui_locale(system_locale: str | None) -> str:
     return "en"
 
 
-def _is_china_first_run_locale(system_locale: str | None) -> bool:
-    return resolve_first_run_ui_locale(system_locale) == "zh-CN"
-
-
-def _apply_china_managed_first_run_defaults(settings: AppSettings) -> None:
-    settings.openrouter = replace(
-        settings.openrouter,
-        selection_alias=OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED,
-        provider_routing=OpenRouterProviderRouting.DEEPSEEK_ONLY,
-        fallback_selection_alias=OpenRouterFallbackSelectionAlias.NONE,
-    )
-    settings.translation = _derive_translation_settings_from_runtime_values(
-        provider_llm=settings.provider.llm,
-        openrouter_model=settings.openrouter.llm_model,
-        openrouter_selected_source=settings.openrouter.selected_source,
-        openrouter_provider_routing=settings.openrouter.provider_routing,
-        gemini_model=settings.gemini.llm_model,
-        qwen_model=settings.qwen.llm_model,
-        deepseek_model=settings.deepseek.llm_model,
-        cerebras_model=settings.cerebras.llm_model,
-        fallback_selection_alias=TranslationFallbackSelectionAlias.OPENROUTER_GEMMA4_26B_A4B,
-        history=settings.translation.connection_history,
-    )
-
-
 def new_settings_for_first_run(system_locale: str | None = None) -> AppSettings:
     if system_locale is None:
         system_locale = detect_system_locale()
@@ -2781,8 +2373,6 @@ def new_settings_for_first_run(system_locale: str | None = None) -> AppSettings:
         TranslationFallbackSelectionAlias.OPENROUTER_DEEPSEEK_V4_FLASH
     )
     settings.ui.locale = resolve_first_run_ui_locale(system_locale)
-    if _is_china_first_run_locale(system_locale):
-        _apply_china_managed_first_run_defaults(settings)
     ensure_prompt_defaults(settings)
     settings.validate()
     return settings
@@ -2899,15 +2489,7 @@ def _normalize_peer_block(data: dict[str, Any], key: str, default_block: dict[st
 def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     data: dict[str, Any] = copy.deepcopy(raw)
     changed = False
-    peer_block_defaults: dict[str, dict[str, Any]] = {
-        "peer_qwen_asr_stt": {"model": None, "region": None},
-        "peer_soniox_stt": {
-            "model": None,
-            "endpoint": None,
-            "keepalive_interval_s": None,
-            "trailing_silence_ms": None,
-        },
-    }
+    peer_block_defaults: dict[str, dict[str, Any]] = {}
 
     version = _coerce_int(data.get("settings_version"), 1)
     if version < 1:
@@ -2949,14 +2531,14 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             provider_data = raw_provider_data
         else:
             provider_data = {
-                "stt": STTProviderName.DEEPGRAM.value,
+                "stt": STTProviderName.LOCAL_QWEN.value,
                 "llm": LLMProviderName.GEMINI.value,
             }
             data["provider"] = provider_data
             changed = True
 
         if "peer_stt" not in provider_data:
-            provider_data["peer_stt"] = STTProviderName.DEEPGRAM.value
+            provider_data["peer_stt"] = STTProviderName.LOCAL_QWEN.value
             changed = True
 
         for key, default_block in peer_block_defaults.items():
@@ -3021,25 +2603,6 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             changed = True
 
         version = 8
-
-    if version < 9:
-        managed_identity_data = data.get("managed_identity")
-        if not isinstance(managed_identity_data, dict):
-            managed_identity_data = {}
-            data["managed_identity"] = managed_identity_data
-            changed = True
-
-        if "installation_id" not in managed_identity_data:
-            managed_identity_data["installation_id"] = ""
-            changed = True
-        if "release_token" not in managed_identity_data:
-            managed_identity_data["release_token"] = None
-            changed = True
-        if "release_token_expires_at" not in managed_identity_data:
-            managed_identity_data["release_token_expires_at"] = None
-            changed = True
-
-        version = 9
 
     if version < 10:
         openrouter_data = data.get("openrouter")
@@ -3109,22 +2672,6 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 
         version = 12
 
-    if version < 13:
-        managed_identity_data = data.get("managed_identity")
-        if not isinstance(managed_identity_data, dict):
-            managed_identity_data = {}
-            data["managed_identity"] = managed_identity_data
-            changed = True
-
-        if "verified_hardware_hash" not in managed_identity_data:
-            managed_identity_data["verified_hardware_hash"] = None
-            changed = True
-        if "verified_hardware_hash_salt_version" not in managed_identity_data:
-            managed_identity_data["verified_hardware_hash_salt_version"] = None
-            changed = True
-
-        version = 13
-
     if version < 14:
         audio_data = data.get("audio")
         if isinstance(audio_data, dict):
@@ -3176,24 +2723,6 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             changed = True
 
         version = 15
-
-    if version < 16:
-        managed_identity_data = data.get("managed_identity")
-        if not isinstance(managed_identity_data, dict):
-            managed_identity_data = {}
-            data["managed_identity"] = managed_identity_data
-            changed = True
-
-        for key in (
-            "active_managed_credential_ref",
-            "active_managed_expires_at",
-            "founder_letter_seen_credential_ref",
-        ):
-            if key not in managed_identity_data:
-                managed_identity_data[key] = None
-                changed = True
-
-        version = 16
 
     if version < 17:
         audio_data = data.get("audio")
@@ -3247,21 +2776,6 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             changed = True
         version = 22
 
-    if version < 23:
-        managed_identity_data = data.get("managed_identity")
-        if not isinstance(managed_identity_data, dict):
-            managed_identity_data = {}
-            data["managed_identity"] = managed_identity_data
-            changed = True
-
-        raw_referral_id = managed_identity_data.get("referral_id")
-        normalized_referral_id = normalize_owned_referral_id(raw_referral_id)
-        if "referral_id" not in managed_identity_data or raw_referral_id != normalized_referral_id:
-            managed_identity_data["referral_id"] = normalized_referral_id
-            changed = True
-
-        version = 23
-
     if version < 24:
         changed = True
         version = 24
@@ -3306,17 +2820,6 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         version = 27
         changed = True
 
-    if version < 28:
-        managed_identity_data = data.get("managed_identity")
-        if not isinstance(managed_identity_data, dict):
-            managed_identity_data = {}
-            data["managed_identity"] = managed_identity_data
-            changed = True
-        if "local_managed_claim_sources" not in managed_identity_data:
-            managed_identity_data["local_managed_claim_sources"] = []
-            changed = True
-        version = 28
-
     if version < 29:
         translation_data = data.get("translation")
         if (
@@ -3328,23 +2831,6 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             )
             changed = True
         version = 29
-
-    if version < 30:
-        managed_identity_data = data.get("managed_identity")
-        if not isinstance(managed_identity_data, dict):
-            managed_identity_data = {}
-            data["managed_identity"] = managed_identity_data
-            changed = True
-        for key in (
-            "pending_delivery_ack_source",
-            "pending_delivery_ack_id",
-            "pending_delivery_ack_managed_credential_ref",
-            "pending_delivery_ack_expires_at",
-        ):
-            if key not in managed_identity_data:
-                managed_identity_data[key] = None
-                changed = True
-        version = 30
 
     if _normalize_local_llm_data(data):
         changed = True
@@ -3386,7 +2872,7 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         changed = True
     elif not isinstance(raw_provider_data, dict):
         provider_data = {
-            "stt": STTProviderName.DEEPGRAM.value,
+            "stt": STTProviderName.LOCAL_QWEN.value,
             "llm": LLMProviderName.GEMINI.value,
         }
         data["provider"] = provider_data
@@ -3401,7 +2887,7 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             provider_data["stt"] = normalized_stt_provider
             changed = True
     if isinstance(provider_data, dict) and "peer_stt" not in provider_data:
-        provider_data["peer_stt"] = STTProviderName.DEEPGRAM.value
+        provider_data["peer_stt"] = STTProviderName.LOCAL_QWEN.value
         changed = True
     if isinstance(provider_data, dict) and "peer_stt" in provider_data:
         raw_peer_provider = provider_data.get("peer_stt")
@@ -3410,24 +2896,9 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             provider_data["peer_stt"] = normalized_peer_provider
             changed = True
 
-    if "peer_deepgram_stt" in data:
-        del data["peer_deepgram_stt"]
-        changed = True
-
     for key, default_block in peer_block_defaults.items():
         if _normalize_peer_block(data, key, default_block):
             changed = True
-
-    # Keep schema at v2 but backfill Soniox legacy default model upgrade.
-    soniox_data = data.get("soniox_stt")
-    if isinstance(soniox_data, dict):
-        model = soniox_data.get("model")
-        # Preserve explicit custom model values and only upgrade legacy defaults.
-        if isinstance(model, str):
-            normalized = model.strip()
-            if normalized in ("stt-rt-v3", "stt-rt-v4"):
-                soniox_data["model"] = "stt-rt-v5"
-                changed = True
 
     gemini_data = data.get("gemini")
     if not isinstance(gemini_data, dict):
@@ -3510,13 +2981,9 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         data["qwen"] = qwen_data
         changed = True
 
-    qwen_asr_data = data.get("qwen_asr_stt")
-    qwen_asr_endpoint = qwen_asr_data.get("endpoint") if isinstance(qwen_asr_data, dict) else None
-
     raw_qwen_region = qwen_data.get("region")
     normalized_qwen_region = _parse_qwen_region(
         raw_qwen_region,
-        legacy_asr_endpoint=qwen_asr_endpoint,
     ).value
     if raw_qwen_region != normalized_qwen_region:
         qwen_data["region"] = normalized_qwen_region
@@ -3741,148 +3208,8 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         del data["overlay_calibration"]
         changed = True
 
-    managed_identity_data = data.get("managed_identity")
-    if not isinstance(managed_identity_data, dict):
-        managed_identity_data = {}
-        data["managed_identity"] = managed_identity_data
-        changed = True
-
-    raw_installation_id = managed_identity_data.get("installation_id")
-    normalized_installation_id = (
-        raw_installation_id.strip() if isinstance(raw_installation_id, str) else ""
-    )
-    if raw_installation_id != normalized_installation_id:
-        managed_identity_data["installation_id"] = normalized_installation_id
-        changed = True
-
-    raw_release_token = managed_identity_data.get("release_token")
-    normalized_release_token = _parse_optional_str(raw_release_token)
-    if raw_release_token != normalized_release_token:
-        managed_identity_data["release_token"] = normalized_release_token
-        changed = True
-
-    raw_release_token_expires_at = managed_identity_data.get("release_token_expires_at")
-    normalized_release_token_expires_at = _parse_optional_str(raw_release_token_expires_at)
-    if raw_release_token_expires_at != normalized_release_token_expires_at:
-        managed_identity_data["release_token_expires_at"] = normalized_release_token_expires_at
-        changed = True
-
-    raw_verified_hardware_hash = managed_identity_data.get("verified_hardware_hash")
-    normalized_verified_hardware_hash = _parse_optional_str(raw_verified_hardware_hash)
-    if (
-        "verified_hardware_hash" not in managed_identity_data
-        or raw_verified_hardware_hash != normalized_verified_hardware_hash
-    ):
-        managed_identity_data["verified_hardware_hash"] = normalized_verified_hardware_hash
-        changed = True
-
-    raw_verified_hardware_hash_salt_version = managed_identity_data.get(
-        "verified_hardware_hash_salt_version"
-    )
-    normalized_verified_hardware_hash_salt_version = _parse_optional_int(
-        raw_verified_hardware_hash_salt_version
-    )
-    if (
-        "verified_hardware_hash_salt_version" not in managed_identity_data
-        or raw_verified_hardware_hash_salt_version != normalized_verified_hardware_hash_salt_version
-    ):
-        managed_identity_data["verified_hardware_hash_salt_version"] = (
-            normalized_verified_hardware_hash_salt_version
-        )
-        changed = True
-
-    raw_active_managed_credential_ref = managed_identity_data.get("active_managed_credential_ref")
-    normalized_active_managed_credential_ref = _parse_optional_str(
-        raw_active_managed_credential_ref
-    )
-    if (
-        "active_managed_credential_ref" not in managed_identity_data
-        or raw_active_managed_credential_ref != normalized_active_managed_credential_ref
-    ):
-        managed_identity_data["active_managed_credential_ref"] = (
-            normalized_active_managed_credential_ref
-        )
-        changed = True
-
-    raw_active_managed_expires_at = managed_identity_data.get("active_managed_expires_at")
-    normalized_active_managed_expires_at = _parse_optional_str(raw_active_managed_expires_at)
-    if (
-        "active_managed_expires_at" not in managed_identity_data
-        or raw_active_managed_expires_at != normalized_active_managed_expires_at
-    ):
-        managed_identity_data["active_managed_expires_at"] = normalized_active_managed_expires_at
-        changed = True
-
-    raw_founder_letter_seen_credential_ref = managed_identity_data.get(
-        "founder_letter_seen_credential_ref"
-    )
-    normalized_founder_letter_seen_credential_ref = _parse_optional_str(
-        raw_founder_letter_seen_credential_ref
-    )
-    if (
-        "founder_letter_seen_credential_ref" not in managed_identity_data
-        or raw_founder_letter_seen_credential_ref != normalized_founder_letter_seen_credential_ref
-    ):
-        managed_identity_data["founder_letter_seen_credential_ref"] = (
-            normalized_founder_letter_seen_credential_ref
-        )
-        changed = True
-
-    raw_referral_id = managed_identity_data.get("referral_id")
-    normalized_referral_id = normalize_owned_referral_id(raw_referral_id)
-    if "referral_id" not in managed_identity_data or raw_referral_id != normalized_referral_id:
-        managed_identity_data["referral_id"] = normalized_referral_id
-        changed = True
-
-    raw_local_managed_claim_sources = managed_identity_data.get("local_managed_claim_sources")
-    normalized_local_managed_claim_sources = list(
-        normalize_managed_claim_sources(raw_local_managed_claim_sources)
-    )
-    if (
-        "local_managed_claim_sources" not in managed_identity_data
-        or raw_local_managed_claim_sources != normalized_local_managed_claim_sources
-    ):
-        managed_identity_data["local_managed_claim_sources"] = (
-            normalized_local_managed_claim_sources
-        )
-        changed = True
-
-    raw_pending_delivery_ack_source = managed_identity_data.get("pending_delivery_ack_source")
-    normalized_pending_delivery_ack_source = (
-        raw_pending_delivery_ack_source
-        if raw_pending_delivery_ack_source in ("discord", "qq")
-        else None
-    )
-    if (
-        "pending_delivery_ack_source" not in managed_identity_data
-        or raw_pending_delivery_ack_source != normalized_pending_delivery_ack_source
-    ):
-        managed_identity_data["pending_delivery_ack_source"] = (
-            normalized_pending_delivery_ack_source
-        )
-        changed = True
-
-    for key in (
-        "pending_delivery_ack_id",
-        "pending_delivery_ack_managed_credential_ref",
-        "pending_delivery_ack_expires_at",
-    ):
-        raw_value = managed_identity_data.get(key)
-        normalized_value = _parse_optional_str(raw_value)
-        if key not in managed_identity_data or raw_value != normalized_value:
-            managed_identity_data[key] = normalized_value
-            changed = True
-
     if "system_prompts" in data:
         data.pop("system_prompts", None)
-        changed = True
-
-    raw_telemetry_data = data.get("telemetry")
-    normalized_telemetry_data = telemetry_settings_to_dict(
-        telemetry_settings_from_dict(raw_telemetry_data)
-    )
-    if raw_telemetry_data != normalized_telemetry_data:
-        data["telemetry"] = normalized_telemetry_data
         changed = True
 
     if data.get("settings_version") != version:
@@ -3907,16 +3234,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     merged_overlay_calibration_data.update(overlay_calibration_data)
     stt_data = data.get("stt") or {}
     ui_data = data.get("ui") or {}
-    managed_identity_data = (
-        data.get("managed_identity") if isinstance(data.get("managed_identity"), dict) else {}
-    )
-    telemetry_data = data.get("telemetry") if isinstance(data.get("telemetry"), dict) else {}
-    peer_qwen_raw = (
-        data.get("peer_qwen_asr_stt") if isinstance(data.get("peer_qwen_asr_stt"), dict) else {}
-    )
-    peer_soniox_data = (
-        data.get("peer_soniox_stt") if isinstance(data.get("peer_soniox_stt"), dict) else {}
-    )
     raw_provider_data = data.get("provider")
     provider_data = raw_provider_data if isinstance(raw_provider_data, dict) else {}
     if raw_provider_data is None:
@@ -3924,11 +3241,11 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     elif isinstance(raw_provider_data, dict):
         stt_provider_value = provider_data.get("stt", STTProviderName.LOCAL_QWEN.value)
     else:
-        stt_provider_value = STTProviderName.DEEPGRAM.value
+        stt_provider_value = STTProviderName.LOCAL_QWEN.value
     raw_peer_provider = (
-        provider_data.get("peer_stt", STTProviderName.DEEPGRAM.value)
+        provider_data.get("peer_stt", STTProviderName.LOCAL_QWEN.value)
         if isinstance(raw_provider_data, dict)
-        else STTProviderName.DEEPGRAM.value
+        else STTProviderName.LOCAL_QWEN.value
     )
 
     input_host_api_raw = (
@@ -3950,7 +3267,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     deepseek_raw = data.get("deepseek") if isinstance(data.get("deepseek"), dict) else {}
     cerebras_raw = data.get("cerebras") if isinstance(data.get("cerebras"), dict) else {}
     local_llm_raw = data.get("local_llm") if isinstance(data.get("local_llm"), dict) else {}
-    qwen_asr_raw = data.get("qwen_asr_stt") if isinstance(data.get("qwen_asr_stt"), dict) else {}
     openrouter_raw = data.get("openrouter") if isinstance(data.get("openrouter"), dict) else {}
     openrouter_model, openrouter_selected_source, openrouter_selection_alias = (
         _resolve_openrouter_main_selection(openrouter_raw, data)
@@ -3958,7 +3274,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     qwen_settings = QwenSettings(
         region=_parse_qwen_region(
             qwen_raw.get("region"),
-            legacy_asr_endpoint=qwen_asr_raw.get("endpoint"),
         ),
         llm_model=_parse_qwen_llm_model(qwen_raw.get("llm_model", QwenLLMModel.QWEN_35_PLUS.value)),
     )
@@ -4081,41 +3396,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             custom_vocabulary_enabled=custom_vocabulary_enabled,
             custom_terms=parsed_custom_terms,
         ),
-        deepgram_stt=DeepgramSTTSettings(
-            model=str(data.get("deepgram_stt", {}).get("model", "nova-3")),
-        ),
-        qwen_asr_stt=QwenASRSTTSettings(
-            model=str(data.get("qwen_asr_stt", {}).get("model", "qwen3-asr-flash-realtime")),
-            endpoint=qwen_settings.get_asr_endpoint(),
-        ),
-        soniox_stt=SonioxSTTSettings(
-            model=str(data.get("soniox_stt", {}).get("model", "stt-rt-v5")),
-            endpoint=str(
-                data.get("soniox_stt", {}).get(
-                    "endpoint", "wss://stt-rt.soniox.com/transcribe-websocket"
-                )
-            ),
-            keepalive_interval_s=float(
-                data.get("soniox_stt", {}).get("keepalive_interval_s", 10.0)
-            ),
-            trailing_silence_ms=int(data.get("soniox_stt", {}).get("trailing_silence_ms", 100)),
-        ),
-        peer_qwen_asr_stt=PeerQwenASRSTTSettings(
-            model=_parse_optional_str(peer_qwen_raw.get("model")),
-            region=(
-                QwenRegion(peer_qwen_raw["region"])
-                if peer_qwen_raw.get("region") in {region.value for region in QwenRegion}
-                else None
-            ),
-        ),
-        peer_soniox_stt=PeerSonioxSTTSettings(
-            model=_parse_optional_str(peer_soniox_data.get("model")),
-            endpoint=_parse_optional_str(peer_soniox_data.get("endpoint")),
-            keepalive_interval_s=_parse_optional_float(
-                peer_soniox_data.get("keepalive_interval_s")
-            ),
-            trailing_silence_ms=_parse_optional_int(peer_soniox_data.get("trailing_silence_ms")),
-        ),
         gemini=GeminiSettings(
             llm_model=_parse_gemini_llm_model(
                 data.get("gemini", {}).get("llm_model", GeminiLLMModel.GEMINI_31_FLASH_LITE.value)
@@ -4204,8 +3484,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             ),
         ),
         api_key_verified=ApiKeyVerificationSettings(
-            deepgram=bool(data.get("api_key_verified", {}).get("deepgram", False)),
-            soniox=bool(data.get("api_key_verified", {}).get("soniox", False)),
             google=bool(data.get("api_key_verified", {}).get("google", False)),
             openrouter=bool(data.get("api_key_verified", {}).get("openrouter", False)),
             deepseek=bool(data.get("api_key_verified", {}).get("deepseek", False)),
@@ -4215,47 +3493,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             ),
             cerebras=bool(data.get("api_key_verified", {}).get("cerebras", False)),
         ),
-        managed_identity=ManagedIdentitySettings(
-            installation_id=_parse_optional_str(managed_identity_data.get("installation_id")) or "",
-            release_token=_parse_optional_str(managed_identity_data.get("release_token")),
-            release_token_expires_at=_parse_optional_str(
-                managed_identity_data.get("release_token_expires_at")
-            ),
-            verified_hardware_hash=_parse_optional_str(
-                managed_identity_data.get("verified_hardware_hash")
-            ),
-            verified_hardware_hash_salt_version=_parse_optional_int(
-                managed_identity_data.get("verified_hardware_hash_salt_version")
-            ),
-            active_managed_credential_ref=_parse_optional_str(
-                managed_identity_data.get("active_managed_credential_ref")
-            ),
-            active_managed_expires_at=_parse_optional_str(
-                managed_identity_data.get("active_managed_expires_at")
-            ),
-            founder_letter_seen_credential_ref=_parse_optional_str(
-                managed_identity_data.get("founder_letter_seen_credential_ref")
-            ),
-            referral_id=normalize_owned_referral_id(managed_identity_data.get("referral_id")),
-            local_managed_claim_sources=normalize_managed_claim_sources(
-                managed_identity_data.get("local_managed_claim_sources")
-            ),
-            pending_delivery_ack_source=(
-                managed_identity_data.get("pending_delivery_ack_source")
-                if managed_identity_data.get("pending_delivery_ack_source") in ("discord", "qq")
-                else None
-            ),
-            pending_delivery_ack_id=_parse_optional_str(
-                managed_identity_data.get("pending_delivery_ack_id")
-            ),
-            pending_delivery_ack_managed_credential_ref=_parse_optional_str(
-                managed_identity_data.get("pending_delivery_ack_managed_credential_ref")
-            ),
-            pending_delivery_ack_expires_at=_parse_optional_str(
-                managed_identity_data.get("pending_delivery_ack_expires_at")
-            ),
-        ),
-        telemetry=telemetry_settings_from_dict(telemetry_data),
         system_prompt=legacy_system_prompt,
         system_prompts={},
     )

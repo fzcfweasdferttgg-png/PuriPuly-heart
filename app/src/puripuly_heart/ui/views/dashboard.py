@@ -43,7 +43,6 @@ class DashboardView(ft.Column):
         # Warning state for UI feedback
         self._translation_showing_warning = False
         self._stt_showing_warning = False
-        self._managed_auth_pending = False
         self._local_stt_notice_status: str | None = None
         self._local_stt_notice_percent: int | None = None
         self._overlay_peer_contract: OverlayPeerConsumerContract | None = None
@@ -553,10 +552,6 @@ class DashboardView(ft.Column):
             debug_prefix=debug_prefix,
         )
 
-    def set_managed_auth_pending(self, pending: bool) -> None:
-        self._managed_auth_pending = bool(pending)
-        self._sync_notice()
-
     def set_local_stt_notice(self, status: str | None, percent: int | None = None) -> None:
         self._local_stt_notice_status = status
         self._local_stt_notice_percent = percent if status == "downloading" else None
@@ -621,9 +616,6 @@ class DashboardView(ft.Column):
 
     def _sync_notice(self) -> None:
         if not hasattr(self, "display_card"):
-            return
-        if self._managed_auth_pending:
-            self.display_card.set_notice(t("dashboard.managed_auth_pending"), "info")
             return
         notice_text, tone = self._current_local_stt_notice()
         if notice_text is not None:

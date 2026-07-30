@@ -35,8 +35,6 @@ from puripuly_heart.config.settings import (
     DESKTOP_FLET_MIN_HEIGHT,
     DESKTOP_FLET_MIN_WIDTH,
     DESKTOP_FLET_SIZE_PRESETS,
-    MANAGED_AUTH_CLAIM_SOURCE_DISCORD,
-    MANAGED_AUTH_CLAIM_SOURCE_QQ,
     OVERLAY_TARGET_DESKTOP,
     OVERLAY_TARGET_STEAMVR,
     AppSettings,
@@ -51,7 +49,6 @@ from puripuly_heart.config.settings import (
     TranslationConnection,
     load_settings,
     new_settings_for_first_run,
-    normalize_owned_referral_id,
     save_settings,
 )
 from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
@@ -71,7 +68,6 @@ from puripuly_heart.core.audio.source import (
 )
 from puripuly_heart.core.clipboard.watcher import create_clipboard_watcher
 from puripuly_heart.core.clock import SystemClock
-from puripuly_heart.core.hardware_fingerprint import get_raw_hardware_fingerprint
 from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
 from puripuly_heart.core.local_stt_assets import (
     LocalSTTInstallState,
@@ -85,30 +81,9 @@ from puripuly_heart.core.local_stt_runtime_installer import (
     RuntimeLocalSTTStatusUpdate,
     ensure_local_stt_installed,
 )
-from puripuly_heart.core.managed_auth_claims import (
-    backfill_local_managed_claim_sources,
-    local_managed_auth_blocking_source,
-)
-from puripuly_heart.core.managed_openrouter_broker_client import (
-    HttpManagedOpenRouterBrokerClient,
-)
-from puripuly_heart.core.managed_openrouter_release import (
-    ManagedOpenRouterReleaseBehavior,
-    ManagedOpenRouterReleaseResult,
-    ManagedOpenRouterReleaseService,
-    ManagedOpenRouterStatusRefreshResult,
-    TalkTogetherPassStatus,
-    UnavailableManagedOpenRouterReleaseClient,
-    format_managed_openrouter_diagnostics,
-)
 from puripuly_heart.core.openrouter_credentials import (
     OPENROUTER_BYOK_API_KEY_SECRET,
     resolve_openrouter_credentials,
-)
-from puripuly_heart.core.openrouter_handoff import (
-    is_effectively_exhausted,
-    mark_founder_letter_shown,
-    should_auto_show_founder_letter,
 )
 from puripuly_heart.core.openrouter_pkce import OpenRouterPKCEClient
 from puripuly_heart.core.orchestrator.hub import ClientHub
@@ -136,24 +111,21 @@ from puripuly_heart.core.stt.controller import (
     ManagedSTTProvider,
 )
 from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
-from puripuly_heart.core.telemetry import TranslationSuccessTelemetryService
 from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_vad_onnx
 from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
 from puripuly_heart.providers.llm.cerebras import CerebrasLLMProvider
 from puripuly_heart.providers.llm.deepseek import DeepSeekLLMProvider
 from puripuly_heart.providers.llm.gemini import GeminiLLMProvider
-from puripuly_heart.providers.llm.openrouter import OpenRouterKeyMetadata, OpenRouterLLMProvider
+from puripuly_heart.providers.llm.openrouter import OpenRouterLLMProvider
 from puripuly_heart.providers.llm.qwen import QwenLLMProvider
 from puripuly_heart.providers.llm.qwen_async import AsyncQwenLLMProvider
-from puripuly_heart.providers.stt.deepgram import DeepgramRealtimeSTTBackend
 from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTError
 from puripuly_heart.providers.stt.local_qwen_sherpa import LocalQwenSherpaLoadError
 from puripuly_heart.providers.stt.local_gigaam_rnnt import LocalGigaamRnntLoadError
 from puripuly_heart.providers.stt.local_parakeet_tdt import LocalParakeetTdtLoadError
 from puripuly_heart.providers.stt.local_parakeet_ctc import LocalParakeetCtcLoadError
 from puripuly_heart.providers.stt.local_transcribecpp import LocalTranscribecppLoadError
-from puripuly_heart.providers.stt.soniox import SonioxRealtimeSTTBackend
 from puripuly_heart.ui.event_bridge import UIEventBridge
 from puripuly_heart.ui.i18n import get_locale, set_locale, t
 from puripuly_heart.ui.overlay_calibration import OverlayCalibration
@@ -179,7 +151,6 @@ MANUAL_TYPING_IDLE_TIMEOUT_S = 3.0
 MANUAL_TYPING_IDLE_POLL_S = 0.25
 MANUAL_INPUT_TYPING_REASON = "manual_input"
 MANUAL_SUBMIT_TYPING_REASON = "manual_submit_pending"
-_PASS_STATUS_UNSET = object()
 _OVERLAY_FAILURE_REASONS = frozenset(
     {
         "missing_executable",
@@ -204,30 +175,14 @@ _OVERLAY_FAILURE_REASONS = frozenset(
         "unknown",
     }
 )
-GITHUB_STAR_PROMPT_MANAGED_REMAINING_PERCENT_THRESHOLD = 60
 GITHUB_STAR_PROMPT_ELIGIBLE_LAUNCH_THRESHOLD = 3
 GITHUB_STAR_PROMPT_RECENCY_WINDOW = timedelta(days=14)
-_GITHUB_STAR_PROMPT_MANAGED_CONNECTIONS = frozenset(
-    {
-        TranslationConnection.MANAGED,
-        TranslationConnection.MANAGED_CHINA,
-    }
-)
 _GITHUB_STAR_PROMPT_USER_OWNED_CLOUD_CONNECTIONS = frozenset(
     {
         TranslationConnection.OPENROUTER,
         TranslationConnection.OFFICIAL_BYOK,
     }
 )
-DISCORD_AUTH_ERROR_KEY_BY_SUBCODE = {
-    "discord_email_unverified": "discord_auth.error.email_unverified",
-    "discord_account_too_new": "discord_auth.error.account_too_new",
-    "discord_lifetime_used": "discord_auth.error.lifetime_used",
-    "hardware_duplicate": "discord_auth.error.hardware_duplicate",
-    "global_cap_reached": "discord_auth.error.daily_cap",
-    "oauth_session_expired": "discord_auth.error.expired",
-    "loopback_unavailable": "discord_auth.error.loopback_unavailable",
-}
 _MICROPHONE_TEST_LEVEL_INTERVAL_S = 1.0
 LOCAL_QWEN_HALLUCINATION_GUIDANCE_TRIGGER_COUNT = 2
 
@@ -298,16 +253,6 @@ class _MicrophoneTestLevelStats:
 
 def _canonical_json_signature(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _callable_accepts_keyword(callable_obj: object, keyword: str) -> bool:
-    try:
-        parameters = inspect.signature(callable_obj).parameters
-    except (TypeError, ValueError):
-        return True
-    return keyword in parameters or any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
-    )
 
 
 def _github_star_prompt_utc_now() -> datetime:
@@ -387,7 +332,6 @@ class GuiController:
 
     settings: AppSettings | None = None
     clock: SystemClock = SystemClock()
-    _managed_openrouter_release_service: ManagedOpenRouterReleaseService | None = None
     _openrouter_pkce_client: OpenRouterPKCEClient | None = None
 
     sender: VrchatOscUdpSender | None = None
@@ -499,51 +443,9 @@ class GuiController:
         default_factory=set,
         repr=False,
     )
-    _managed_trial_pending_auth: bool = field(init=False, default=False)
-    _discord_managed_auth_in_progress: bool = field(init=False, default=False)
-    _qq_managed_auth_in_progress: bool = field(init=False, default=False)
-    _qq_managed_auth_generation: int = field(init=False, default=0)
-    _qq_managed_auth_cancelled: bool = field(init=False, default=False)
-    _qq_managed_auth_task_handle: asyncio.Task[object] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _discord_managed_auth_callback_received_hook: Callable[[], None] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    last_discord_managed_auth_referral_bonus_applied: bool = field(
-        init=False,
-        default=False,
-    )
-    _managed_trial_usage_metadata: OpenRouterKeyMetadata | None = field(init=False, default=None)
-    _managed_trial_usage_metadata_entitlement_ref: str | None = field(
-        init=False,
-        default=None,
-    )
-    _talk_together_pass_status: TalkTogetherPassStatus | None = field(
-        init=False,
-        default=None,
-    )
-    _talk_together_pass_status_key: tuple[str | None, str | None, str | None] | None = field(
-        init=False,
-        default=None,
-    )
     _translation_toggle_intent_enabled: bool = field(init=False, default=False)
     _translation_toggle_generation: int = field(init=False, default=0)
     _github_star_prompt_translation_success_task: asyncio.Task[bool] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _telemetry_translation_success_task: asyncio.Task[bool] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _translation_success_telemetry_service: TranslationSuccessTelemetryService | None = field(
         init=False,
         default=None,
         repr=False,
@@ -574,16 +476,8 @@ class GuiController:
         return self._effective_peer_translation_enabled_for(self.settings)
 
     @property
-    def managed_auth_pending(self) -> bool:
-        return self._managed_trial_pending_auth
-
-    @property
     def desktop_overlay_captions_locked(self) -> bool:
         return self.desktop_overlay_interaction_mode == DESKTOP_INTERACTION_MODE_PASS_THROUGH
-
-    @property
-    def discord_managed_auth_in_progress(self) -> bool:
-        return self._discord_managed_auth_in_progress
 
     @property
     def effective_context_mode(self) -> str:
@@ -658,7 +552,6 @@ class GuiController:
 
     async def start(self) -> None:
         self.settings = self._load_or_init_settings(self.config_path)
-        self._backfill_local_managed_claim_sources()
         self.settings.ui.overlay_enabled = False
         self.settings.ui.peer_translation_enabled = False
         self._sync_overlay_calibration_cache(self.settings)
@@ -669,10 +562,6 @@ class GuiController:
             apply_locale = getattr(self.app, "apply_locale", None)
             if callable(apply_locale):
                 apply_locale()
-        with contextlib.suppress(Exception):
-            show_telemetry_consent_dialog = getattr(self.app, "show_telemetry_consent_dialog", None)
-            if callable(show_telemetry_consent_dialog):
-                show_telemetry_consent_dialog()
 
         runtime_logging = self.runtime_logging
         runtime_logging.set_mode(SessionLoggingMode.BASIC)
@@ -683,10 +572,6 @@ class GuiController:
             runtime_logging.attach_realtime_sink(logs_view)
 
         await self._init_pipeline()
-        self._translation_success_telemetry_service = TranslationSuccessTelemetryService(
-            read_settings=lambda: self.settings,
-            persist_settings=self._persist_telemetry_settings,
-        )
         self._refresh_local_stt_runtime_state()
 
         assert self.hub is not None
@@ -694,16 +579,8 @@ class GuiController:
         dash = getattr(self.app, "view_dashboard", None)
         if dash is not None:
             # Set needs_key flags based on saved verification status & key existence
-            # STT: check current provider's verification status
-            stt_provider = self.settings.provider.stt.value
-            if self._stt_provider_requires_secret(self.settings.provider.stt):
-                # Map stt provider to api_key_verified field name (qwen_asr uses alibaba keys)
-                stt_key_map = {"qwen_asr": self._get_alibaba_verified_key()}
-                stt_verified_key = stt_key_map.get(stt_provider, stt_provider)
-                stt_verified = getattr(self.settings.api_key_verified, stt_verified_key, False)
-                dash.stt_needs_key = (self.hub.stt is None) or (not stt_verified)
-            else:
-                dash.stt_needs_key = False
+            # STT: no network providers — never needs a key
+            dash.stt_needs_key = False
 
             # LLM: check current provider's verification status
             llm_provider = self.settings.provider.llm.value
@@ -717,11 +594,7 @@ class GuiController:
                 }
                 llm_verified_key = llm_key_map.get(llm_provider, llm_provider)
                 llm_verified = getattr(self.settings.api_key_verified, llm_verified_key, False)
-                dash.translation_needs_key = (
-                    False
-                    if self._managed_openrouter_can_attempt_translation()
-                    else (self.hub.llm is None) or (not llm_verified)
-                )
+                dash.translation_needs_key = (self.hub.llm is None) or (not llm_verified)
             else:
                 dash.translation_needs_key = False
 
@@ -729,7 +602,6 @@ class GuiController:
             dash.set_translation_enabled(False)
             dash.set_stt_enabled(False)
             self.hub.translation_enabled = False
-            await self._refresh_managed_trial_usage_state_impl(auto_show_founder_letter=False)
 
         await self.hub.start(auto_flush_osc=True)
 
@@ -752,17 +624,8 @@ class GuiController:
 
     def _stt_provider_applies_custom_vocabulary(self, settings: AppSettings) -> bool:
         return settings.provider.stt in (
-            STTProviderName.DEEPGRAM,
             STTProviderName.LOCAL_QWEN,
             STTProviderName.LOCAL_QWEN_17B,
-            STTProviderName.SONIOX,
-        )
-
-    def _stt_provider_requires_secret(self, provider: STTProviderName) -> bool:
-        return provider in (
-            STTProviderName.DEEPGRAM,
-            STTProviderName.QWEN_ASR,
-            STTProviderName.SONIOX,
         )
 
     def _llm_provider_requires_secret(self, provider: LLMProviderName) -> bool:
@@ -778,12 +641,6 @@ class GuiController:
         if self.settings is None:
             return None
         return self.settings.provider.stt
-
-    def _dashboard_stt_needs_key(self, *, stt_available: bool) -> bool:
-        provider = self._selected_stt_provider()
-        if provider is None:
-            return not stt_available
-        return self._stt_provider_requires_secret(provider) and not stt_available
 
     def _stt_runtime_custom_vocabulary_signature(
         self, settings: AppSettings
@@ -846,33 +703,6 @@ class GuiController:
 
         return (
             settings.provider.stt,
-            (
-                settings.deepgram_stt.model
-                if settings.provider.stt == STTProviderName.DEEPGRAM
-                else None
-            ),
-            settings.qwen.region if settings.provider.stt == STTProviderName.QWEN_ASR else None,
-            (
-                settings.qwen_asr_stt.model
-                if settings.provider.stt == STTProviderName.QWEN_ASR
-                else None
-            ),
-            settings.soniox_stt.model if settings.provider.stt == STTProviderName.SONIOX else None,
-            (
-                settings.soniox_stt.endpoint
-                if settings.provider.stt == STTProviderName.SONIOX
-                else None
-            ),
-            (
-                settings.soniox_stt.keepalive_interval_s
-                if settings.provider.stt == STTProviderName.SONIOX
-                else None
-            ),
-            (
-                settings.soniox_stt.trailing_silence_ms
-                if settings.provider.stt == STTProviderName.SONIOX
-                else None
-            ),
             local_qwen_identity,
             settings.provider.stt_compute,
             settings.provider.stt_quant,
@@ -887,33 +717,6 @@ class GuiController:
     def _build_peer_stt_provider_signature(self, settings: AppSettings) -> tuple[object, ...]:
         return build_peer_stt_provider_signature(settings)
 
-    def _managed_openrouter_can_attempt_translation(self) -> bool:
-        can_attempt = bool(
-            self.settings is not None
-            and self.settings.provider.llm == LLMProviderName.OPENROUTER
-            and self.settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
-            and self.hub is not None
-            and self.hub.llm is not None
-        )
-        if not can_attempt:
-            return False
-        if self._is_managed_china_connection():
-            return self._managed_openrouter_local_key_available()
-        return True
-
-    def _sync_managed_auth_dashboard_notice(self) -> None:
-        dash = getattr(self.app, "view_dashboard", None)
-        setter = getattr(dash, "set_managed_auth_pending", None) if dash is not None else None
-        if callable(setter):
-            setter(self._managed_trial_pending_auth)
-
-    def _set_managed_trial_pending_auth(self, pending: bool) -> None:
-        self._managed_trial_pending_auth = bool(pending)
-        self._sync_managed_auth_dashboard_notice()
-
-    def clear_managed_auth_pending_state(self) -> None:
-        self._set_managed_trial_pending_auth(False)
-
     def _record_translation_toggle_intent(self, enabled: bool) -> int:
         self._translation_toggle_intent_enabled = bool(enabled)
         self._translation_toggle_generation += 1
@@ -922,414 +725,6 @@ class GuiController:
     def _translation_toggle_intent_matches(self, *, enabled: bool, generation: int) -> bool:
         return generation == self._translation_toggle_generation and (
             self._translation_toggle_intent_enabled == bool(enabled)
-        )
-
-    def _should_show_managed_auth_pending_before_prepare(self) -> bool:
-        if self.settings is None:
-            return False
-        try:
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-            resolution = resolve_openrouter_credentials(
-                self.settings,
-                secrets=secrets,
-                request_intent="TRANS",
-            )
-        except Exception as exc:
-            self.log_basic(f"[ManagedAuth] Credential resolution failed: {exc}", level=logging.WARNING)
-            return True
-        return resolution.api_key is None
-
-    def _managed_openrouter_selected(self) -> bool:
-        return bool(
-            self.settings is not None
-            and self.settings.provider.llm == LLMProviderName.OPENROUTER
-            and self.settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
-        )
-
-    def _backfill_local_managed_claim_sources(self) -> tuple[str, ...]:
-        if self.settings is None:
-            return ()
-        try:
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-            return backfill_local_managed_claim_sources(
-                self.settings,
-                secrets,
-                persist_settings=lambda updated: save_settings(self.config_path, updated),
-            )
-        except Exception as exc:
-            logger.warning("[ManagedAuth] local managed claim backfill failed: %s", exc)
-            return self.settings.managed_identity.local_managed_claim_sources
-
-    def _local_managed_auth_blocking_source(self, requested_source: str) -> str | None:
-        if self.settings is None:
-            return None
-        self._backfill_local_managed_claim_sources()
-        return local_managed_auth_blocking_source(self.settings, requested_source)
-
-    def _managed_openrouter_local_key_available(self) -> bool:
-        if self.settings is None:
-            return False
-        try:
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-            resolution = resolve_openrouter_credentials(
-                self.settings,
-                secrets=secrets,
-                request_intent="TRANS",
-            )
-        except Exception as exc:
-            self.log_basic(f"[ManagedAuth] Local key check failed: {exc}", level=logging.WARNING)
-            return False
-        has_key = resolution.api_key is not None
-        if self._is_managed_china_connection():
-            logger.info(
-                "[QQAuth] _managed_openrouter_local_key_available: China mode, qq_key=%s",
-                has_key,
-            )
-        else:
-            logger.info(
-                "[ManagedAuth] _managed_openrouter_local_key_available: non-China mode, has_key=%s",
-                has_key,
-            )
-        return has_key
-
-    def _managed_qq_key_available(self) -> bool:
-        if self.settings is None:
-            return False
-        try:
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-            resolution = resolve_openrouter_credentials(
-                self.settings,
-                secrets=secrets,
-                request_intent="TRANS",
-            )
-            result = resolution.api_key is not None
-            logger.info("[QQAuth] _managed_qq_key_available: %s", result)
-            return result
-        except Exception as exc:
-            logger.warning("[QQAuth] _managed_qq_key_available: exception: %s", exc)
-            return False
-
-    def dashboard_managed_auth_action(self) -> str:
-        if not self._managed_openrouter_selected():
-            return "continue"
-        if (
-            self._discord_managed_auth_in_progress
-            or self._qq_managed_auth_in_progress
-            or self._managed_trial_pending_auth
-        ):
-            logger.info(
-                "[ManagedAuth] dashboard_managed_auth_action: in_progress (discord=%s qq=%s pending=%s)",
-                self._discord_managed_auth_in_progress,
-                self._qq_managed_auth_in_progress,
-                self._managed_trial_pending_auth,
-            )
-            return "in_progress"
-        if self._managed_openrouter_local_key_available():
-            logger.info("[ManagedAuth] dashboard_managed_auth_action: continue (key available)")
-            return "continue"
-        is_china = self._is_managed_china_connection()
-        logger.info("[ManagedAuth] dashboard_managed_auth_action: prompt (is_china=%s)", is_china)
-        return "prompt"
-
-    def _discord_auth_message_key(self, result) -> str:  # noqa: ANN001
-        diagnostics = getattr(result, "diagnostics", None)
-        subcode = getattr(diagnostics, "subcode", None)
-        if subcode is not None:
-            mapped_key = DISCORD_AUTH_ERROR_KEY_BY_SUBCODE.get(subcode)
-            if mapped_key is not None:
-                return mapped_key
-        if getattr(diagnostics, "code", None) == "discord_loopback_unavailable":
-            return DISCORD_AUTH_ERROR_KEY_BY_SUBCODE["loopback_unavailable"]
-        return getattr(result, "message_key", "discord_auth.error.retry")
-
-    async def start_discord_managed_auth_from_dialog(
-        self,
-        *,
-        on_callback_received: Callable[[], None] | None = None,
-        referral_id: str | None = None,
-    ) -> bool:
-        self.last_discord_managed_auth_referral_bonus_applied = False
-        if (
-            self._local_managed_auth_blocking_source(MANAGED_AUTH_CLAIM_SOURCE_DISCORD)
-            == MANAGED_AUTH_CLAIM_SOURCE_QQ
-        ):
-            self._discord_managed_auth_in_progress = False
-            self._set_managed_trial_pending_auth(False)
-            self._show_short_message("discord_auth.error.already_claimed_qq")
-            return False
-        service = self._managed_openrouter_release_service
-        if service is None:
-            self._discord_managed_auth_in_progress = False
-            self._set_managed_trial_pending_auth(False)
-            self._show_short_message("discord_auth.error.retry")
-            return False
-
-        previous_callback = self._discord_managed_auth_callback_received_hook
-        self._discord_managed_auth_callback_received_hook = on_callback_received
-        self._discord_managed_auth_in_progress = True
-        self._set_managed_trial_pending_auth(True)
-        try:
-            try:
-                result = await service.prepare_for_translation(referral_id=referral_id)
-            except Exception as exc:
-                self.log_basic(
-                    f"[ManagedAuth] Discord auth start failed: {exc}",
-                    level=logging.ERROR,
-                )
-                self._show_short_message("discord_auth.error.retry")
-                return False
-
-            if (
-                result.behavior == ManagedOpenRouterReleaseBehavior.READY
-                and result.local_key_available
-            ):
-                self.last_discord_managed_auth_referral_bonus_applied = (
-                    getattr(result, "referral_bonus_applied", False) is True
-                )
-                if self.hub is None:
-                    self._show_short_message("discord_auth.error.retry")
-                    return False
-                if self.hub.llm is None:
-                    await self._rebuild_llm_provider()
-                if self.hub.llm is None:
-                    self._show_short_message("discord_auth.error.retry")
-                    return False
-                result_referral_id = normalize_owned_referral_id(
-                    getattr(result, "referral_id", None)
-                )
-                self._set_managed_usage_view_state(
-                    view_settings=getattr(self.app, "view_settings", None),
-                    visible=True,
-                    remaining_percent=None,
-                    referral_id=result_referral_id or self._current_owned_referral_id(),
-                    pass_status=getattr(result, "pass_status", None),
-                )
-                self._schedule_managed_trial_usage_refresh()
-                return True
-
-            message_key = self._discord_auth_message_key(result)
-            diagnostics = result.diagnostics
-            error_class = getattr(diagnostics, "error_class", None)
-            self.log_basic(
-                "[ManagedAuth] Discord auth failed: "
-                f"message_key={message_key} class={error_class or 'unknown'}",
-                level=logging.ERROR,
-            )
-            self._show_short_message(
-                message_key,
-                **dict(result.message_kwargs),
-            )
-            return False
-        finally:
-            if self._discord_managed_auth_callback_received_hook is on_callback_received:
-                self._discord_managed_auth_callback_received_hook = previous_callback
-            self._discord_managed_auth_in_progress = False
-            self._set_managed_trial_pending_auth(False)
-
-    def _is_managed_china_connection(self) -> bool:
-        if self.settings is None:
-            return False
-        return self.settings.translation.connection == TranslationConnection.MANAGED_CHINA
-
-    async def start_qq_managed_auth_from_dialog(
-        self,
-        *,
-        qq_identity: str,
-        credential: str,
-    ) -> bool | ManagedOpenRouterReleaseResult:
-        logger.info("[QQAuth] start_qq_managed_auth_from_dialog: starting")
-        current_task = asyncio.current_task()
-        previous_task = self._qq_managed_auth_task_handle
-        if (
-            previous_task is not None
-            and previous_task is not current_task
-            and not previous_task.done()
-        ):
-            previous_task.cancel()
-        if current_task is not None:
-            self._qq_managed_auth_task_handle = current_task
-        self._qq_managed_auth_generation += 1
-        auth_generation = self._qq_managed_auth_generation
-        self._qq_managed_auth_cancelled = False
-
-        service = self._managed_openrouter_release_service
-        if service is None:
-            logger.warning("[QQAuth] start_qq_managed_auth_from_dialog: service is None")
-            if current_task is not None and self._qq_managed_auth_task_handle is current_task:
-                self._qq_managed_auth_task_handle = None
-            self._qq_managed_auth_in_progress = False
-            self._set_managed_trial_pending_auth(False)
-            return self._neutral_qq_managed_auth_result()
-
-        normalized_qq_identity = (qq_identity or "").strip()
-        normalized_credential = (credential or "").strip()
-        if not normalized_qq_identity or not normalized_credential:
-            logger.warning("[QQAuth] start_qq_managed_auth_from_dialog: empty input")
-            if current_task is not None and self._qq_managed_auth_task_handle is current_task:
-                self._qq_managed_auth_task_handle = None
-            self._qq_managed_auth_in_progress = False
-            self._set_managed_trial_pending_auth(False)
-            return ManagedOpenRouterReleaseResult(
-                behavior=ManagedOpenRouterReleaseBehavior.RETRY,
-                message_key="qq_auth.error.invalid_input",
-            )
-
-        if (
-            self._local_managed_auth_blocking_source(MANAGED_AUTH_CLAIM_SOURCE_QQ)
-            == MANAGED_AUTH_CLAIM_SOURCE_DISCORD
-        ):
-            logger.info("[QQAuth] start_qq_managed_auth_from_dialog: blocked by Discord claim")
-            if current_task is not None and self._qq_managed_auth_task_handle is current_task:
-                self._qq_managed_auth_task_handle = None
-            self._qq_managed_auth_in_progress = False
-            self._set_managed_trial_pending_auth(False)
-            return ManagedOpenRouterReleaseResult(
-                behavior=ManagedOpenRouterReleaseBehavior.STOP,
-                message_key="qq_auth.error.already_claimed_discord",
-            )
-
-        self._qq_managed_auth_in_progress = True
-        self._set_managed_trial_pending_auth(True)
-
-        def issue_persistence_allowed() -> bool:
-            return self._is_current_qq_managed_auth_generation(auth_generation)
-
-        try:
-            try:
-                logger.info(
-                    "[QQAuth] start_qq_managed_auth_from_dialog: calling prepare_from_qq_assertion"
-                )
-                result = await service.prepare_from_qq_assertion(
-                    qq_identity=normalized_qq_identity,
-                    credential=normalized_credential,
-                    issue_persistence_allowed=issue_persistence_allowed,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if not self._is_current_qq_managed_auth_generation(auth_generation):
-                    return self._neutral_qq_managed_auth_result()
-                self.log_basic(
-                    "[QQAuth] QQ auth start failed",
-                    level=logging.ERROR,
-                )
-                logger.warning(
-                    "[QQAuth] start_qq_managed_auth_from_dialog: release error class=%s",
-                    exc.__class__.__name__,
-                )
-                return ManagedOpenRouterReleaseResult(
-                    behavior=ManagedOpenRouterReleaseBehavior.RETRY,
-                    message_key="qq_auth.error.retry",
-                )
-
-            if not self._is_current_qq_managed_auth_generation(auth_generation):
-                return self._neutral_qq_managed_auth_result()
-            logger.info(
-                "[QQAuth] start_qq_managed_auth_from_dialog: result behavior=%s local_key=%s",
-                result.behavior,
-                result.local_key_available,
-            )
-
-            if (
-                result.behavior == ManagedOpenRouterReleaseBehavior.READY
-                and result.local_key_available
-            ):
-                if self.hub is None:
-                    return ManagedOpenRouterReleaseResult(
-                        behavior=ManagedOpenRouterReleaseBehavior.RETRY,
-                        message_key="qq_auth.error.retry",
-                    )
-                if self.hub.llm is None:
-                    await self._rebuild_llm_provider()
-                    if not self._is_current_qq_managed_auth_generation(auth_generation):
-                        return self._neutral_qq_managed_auth_result()
-                if self.hub.llm is None:
-                    return ManagedOpenRouterReleaseResult(
-                        behavior=ManagedOpenRouterReleaseBehavior.RETRY,
-                        message_key="qq_auth.error.retry",
-                    )
-                result_referral_id = normalize_owned_referral_id(
-                    getattr(result, "referral_id", None)
-                )
-                self._set_managed_usage_view_state(
-                    view_settings=getattr(self.app, "view_settings", None),
-                    visible=True,
-                    remaining_percent=None,
-                    referral_id=result_referral_id or self._current_owned_referral_id(),
-                    pass_status=getattr(result, "pass_status", None),
-                )
-                self._schedule_managed_trial_usage_refresh()
-                return True
-
-            result = self._qq_managed_auth_result_for_dialog(result)
-            diagnostics = result.diagnostics
-            subcode = getattr(diagnostics, "subcode", None)
-            self.log_basic(
-                "[ManagedAuth] QQ auth failed: "
-                f"message_key={result.message_key} "
-                f"subcode={subcode or 'none'} "
-                f"class={getattr(diagnostics, 'error_class', None) or 'unknown'}",
-                level=logging.ERROR,
-            )
-            return result
-        finally:
-            if self._is_current_qq_managed_auth_generation(auth_generation) and (
-                current_task is None or self._qq_managed_auth_task_handle is current_task
-            ):
-                if current_task is not None:
-                    self._qq_managed_auth_task_handle = None
-                self._qq_managed_auth_in_progress = False
-                self._set_managed_trial_pending_auth(False)
-
-    def _neutral_qq_managed_auth_result(self) -> ManagedOpenRouterReleaseResult:
-        return ManagedOpenRouterReleaseResult(
-            behavior=ManagedOpenRouterReleaseBehavior.RETRY,
-            message_key="qq_auth.error.retry",
-        )
-
-    def _is_current_qq_managed_auth_generation(self, generation: int) -> bool:
-        return bool(
-            generation == self._qq_managed_auth_generation and not self._qq_managed_auth_cancelled
-        )
-
-    def _qq_managed_auth_result_for_dialog(
-        self,
-        result: ManagedOpenRouterReleaseResult,
-    ) -> ManagedOpenRouterReleaseResult:
-        diagnostics = result.diagnostics
-        subcode = getattr(diagnostics, "subcode", None)
-        if subcode in {"qq_credential_invalid", "qq_credential_mismatch"}:
-            if result.message_key == "qq_auth.error.credential_mismatch":
-                return result
-            return replace(result, message_key="qq_auth.error.credential_mismatch")
-        if subcode == "qq_lifetime_used":
-            if result.message_key == "qq_auth.error.lifetime_used":
-                return result
-            return replace(result, message_key="qq_auth.error.lifetime_used")
-        return result
-
-    def cancel_qq_managed_auth(self) -> None:
-        self._qq_managed_auth_cancelled = True
-        task_handle = self._qq_managed_auth_task_handle
-        cancel = getattr(task_handle, "cancel", None)
-        if callable(cancel):
-            with contextlib.suppress(Exception):
-                cancel()
-        self._qq_managed_auth_task_handle = None
-        self._qq_managed_auth_in_progress = False
-        self._set_managed_trial_pending_auth(False)
-
-    def _managed_trial_remaining_percent(
-        self, usage_metadata: OpenRouterKeyMetadata | None
-    ) -> int | None:
-        if usage_metadata is None:
-            return None
-        if usage_metadata.limit_usd is None or usage_metadata.remaining_usd is None:
-            return None
-        if usage_metadata.limit_usd <= 0:
-            return None
-        return max(
-            0, min(100, round((usage_metadata.remaining_usd / usage_metadata.limit_usd) * 100))
         )
 
     def _github_star_prompt_translation_connection_for(
@@ -1357,12 +752,6 @@ class GuiController:
             in _GITHUB_STAR_PROMPT_USER_OWNED_CLOUD_CONNECTIONS
         )
 
-    def _github_star_prompt_has_managed_connection(self) -> bool:
-        return (
-            self._github_star_prompt_current_translation_connection()
-            in _GITHUB_STAR_PROMPT_MANAGED_CONNECTIONS
-        )
-
     def _github_star_prompt_has_user_owned_cloud_connection(self) -> bool:
         return (
             self._github_star_prompt_current_translation_connection()
@@ -1372,14 +761,6 @@ class GuiController:
     def is_github_star_prompt_eligible(self) -> bool:
         if self.settings is None:
             return False
-        if self._github_star_prompt_has_managed_connection():
-            remaining_percent = self._managed_trial_remaining_percent(
-                self._managed_trial_usage_metadata
-            )
-            return (
-                remaining_percent is not None
-                and remaining_percent <= GITHUB_STAR_PROMPT_MANAGED_REMAINING_PERCENT_THRESHOLD
-            )
         if self._github_star_prompt_has_user_owned_cloud_connection():
             return bool(self.settings.ui.github_star_prompt_translation_success_observed)
         return False
@@ -1669,65 +1050,6 @@ class GuiController:
         if self._github_star_prompt_translation_success_task is task:
             self._github_star_prompt_translation_success_task = None
 
-    async def _persist_telemetry_settings(self, settings: AppSettings) -> None:
-        await asyncio.to_thread(save_settings, self.config_path, settings)
-
-    async def record_translation_success_for_telemetry(self) -> bool:
-        service = self._translation_success_telemetry_service
-        if service is None:
-            return False
-        return await service.record_translation_success()
-
-    async def _run_translation_success_telemetry_task(self) -> bool:
-        try:
-            return await self.record_translation_success_for_telemetry()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self.log_basic(
-                f"[Telemetry] Translation success-day delivery skipped: {exc}",
-                level=logging.INFO,
-            )
-            return False
-
-    def schedule_translation_success_telemetry(self) -> bool:
-        service = self._translation_success_telemetry_service
-        if service is None:
-            return False
-        existing_task = self._telemetry_translation_success_task
-        if existing_task is not None and not existing_task.done():
-            return False
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return False
-
-        task = loop.create_task(self._run_translation_success_telemetry_task())
-        self._telemetry_translation_success_task = task
-
-        def _clear_completed_task(completed_task: asyncio.Task[bool]) -> None:
-            if self._telemetry_translation_success_task is completed_task:
-                self._telemetry_translation_success_task = None
-
-        task.add_done_callback(_clear_completed_task)
-        return True
-
-    async def _cancel_telemetry_translation_success_task(self) -> None:
-        task = self._telemetry_translation_success_task
-        self._telemetry_translation_success_task = None
-        if task is not None and not task.done():
-            task.cancel()
-        if task is not None:
-            await asyncio.gather(task, return_exceptions=True)
-
-    async def _close_translation_success_telemetry_service(self) -> None:
-        await self._cancel_telemetry_translation_success_task()
-        service = self._translation_success_telemetry_service
-        self._translation_success_telemetry_service = None
-        if service is not None:
-            with contextlib.suppress(Exception):
-                await service.close()
-
     async def _preserve_github_star_prompt_observation_before_settings_replace(
         self,
         replacement_settings: AppSettings,
@@ -1763,381 +1085,6 @@ class GuiController:
                 replacement_ui.github_star_prompt_last_shown_at,
                 current_ui.github_star_prompt_last_shown_at,
             )
-
-    def _current_owned_referral_id(self) -> str | None:
-        if self.settings is None:
-            return None
-        return normalize_owned_referral_id(self.settings.managed_identity.referral_id)
-
-    def _managed_identity_scope(
-        self,
-        referral_id: str | None,
-    ) -> tuple[str | None, str | None, str | None] | None:
-        if self.settings is None:
-            return None
-        installation_id = self.settings.managed_identity.installation_id.strip() or None
-        active_ref = self.settings.managed_identity.active_managed_credential_ref
-        normalized_active_ref = active_ref.strip() if isinstance(active_ref, str) else None
-        normalized_referral_id = normalize_owned_referral_id(referral_id)
-        return (installation_id, normalized_active_ref or None, normalized_referral_id)
-
-    def _talk_together_pass_cache_key(
-        self,
-        referral_id: str | None,
-    ) -> tuple[str | None, str | None, str | None] | None:
-        normalized_referral_id = normalize_owned_referral_id(referral_id)
-        if normalized_referral_id is None:
-            return None
-        return self._managed_identity_scope(normalized_referral_id)
-
-    def _clear_talk_together_pass_status_cache(self) -> None:
-        self._talk_together_pass_status = None
-        self._talk_together_pass_status_key = None
-
-    def _cached_talk_together_pass_status_for(
-        self,
-        referral_id: str | None,
-    ) -> TalkTogetherPassStatus | None:
-        cache_key = self._talk_together_pass_cache_key(referral_id)
-        if cache_key is None or cache_key != self._talk_together_pass_status_key:
-            self._clear_talk_together_pass_status_cache()
-            return None
-        return self._talk_together_pass_status
-
-    def _set_managed_usage_view_state(
-        self,
-        *,
-        view_settings: object | None,
-        visible: bool,
-        remaining_percent: int | None,
-        referral_id: str | None,
-        pass_status: TalkTogetherPassStatus | None | object = _PASS_STATUS_UNSET,
-    ) -> None:
-        normalized_referral_id = normalize_owned_referral_id(referral_id)
-        if not visible or normalized_referral_id is None:
-            self._clear_talk_together_pass_status_cache()
-        elif pass_status is _PASS_STATUS_UNSET:
-            pass
-        elif (
-            isinstance(pass_status, TalkTogetherPassStatus)
-            and pass_status.pass_id == normalized_referral_id
-        ):
-            self._talk_together_pass_status = pass_status
-            self._talk_together_pass_status_key = self._talk_together_pass_cache_key(
-                normalized_referral_id
-            )
-        else:
-            self._clear_talk_together_pass_status_cache()
-
-        effective_pass_status = self._cached_talk_together_pass_status_for(normalized_referral_id)
-        if view_settings is None:
-            return
-        managed_key_setter = getattr(view_settings, "set_managed_key_state", None)
-        if callable(managed_key_setter):
-            if _callable_accepts_keyword(managed_key_setter, "pass_status"):
-                managed_key_setter(
-                    visible=visible,
-                    remaining_percent=remaining_percent,
-                    referral_id=normalized_referral_id,
-                    pass_status=effective_pass_status,
-                )
-            else:
-                managed_key_setter(
-                    visible=visible,
-                    remaining_percent=remaining_percent,
-                    referral_id=normalized_referral_id,
-                )
-            return
-        usage_setter = getattr(view_settings, "set_managed_trial_usage_state", None)
-        if callable(usage_setter):
-            usage_setter(visible=visible, remaining_percent=remaining_percent)
-
-    def _managed_key_card_visible_from_settings(self) -> bool:
-        if self.settings is None:
-            return False
-        return self.settings.translation.connection in (
-            TranslationConnection.MANAGED,
-            TranslationConnection.MANAGED_CHINA,
-        )
-
-    async def _refresh_managed_status_best_effort(
-        self,
-        *,
-        service: object | None = None,
-    ) -> ManagedOpenRouterStatusRefreshResult:
-        current_referral_id = self._current_owned_referral_id()
-        if service is None:
-            service = self._managed_openrouter_release_service
-        if service is None:
-            return ManagedOpenRouterStatusRefreshResult(
-                referral_id=current_referral_id,
-                pass_status=self._cached_talk_together_pass_status_for(current_referral_id),
-                succeeded=False,
-            )
-        refresh_status = getattr(service, "refresh_managed_status", None)
-        if callable(refresh_status):
-            try:
-                return await refresh_status()
-            except Exception as exc:
-                self.log_basic(
-                    f"[ManagedAuth] Managed status refresh failed: {exc}",
-                    level=logging.WARNING,
-                )
-                return ManagedOpenRouterStatusRefreshResult(
-                    referral_id=current_referral_id,
-                    pass_status=self._cached_talk_together_pass_status_for(current_referral_id),
-                    succeeded=False,
-                )
-        refresh_status = getattr(service, "refresh_owned_referral_id_from_status", None)
-        if callable(refresh_status):
-            try:
-                return ManagedOpenRouterStatusRefreshResult(
-                    referral_id=normalize_owned_referral_id(await refresh_status())
-                    or current_referral_id,
-                    pass_status=None,
-                    succeeded=True,
-                )
-            except Exception as exc:
-                self.log_basic(
-                    f"[ManagedAuth] Referral ID status refresh failed: {exc}",
-                    level=logging.WARNING,
-                )
-        return ManagedOpenRouterStatusRefreshResult(
-            referral_id=current_referral_id,
-            pass_status=self._cached_talk_together_pass_status_for(current_referral_id),
-            succeeded=False,
-        )
-
-    async def _refresh_owned_referral_id_from_managed_status_best_effort(
-        self,
-        *,
-        service: object | None = None,
-    ) -> str | None:
-        return (await self._refresh_managed_status_best_effort(service=service)).referral_id
-
-    def _schedule_owned_referral_id_status_refresh(
-        self,
-        *,
-        view_settings: object | None,
-        remaining_percent: int | None,
-        current_referral_id: str | None,
-    ) -> None:
-        service = self._managed_openrouter_release_service
-        if service is None:
-            return
-        refresh_status = getattr(service, "refresh_managed_status", None)
-        legacy_refresh_status = getattr(service, "refresh_owned_referral_id_from_status", None)
-        if not callable(refresh_status) and not callable(legacy_refresh_status):
-            return
-        scheduled_identity_scope = self._managed_identity_scope(current_referral_id)
-        scheduled_identity_base = (
-            scheduled_identity_scope[:2] if scheduled_identity_scope is not None else None
-        )
-
-        async def _run_status_refresh() -> None:
-            try:
-                result = await self._refresh_managed_status_best_effort(
-                    service=service,
-                )
-                if service is not self._managed_openrouter_release_service:
-                    return
-                if (
-                    self.settings is None
-                    or self.settings.provider.llm != LLMProviderName.OPENROUTER
-                    or self.settings.openrouter.selected_source
-                    != OpenRouterCredentialSource.MANAGED
-                    or not self._managed_key_card_visible_from_settings()
-                ):
-                    return
-                refreshed_referral_id = (
-                    normalize_owned_referral_id(result.referral_id) or current_referral_id
-                )
-                current_identity_scope = self._managed_identity_scope(
-                    self._current_owned_referral_id()
-                )
-                allowed_identity_scopes = {scheduled_identity_scope}
-                if scheduled_identity_base is not None:
-                    allowed_identity_scopes.add((*scheduled_identity_base, refreshed_referral_id))
-                if current_identity_scope not in allowed_identity_scopes:
-                    return
-                if result.succeeded:
-                    self._set_managed_usage_view_state(
-                        view_settings=view_settings,
-                        visible=True,
-                        remaining_percent=remaining_percent,
-                        referral_id=refreshed_referral_id,
-                        pass_status=result.pass_status,
-                    )
-                    return
-                self._set_managed_usage_view_state(
-                    view_settings=view_settings,
-                    visible=True,
-                    remaining_percent=remaining_percent,
-                    referral_id=refreshed_referral_id,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self.log_basic(
-                    f"[ManagedAuth] Referral ID status refresh failed: {exc}",
-                    level=logging.WARNING,
-                )
-
-        with contextlib.suppress(RuntimeError):
-            asyncio.get_running_loop().create_task(_run_status_refresh())
-
-    def _schedule_managed_trial_usage_refresh(self) -> None:
-        async def _run_refresh() -> None:
-            await self._refresh_managed_trial_usage_state_best_effort()
-
-        with contextlib.suppress(RuntimeError):
-            asyncio.get_running_loop().create_task(_run_refresh())
-
-    def _on_managed_trial_delegate_ready(self) -> None:
-        self._set_managed_trial_pending_auth(False)
-        self._schedule_managed_trial_usage_refresh()
-
-    async def _refresh_managed_trial_usage_state_best_effort(self) -> None:
-        try:
-            await self._refresh_managed_trial_usage_state()
-        except Exception as exc:
-            self.log_basic(
-                f"[ManagedAuth] Usage refresh failed: {exc}",
-                level=logging.WARNING,
-            )
-
-    async def _refresh_managed_trial_usage_state(self) -> None:
-        await self._refresh_managed_trial_usage_state_impl(auto_show_founder_letter=True)
-
-    def _clear_managed_trial_usage_metadata_cache(self) -> None:
-        self._managed_trial_usage_metadata = None
-        self._managed_trial_usage_metadata_entitlement_ref = None
-
-    def _sync_managed_trial_usage_metadata_scope(self) -> str | None:
-        if self.settings is None:
-            self._clear_managed_trial_usage_metadata_cache()
-            return None
-        entitlement_ref = self.settings.managed_identity.active_managed_credential_ref
-        if entitlement_ref != self._managed_trial_usage_metadata_entitlement_ref:
-            self._managed_trial_usage_metadata = None
-            self._managed_trial_usage_metadata_entitlement_ref = entitlement_ref
-        return entitlement_ref
-
-    async def _refresh_managed_trial_usage_state_impl(
-        self,
-        *,
-        auto_show_founder_letter: bool,
-    ) -> None:
-        view_settings = getattr(self.app, "view_settings", None)
-        if self.settings is None:
-            self._clear_managed_trial_usage_metadata_cache()
-            self._set_managed_trial_pending_auth(False)
-            self._set_managed_usage_view_state(
-                view_settings=view_settings,
-                visible=False,
-                remaining_percent=None,
-                referral_id=self._current_owned_referral_id(),
-            )
-            return
-        managed_key_visible = self._managed_key_card_visible_from_settings()
-        if not managed_key_visible:
-            self._clear_managed_trial_usage_metadata_cache()
-            self._set_managed_trial_pending_auth(False)
-            self._set_managed_usage_view_state(
-                view_settings=view_settings,
-                visible=False,
-                remaining_percent=None,
-                referral_id=self._current_owned_referral_id(),
-            )
-            return
-        if (
-            self.settings.provider.llm != LLMProviderName.OPENROUTER
-            or self.settings.openrouter.selected_source != OpenRouterCredentialSource.MANAGED
-        ):
-            self._clear_managed_trial_usage_metadata_cache()
-            self._set_managed_trial_pending_auth(False)
-            self._set_managed_usage_view_state(
-                view_settings=view_settings,
-                visible=True,
-                remaining_percent=None,
-                referral_id=self._current_owned_referral_id(),
-            )
-            return
-
-        entitlement_ref = self._sync_managed_trial_usage_metadata_scope()
-
-        try:
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-            resolution = resolve_openrouter_credentials(self.settings, secrets=secrets)
-        except Exception as exc:
-            self.log_basic(f"[ManagedTrial] Credential resolution failed: {exc}", level=logging.WARNING)
-            resolution = None
-
-        usage_metadata: OpenRouterKeyMetadata | None = None
-        api_key = resolution.api_key if resolution is not None else None
-        if api_key:
-            self._set_managed_trial_pending_auth(False)
-            usage_metadata = await OpenRouterLLMProvider.fetch_key_metadata(api_key)
-
-        self._managed_trial_usage_metadata = usage_metadata
-        self._managed_trial_usage_metadata_entitlement_ref = entitlement_ref
-
-        remaining_percent = self._managed_trial_remaining_percent(usage_metadata)
-        current_referral_id = self._current_owned_referral_id()
-        self._set_managed_usage_view_state(
-            view_settings=view_settings,
-            visible=True,
-            remaining_percent=remaining_percent,
-            referral_id=current_referral_id,
-        )
-
-        if auto_show_founder_letter and is_effectively_exhausted(usage_metadata):
-            self._disable_translation_for_managed_exhaustion(
-                reopen_founder_letter=should_auto_show_founder_letter(self.settings, usage_metadata)
-            )
-
-        self._schedule_owned_referral_id_status_refresh(
-            view_settings=view_settings,
-            remaining_percent=remaining_percent,
-            current_referral_id=current_referral_id,
-        )
-
-    def _show_founder_letter_dialog(self) -> None:
-        if self.settings is None:
-            return
-        show_founder_letter_dialog = getattr(self.app, "show_founder_letter_dialog", None)
-        if not callable(show_founder_letter_dialog):
-            return
-        show_founder_letter_dialog()
-        mark_founder_letter_shown(self.settings)
-        with contextlib.suppress(Exception):
-            self._save_settings()
-
-    def _disable_translation_for_managed_exhaustion(
-        self,
-        *,
-        reopen_founder_letter: bool,
-    ) -> None:
-        self._record_translation_toggle_intent(False)
-        self._set_managed_trial_pending_auth(False)
-        if reopen_founder_letter:
-            self._show_founder_letter_dialog()
-        if self.hub is not None:
-            self.hub.translation_enabled = False
-        dash = getattr(self.app, "view_dashboard", None)
-        if dash is not None:
-            dash.set_translation_enabled(False)
-
-    async def _should_route_managed_trans_to_founder_letter(self) -> bool:
-        if self.settings is None:
-            return False
-        with contextlib.suppress(Exception):
-            await self._refresh_managed_trial_usage_state_impl(auto_show_founder_letter=False)
-        if not is_effectively_exhausted(self._managed_trial_usage_metadata):
-            return False
-
-        self._disable_translation_for_managed_exhaustion(reopen_founder_letter=True)
-        return True
 
     def _build_llm_provider_signature(self, settings: AppSettings) -> tuple[object, ...]:
         return (
@@ -2224,16 +1171,6 @@ class GuiController:
         target.qwen.region = source.qwen.region
         target.deepseek.llm_model = source.deepseek.llm_model
         target.local_llm = copy.deepcopy(source.local_llm)
-        if source.openrouter.selected_source == OpenRouterCredentialSource.MANAGED:
-            target.managed_identity.verified_hardware_hash = (
-                source.managed_identity.verified_hardware_hash
-            )
-            target.managed_identity.verified_hardware_hash_salt_version = (
-                source.managed_identity.verified_hardware_hash_salt_version
-            )
-        else:
-            target.managed_identity.verified_hardware_hash = None
-            target.managed_identity.verified_hardware_hash_salt_version = None
         target.system_prompt = source.system_prompt
         target.system_prompts = {}
 
@@ -2944,7 +1881,6 @@ class GuiController:
         self._is_stopping = True
         self._cancel_stt_idle_release()
         await self._drain_github_star_prompt_translation_success_task()
-        await self._close_translation_success_telemetry_service()
         await self._stop_clipboard_watcher()
         await self._cancel_local_stt_download()
         await self.stop_microphone_test()
@@ -2973,7 +1909,6 @@ class GuiController:
                 self.sender.close()
             self.sender = None
         self.osc = None
-        await self._replace_managed_openrouter_release_service(None)
         if self._runtime_logging is not None:
             with contextlib.suppress(Exception):
                 self._runtime_logging.close()
@@ -3489,8 +2424,6 @@ class GuiController:
 
     async def set_translation_enabled(self, enabled: bool) -> bool:
         request_generation = self._record_translation_toggle_intent(enabled)
-        if not enabled:
-            self._set_managed_trial_pending_auth(False)
         if self.hub is None:
             return False
         self.log_basic(f"[Translation] Toggle request: enabled={enabled}")
@@ -3499,8 +2432,6 @@ class GuiController:
             f"current_enabled={self.hub.translation_enabled} "
             f"llm_available={self.hub.llm is not None}"
         )
-        if enabled and await self._handle_managed_translation_enable(request_generation) is False:
-            return False
         if enabled and not self._translation_toggle_intent_matches(
             enabled=True,
             generation=request_generation,
@@ -3554,12 +2485,7 @@ class GuiController:
         # Log provider info when enabling
         if enabled and self.settings is not None:
             provider = self.settings.provider.stt.value
-            if provider == "qwen_asr":
-                region = self.settings.qwen.region.value
-                self.log_basic(f"[STT] Enabled with provider: {provider}")
-                self.log_detailed(f"[STT] Provider detail: provider={provider} region={region}")
-            else:
-                self.log_basic(f"[STT] Enabled with provider: {provider}")
+            self.log_basic(f"[STT] Enabled with provider: {provider}")
 
         if (
             enabled
@@ -3614,68 +2540,6 @@ class GuiController:
                 )
                 return
         self._log_error(message)
-
-    async def _handle_managed_translation_enable(self, request_generation: int) -> bool:
-        if self.settings is None or self.hub is None:
-            return True
-        if self.settings.provider.llm != LLMProviderName.OPENROUTER:
-            return True
-        if self.settings.openrouter.selected_source != OpenRouterCredentialSource.MANAGED:
-            return True
-        if (
-            self._is_managed_china_connection()
-            and not self._managed_openrouter_local_key_available()
-        ):
-            self._set_managed_trial_pending_auth(False)
-            self.hub.translation_enabled = False
-            dash = getattr(self.app, "view_dashboard", None)
-            if dash is not None:
-                dash.set_translation_enabled(False)
-            self._show_short_message("qq_auth.error.key_unavailable")
-            return False
-        if await self._should_route_managed_trans_to_founder_letter():
-            return False
-        service = self._managed_openrouter_release_service
-        if service is None:
-            return True
-
-        self._set_managed_trial_pending_auth(
-            self._should_show_managed_auth_pending_before_prepare()
-        )
-        try:
-            result = await service.prepare_for_translation()
-        except Exception:
-            self._set_managed_trial_pending_auth(False)
-            raise
-
-        self._set_managed_trial_pending_auth(False)
-
-        if not self._translation_toggle_intent_matches(
-            enabled=True,
-            generation=request_generation,
-        ):
-            self.log_detailed(
-                "[Translation] Skipping stale managed enable result after newer toggle intent"
-            )
-            return False
-
-        if result.behavior == ManagedOpenRouterReleaseBehavior.READY and result.local_key_available:
-            if self.hub.llm is None:
-                await self._rebuild_llm_provider()
-            else:
-                self._schedule_managed_trial_usage_refresh()
-            return True
-
-        diagnostics_text = format_managed_openrouter_diagnostics(result.diagnostics)
-        if diagnostics_text:
-            self.log_basic(f"[ManagedAuth] {diagnostics_text}", level=logging.ERROR)
-        await self._refresh_managed_trial_usage_state_impl(auto_show_founder_letter=False)
-        self.hub.translation_enabled = False
-        dash = getattr(self.app, "view_dashboard", None)
-        if dash is not None:
-            dash.set_translation_enabled(False)
-        self._show_short_message(result.message_key, **dict(result.message_kwargs))
-        return False
 
     def _refresh_local_stt_runtime_state(self) -> None:
         if self.settings is None:
@@ -4558,10 +3422,6 @@ class GuiController:
                     key,
                     base_url="https://dashscope-intl.aliyuncs.com/api/v1",
                 )
-            elif provider == "deepgram":
-                success = await DeepgramRealtimeSTTBackend.verify_api_key(key)
-            elif provider == "soniox":
-                success = await SonioxRealtimeSTTBackend.verify_api_key(key)
             else:
                 return False, f"Unknown provider: {provider}"
 
@@ -4630,13 +3490,6 @@ class GuiController:
         self._save_settings()
         self._clear_local_stt_pending_enable_if_provider_switched_away()
         self._sync_local_stt_notice()
-        if (
-            next_settings.provider.llm != LLMProviderName.OPENROUTER
-            or next_settings.openrouter.selected_source != OpenRouterCredentialSource.MANAGED
-        ):
-            self._set_managed_trial_pending_auth(False)
-        else:
-            self._sync_managed_auth_dashboard_notice()
 
         if self.hub is not None:
             self.hub.source_language = next_settings.languages.source_language
@@ -4700,15 +3553,9 @@ class GuiController:
         llm_error: Exception | None = None
         try:
             secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-            new_managed_release_service = self._create_managed_openrouter_release_service(
-                secrets=secrets
-            )
-            await self._replace_managed_openrouter_release_service(new_managed_release_service)
             llm = create_llm_provider(
                 self.settings,
                 secrets=secrets,
-                managed_release_service=self._managed_openrouter_release_service,
-                managed_delegate_ready=self._on_managed_trial_delegate_ready,
                 runtime_logging=self.runtime_logging,
             )
         except Exception as exc:
@@ -4720,14 +3567,24 @@ class GuiController:
         # Update hub's LLM provider
         self.hub.llm = llm
 
-        # Update dashboard status
         dash = getattr(self.app, "view_dashboard", None)
+
+        # Stop translation if provider changed while translation was active.
+        # Without this the dashboard toggle stays green but translation is broken/stale.
+        if self.hub.translation_enabled:
+            self.hub.translation_enabled = False
+            if dash is not None:
+                dash.set_translation_enabled(False)
+
+        # Update needs_key DATA only (no UI update).
+        # The toggle handler checks this before enabling — if the provider has no key,
+        # the first click shows a warning instead of turning ON.
+        # We do NOT call set_translation_needs_key() here because that would
+        # turn the button yellow just from switching providers in settings.
         if dash is not None:
-            dash.set_translation_needs_key(
+            dash.translation_needs_key = (
                 (llm is None) and self._llm_provider_requires_secret(self.settings.provider.llm)
             )
-
-        await self._refresh_managed_trial_usage_state_best_effort()
 
         if llm is None:
             message = "LLM provider not available"
@@ -4777,7 +3634,7 @@ class GuiController:
 
         dash = getattr(self.app, "view_dashboard", None)
         if dash is not None:
-            dash.set_stt_needs_key(self._dashboard_stt_needs_key(stt_available=stt is not None))
+            dash.set_stt_needs_key(False)
             if stt is None:
                 dash.set_stt_enabled(False)
 
@@ -5078,9 +3935,7 @@ class GuiController:
                 (self.hub.llm is None)
                 and self._llm_provider_requires_secret(self.settings.provider.llm)
             )
-            dash.set_stt_needs_key(
-                self._dashboard_stt_needs_key(stt_available=self.hub.stt is not None)
-            )
+            dash.set_stt_needs_key(False)
 
             self.hub.translation_enabled = (
                 bool(getattr(dash, "is_translation_on", True)) and self.hub.llm is not None
@@ -5109,18 +3964,12 @@ class GuiController:
         assert self.settings is not None
         self._sync_signature_caches(self.settings)
         secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-        new_managed_release_service = self._create_managed_openrouter_release_service(
-            secrets=secrets
-        )
-        await self._replace_managed_openrouter_release_service(new_managed_release_service)
 
         llm = None
         with contextlib.suppress(Exception):
             llm = create_llm_provider(
                 self.settings,
                 secrets=secrets,
-                managed_release_service=self._managed_openrouter_release_service,
-                managed_delegate_ready=self._on_managed_trial_delegate_ready,
                 runtime_logging=self.runtime_logging,
             )
 
@@ -5220,55 +4069,6 @@ class GuiController:
         )
         self._last_peer_translation_enabled = self.settings.ui.peer_translation_enabled
         await self._configure_vrc_mic_receiver(enabled=self.settings.osc.vrc_mic_intercept)
-
-    async def _replace_managed_openrouter_release_service(
-        self,
-        service: ManagedOpenRouterReleaseService | None,
-    ) -> None:
-        previous = self._managed_openrouter_release_service
-        self._managed_openrouter_release_service = service
-        if previous is not None and previous is not service:
-            with contextlib.suppress(Exception):
-                await previous.close()
-
-    def _create_managed_openrouter_release_service(
-        self, *, secrets
-    ) -> ManagedOpenRouterReleaseService | None:
-        if self.settings is None:
-            return None
-        if self.settings.provider.llm != LLMProviderName.OPENROUTER:
-            return None
-        if self.settings.openrouter.selected_source != OpenRouterCredentialSource.MANAGED:
-            return None
-
-        from puripuly_heart import __version__
-
-        try:
-            client = HttpManagedOpenRouterBrokerClient(
-                base_url=self.settings.openrouter.broker_base_url,
-            )
-        except ValueError as exc:
-            logger.warning(
-                "[Managed OpenRouter] Invalid broker base URL %r; using unavailable fallback: %s",
-                self.settings.openrouter.broker_base_url,
-                exc,
-            )
-            client = UnavailableManagedOpenRouterReleaseClient()
-
-        return ManagedOpenRouterReleaseService(
-            settings=self.settings,
-            secrets=secrets,
-            client=client,
-            persist_settings=lambda updated: save_settings(self.config_path, updated),
-            raw_hardware_fingerprint_provider=get_raw_hardware_fingerprint,
-            app_version=__version__,
-            on_discord_callback_received=self._on_discord_managed_auth_callback_received,
-        )
-
-    def _on_discord_managed_auth_callback_received(self) -> None:
-        hook = self._discord_managed_auth_callback_received_hook
-        if callable(hook):
-            hook()
 
     @property
     def microphone_test_meter_level(self) -> float:
@@ -6509,19 +5309,12 @@ class GuiController:
                         if secrets is not None
                         else None
                     )
-                    if (
-                        self.settings.openrouter.selected_source
-                        == OpenRouterCredentialSource.MANAGED
-                        and (resolution is None or resolution.api_key is None)
-                    ):
-                        llm_valid = self._managed_openrouter_can_attempt_translation()
-                    else:
-                        key = (
-                            resolution.api_key
-                            if resolution is not None and resolution.api_key
-                            else ""
-                        )
-                        llm_valid = bool(key) and await OpenRouterLLMProvider.verify_api_key(key)
+                    key = (
+                        resolution.api_key
+                        if resolution is not None and resolution.api_key
+                        else ""
+                    )
+                    llm_valid = bool(key) and await OpenRouterLLMProvider.verify_api_key(key)
                 elif provider_name == LLMProviderName.DEEPSEEK:
                     key = (
                         (secrets.get("deepseek_api_key") if secrets is not None else None)
@@ -6563,34 +5356,5 @@ class GuiController:
             if self.settings.provider.llm == LLMProviderName.LOCAL_LLM and self.hub is not None:
                 dash.set_translation_enabled(bool(self.hub.translation_enabled))
 
-        # 2. Verify STT
-        stt_requires_secret = self._stt_provider_requires_secret(self.settings.provider.stt)
-        stt_valid = not stt_requires_secret
-        if self.hub and self.hub.stt and stt_requires_secret:
-            try:
-                provider_name = self.settings.provider.stt
-
-                if provider_name == STTProviderName.DEEPGRAM:
-                    key = secrets.get("deepgram_api_key") or "" if secrets is not None else ""
-                    stt_valid = await DeepgramRealtimeSTTBackend.verify_api_key(key)
-                elif provider_name == STTProviderName.QWEN_ASR:
-                    stt_valid = await _verify_alibaba_any_model()
-                elif provider_name == STTProviderName.SONIOX:
-                    key = secrets.get("soniox_api_key") or "" if secrets is not None else ""
-                    stt_valid = await SonioxRealtimeSTTBackend.verify_api_key(key)
-                else:
-                    stt_valid = True
-            except Exception as exc:
-                stt_valid = False
-                self._log_error(f"[KeyVerify] STT key verification failed for {provider_name}: {exc}")
-
-        if not stt_valid:
-            dash.set_stt_needs_key(stt_requires_secret)
-            if self.hub:
-                # Close STT backend?
-                pass
-            dash.set_stt_enabled(False)
-        else:
-            dash.set_stt_needs_key(False)
-
-        await self._refresh_managed_trial_usage_state_impl(auto_show_founder_letter=False)
+        # 2. Verify STT — no network providers, always valid
+        dash.set_stt_needs_key(False)

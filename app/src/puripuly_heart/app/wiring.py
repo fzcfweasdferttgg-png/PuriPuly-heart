@@ -25,7 +25,6 @@ from puripuly_heart.config.settings import (
     OpenRouterLLMModel,
     OpenRouterProviderRouting,
     OpenRouterSelectionAlias,
-    QwenRegion,
     SecretsBackend,
     SecretsSettings,
     STTProviderName,
@@ -34,9 +33,7 @@ from puripuly_heart.config.settings import (
 from puripuly_heart.core.llm import FallbackRacingLLMProvider
 from puripuly_heart.core.llm.provider import LLMProvider, SemaphoreLLMProvider
 from puripuly_heart.core.openrouter_credentials import (
-    load_managed_openrouter_user_identifier,
     require_openrouter_execution_api_key,
-    resolve_openrouter_credentials,
 )
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.core.storage.secrets import (
@@ -56,10 +53,6 @@ from puripuly_heart.providers.llm.qwen import QwenLLMProvider
 from puripuly_heart.providers.llm.qwen_async import AsyncQwenLLMProvider
 
 SECRETS_PASSPHRASE_ENV = "PURIPULY_HEART_SECRETS_PASSPHRASE"
-MANAGED_OPENROUTER_RELEASE_SERVICE_REQUIRED_ERROR = (
-    "OpenRouter managed mode requires a managed release service; "
-    "CLI/headless paths are not wired for managed OpenRouter mode yet"
-)
 
 
 @dataclass(slots=True)
@@ -162,8 +155,6 @@ def _create_llm_provider_from_alias_profile(
     *,
     alias: str,
     secrets: SecretStore,
-    managed_release_service: object | None,
-    managed_delegate_ready: Callable[[], object] | None,
     runtime_logging: SessionRuntimeLoggingService | None,
 ) -> LLMProvider:
     profile = profile_for_alias(alias)
@@ -178,47 +169,10 @@ def _create_llm_provider_from_alias_profile(
         raise ValueError(f"Unsupported LLM selection alias: {alias}")
 
     alias_settings = _settings_for_openrouter_alias(settings, alias=alias)
-    alias_managed_release_service = _managed_release_service_for_alias(
-        managed_release_service,
-        alias_settings=alias_settings,
-    )
-    if (
-        alias_settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
-        and alias_managed_release_service is None
-    ):
-        raise ValueError(MANAGED_OPENROUTER_RELEASE_SERVICE_REQUIRED_ERROR)
-
-    resolution = resolve_openrouter_credentials(alias_settings, secrets=secrets)
-    if (
-        alias_settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
-        and resolution.api_key is None
-        and alias_managed_release_service is not None
-    ):
-        from puripuly_heart.core.managed_openrouter_release import ManagedOpenRouterLLMProvider
-
-        return ManagedOpenRouterLLMProvider(
-            release_service=alias_managed_release_service,
-            delegate_factory=lambda api_key: OpenRouterLLMProvider(
-                api_key=api_key,
-                user_identifier=load_managed_openrouter_user_identifier(
-                    alias_settings,
-                    secrets=secrets,
-                ),
-                model=alias_settings.openrouter.llm_model.value,
-                routing_mode=settings.openrouter.routing_mode,
-                provider_routing=alias_settings.openrouter.provider_routing,
-                runtime_logging=runtime_logging,
-            ),
-            on_delegate_ready=managed_delegate_ready,
-        )
 
     api_key = require_openrouter_execution_api_key(alias_settings, secrets=secrets)
-    user_identifier = None
-    if alias_settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED:
-        user_identifier = load_managed_openrouter_user_identifier(alias_settings, secrets=secrets)
     return OpenRouterLLMProvider(
         api_key=api_key,
-        user_identifier=user_identifier,
         model=alias_settings.openrouter.llm_model.value,
         routing_mode=settings.openrouter.routing_mode,
         provider_routing=alias_settings.openrouter.provider_routing,
@@ -226,46 +180,10 @@ def _create_llm_provider_from_alias_profile(
     )
 
 
-def _managed_release_service_for_alias(
-    managed_release_service: object | None,
-    *,
-    alias_settings: AppSettings,
-) -> object | None:
-    if managed_release_service is None:
-        return None
-
-    from puripuly_heart.core.managed_openrouter_release import ManagedOpenRouterReleaseService
-
-    if not isinstance(managed_release_service, ManagedOpenRouterReleaseService):
-        return managed_release_service
-
-    if (
-        managed_release_service.settings.openrouter.selection_alias
-        == alias_settings.openrouter.selection_alias
-    ):
-        return managed_release_service
-
-    return ManagedOpenRouterReleaseService(
-        settings=alias_settings,
-        secrets=managed_release_service.secrets,
-        client=managed_release_service.client,
-        persist_settings=lambda _updated: managed_release_service.persist_settings(
-            managed_release_service.settings
-        ),
-        app_version=managed_release_service.app_version,
-        raw_hardware_fingerprint_provider=managed_release_service.raw_hardware_fingerprint_provider,
-        hardware_hash_provider=managed_release_service._legacy_hardware_hash_provider,
-        signed_at_provider=managed_release_service.signed_at_provider,
-        monotonic_ms_provider=managed_release_service.monotonic_ms_provider,
-    )
-
-
 def _create_openrouter_fallback_provider(
     *,
     settings: AppSettings,
     secrets: SecretStore,
-    managed_release_service: object | None,
-    managed_delegate_ready: Callable[[], object] | None,
     runtime_logging: SessionRuntimeLoggingService | None,
 ) -> LLMProvider:
     fallback_model = resolve_openrouter_fallback_model(
@@ -282,33 +200,6 @@ def _create_openrouter_fallback_provider(
         ),
     )
 
-    if settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED:
-        if managed_release_service is None:
-            raise ValueError(MANAGED_OPENROUTER_RELEASE_SERVICE_REQUIRED_ERROR)
-
-        from puripuly_heart.core.managed_openrouter_release import ManagedOpenRouterLLMProvider
-
-        fallback_managed_release_service = _managed_release_service_for_alias(
-            managed_release_service,
-            alias_settings=resolved_settings,
-        )
-
-        return ManagedOpenRouterLLMProvider(
-            release_service=fallback_managed_release_service,
-            delegate_factory=lambda api_key: OpenRouterLLMProvider(
-                api_key=api_key,
-                user_identifier=load_managed_openrouter_user_identifier(
-                    resolved_settings,
-                    secrets=secrets,
-                ),
-                model=resolved_settings.openrouter.llm_model.value,
-                routing_mode=resolved_settings.openrouter.routing_mode,
-                provider_routing=resolved_settings.openrouter.provider_routing,
-                runtime_logging=runtime_logging,
-            ),
-            on_delegate_ready=managed_delegate_ready,
-        )
-
     api_key = require_openrouter_execution_api_key(resolved_settings, secrets=secrets)
     return OpenRouterLLMProvider(
         api_key=api_key,
@@ -320,10 +211,6 @@ def _create_openrouter_fallback_provider(
 
 
 def _translation_fallback_openrouter_source(settings: AppSettings) -> OpenRouterCredentialSource:
-    if settings.provider.llm == LLMProviderName.OPENROUTER:
-        if settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED:
-            return OpenRouterCredentialSource.MANAGED
-        return OpenRouterCredentialSource.BYOK
     return OpenRouterCredentialSource.BYOK
 
 
@@ -347,36 +234,9 @@ def _create_openrouter_translation_fallback_provider(
     settings: AppSettings,
     secrets: SecretStore,
     model: OpenRouterLLMModel,
-    managed_release_service: object | None,
-    managed_delegate_ready: Callable[[], object] | None,
     runtime_logging: SessionRuntimeLoggingService | None,
 ) -> LLMProvider:
     resolved_settings = _openrouter_settings_for_translation_fallback(settings, model=model)
-    if resolved_settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED:
-        if managed_release_service is None:
-            raise ValueError(MANAGED_OPENROUTER_RELEASE_SERVICE_REQUIRED_ERROR)
-
-        from puripuly_heart.core.managed_openrouter_release import ManagedOpenRouterLLMProvider
-
-        fallback_managed_release_service = _managed_release_service_for_alias(
-            managed_release_service,
-            alias_settings=resolved_settings,
-        )
-        return ManagedOpenRouterLLMProvider(
-            release_service=fallback_managed_release_service,
-            delegate_factory=lambda api_key: OpenRouterLLMProvider(
-                api_key=api_key,
-                user_identifier=load_managed_openrouter_user_identifier(
-                    resolved_settings,
-                    secrets=secrets,
-                ),
-                model=resolved_settings.openrouter.llm_model.value,
-                routing_mode=resolved_settings.openrouter.routing_mode,
-                provider_routing=resolved_settings.openrouter.provider_routing,
-                runtime_logging=runtime_logging,
-            ),
-            on_delegate_ready=managed_delegate_ready,
-        )
 
     api_key = require_openrouter_execution_api_key(resolved_settings, secrets=secrets)
     return OpenRouterLLMProvider(
@@ -393,8 +253,6 @@ def _create_translation_fallback_provider(
     settings: AppSettings,
     secrets: SecretStore,
     alias: TranslationFallbackSelectionAlias,
-    managed_release_service: object | None,
-    managed_delegate_ready: Callable[[], object] | None,
     runtime_logging: SessionRuntimeLoggingService | None,
 ) -> LLMProvider:
     if alias == TranslationFallbackSelectionAlias.DEEPSEEK_V4_FLASH_OFFICIAL:
@@ -422,8 +280,6 @@ def _create_translation_fallback_provider(
             settings=settings,
             secrets=secrets,
             model=OpenRouterLLMModel.DEEPSEEK_V4_FLASH,
-            managed_release_service=managed_release_service,
-            managed_delegate_ready=managed_delegate_ready,
             runtime_logging=runtime_logging,
         )
     if alias == TranslationFallbackSelectionAlias.OPENROUTER_GEMMA4_26B_A4B:
@@ -431,8 +287,6 @@ def _create_translation_fallback_provider(
             settings=settings,
             secrets=secrets,
             model=OpenRouterLLMModel.GEMMA_4_26B_A4B_IT,
-            managed_release_service=managed_release_service,
-            managed_delegate_ready=managed_delegate_ready,
             runtime_logging=runtime_logging,
         )
     raise ValueError(f"Unsupported translation fallback selection: {alias}")
@@ -478,30 +332,12 @@ def _emit_translation_fallback_noop(
             emit(f"[Fallback] Skipped matching fallback target: {alias.value}")
 
 
-def _shared_managed_release_service_for_fallback(
-    primary: LLMProvider,
-    managed_release_service: object | None,
-) -> object | None:
-    from puripuly_heart.core.managed_openrouter_release import ManagedOpenRouterLLMProvider
-
-    if isinstance(primary, ManagedOpenRouterLLMProvider):
-        return primary.release_service
-    return managed_release_service
-
-
 @dataclass(frozen=True, slots=True)
 class ResolvedPeerSTTConfig:
     provider: STTProviderName
     source_language: str
     sample_rate_hz: int
     keyterms: tuple[str, ...]
-    deepgram_model: str | None = None
-    qwen_model: str | None = None
-    qwen_region: QwenRegion | None = None
-    soniox_model: str | None = None
-    soniox_endpoint: str | None = None
-    soniox_keepalive_interval_s: float | None = None
-    soniox_trailing_silence_ms: int | None = None
 
 
 def _portable_passphrase() -> str:
@@ -621,8 +457,6 @@ def create_llm_provider(
     settings: AppSettings,
     *,
     secrets: SecretStore,
-    managed_release_service: object | None = None,
-    managed_delegate_ready: Callable[[], object] | None = None,
     runtime_logging: SessionRuntimeLoggingService | None = None,
 ) -> LLMProvider:
     if settings.provider.llm == LLMProviderName.GEMINI:
@@ -638,8 +472,6 @@ def create_llm_provider(
             settings,
             alias=primary_alias,
             secrets=secrets,
-            managed_release_service=managed_release_service,
-            managed_delegate_ready=managed_delegate_ready,
             runtime_logging=runtime_logging,
         )
     elif settings.provider.llm == LLMProviderName.QWEN:
@@ -720,10 +552,6 @@ def create_llm_provider(
                 alias=translation_fallback_alias,
             )
         else:
-            fallback_managed_release_service = _shared_managed_release_service_for_fallback(
-                base,
-                managed_release_service,
-            )
             base = FallbackRacingLLMProvider(
                 primary=base,
                 fallback=_LazyFactoryLLMProvider(
@@ -731,8 +559,6 @@ def create_llm_provider(
                         settings=settings,
                         secrets=secrets,
                         alias=translation_fallback_alias,
-                        managed_release_service=fallback_managed_release_service,
-                        managed_delegate_ready=managed_delegate_ready,
                         runtime_logging=runtime_logging,
                     )
                 ),
@@ -743,18 +569,12 @@ def create_llm_provider(
         and settings.openrouter.fallback_selection_alias != OpenRouterFallbackSelectionAlias.NONE
         and settings.openrouter.provider_routing != OpenRouterProviderRouting.DEEPSEEK_ONLY
     ):
-        fallback_managed_release_service = _shared_managed_release_service_for_fallback(
-            base,
-            managed_release_service,
-        )
         base = FallbackRacingLLMProvider(
             primary=base,
             fallback=_LazyFactoryLLMProvider(
                 factory=lambda: _create_openrouter_fallback_provider(
                     settings=settings,
                     secrets=secrets,
-                    managed_release_service=fallback_managed_release_service,
-                    managed_delegate_ready=managed_delegate_ready,
                     runtime_logging=runtime_logging,
                 )
             ),
@@ -885,130 +705,19 @@ def create_stt_backend(
             device=_device,
         )
 
-    if settings.provider.stt == STTProviderName.DEEPGRAM:
-        api_key = require_secret(secrets, key="deepgram_api_key", env_var="DEEPGRAM_API_KEY")
-        return _create_deepgram_stt_backend(
-            settings=settings,
-            api_key=api_key,
-            keyterms=effective_terms,
-        )
-
-    if settings.provider.stt == STTProviderName.QWEN_ASR:
-        from puripuly_heart.config.settings import QwenRegion
-        from puripuly_heart.core.language import get_qwen_asr_language
-        from puripuly_heart.providers.stt.qwen_asr import QwenASRRealtimeSTTBackend
-
-        if settings.qwen.region == QwenRegion.BEIJING:
-            api_key = require_secret_any(
-                secrets,
-                key="alibaba_api_key_beijing",
-                env_vars=("ALIBABA_API_KEY_BEIJING", "ALIBABA_API_KEY", "DASHSCOPE_API_KEY"),
-                legacy_keys=("alibaba_api_key",),
-            )
-        else:
-            api_key = require_secret_any(
-                secrets,
-                key="alibaba_api_key_singapore",
-                env_vars=("ALIBABA_API_KEY_SINGAPORE", "ALIBABA_API_KEY", "DASHSCOPE_API_KEY"),
-                legacy_keys=("alibaba_api_key",),
-            )
-        endpoint = settings.qwen.get_asr_endpoint()
-        return QwenASRRealtimeSTTBackend(
-            api_key=api_key,
-            model=settings.qwen_asr_stt.model,
-            endpoint=endpoint,
-            language=get_qwen_asr_language(settings.languages.source_language),
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-        )
-
-    if settings.provider.stt == STTProviderName.SONIOX:
-        from puripuly_heart.core.language import get_soniox_language_hints
-        from puripuly_heart.providers.stt.soniox import SonioxRealtimeSTTBackend
-
-        api_key = require_secret(secrets, key="soniox_api_key", env_var="SONIOX_API_KEY")
-        return SonioxRealtimeSTTBackend(
-            api_key=api_key,
-            model=settings.soniox_stt.model,
-            endpoint=settings.soniox_stt.endpoint,
-            language_hints=get_soniox_language_hints(settings.languages.source_language),
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-            keepalive_interval_s=settings.soniox_stt.keepalive_interval_s,
-            trailing_silence_ms=settings.soniox_stt.trailing_silence_ms,
-            context_terms=effective_terms,
-        )
-
     raise ValueError(f"Unsupported STT provider: {settings.provider.stt}")
 
 
 def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
     peer_source_language = settings.languages.effective_peer_source
-    keyterms: tuple[str, ...] = ()
     provider = settings.provider.peer_stt
 
-    if provider == STTProviderName.DEEPGRAM:
-        return ResolvedPeerSTTConfig(
-            provider=provider,
-            source_language=peer_source_language,
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-            keyterms=keyterms,
-            deepgram_model=settings.deepgram_stt.model,
-        )
-
-    if provider == STTProviderName.QWEN_ASR:
-        return ResolvedPeerSTTConfig(
-            provider=provider,
-            source_language=peer_source_language,
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-            keyterms=keyterms,
-            qwen_model=settings.qwen_asr_stt.model,
-            qwen_region=settings.qwen.region,
-        )
-
-    if provider == STTProviderName.SONIOX:
-        return ResolvedPeerSTTConfig(
-            provider=provider,
-            source_language=peer_source_language,
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-            keyterms=keyterms,
-            soniox_model=settings.soniox_stt.model,
-            soniox_endpoint=settings.soniox_stt.endpoint,
-            soniox_keepalive_interval_s=settings.soniox_stt.keepalive_interval_s,
-            soniox_trailing_silence_ms=settings.soniox_stt.trailing_silence_ms,
-        )
-
-    if provider in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
-        return ResolvedPeerSTTConfig(
-            provider=provider,
-            source_language=peer_source_language,
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-            keyterms=(),
-        )
-
-    if provider == STTProviderName.LOCAL_GIGAAM_RNNT:
-        return ResolvedPeerSTTConfig(
-            provider=provider,
-            source_language=peer_source_language,
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-            keyterms=(),
-        )
-
-    if provider in (STTProviderName.LOCAL_PARAKEET_TDT,):
-        return ResolvedPeerSTTConfig(
-            provider=provider,
-            source_language=peer_source_language,
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-            keyterms=(),
-        )
-
-    if provider in (STTProviderName.LOCAL_GIGAAM_RNNT_GGUF, STTProviderName.LOCAL_PARAKEET_TDT_GGUF, STTProviderName.LOCAL_QWEN3_ASR_GGUF, STTProviderName.LOCAL_QWEN_17B_GGUF):
-        return ResolvedPeerSTTConfig(
-            provider=provider,
-            source_language=peer_source_language,
-            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-            keyterms=(),
-        )
-
-    raise ValueError(f"Unsupported peer STT provider: {provider}")
+    return ResolvedPeerSTTConfig(
+        provider=provider,
+        source_language=peer_source_language,
+        sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
+        keyterms=(),
+    )
 
 
 def build_peer_stt_provider_signature(settings: AppSettings) -> tuple[object, ...]:
@@ -1017,13 +726,6 @@ def build_peer_stt_provider_signature(settings: AppSettings) -> tuple[object, ..
         resolved.provider,
         resolved.source_language,
         resolved.sample_rate_hz,
-        resolved.deepgram_model,
-        resolved.qwen_model,
-        resolved.qwen_region,
-        resolved.soniox_model,
-        resolved.soniox_endpoint,
-        resolved.soniox_keepalive_interval_s,
-        resolved.soniox_trailing_silence_ms,
         resolved.keyterms,
         settings.provider.peer_stt_compute,
         settings.provider.peer_stt_quant,
@@ -1037,62 +739,6 @@ def create_peer_stt_backend(
     diagnostics_enabled: Callable[[], bool] | None = None,
 ) -> STTBackend:
     resolved = resolve_peer_stt_config(settings)
-
-    if resolved.provider == STTProviderName.DEEPGRAM:
-        api_key = require_secret(secrets, key="deepgram_api_key", env_var="DEEPGRAM_API_KEY")
-        return _create_deepgram_stt_backend(
-            settings=settings,
-            api_key=api_key,
-            keyterms=resolved.keyterms,
-            source_language=resolved.source_language,
-            stream_label="peer",
-            model=resolved.deepgram_model,
-        )
-
-    if resolved.provider == STTProviderName.QWEN_ASR:
-        from puripuly_heart.core.language import get_qwen_asr_language
-        from puripuly_heart.providers.stt.qwen_asr import QwenASRRealtimeSTTBackend
-
-        if resolved.qwen_region == QwenRegion.BEIJING:
-            api_key = require_secret_any(
-                secrets,
-                key="alibaba_api_key_beijing",
-                env_vars=("ALIBABA_API_KEY_BEIJING", "ALIBABA_API_KEY", "DASHSCOPE_API_KEY"),
-                legacy_keys=("alibaba_api_key",),
-            )
-            endpoint = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
-        else:
-            api_key = require_secret_any(
-                secrets,
-                key="alibaba_api_key_singapore",
-                env_vars=("ALIBABA_API_KEY_SINGAPORE", "ALIBABA_API_KEY", "DASHSCOPE_API_KEY"),
-                legacy_keys=("alibaba_api_key",),
-            )
-            endpoint = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
-
-        return QwenASRRealtimeSTTBackend(
-            api_key=api_key,
-            model=resolved.qwen_model,
-            endpoint=endpoint,
-            language=get_qwen_asr_language(resolved.source_language),
-            sample_rate_hz=resolved.sample_rate_hz,
-        )
-
-    if resolved.provider == STTProviderName.SONIOX:
-        from puripuly_heart.core.language import get_soniox_language_hints
-        from puripuly_heart.providers.stt.soniox import SonioxRealtimeSTTBackend
-
-        api_key = require_secret(secrets, key="soniox_api_key", env_var="SONIOX_API_KEY")
-        return SonioxRealtimeSTTBackend(
-            api_key=api_key,
-            model=resolved.soniox_model,
-            endpoint=resolved.soniox_endpoint,
-            language_hints=get_soniox_language_hints(resolved.source_language),
-            sample_rate_hz=resolved.sample_rate_hz,
-            keepalive_interval_s=resolved.soniox_keepalive_interval_s,
-            trailing_silence_ms=resolved.soniox_trailing_silence_ms,
-            context_terms=resolved.keyterms,
-        )
 
     if resolved.provider in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
         from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
@@ -1185,26 +831,3 @@ def create_peer_stt_backend(
         )
 
     raise ValueError(f"Unsupported peer STT provider: {resolved.provider}")
-
-
-def _create_deepgram_stt_backend(
-    *,
-    settings: AppSettings,
-    api_key: str,
-    keyterms: tuple[str, ...] | list[str],
-    source_language: str | None = None,
-    stream_label: str | None = None,
-    model: str | None = None,
-) -> STTBackend:
-    from puripuly_heart.core.language import get_deepgram_language
-    from puripuly_heart.providers.stt.deepgram import DeepgramRealtimeSTTBackend
-
-    source_language = source_language or settings.languages.source_language
-    return DeepgramRealtimeSTTBackend(
-        api_key=api_key,
-        model=model or settings.deepgram_stt.model,
-        language=get_deepgram_language(source_language),
-        sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
-        keyterms=keyterms,
-        stream_label=stream_label,
-    )

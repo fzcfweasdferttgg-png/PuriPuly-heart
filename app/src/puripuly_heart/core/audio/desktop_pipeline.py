@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from puripuly_heart.core.audio.diagnostics import compute_audio_frame_metrics
-from puripuly_heart.core.audio.format import AudioFrameF32, float32_to_pcm16le_bytes
+from puripuly_heart.core.audio.format import AudioFrameF32
 from puripuly_heart.core.audio.source import AudioSource
 from puripuly_heart.core.audio.streaming_resampler import MonoFirstStreamingResampler
 
@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 class DesktopPeerAudioFrame:
     samples: np.ndarray
     sample_rate_hz: int
-    deepgram_pcm16le: bytes
     channels: int = 1
 
 
@@ -122,5 +121,4 @@ class DesktopPeerPipeline:
             samples=samples,
             sample_rate_hz=self.target_sample_rate_hz,
             channels=1,
-            deepgram_pcm16le=float32_to_pcm16le_bytes(samples),
         )
