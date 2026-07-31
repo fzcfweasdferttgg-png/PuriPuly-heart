@@ -5,7 +5,7 @@ import json
 import locale
 import math
 import secrets
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -13,7 +13,6 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from puripuly_heart.config.audio_host_api import (
-    WINDOWS_DIRECTSOUND_HOST_API,
     WINDOWS_WASAPI_COMPATIBILITY_HOST_API,
 )
 from puripuly_heart.config.vad_defaults import (

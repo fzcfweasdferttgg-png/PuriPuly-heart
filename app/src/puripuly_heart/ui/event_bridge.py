@@ -245,7 +245,6 @@ class UIEventBridge:
                     dashboard_target_language=target_lang,
                 )
             self._append_conversation_record(translation, source=source)
-            self._schedule_github_star_prompt_translation_success(translation)
             return
 
         if event.type == UIEventType.OSC_SENT:

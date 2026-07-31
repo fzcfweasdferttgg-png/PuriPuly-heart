@@ -58,9 +58,6 @@ FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE = {
     "ja": "自分のapiキーを使う",
 }
 FOUNDER_README_DEFAULT_API_KEYS_ANCHOR = "using-your-own-api-keys"
-GITHUB_STAR_REPOSITORY_URL = "https://github.com/kapitalismho/PuriPuly-heart"
-GITHUB_STAR_PROMPT_DELAY_S = 2.5
-GITHUB_STAR_PROMPT_DURATION_MS = 8000
 
 
 def _callable_accepts_keyword(callable_obj: object, keyword: str) -> bool:
@@ -94,11 +91,9 @@ class TranslatorApp:
         self.overlay_peer_contract = None
         self.debug_ui_preview = bool(debug_ui_preview)
         self.debug_preview_panel: DebugPreviewPanel | None = None
-        self._github_star_prompt_launch_pending = True
         self._launch_high_priority_feedback_shown = False
         self._launch_high_priority_feedback_reason: str | None = None
         self._launch_high_priority_snackbar = None
-        self._github_star_prompt_shown_this_launch = False
         self._microphone_test_dialog: MicrophoneTestDialog | None = None
         self._setup_page()
         self._build_layout()
@@ -248,79 +243,10 @@ class TranslatorApp:
         reason: str,
         snackbar: object | None = None,
     ) -> None:
-        if not getattr(self, "_github_star_prompt_launch_pending", True):
-            return
         self._launch_high_priority_feedback_shown = True
         self._launch_high_priority_feedback_reason = reason
         if snackbar is not None:
             self._launch_high_priority_snackbar = snackbar
-
-    def _launch_feedback_conflicts_with_github_star_prompt(self) -> bool:
-        if getattr(self, "_launch_high_priority_feedback_shown", False):
-            return True
-        snackbar = getattr(self, "_launch_high_priority_snackbar", None)
-        return bool(getattr(snackbar, "open", False))
-
-    async def maybe_show_github_star_prompt_after_launch(
-        self,
-        *,
-        delay_s: float = GITHUB_STAR_PROMPT_DELAY_S,
-    ) -> bool:
-        try:
-            controller = getattr(self, "controller", None)
-            persist_eligible_launch = getattr(
-                controller,
-                "persist_github_star_prompt_eligible_launch",
-                None,
-            )
-            if not callable(persist_eligible_launch):
-                return False
-            launch_gate_satisfied = await persist_eligible_launch()
-            if self._launch_feedback_conflicts_with_github_star_prompt():
-                return False
-            if not launch_gate_satisfied:
-                return False
-            should_show = getattr(controller, "should_show_github_star_prompt", None)
-            if not callable(should_show) or not should_show():
-                return False
-
-            await asyncio.sleep(delay_s)
-
-            if self._launch_feedback_conflicts_with_github_star_prompt():
-                return False
-            if not should_show():
-                return False
-            return await self._open_github_star_prompt_snackbar(
-                should_open=lambda: not self._launch_feedback_conflicts_with_github_star_prompt()
-            )
-        finally:
-            self._github_star_prompt_launch_pending = False
-
-    async def _open_github_star_prompt_snackbar(self, *, should_open=None) -> bool:  # noqa: ANN001
-        if getattr(self, "_github_star_prompt_shown_this_launch", False):
-            return False
-        controller = getattr(self, "controller", None)
-        persist_opened = getattr(controller, "persist_github_star_prompt_opened", None)
-        if not callable(persist_opened) or not await persist_opened(should_open=should_open):
-            return False
-
-        snackbar = None
-
-        def _open_repository(_event) -> None:  # noqa: ANN001
-            async def _persist_click() -> None:
-                persist_clicked = getattr(controller, "persist_github_star_prompt_clicked", None)
-                if callable(persist_clicked):
-                    await persist_clicked()
-
-            self._queue_settings_mutation_task(_persist_click)
-            webbrowser.open(GITHUB_STAR_REPOSITORY_URL)
-            if snackbar is not None:
-                self._close_github_star_prompt_snackbar(snackbar)
-
-        snackbar = self._build_github_star_prompt_snackbar(_open_repository)
-        self._github_star_prompt_shown_this_launch = True
-        self.page.open(snackbar)
-        return True
 
     def _build_github_star_prompt_snackbar(self, on_click) -> ft.SnackBar:  # noqa: ANN001
         return ft.SnackBar(
@@ -351,7 +277,7 @@ class TranslatorApp:
                 spacing=12,
             ),
             bgcolor=COLOR_SUCCESS,
-            duration=GITHUB_STAR_PROMPT_DURATION_MS,
+            duration=8000,
             behavior=ft.SnackBarBehavior.FLOATING,
             margin=ft.margin.only(bottom=90),
             padding=20,
@@ -395,7 +321,7 @@ class TranslatorApp:
         snackbar = None
 
         def _open_repository(_event) -> None:  # noqa: ANN001
-            webbrowser.open(GITHUB_STAR_REPOSITORY_URL)
+            webbrowser.open("https://github.com/kapitalismho/PuriPuly-heart")
             if snackbar is not None:
                 self._close_github_star_prompt_snackbar(snackbar)
 
@@ -1059,7 +985,3 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
 
     page.on_close = _on_close
     page.on_disconnect = _on_close
-
-    show_github_star_prompt = getattr(app, "maybe_show_github_star_prompt_after_launch", None)
-    if callable(show_github_star_prompt):
-        await show_github_star_prompt()

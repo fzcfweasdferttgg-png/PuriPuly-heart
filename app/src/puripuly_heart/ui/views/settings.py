@@ -68,7 +68,6 @@ from puripuly_heart.ui.theme import (
     COLOR_ON_BACKGROUND,
     COLOR_PRIMARY,
     COLOR_SURFACE,
-    COLOR_SURFACE_DIM,
 )
 
 logger = logging.getLogger(__name__)
