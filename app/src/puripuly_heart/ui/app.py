@@ -2,14 +2,12 @@ import asyncio
 import contextlib
 import inspect
 import logging
-import tempfile
 import webbrowser
 from pathlib import Path
 
 import flet as ft
 
 from puripuly_heart.config.settings import (
-    AppSettings,
     LLMProviderName,
     save_settings,
 )
@@ -48,7 +46,6 @@ DEFAULT_WINDOW_HEIGHT = 850
 MIN_WINDOW_WIDTH = 1024
 MIN_WINDOW_HEIGHT = 760
 APP_CONTENT_PADDING = 16
-FOUNDER_CONTACT_URL = "https://x.com/kapitalismho"
 FOUNDER_README_BASE_URL = "https://github.com/kapitalismho/PuriPuly-heart/blob/main"
 FOUNDER_README_PATH_BY_LOCALE = {
     "ko": "README.ko.md",
@@ -574,10 +571,6 @@ class TranslatorApp:
         self._on_nav_change(2)
         self._set_bottom_nav_selected(2)
 
-    def _open_settings_tab(self) -> None:
-        self._on_nav_change(1)
-        self._set_bottom_nav_selected(1)
-
     def _set_bottom_nav_selected(self, index: int) -> None:
         selected_attr = getattr(self.bottom_nav, "_selected", None)
         if selected_attr != index and hasattr(self.bottom_nav, "_selected"):
@@ -730,18 +723,6 @@ class TranslatorApp:
             log_detailed(message, level=level)
             return
         logger.log(level, message)
-
-    def _revert_dashboard_translation_toggle(self) -> None:
-        self._set_dashboard_translation_visual_state(False)
-
-    def _set_dashboard_translation_visual_state(self, enabled: bool) -> None:
-        dash = getattr(self, "view_dashboard", None)
-        set_translation_enabled = getattr(dash, "set_translation_enabled", None)
-        if callable(set_translation_enabled):
-            try:
-                set_translation_enabled(enabled)
-            except Exception:
-                logger.exception("Failed to update dashboard translation toggle")
 
     def _on_translation_toggle(self, enabled: bool) -> bool:
         self._log_basic(f"[Dashboard] Translation toggle requested: enabled={enabled}")
@@ -990,27 +971,8 @@ class TranslatorApp:
 
         self._queue_settings_mutation_task(_task)
 
-    def _translation_enable_succeeded(self, controller: object, result: object) -> bool:
-        if result is False:
-            return False
-        hub = getattr(controller, "hub", None)
-        if hub is not None:
-            return bool(
-                getattr(hub, "llm", None) is not None and getattr(hub, "translation_enabled", False)
-            )
-        return result is True
-
-    def _on_founder_letter_contact(self) -> None:
-        webbrowser.open(FOUNDER_CONTACT_URL)
-
     def _on_founder_letter_readme(self) -> None:
         webbrowser.open(founder_readme_url_for_locale(get_locale()))
-
-    def show_founder_letter_dialog(self) -> None:
-        self._mark_launch_high_priority_feedback_shown("usage_exhaustion")
-        dialog = FounderLetterDialog(self.page, on_readme=self._on_founder_letter_readme)
-        self._founder_letter_dialog = dialog
-        dialog.open()
 
     def _api_key_verification_matches_current_field(self, provider: str, key: str) -> bool:
         if provider != "openai_compatible":

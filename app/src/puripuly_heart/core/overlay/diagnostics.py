@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -115,13 +114,3 @@ class OverlayDiagnosticsRecorder:
         }
         payload.update({key: _json_safe(value) for key, value in fields.items()})
         return payload
-
-    def _sorted_events(self) -> list[dict[str, Any]]:
-        return sorted(
-            self._iter_all_events(),
-            key=lambda event: int(event.get("sequence", 0)),
-        )
-
-    def _iter_all_events(self) -> Iterable[dict[str, Any]]:
-        yield from self.child_stdout_lines
-        yield from self.child_stderr_lines

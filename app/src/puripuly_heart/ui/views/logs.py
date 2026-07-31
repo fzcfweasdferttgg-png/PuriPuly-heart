@@ -303,13 +303,6 @@ class LogsView(ft.Column):
 
         self.controls = [card]
 
-    def attach_log_handler(self) -> None:
-        """Attach this view as a logging handler to capture app logs."""
-        if self._handler is not None:
-            return
-        self._handler = FletLogHandler(self)
-        logging.getLogger().addHandler(self._handler)
-
     def append_log(self, record: str):
         """Append a log entry with throttled updates."""
         self._model.append(record)

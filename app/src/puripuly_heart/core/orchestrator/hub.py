@@ -769,18 +769,6 @@ class ClientHub:
         self.peer_runtime.clear_context()
         self._emit_basic("[Hub] Context history cleared")
 
-    def _get_valid_context(self) -> list[ContextEntry]:
-        """Get context entries within time window and max entries limit."""
-        return self.context_resolver.get_local_entries(
-            runtime=self.self_runtime,
-            source_language=self._source_language_for(self.self_runtime),
-            target_language=self._target_language_for(self.self_runtime),
-        )
-
-    def _format_context_for_llm(self, context: list[ContextEntry]) -> str:
-        """Format context entries as a string for LLM prompt."""
-        return self.context_resolver.format_local(context)
-
     def _remember_context_entry(
         self,
         text: str,
@@ -2926,54 +2914,6 @@ class ClientHub:
             self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
         if runtime.channel == "peer":
             self._complete_peer_logical_turn(utterance_id)
-
-    async def handle_peer_transcript_final_for_test(
-        self,
-        text: str,
-        source: str = "Peer",
-    ) -> UUID:
-        _ = source
-        parent_utterance_id = uuid4()
-        before_event_count = 0
-        if hasattr(self.overlay_sink, "events"):
-            before_event_count = len(self.overlay_sink.events)  # type: ignore[attr-defined]
-        existing_peer_utterance_ids = set(self.peer_runtime.utterances)
-        await self._handle_stt_event(
-            STTFinalEvent(
-                utterance_id=parent_utterance_id,
-                transcript=Transcript(
-                    utterance_id=parent_utterance_id,
-                    text=text,
-                    is_final=True,
-                    created_at=self.clock.now(),
-                    channel="peer",
-                ),
-            )
-        )
-        if hasattr(self.overlay_sink, "events"):
-            new_events = self.overlay_sink.events[before_event_count:]  # type: ignore[attr-defined]
-            for event in new_events:
-                if getattr(event, "type", None) == "peer_active_update":
-                    return event.utterance_id
-        for utterance_id, bundle in self.peer_runtime.utterances.items():
-            if utterance_id in existing_peer_utterance_ids:
-                continue
-            if bundle.final is not None and bundle.final.text == text:
-                return utterance_id
-        raise AssertionError("peer test helper did not produce a peer logical turn")
-
-    async def translate_peer_text_for_test(
-        self,
-        text: str,
-    ) -> UUID:
-        utterance_id = await self.handle_peer_transcript_final_for_test(
-            text=text,
-        )
-        if self.peer_runtime.translation_tasks:
-            await asyncio.gather(
-                *self.peer_runtime.translation_tasks.values(), return_exceptions=True
-            )
-        return utterance_id
 
     async def _enqueue_osc(
         self,

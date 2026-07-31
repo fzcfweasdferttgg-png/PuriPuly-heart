@@ -123,27 +123,6 @@ def _create_recognizer(data: dict[str, object]) -> object:
             hotwords=hotwords,
         )
 
-    if provider_name == "local_parakeet_ctc":
-        from puripuly_heart.providers.stt.local_parakeet_ctc import (
-            PARAKEET_CTC_SAMPLE_RATE_HZ,
-            create_local_parakeet_ctc_recognizer,
-        )
-
-        recognizer = create_local_parakeet_ctc_recognizer(
-            model_dir=model_dir,
-            num_threads=num_threads,
-            sample_rate_hz=PARAKEET_CTC_SAMPLE_RATE_HZ,
-            feature_dim=feature_dim,
-            provider=provider_type,
-            device=device,
-        )
-        return _RecognizerHandle(
-            recognizer=recognizer,
-            sample_rate_hz=PARAKEET_CTC_SAMPLE_RATE_HZ,
-            language_hint=str(language_hint) if language_hint else None,
-            hotwords=hotwords,
-        )
-
     if provider_name == "local_transcribecpp":
         from puripuly_heart.providers.stt.local_transcribecpp import (
             TRANSCRIBECPP_SAMPLE_RATE_HZ,

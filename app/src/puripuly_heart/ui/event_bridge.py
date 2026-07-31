@@ -226,9 +226,6 @@ class UIEventBridge:
 
             if is_final:
                 self._remember_final_self_transcript(transcript)
-                add_history = getattr(self.app, "add_history_entry", None)
-                if add_history is not None:
-                    add_history(source, transcript.text, language_code=source_lang)
             return
 
         if event.type == UIEventType.TRANSLATION_DONE:
@@ -262,9 +259,6 @@ class UIEventBridge:
                     dashboard_target_language=target_lang,
                 )
             self._append_conversation_record(translation, source=source)
-            add_history = getattr(self.app, "add_history_entry", None)
-            if add_history is not None:
-                add_history(source, translation.text, translated=True, language_code=target_lang)
             self._schedule_github_star_prompt_translation_success(translation)
             return
 
@@ -272,11 +266,6 @@ class UIEventBridge:
             msg = event.payload
             if not isinstance(msg, OSCMessage):
                 return
-            source_lang, target_lang = self._get_language_codes()
-            lang_code = target_lang if self._translation_enabled() else source_lang
-            add_history = getattr(self.app, "add_history_entry", None)
-            if add_history is not None:
-                add_history("VRChat", msg.text, language_code=lang_code)
             return
 
         if event.type == UIEventType.ERROR:

@@ -79,11 +79,6 @@ def validate_vendored_openvr_bundle(
     )
 
 
-def collect_vendored_openvr_runtime_binaries() -> list[tuple[str, str]]:
-    bundle = validate_vendored_openvr_bundle()
-    return [(str(bundle.dll_path), OPENVR_VENDOR_PACKAGED_RUNTIME_RELATIVE_DIR)]
-
-
 def _default_bundle_dir() -> Path:
     return Path(__file__).resolve().parents[4] / OPENVR_VENDOR_BUNDLE_RELATIVE_DIR
 
@@ -105,7 +100,6 @@ __all__ = [
     "OPENVR_VENDOR_REPOSITORY_REF",
     "OPENVR_VENDOR_SHA256_LINE",
     "VendoredOpenVrBundle",
-    "collect_vendored_openvr_runtime_binaries",
     "validate_openvr_runtime_dll",
     "validate_vendored_openvr_bundle",
 ]

@@ -176,7 +176,3 @@ def source_label(source: str | None) -> str:
     if not source:
         return t("source.unknown", default="")
     return t(_SOURCE_KEY_MAP.get(source, ""), default=source)
-
-
-def translated_source_label(source: str) -> str:
-    return t("history.translated_source", source=source)
