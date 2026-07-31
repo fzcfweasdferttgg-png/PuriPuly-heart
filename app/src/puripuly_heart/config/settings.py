@@ -596,30 +596,12 @@ class UiSettings:
     integrated_context_enabled: bool = True
     integrated_context_bootstrapped: bool = False
     clipboard_auto_translate_enabled: bool = False
-    github_star_prompt_clicked: bool = False
-    github_star_prompt_last_shown_at: str | None = None
-    github_star_prompt_show_count: int = 0
-    github_star_prompt_translation_success_observed: bool = False
-    github_star_prompt_eligible_launch_count: int = 0
 
     def validate(self) -> None:
         if not self.locale:
             raise ValueError("locale must be non-empty")
         if not isinstance(self.clipboard_auto_translate_enabled, bool):
             raise ValueError("clipboard_auto_translate_enabled must be a bool")
-        if not isinstance(self.github_star_prompt_clicked, bool):
-            raise ValueError("github_star_prompt_clicked must be a bool")
-        self.github_star_prompt_last_shown_at = _parse_utc_iso8601_timestamp(
-            self.github_star_prompt_last_shown_at
-        )
-        self.github_star_prompt_show_count = _parse_non_negative_int(
-            self.github_star_prompt_show_count
-        )
-        if not isinstance(self.github_star_prompt_translation_success_observed, bool):
-            raise ValueError("github_star_prompt_translation_success_observed must be a bool")
-        self.github_star_prompt_eligible_launch_count = _parse_non_negative_int(
-            self.github_star_prompt_eligible_launch_count
-        )
 
 
 @dataclass(slots=True)
@@ -751,12 +733,6 @@ class OverlaySettings:
 class ApiKeyVerificationSettings:
     """Stores API key verification status for each provider."""
 
-    google: bool = False
-    openrouter: bool = False
-    deepseek: bool = False
-    alibaba_beijing: bool = False
-    alibaba_singapore: bool = False
-    cerebras: bool = False
     openai_compatible: bool = False
 
     def validate(self) -> None:
@@ -1137,27 +1113,8 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "integrated_context_enabled": settings.ui.integrated_context_enabled,
             "integrated_context_bootstrapped": settings.ui.integrated_context_bootstrapped,
             "clipboard_auto_translate_enabled": settings.ui.clipboard_auto_translate_enabled,
-            "github_star_prompt_clicked": settings.ui.github_star_prompt_clicked,
-            "github_star_prompt_last_shown_at": _parse_utc_iso8601_timestamp(
-                settings.ui.github_star_prompt_last_shown_at
-            ),
-            "github_star_prompt_show_count": _parse_non_negative_int(
-                settings.ui.github_star_prompt_show_count
-            ),
-            "github_star_prompt_translation_success_observed": (
-                settings.ui.github_star_prompt_translation_success_observed
-            ),
-            "github_star_prompt_eligible_launch_count": _parse_non_negative_int(
-                settings.ui.github_star_prompt_eligible_launch_count
-            ),
         },
         "api_key_verified": {
-            "google": settings.api_key_verified.google,
-            "openrouter": settings.api_key_verified.openrouter,
-            "deepseek": settings.api_key_verified.deepseek,
-            "alibaba_beijing": settings.api_key_verified.alibaba_beijing,
-            "alibaba_singapore": settings.api_key_verified.alibaba_singapore,
-            "cerebras": settings.api_key_verified.cerebras,
             "openai_compatible": settings.api_key_verified.openai_compatible,
         },
         "system_prompt": settings.system_prompt,
@@ -1803,29 +1760,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             clipboard_auto_translate_enabled=bool(
                 ui_data.get("clipboard_auto_translate_enabled", False)
             ),
-            github_star_prompt_clicked=_parse_bool(ui_data.get("github_star_prompt_clicked")),
-            github_star_prompt_last_shown_at=_parse_utc_iso8601_timestamp(
-                ui_data.get("github_star_prompt_last_shown_at")
-            ),
-            github_star_prompt_show_count=_parse_non_negative_int(
-                ui_data.get("github_star_prompt_show_count")
-            ),
-            github_star_prompt_translation_success_observed=_parse_bool(
-                ui_data.get("github_star_prompt_translation_success_observed")
-            ),
-            github_star_prompt_eligible_launch_count=_parse_non_negative_int(
-                ui_data.get("github_star_prompt_eligible_launch_count")
-            ),
         ),
         api_key_verified=ApiKeyVerificationSettings(
-            google=bool(data.get("api_key_verified", {}).get("google", False)),
-            openrouter=bool(data.get("api_key_verified", {}).get("openrouter", False)),
-            deepseek=bool(data.get("api_key_verified", {}).get("deepseek", False)),
-            alibaba_beijing=bool(data.get("api_key_verified", {}).get("alibaba_beijing", False)),
-            alibaba_singapore=bool(
-                data.get("api_key_verified", {}).get("alibaba_singapore", False)
-            ),
-            cerebras=bool(data.get("api_key_verified", {}).get("cerebras", False)),
             openai_compatible=bool(data.get("api_key_verified", {}).get("openai_compatible", False)),
         ),
         system_prompt=legacy_system_prompt,
