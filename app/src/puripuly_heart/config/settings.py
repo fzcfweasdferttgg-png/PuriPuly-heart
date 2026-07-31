@@ -18,7 +18,6 @@ from puripuly_heart.config.audio_host_api import (
 )
 from puripuly_heart.config.vad_defaults import (
     DEFAULT_LOW_LATENCY_VAD_HANGOVER_MS,
-    LEGACY_LOW_LATENCY_VAD_HANGOVER_MS,
 )
 from puripuly_heart.ui.overlay_calibration import OverlayCalibration
 
@@ -26,8 +25,6 @@ SETTINGS_SCHEMA_VERSION = 30
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
 MAX_CUSTOM_VOCAB_TERMS = 100
-REFERRAL_ID_LENGTH = 6
-REFERRAL_ID_ALPHABET = frozenset("23456789ABCDEFGHJKMNPQRSTUVWXYZ")
 OVERLAY_TARGET_STEAMVR = "steamvr"
 OVERLAY_TARGET_DESKTOP = "desktop"
 OVERLAY_TARGET_VALUES = frozenset({OVERLAY_TARGET_STEAMVR, OVERLAY_TARGET_DESKTOP})
@@ -83,19 +80,6 @@ def _default_local_llm_extra_body() -> dict[str, object]:
 
 def _default_custom_terms() -> dict[str, list[str]]:
     return {language: list(terms) for language, terms in DEFAULT_CUSTOM_VOCAB_TERMS.items()}
-
-
-def normalize_owned_referral_id(value: object) -> str | None:
-    """Normalize an owned Referral ID for app persistence/display, or return None."""
-
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip().upper()
-    if len(normalized) != REFERRAL_ID_LENGTH:
-        return None
-    if any(char not in REFERRAL_ID_ALPHABET for char in normalized):
-        return None
-    return normalized
 
 
 class STTProviderName(str, Enum):
@@ -1298,16 +1282,6 @@ def _normalize_local_llm_data(data: dict[str, Any]) -> bool:
         data["local_llm"] = normalized
         return True
     return False
-
-
-def _loaded_llm_provider(settings_data: dict[str, Any]) -> LLMProviderName:
-    provider_data = settings_data.get("provider")
-    provider_llm_value = (
-        provider_data.get("llm", LLMProviderName.OPENAI_COMPATIBLE.value)
-        if isinstance(provider_data, dict)
-        else LLMProviderName.OPENAI_COMPATIBLE.value
-    )
-    return _parse_llm_provider(provider_llm_value)
 
 
 def _derive_translation_settings_from_runtime_values(

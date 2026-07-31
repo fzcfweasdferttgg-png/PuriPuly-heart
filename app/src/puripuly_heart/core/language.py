@@ -114,11 +114,6 @@ def get_all_language_options() -> Sequence[tuple[str, str]]:
     )
 
 
-def is_supported_language(code: str) -> bool:
-    """Check if a language code is supported."""
-    return get_language_info(code) is not None
-
-
 def get_stt_compatibility_warning(code: str, stt_provider: str) -> SttCompatibilityWarning | None:
     """Return a warning key if the language is not supported by the STT provider."""
     lang_info = get_language_info(code)

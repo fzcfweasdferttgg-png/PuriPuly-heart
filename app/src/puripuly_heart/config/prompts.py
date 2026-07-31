@@ -103,15 +103,6 @@ def get_prompts_dir() -> Path:
     return Path.cwd() / "prompts"
 
 
-def list_prompts() -> list[str]:
-    """List available prompt file names (without extension)."""
-    prompts_dir = get_prompts_dir()
-    if not prompts_dir.exists():
-        return []
-
-    return sorted([f.stem for f in prompts_dir.glob("*.md")])
-
-
 def load_prompt(name: str = "default") -> str:
     """Load a prompt from file.
 
@@ -196,12 +187,6 @@ def _get_prompt_cache() -> PromptAssemblyCache:
 def warm_prompt_cache() -> None:
     """Preload translation prompt files into the process cache."""
     _get_prompt_cache()
-
-
-def _reset_prompt_cache_for_tests() -> None:
-    """Reset cached prompt pieces for tests that swap prompt directories."""
-    global _PROMPT_CACHE
-    _PROMPT_CACHE = None
 
 
 def _normalize_language_name(language_name: str) -> str:
@@ -322,11 +307,6 @@ def get_translation_prompt_template() -> str:
 def get_dual_translation_prompt_template() -> str:
     """Load the dual-language translation prompt template."""
     return _get_prompt_cache().dual_template
-
-
-def get_default_prompt() -> str:
-    """Load the default prompt."""
-    return get_translation_prompt_template()
 
 
 def load_prompt_for_provider(provider: str) -> str:
