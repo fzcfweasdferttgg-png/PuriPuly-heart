@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, ClassVar, Literal, Protocol
+from typing import ClassVar, Literal, Protocol
 from uuid import UUID, uuid4
 
 from puripuly_heart.core.clock import Clock, SystemClock
@@ -150,69 +149,6 @@ OverlayEventUnion = (
 
 class OverlaySink(Protocol):
     async def emit(self, event: OverlayEventUnion) -> None: ...
-
-
-@dataclass(slots=True)
-class NullOverlaySink:
-    async def emit(self, event: OverlayEventUnion) -> None:
-        _ = event
-
-
-@dataclass(slots=True)
-class OverlayStreamCoalescer:
-    interval_ms: int = 300
-    _pending_event: OverlayEventUnion | None = None
-    _flush_task: asyncio.Task[None] | None = None
-
-    async def push(
-        self,
-        event: OverlayEventUnion,
-        emit: Callable[[OverlayEventUnion], Awaitable[None]],
-    ) -> None:
-        self._pending_event = event
-        if self._flush_task is None or self._flush_task.done():
-            self._flush_task = asyncio.create_task(self._delayed_flush(emit))
-
-    async def flush(
-        self,
-        emit: Callable[[OverlayEventUnion], Awaitable[None]],
-    ) -> None:
-        flush_task = self._flush_task
-        self._flush_task = None
-        if flush_task is not None and not flush_task.done():
-            flush_task.cancel()
-            await asyncio.gather(flush_task, return_exceptions=True)
-
-        pending = self._take_pending_event()
-        if pending is not None:
-            await emit(pending)
-
-    async def cancel(self) -> None:
-        flush_task = self._flush_task
-        self._flush_task = None
-        self._pending_event = None
-        if flush_task is not None and not flush_task.done():
-            flush_task.cancel()
-            await asyncio.gather(flush_task, return_exceptions=True)
-
-    async def _delayed_flush(
-        self,
-        emit: Callable[[OverlayEventUnion], Awaitable[None]],
-    ) -> None:
-        try:
-            await asyncio.sleep(self.interval_ms / 1000.0)
-            pending = self._take_pending_event()
-            if pending is not None:
-                await emit(pending)
-        except asyncio.CancelledError:
-            raise
-        finally:
-            self._flush_task = None
-
-    def _take_pending_event(self) -> OverlayEventUnion | None:
-        pending = self._pending_event
-        self._pending_event = None
-        return pending
 
 
 @dataclass(slots=True)

@@ -18,23 +18,6 @@ class SecretStore(Protocol):
 
 
 @dataclass(slots=True)
-class InMemorySecretStore:
-    _items: dict[str, str]
-
-    def __init__(self) -> None:
-        self._items = {}
-
-    def get(self, key: str) -> str | None:
-        return self._items.get(key)
-
-    def set(self, key: str, value: str) -> None:
-        self._items[key] = value
-
-    def delete(self, key: str) -> None:
-        self._items.pop(key, None)
-
-
-@dataclass(slots=True)
 class KeyringSecretStore:
     service_name: str = "puripuly-heart"
 
@@ -63,14 +46,6 @@ class KeyringSecretStore:
                     return
                 raise
             raise
-
-
-def mask_secret(value: str, *, unmasked_prefix: int = 3) -> str:
-    if not value:
-        return value
-    if len(value) <= unmasked_prefix:
-        return "*" * len(value)
-    return value[:unmasked_prefix] + "****"
 
 
 @dataclass(slots=True)
