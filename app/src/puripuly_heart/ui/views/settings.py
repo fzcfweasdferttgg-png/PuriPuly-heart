@@ -28,7 +28,6 @@ from puripuly_heart.config.settings import (
     LLMProviderName,
     STTProviderName,
     TranslationConnection,
-    TranslationFallbackSelectionAlias,
     TranslationModel,
     _normalize_local_llm_base_url,
     default_translation_connection,
@@ -114,23 +113,6 @@ _TRANSLATION_CONNECTION_DESCRIPTION_KEYS = {
     TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible.description",
 }
 _TRANSLATION_CONNECTION_ONLY_SUPPORTED_KEY = "settings.translation_connection.only_supported"
-_TRANSLATION_FALLBACK_SELECTION_ORDER = (
-    TranslationFallbackSelectionAlias.NONE,
-    TranslationFallbackSelectionAlias.DEEPSEEK_V4_FLASH_OFFICIAL,
-    TranslationFallbackSelectionAlias.OPENROUTER_DEEPSEEK_V4_FLASH,
-    TranslationFallbackSelectionAlias.OPENROUTER_GEMMA4_26B_A4B,
-    TranslationFallbackSelectionAlias.CEREBRAS_GEMMA4_31B,
-)
-_TRANSLATION_FALLBACK_LABEL_KEYS = {
-    TranslationFallbackSelectionAlias.NONE: "settings.fallback.none",
-    TranslationFallbackSelectionAlias.DEEPSEEK_V4_FLASH_OFFICIAL: "settings.fallback.deepseek_v4_flash_official",
-    TranslationFallbackSelectionAlias.OPENROUTER_DEEPSEEK_V4_FLASH: "settings.fallback.openrouter_deepseek_v4_flash",
-    TranslationFallbackSelectionAlias.OPENROUTER_GEMMA4_26B_A4B: "settings.fallback.openrouter_gemma4_26b_a4b",
-    TranslationFallbackSelectionAlias.CEREBRAS_GEMMA4_31B: "settings.fallback.cerebras_gemma4_31b",
-}
-_TRANSLATION_FALLBACK_DESCRIPTION_KEYS = {
-    TranslationFallbackSelectionAlias.CEREBRAS_GEMMA4_31B: "settings.fallback.cerebras_gemma4_31b.description",
-}
 
 
 def _make_text_button(label: str, **kwargs) -> ft.TextButton:
@@ -380,7 +362,6 @@ class SettingsView(ft.Column):
             self._desktop_overlay_primary_action,
             self._desktop_overlay_view_logs_action,
             self._translation_connection_text,
-            self._openrouter_fallback_text,
         )
 
     def _sync_clickable_text_control_fonts(self, font_family: str | None) -> None:
@@ -1688,31 +1669,11 @@ class SettingsView(ft.Column):
             title=self._translation_connection_title,
             value=self._translation_connection_text,
         )
-        self._openrouter_fallback_title = ft.Text(
-            t("settings.fallback"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._openrouter_fallback_text = self._build_clickable_text(
-            t("provider.deepseek_v4_flash_fallback"),
-            self._on_openrouter_fallback_click,
-        )
-        self._openrouter_fallback_helper_text = ft.Text(
-            t("settings.fallback.inactive_helper"),
-            size=16,
-            color=COLOR_NEUTRAL,
-        )
-        self._openrouter_fallback_card = self._wrap_unit_card(
-            title=self._openrouter_fallback_title,
-            value=self._openrouter_fallback_text,
-        )
         self._translation_connection_row = ft.Container(
             content=ft.Row(
                 [
                     self._low_latency_card,
                     self._translation_connection_card,
-                    self._openrouter_fallback_card,
                 ],
                 spacing=16,
                 expand=True,
@@ -2043,22 +2004,6 @@ class SettingsView(ft.Column):
         text_control = self._translation_connection_text.content
         text_control.value = text
         text_control.size = 28
-
-    def _translation_fallback_display_label(
-        self,
-        alias: TranslationFallbackSelectionAlias,
-    ) -> str:
-        return t(_TRANSLATION_FALLBACK_LABEL_KEYS[alias])
-
-    def _effective_translation_fallback_modal_value(
-        self,
-        settings: AppSettings | None,
-    ) -> str:
-        if settings is None:
-            return TranslationFallbackSelectionAlias.NONE.value
-        if settings.translation.fallback_selection_alias != TranslationFallbackSelectionAlias.NONE:
-            return settings.translation.fallback_selection_alias.value
-        return TranslationFallbackSelectionAlias.NONE.value
 
     def _get_llm_display_label(self, settings: AppSettings) -> str:
         return self._translation_model_display_label(settings.translation.model)
@@ -2641,7 +2586,6 @@ class SettingsView(ft.Column):
         stt = settings.provider.stt
         llm = settings.provider.llm
         peer_stt = self._effective_peer_stt_provider(settings)
-        fallback_alias = settings.translation.fallback_selection_alias
 
         self._translation_connection_row.visible = True
         self._local_llm_connection_card.visible = llm == LLMProviderName.LOCAL_LLM
@@ -2682,9 +2626,6 @@ class SettingsView(ft.Column):
 
     # --- Event Handlers ---
     def _on_qwen_region_click(self, e) -> None:
-        pass
-
-    def _on_openrouter_fallback_click(self, e) -> None:
         pass
 
     def _on_stt_click(self, e) -> None:
@@ -4601,7 +4542,6 @@ class SettingsView(ft.Column):
         self._peer_pre_roll_field.label = t("settings.vad.peer_pre_roll_ms")
         self._low_latency_title.value = t("settings.low_latency_mode")
         self._translation_connection_title.value = t("settings.translation_connection")
-        self._openrouter_fallback_title.value = t("settings.fallback")
         self._local_llm_connection_title.value = t("settings.local_llm.connection")
         self._local_llm_base_url.label = t("settings.local_llm.base_url")
         self._local_llm_model.label = t("settings.local_llm.model")
