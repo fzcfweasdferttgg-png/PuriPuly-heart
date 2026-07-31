@@ -30,7 +30,6 @@ from puripuly_heart.app.wiring import (
     resolve_peer_stt_config,
 )
 from puripuly_heart.config.audio_host_api import normalize_input_host_api
-from puripuly_heart.config.llm_profiles import profile_for_alias
 from puripuly_heart.config.settings import (
     DESKTOP_FLET_MIN_HEIGHT,
     DESKTOP_FLET_MIN_WIDTH,
@@ -39,12 +38,6 @@ from puripuly_heart.config.settings import (
     OVERLAY_TARGET_STEAMVR,
     AppSettings,
     LLMProviderName,
-    OpenRouterCredentialSource,
-    OpenRouterLLMModel,
-    OpenRouterProviderRouting,
-    OpenRouterSelectionAlias,
-    QwenLLMModel,
-    QwenRegion,
     STTProviderName,
     TranslationConnection,
     load_settings,
@@ -75,11 +68,6 @@ from puripuly_heart.core.local_stt_assets import (
     LocalSTTModelMissingError,
     inspect_local_stt_install_state,
 )
-from puripuly_heart.core.openrouter_credentials import (
-    OPENROUTER_BYOK_API_KEY_SECRET,
-    resolve_openrouter_credentials,
-)
-from puripuly_heart.core.openrouter_pkce import OpenRouterPKCEClient
 from puripuly_heart.core.orchestrator.hub import ClientHub
 from puripuly_heart.core.osc.chatbox_paginator import ChatboxPaginator
 from puripuly_heart.core.osc.receiver import (
@@ -108,12 +96,6 @@ from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
 from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_vad_onnx
 from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
-from puripuly_heart.providers.llm.cerebras import CerebrasLLMProvider
-from puripuly_heart.providers.llm.deepseek import DeepSeekLLMProvider
-from puripuly_heart.providers.llm.gemini import GeminiLLMProvider
-from puripuly_heart.providers.llm.openrouter import OpenRouterLLMProvider
-from puripuly_heart.providers.llm.qwen import QwenLLMProvider
-from puripuly_heart.providers.llm.qwen_async import AsyncQwenLLMProvider
 from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTError
 from puripuly_heart.providers.stt.local_qwen_sherpa import LocalQwenSherpaLoadError
 from puripuly_heart.providers.stt.local_gigaam_rnnt import LocalGigaamRnntLoadError
@@ -326,7 +308,6 @@ class GuiController:
 
     settings: AppSettings | None = None
     clock: SystemClock = SystemClock()
-    _openrouter_pkce_client: OpenRouterPKCEClient | None = None
 
     sender: VrchatOscUdpSender | None = None
     osc: ChatboxPaginator | None = None
@@ -579,15 +560,9 @@ class GuiController:
             # LLM: check current provider's verification status
             llm_provider = self.settings.provider.llm.value
             if self._llm_provider_requires_secret(self.settings.provider.llm):
-                # Map llm provider to api_key_verified field name
-                llm_key_map = {
-                    "gemini": "google",
-                    "openrouter": "openrouter",
-                    "deepseek": "deepseek",
-                    "qwen": self._get_alibaba_verified_key(),
-                }
-                llm_verified_key = llm_key_map.get(llm_provider, llm_provider)
-                llm_verified = getattr(self.settings.api_key_verified, llm_verified_key, False)
+                llm_verified = getattr(
+                    self.settings.api_key_verified, llm_provider, False
+                )
                 dash.translation_needs_key = (self.hub.llm is None) or (not llm_verified)
             else:
                 dash.translation_needs_key = False
@@ -608,14 +583,6 @@ class GuiController:
         self._bridge_task = asyncio.create_task(bridge.run())
         await self._sync_clipboard_watcher()
 
-    def _get_alibaba_verified_key(self) -> str:
-        """Get the api_key_verified field name based on Qwen region."""
-        from puripuly_heart.config.settings import QwenRegion
-
-        if self.settings.qwen.region == QwenRegion.BEIJING:
-            return "alibaba_beijing"
-        return "alibaba_singapore"
-
     def _stt_provider_applies_custom_vocabulary(self, settings: AppSettings) -> bool:
         return settings.provider.stt in (
             STTProviderName.LOCAL_QWEN,
@@ -624,11 +591,7 @@ class GuiController:
 
     def _llm_provider_requires_secret(self, provider: LLMProviderName) -> bool:
         return provider in (
-            LLMProviderName.GEMINI,
-            LLMProviderName.OPENROUTER,
-            LLMProviderName.QWEN,
-            LLMProviderName.DEEPSEEK,
-            LLMProviderName.CEREBRAS,
+            LLMProviderName.OPENAI_COMPATIBLE,
         )
 
     def _selected_stt_provider(self) -> STTProviderName | None:
@@ -1074,42 +1037,12 @@ class GuiController:
     def _build_llm_provider_signature(self, settings: AppSettings) -> tuple[object, ...]:
         return (
             settings.provider.llm,
-            settings.gemini.llm_model if settings.provider.llm == LLMProviderName.GEMINI else None,
             (
-                settings.openrouter.llm_model
-                if settings.provider.llm == LLMProviderName.OPENROUTER
-                else None
-            ),
-            (
-                settings.openrouter.routing_mode
-                if settings.provider.llm == LLMProviderName.OPENROUTER
-                else None
-            ),
-            (
-                settings.openrouter.provider_routing
-                if settings.provider.llm == LLMProviderName.OPENROUTER
-                else OpenRouterProviderRouting.DEFAULT
-            ),
-            (
-                settings.openrouter.selected_source
-                if settings.provider.llm == LLMProviderName.OPENROUTER
-                else None
-            ),
-            (
-                settings.openrouter.fallback_selection_alias
-                if settings.provider.llm == LLMProviderName.OPENROUTER
-                else None
-            ),
-            settings.qwen.llm_model if settings.provider.llm == LLMProviderName.QWEN else None,
-            settings.qwen.region if settings.provider.llm == LLMProviderName.QWEN else None,
-            (
-                settings.deepseek.llm_model
-                if settings.provider.llm == LLMProviderName.DEEPSEEK
-                else None
-            ),
-            (
-                settings.cerebras.llm_model
-                if settings.provider.llm == LLMProviderName.CEREBRAS
+                (
+                    settings.provider.openai_compatible.base_url,
+                    settings.provider.openai_compatible.model,
+                )
+                if settings.provider.llm == LLMProviderName.OPENAI_COMPATIBLE
                 else None
             ),
             (
@@ -1144,17 +1077,8 @@ class GuiController:
         target.provider.stt = source.provider.stt
         target.provider.peer_stt = source.provider.peer_stt
         target.provider.llm = source.provider.llm
+        target.provider.openai_compatible = copy.deepcopy(source.provider.openai_compatible)
         target.translation = copy.deepcopy(source.translation)
-        target.gemini.llm_model = source.gemini.llm_model
-        target.openrouter.llm_model = source.openrouter.llm_model
-        target.openrouter.routing_mode = source.openrouter.routing_mode
-        target.openrouter.provider_routing = source.openrouter.provider_routing
-        target.openrouter.selected_source = source.openrouter.selected_source
-        target.openrouter.selection_alias = source.openrouter.selection_alias
-        target.openrouter.fallback_selection_alias = source.openrouter.fallback_selection_alias
-        target.qwen.llm_model = source.qwen.llm_model
-        target.qwen.region = source.qwen.region
-        target.deepseek.llm_model = source.deepseek.llm_model
         target.local_llm = copy.deepcopy(source.local_llm)
         target.system_prompt = source.system_prompt
         target.system_prompts = {}
@@ -2436,14 +2360,7 @@ class GuiController:
         # Log provider info when enabling
         if enabled and self.settings is not None:
             provider = self.settings.provider.llm.value
-            if provider == "qwen":
-                region = self.settings.qwen.region.value
-                self.log_basic(f"[Translation] Enabled with provider: {provider}")
-                self.log_detailed(
-                    f"[Translation] Provider detail: provider={provider} region={region}"
-                )
-            else:
-                self.log_basic(f"[Translation] Enabled with provider: {provider}")
+            self.log_basic(f"[Translation] Enabled with provider: {provider}")
 
         # Clear context history when toggling translation
         self.hub.clear_context()
@@ -2452,9 +2369,6 @@ class GuiController:
             llm = self.hub.llm
             if isinstance(llm, SemaphoreLLMProvider):
                 llm = llm.inner
-            if isinstance(llm, (GeminiLLMProvider, QwenLLMProvider, AsyncQwenLLMProvider)):
-                with contextlib.suppress(Exception):
-                    await llm.warmup()
         return bool(self.hub.translation_enabled)
 
     async def set_stt_enabled(self, enabled: bool) -> None:
@@ -3177,12 +3091,9 @@ class GuiController:
         self._refresh_local_stt_runtime_state()
         self._clear_local_stt_pending_enable_if_provider_switched_away()
 
-        # low_latency_mode 변경 시 Qwen LLM 프로바이더 재생성 필요
-        # (AsyncQwenLLMProvider vs QwenLLMProvider 전환)
         if (
             prev_low_latency is not None
             and prev_low_latency != settings.stt.low_latency_mode
-            and self.settings.provider.llm.value == "qwen"
         ):
             self.log_detailed(
                 "[Settings] Low latency detail: "
@@ -3302,34 +3213,16 @@ class GuiController:
 
         try:
             success = False
-            if provider == "google":
-                success = await GeminiLLMProvider.verify_api_key(
-                    key,
-                    model=self.settings.gemini.llm_model.value,
-                )
-            elif provider == "openrouter":
-                success = await OpenRouterLLMProvider.verify_api_key(key)
-            elif provider == "deepseek":
-                success = await DeepSeekLLMProvider.verify_api_key(key)
-            elif provider == "cerebras":
-                success = await CerebrasLLMProvider.verify_api_key(key)
-            elif provider == "alibaba_beijing":
-                return await self._verify_qwen_key_with_model_fallback(
-                    key,
-                    base_url="https://dashscope.aliyuncs.com/api/v1",
-                )
-            elif provider == "alibaba_singapore":
-                return await self._verify_qwen_key_with_model_fallback(
-                    key,
-                    base_url="https://dashscope-intl.aliyuncs.com/api/v1",
-                )
+            if provider == "openai_compatible":
+                from puripuly_heart.providers.llm.openai_compatible import OpenAICompatibleLLMProvider
+                result = await OpenAICompatibleLLMProvider(
+                    api_key=key,
+                    base_url=self.settings.provider.openai_compatible.base_url,
+                    model=self.settings.provider.openai_compatible.model,
+                ).verify_connection()
+                return result.api_key_valid, result.error_message or "OK" if result.api_key_valid else result.error_message
             else:
                 return False, f"Unknown provider: {provider}"
-
-            if success:
-                return True, "Verification successful"
-            else:
-                return False, "Verification failed (check logs/console for details)"
         except Exception as exc:
             msg = f"Verification error for {provider}: {exc}"
             self._log_error(msg)
@@ -4702,90 +4595,6 @@ class GuiController:
         if self.vrc_mic_audio_gate is not None:
             self.vrc_mic_audio_gate.set_receiver_active(False)
 
-    def _create_openrouter_pkce_client(self) -> OpenRouterPKCEClient:
-        return OpenRouterPKCEClient(callback_origin="http://localhost:3000")
-
-    def reopen_openrouter_pkce_authorization_url(self) -> bool:
-        if self._openrouter_pkce_client is None:
-            return False
-        return self._openrouter_pkce_client.reopen_authorization_url()
-
-    async def connect_openrouter_via_pkce(
-        self,
-        *,
-        target_settings: AppSettings,
-        launch_source: str,
-    ) -> bool:
-        assert self.settings is not None
-        selection_alias = target_settings.openrouter.selection_alias
-        if selection_alias is None:
-            raise ValueError("PKCE connection requires a BYOK OpenRouter alias")
-
-        profile = profile_for_alias(selection_alias.value)
-        if profile.openrouter_source != OpenRouterCredentialSource.BYOK.value:
-            raise ValueError("PKCE connection requires a BYOK OpenRouter alias")
-        if profile.openrouter_model is None:
-            raise ValueError("PKCE connection requires a BYOK OpenRouter model")
-        previous_settings = copy.deepcopy(self.settings)
-
-        try:
-            pkce_client = self._create_openrouter_pkce_client()
-            self._openrouter_pkce_client = pkce_client
-            try:
-                result = await pkce_client.run_desktop_flow()
-            finally:
-                self._openrouter_pkce_client = None
-        except Exception as exc:
-            self._show_short_message("openrouter.pkce.failed")
-            self._log_error(f"OpenRouter PKCE failed: {exc}")
-            if launch_source == "letter":
-                show_founder_letter_dialog = getattr(self.app, "show_founder_letter_dialog", None)
-                if callable(show_founder_letter_dialog):
-                    with contextlib.suppress(Exception):
-                        show_founder_letter_dialog()
-            return False
-
-        try:
-            if not await OpenRouterLLMProvider.verify_api_key(result.api_key):
-                raise RuntimeError("OpenRouter PKCE key verification failed")
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
-            previous_api_key = secrets.get(OPENROUTER_BYOK_API_KEY_SECRET)
-            secrets.set(OPENROUTER_BYOK_API_KEY_SECRET, result.api_key)
-            updated = copy.deepcopy(target_settings)
-            updated.provider.llm = LLMProviderName.OPENROUTER
-            updated.openrouter.selection_alias = OpenRouterSelectionAlias(profile.alias)
-            updated.openrouter.selected_source = OpenRouterCredentialSource.BYOK
-            updated.openrouter.llm_model = OpenRouterLLMModel(profile.openrouter_model)
-            updated.api_key_verified.openrouter = True
-            try:
-                await self.apply_providers(updated, force_rebuild_llm=True)
-                self.settings.api_key_verified.openrouter = True
-                self._save_settings()
-            except Exception:
-                with contextlib.suppress(Exception):
-                    if previous_api_key is None:
-                        secrets.delete(OPENROUTER_BYOK_API_KEY_SECRET)
-                    else:
-                        secrets.set(OPENROUTER_BYOK_API_KEY_SECRET, previous_api_key)
-                try:
-                    await self.apply_providers(previous_settings, force_rebuild_llm=True)
-                except Exception as rollback_exc:
-                    self.settings = previous_settings
-                    with contextlib.suppress(Exception):
-                        self._save_settings()
-                    self._log_error(f"OpenRouter PKCE rollback failed: {rollback_exc}")
-                raise
-        except Exception as exc:
-            self._show_short_message("openrouter.pkce.failed")
-            self._log_error(f"OpenRouter PKCE apply failed: {exc}")
-            if launch_source == "letter":
-                show_founder_letter_dialog = getattr(self.app, "show_founder_letter_dialog", None)
-                if callable(show_founder_letter_dialog):
-                    with contextlib.suppress(Exception):
-                        show_founder_letter_dialog()
-            return False
-        return True
-
     def _save_settings(self) -> None:
         assert self.settings is not None
         try:
@@ -4996,74 +4805,3 @@ class GuiController:
 
     def _log_error(self, message: str) -> None:
         self.log_basic(message, level=logging.ERROR)
-
-    def _get_qwen_key_and_base_url(self, secrets) -> tuple[str, str]:
-        if self.settings is None:
-            return "", ""
-        if self.settings.qwen.region == QwenRegion.BEIJING:
-            target_key = "alibaba_api_key_beijing"
-        else:
-            target_key = "alibaba_api_key_singapore"
-
-        api_key = secrets.get(target_key) or ""
-        if api_key:
-            return api_key, self.settings.qwen.get_llm_base_url()
-
-        # Backward compatibility: legacy single-key storage from older versions.
-        legacy_key = secrets.get("alibaba_api_key") or ""
-        if legacy_key:
-            setter = getattr(secrets, "set", None)
-            if callable(setter):
-                with contextlib.suppress(Exception):
-                    setter(target_key, legacy_key)
-            return legacy_key, self.settings.qwen.get_llm_base_url()
-
-        return "", self.settings.qwen.get_llm_base_url()
-
-    async def _verify_qwen_key_with_model_fallback(
-        self,
-        api_key: str,
-        *,
-        base_url: str,
-    ) -> tuple[bool, str]:
-        if self.settings is None:
-            return False, "Verification failed (check logs/console for details)"
-
-        selected_model = self.settings.qwen.llm_model.value
-        if await self._verify_qwen_llm_api_key(api_key, base_url=base_url, model=selected_model):
-            return True, "Verification successful"
-
-        for fallback_model in (
-            model.value for model in QwenLLMModel if model.value != selected_model
-        ):
-            if await self._verify_qwen_llm_api_key(
-                api_key,
-                base_url=base_url,
-                model=fallback_model,
-            ):
-                return False, f"qwen_model_unavailable:{selected_model}"
-
-        return False, "Verification failed (check logs/console for details)"
-
-    async def _verify_qwen_llm_api_key(
-        self,
-        api_key: str,
-        *,
-        base_url: str,
-        model: str | None = None,
-    ) -> bool:
-        if self.settings is None:
-            return False
-        runtime_model = model or self.settings.qwen.llm_model.value
-        if self.settings.stt.low_latency_mode:
-            async_base_url = base_url.replace("/api/v1", "/compatible-mode/v1")
-            return await AsyncQwenLLMProvider.verify_api_key(
-                api_key,
-                base_url=async_base_url,
-                model=runtime_model,
-            )
-        return await QwenLLMProvider.verify_api_key(
-            api_key,
-            base_url=base_url,
-            model=runtime_model,
-        )

@@ -18,7 +18,7 @@ class PromptEditor(ft.Column):
     ):
         self._on_change = on_change
         self._on_commit = on_commit
-        self._current_provider = "gemini"
+        self._current_provider = "openai_compatible"
 
         self._text_field = ft.TextField(
             multiline=True,

@@ -437,7 +437,6 @@ class FallbackRacingLLMProvider(LLMProvider):
         pending: list[object] = [provider]
         resolved_model: str | None = None
         resolved_source: str | None = None
-        saw_openrouter = False
 
         while pending:
             current = pending.pop(0)
@@ -445,12 +444,11 @@ class FallbackRacingLLMProvider(LLMProvider):
                 continue
             seen.add(id(current))
 
-            node_model, node_source, node_is_openrouter = cls._identity_from_node(current)
+            node_model, node_source = cls._identity_from_node(current)
             if resolved_model is None and node_model is not None:
                 resolved_model = node_model
             if resolved_source is None and node_source is not None:
                 resolved_source = node_source
-            saw_openrouter = saw_openrouter or node_is_openrouter
 
             if resolved_model is not None and resolved_source is not None:
                 return resolved_model, resolved_source
@@ -460,12 +458,10 @@ class FallbackRacingLLMProvider(LLMProvider):
                 if wrapped is not None and id(wrapped) not in seen:
                     pending.append(wrapped)
 
-        if resolved_source is None and saw_openrouter:
-            resolved_source = "openrouter"
         return resolved_model, resolved_source
 
     @classmethod
-    def _identity_from_node(cls, provider: object) -> tuple[str | None, str | None, bool]:
+    def _identity_from_node(cls, provider: object) -> tuple[str | None, str | None]:
         direct_model = cls._stringify_metadata(getattr(provider, "model", None))
         direct_source = cls._stringify_metadata(
             getattr(
@@ -483,26 +479,15 @@ class FallbackRacingLLMProvider(LLMProvider):
 
         model = direct_model or settings_model or release_model
         source = direct_source or settings_source or release_source
-        is_openrouter = cls._is_openrouter_provider(provider) or any(
-            value is not None
-            for value in (release_model, release_source, settings_model, settings_source)
-        )
-        return model, source, is_openrouter
+        return model, source
 
     @classmethod
     def _settings_identity(cls, settings: object | None) -> tuple[str | None, str | None]:
         if settings is None:
             return None, None
-        openrouter_settings = getattr(settings, "openrouter", settings)
-        model = cls._stringify_metadata(getattr(openrouter_settings, "llm_model", None))
-        source = cls._stringify_metadata(getattr(openrouter_settings, "selected_source", None))
+        model = cls._stringify_metadata(getattr(settings, "llm_model", None))
+        source = cls._stringify_metadata(getattr(settings, "selected_source", None))
         return model, source
-
-    @staticmethod
-    def _is_openrouter_provider(provider: object) -> bool:
-        provider_type = type(provider)
-        haystack = f"{provider_type.__module__}.{provider_type.__name__}".lower()
-        return "openrouter" in haystack
 
     @staticmethod
     def _stringify_metadata(value: object | None) -> str | None:

@@ -46,7 +46,6 @@ class DebugPreviewPanel(ft.Container):
         self,
         *,
         on_founder_letter: Callable[[], None],
-        on_pkce_failure: Callable[[], None],
         on_peer_translation_eula: Callable[[], None],
         on_local_qwen_hallucination_modal: Callable[[], None],
         on_capture_fault_cycle: Callable[[], None],
@@ -61,7 +60,6 @@ class DebugPreviewPanel(ft.Container):
                 on_github_star_snackbar,
             ),
             _PreviewAction("founder_letter", "debug_preview.founder_letter", on_founder_letter),
-            _PreviewAction("pkce_failure", "debug_preview.pkce_failure", on_pkce_failure),
             _PreviewAction(
                 "peer_translation_eula",
                 "debug_preview.peer_translation_eula",

@@ -14,10 +14,6 @@ from typing import Callable
 import flet as ft
 
 from puripuly_heart.app.wiring import create_secret_store
-from puripuly_heart.config.llm_profiles import (
-    fallback_profile_for_alias,
-    profile_for_alias,
-)
 from puripuly_heart.config.prompts import load_prompt_for_provider
 from puripuly_heart.config.settings import (
     DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
@@ -30,11 +26,6 @@ from puripuly_heart.config.settings import (
     OVERLAY_TARGET_STEAMVR,
     AppSettings,
     LLMProviderName,
-    OpenRouterCredentialSource,
-    OpenRouterFallbackSelectionAlias,
-    OpenRouterLLMModel,
-    OpenRouterSelectionAlias,
-    QwenRegion,
     STTProviderName,
     TranslationConnection,
     TranslationFallbackSelectionAlias,
@@ -108,16 +99,19 @@ _TRANSLATION_MODEL_LABEL_KEYS = {
     TranslationModel.QWEN_35_PLUS: "provider.qwen35_plus",
     TranslationModel.LOCAL_LLM: "provider.local_llms",
     TranslationModel.GEMMA4_31B_CEREBRAS: "provider.gemma4_31b_cerebras",
+    TranslationModel.OPENAI_COMPATIBLE: "provider.openai_compatible",
 }
 _TRANSLATION_CONNECTION_LABEL_KEYS = {
     TranslationConnection.OPENROUTER: "settings.translation_connection.openrouter",
     TranslationConnection.OFFICIAL_BYOK: "settings.translation_connection.official_byok",
     TranslationConnection.OLLAMA: "settings.translation_connection.ollama",
+    TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible",
 }
 _TRANSLATION_CONNECTION_DESCRIPTION_KEYS = {
     TranslationConnection.OPENROUTER: "settings.translation_connection.openrouter.description",
     TranslationConnection.OFFICIAL_BYOK: "settings.translation_connection.official_byok.description",
     TranslationConnection.OLLAMA: "settings.translation_connection.ollama.description",
+    TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible.description",
 }
 _TRANSLATION_CONNECTION_ONLY_SUPPORTED_KEY = "settings.translation_connection.only_supported"
 _TRANSLATION_FALLBACK_SELECTION_ORDER = (
@@ -209,17 +203,6 @@ def _setting_action_text_size(text: str) -> int:
     return 16
 
 
-def _derive_openrouter_selection_alias(
-    llm_model: OpenRouterLLMModel,
-    selected_source: OpenRouterCredentialSource,
-) -> OpenRouterSelectionAlias:
-    if llm_model == OpenRouterLLMModel.QWEN_35_FLASH_02_23:
-        return OpenRouterSelectionAlias.QWEN35_FLASH_BYOK
-    if llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH:
-        return OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
-    return OpenRouterSelectionAlias.GEMMA4_BYOK
-
-
 class SettingsView(ft.Column):
     """Settings view with Bento grid layout."""
 
@@ -232,7 +215,6 @@ class SettingsView(ft.Column):
         self.on_prompt_apply_settings: Callable[[AppSettings], None] | None = None
         self.on_providers_changed: Callable[[], None] | None = None
         self.on_local_llm_secret_changed: Callable[[], None] | None = None
-        self.on_request_openrouter_pkce: Callable[[AppSettings], None] | None = None
         self.on_verify_api_key: Callable[[str, str], object] | None = None
         self.on_secret_cleared: Callable[[str], None] | None = None  # key name
         self.on_overlay_calibration_begin: Callable[[], OverlayCalibration] | None = None
@@ -880,73 +862,10 @@ class SettingsView(ft.Column):
         )
 
         # API Key fields
-        self._google_key = ApiKeyField(
-            "settings.google_api_key",
-            "google_api_key",
-            "google",
-            on_verify=self._verify_key,
-            on_save=self._on_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-        )
-        self._openrouter_key = ApiKeyField(
-            "settings.openrouter_api_key",
-            "openrouter_api_key",
-            "openrouter",
-            on_verify=self._verify_key,
-            on_save=self._on_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-        )
-        self._deepseek_key = ApiKeyField(
-            "settings.deepseek_api_key",
-            "deepseek_api_key",
-            "deepseek",
-            on_verify=self._verify_key,
-            on_save=self._on_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-        )
-        self._cerebras_key = ApiKeyField(
-            "settings.cerebras_api_key",
-            "cerebras_api_key",
-            "cerebras",
-            on_verify=self._verify_key,
-            on_save=self._on_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-        )
-        self._openrouter_pkce_button = self._build_action_button(
-            t("settings.openrouter_authenticate"),
-            self._on_openrouter_pkce_click,
-            size=20,
-            default_color=COLOR_NEUTRAL_DARK,
-            disabled_color=COLOR_NEUTRAL_DARK,
-        )
-        self._openrouter_pkce_button.disabled = False
-        self._openrouter_pkce_button_row = ft.Row(
-            controls=[self._openrouter_pkce_button],
-            alignment=ft.MainAxisAlignment.END,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-        self._alibaba_key_beijing = ApiKeyField(
-            "settings.alibaba_api_key_beijing",
-            "alibaba_api_key_beijing",
-            "alibaba_beijing",
-            on_verify=self._verify_key,
-            on_save=self._on_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-        )
-        self._alibaba_key_singapore = ApiKeyField(
-            "settings.alibaba_api_key_singapore",
-            "alibaba_api_key_singapore",
-            "alibaba_singapore",
+        self._openai_compatible_key = ApiKeyField(
+            "settings.openai_compatible_api_key",
+            "openai_compatible_api_key",
+            "openai_compatible",
             on_verify=self._verify_key,
             on_save=self._on_secret_change,
             show_snackbar=lambda msg, bg: (
@@ -956,14 +875,7 @@ class SettingsView(ft.Column):
 
         self._api_keys_column = ft.Column(
             [
-                # self._qwen_region_row removed
-                self._google_key,
-                self._deepseek_key,
-                self._cerebras_key,
-                self._alibaba_key_beijing,
-                self._alibaba_key_singapore,
-                self._openrouter_key,
-                self._openrouter_pkce_button_row,
+                self._openai_compatible_key,
             ],
             spacing=12,
         )
@@ -1910,6 +1822,55 @@ class SettingsView(ft.Column):
         )
         self._local_llm_connection_card.visible = False
 
+        # OpenAI Compatible provider card
+        self._openai_compatible_title = ft.Text(
+            t("settings.openai_compatible.connection", default="OpenAI Compatible Settings"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._openai_compatible_base_url = ft.TextField(
+            label=t("settings.openai_compatible.base_url", default="Base URL"),
+            value="https://api.openai.com/v1",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_openai_compatible_field_change,
+            on_blur=self._on_openai_compatible_base_url_change_end,
+            on_submit=self._on_openai_compatible_base_url_change_end,
+        )
+        self._openai_compatible_model = ft.TextField(
+            label=t("settings.openai_compatible.model", default="Model"),
+            value="gpt-4o-mini",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_openai_compatible_field_change,
+            on_blur=self._on_openai_compatible_model_change_end,
+            on_submit=self._on_openai_compatible_model_change_end,
+        )
+        self._openai_compatible_card = self._wrap_card(
+            ft.Column(
+                [
+                    self._openai_compatible_title,
+                    ft.Container(height=4),
+                    self._openai_compatible_base_url,
+                    self._openai_compatible_model,
+                ],
+                spacing=8,
+            ),
+            height=None,
+        )
+        self._openai_compatible_card.visible = False
+
         # === Row 8: Persona (2x2) - Licenses style ===
         self._prompt_editor = PromptEditor(
             on_change=self._on_prompt_change,
@@ -2027,6 +1988,7 @@ class SettingsView(ft.Column):
                     row1,
                     self._translation_connection_row,
                     self._local_llm_connection_card,
+                    self._openai_compatible_card,
                     api_keys_row,
                 ],
                 "general": [
@@ -2082,65 +2044,6 @@ class SettingsView(ft.Column):
         text_control.value = text
         text_control.size = 28
 
-    def _stored_openrouter_selection_alias(
-        self, settings: AppSettings
-    ) -> OpenRouterSelectionAlias | None:
-        if settings.openrouter.selection_alias is None:
-            if settings.openrouter.selected_source == OpenRouterCredentialSource.NONE:
-                return None
-            return _derive_openrouter_selection_alias(
-                settings.openrouter.llm_model,
-                settings.openrouter.selected_source,
-            )
-        try:
-            profile_for_alias(settings.openrouter.selection_alias.value)
-            return settings.openrouter.selection_alias
-        except KeyError:
-            if settings.openrouter.selected_source == OpenRouterCredentialSource.NONE:
-                return None
-            return _derive_openrouter_selection_alias(
-                settings.openrouter.llm_model,
-                settings.openrouter.selected_source,
-            )
-
-    def _display_openrouter_selection_alias(
-        self, settings: AppSettings
-    ) -> OpenRouterSelectionAlias:
-        stored_alias = self._stored_openrouter_selection_alias(settings)
-        if stored_alias is not None:
-            return stored_alias
-        if settings.openrouter.llm_model == OpenRouterLLMModel.QWEN_35_FLASH_02_23:
-            return OpenRouterSelectionAlias.QWEN35_FLASH_BYOK
-        if settings.openrouter.llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH:
-            return OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
-        return OpenRouterSelectionAlias.GEMMA4_BYOK
-
-    def _openrouter_selection_profile(self, settings: AppSettings | None):
-        if settings is None:
-            return None
-        try:
-            return profile_for_alias(self._display_openrouter_selection_alias(settings).value)
-        except KeyError:
-            return None
-
-    def _openrouter_fallback_profile(self, settings: AppSettings | None):
-        if settings is None:
-            return None
-        try:
-            return fallback_profile_for_alias(settings.openrouter.fallback_selection_alias.value)
-        except KeyError:
-            return None
-
-    def _legacy_openrouter_fallback_display_active(self, settings: AppSettings | None) -> bool:
-        if settings is None:
-            return False
-        return (
-            settings.translation.fallback_selection_alias == TranslationFallbackSelectionAlias.NONE
-            and settings.provider.llm == LLMProviderName.OPENROUTER
-            and settings.openrouter.fallback_selection_alias
-            != OpenRouterFallbackSelectionAlias.NONE
-        )
-
     def _translation_fallback_display_label(
         self,
         alias: TranslationFallbackSelectionAlias,
@@ -2155,105 +2058,24 @@ class SettingsView(ft.Column):
             return TranslationFallbackSelectionAlias.NONE.value
         if settings.translation.fallback_selection_alias != TranslationFallbackSelectionAlias.NONE:
             return settings.translation.fallback_selection_alias.value
-        if settings.provider.llm == LLMProviderName.OPENROUTER:
-            if (
-                settings.openrouter.fallback_selection_alias
-                == OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH
-            ):
-                return TranslationFallbackSelectionAlias.OPENROUTER_DEEPSEEK_V4_FLASH.value
-            if (
-                settings.openrouter.fallback_selection_alias
-                == OpenRouterFallbackSelectionAlias.NONE
-            ):
-                return TranslationFallbackSelectionAlias.NONE.value
         return TranslationFallbackSelectionAlias.NONE.value
-
-    def _openrouter_fallback_source(
-        self, settings: AppSettings | None
-    ) -> OpenRouterCredentialSource:
-        if settings is None:
-            return OpenRouterCredentialSource.NONE
-        if settings.translation.fallback_selection_alias in (
-            TranslationFallbackSelectionAlias.OPENROUTER_DEEPSEEK_V4_FLASH,
-            TranslationFallbackSelectionAlias.OPENROUTER_GEMMA4_26B_A4B,
-        ):
-            if settings.provider.llm != LLMProviderName.OPENROUTER:
-                return OpenRouterCredentialSource.NONE
-            return OpenRouterCredentialSource.BYOK
-        if settings.provider.llm != LLMProviderName.OPENROUTER:
-            return OpenRouterCredentialSource.NONE
-        if settings.openrouter.fallback_selection_alias == OpenRouterFallbackSelectionAlias.NONE:
-            return OpenRouterCredentialSource.NONE
-        return settings.openrouter.selected_source
-
-    def _openrouter_profile_display_label(self, profile) -> str:
-        return t(profile.label_key)
-
-    def _openrouter_profile_display_description(self, profile) -> str:
-        return t(profile.description_key, default="")
 
     def _get_llm_display_label(self, settings: AppSettings) -> str:
         return self._translation_model_display_label(settings.translation.model)
 
     def _get_translation_connection_display_label(self, settings: AppSettings | None) -> str:
         if settings is None:
-            return self._translation_connection_display_label(TranslationConnection.OPENROUTER)
+            return self._translation_connection_display_label(TranslationConnection.OPENAI_COMPATIBLE)
         return self._translation_connection_display_label(settings.translation.connection)
-
-    def _get_openrouter_fallback_display_label(self, settings: AppSettings | None) -> str:
-        if (
-            settings is not None
-            and settings.translation.fallback_selection_alias
-            != TranslationFallbackSelectionAlias.NONE
-        ):
-            return self._translation_fallback_display_label(
-                settings.translation.fallback_selection_alias
-            )
-        profile = self._openrouter_fallback_profile(settings)
-        if (
-            profile is None
-            or profile.openrouter_model is None
-            or not self._legacy_openrouter_fallback_display_active(settings)
-        ):
-            return t("settings.fallback.none")
-        return t(profile.label_key)
-
-    def _get_openrouter_fallback_helper_text(self, settings: AppSettings | None) -> str:
-        if settings is None:
-            return t("settings.fallback.inactive_helper")
-        if settings.translation.fallback_selection_alias != TranslationFallbackSelectionAlias.NONE:
-            return t("settings.fallback.active_helper")
-        if self._legacy_openrouter_fallback_display_active(settings):
-            return t("settings.fallback.legacy_openrouter_helper")
-        return t("settings.fallback.none.description")
-
-    def _set_openrouter_fallback_text(self, text: str) -> None:
-        text_control = self._openrouter_fallback_text.content
-        text_control.value = text
-        text_control.size = 28
-
-    def _sync_openrouter_fallback_card(self, settings: AppSettings | None = None) -> None:
-        if settings is None:
-            settings = self._build_settings_with_provider_draft()
-        self._set_openrouter_fallback_text(self._get_openrouter_fallback_display_label(settings))
-        self._openrouter_fallback_helper_text.value = self._get_openrouter_fallback_helper_text(
-            settings
-        )
 
     def _active_prompt_key_for_settings(self, settings: AppSettings | None) -> str:
         if settings is None:
-            return "gemini"
-        if settings.provider.llm == LLMProviderName.GEMINI:
-            return "gemini"
-        if settings.provider.llm == LLMProviderName.OPENROUTER:
-            return "openrouter"
-        if settings.provider.llm == LLMProviderName.DEEPSEEK:
-            return "deepseek"
+            return "openai_compatible"
         if settings.provider.llm == LLMProviderName.LOCAL_LLM:
             return "local_llm"
-        if settings.provider.llm == LLMProviderName.CEREBRAS:
-            return "cerebras"
-        return "qwen"
+        if settings.provider.llm == LLMProviderName.OPENAI_COMPATIBLE:
+            return "openai_compatible"
+        return "openai_compatible"
 
     def _active_prompt_key(self) -> str:
         return self._active_prompt_key_for_settings(self._build_settings_with_provider_draft())
@@ -2333,16 +2155,7 @@ class SettingsView(ft.Column):
         target.provider.stt_quant = source.provider.stt_quant
         target.provider.peer_stt_quant = source.provider.peer_stt_quant
         target.translation = copy.deepcopy(source.translation)
-        target.gemini.llm_model = source.gemini.llm_model
-        target.openrouter.llm_model = source.openrouter.llm_model
-        target.openrouter.routing_mode = source.openrouter.routing_mode
-        target.openrouter.provider_routing = source.openrouter.provider_routing
-        target.openrouter.selected_source = source.openrouter.selected_source
-        target.openrouter.selection_alias = source.openrouter.selection_alias
-        target.openrouter.fallback_selection_alias = source.openrouter.fallback_selection_alias
-        target.qwen.llm_model = source.qwen.llm_model
         target.qwen.region = source.qwen.region
-        target.deepseek.llm_model = source.deepseek.llm_model
         target.local_llm = copy.deepcopy(source.local_llm)
         target.system_prompt = source.system_prompt
         target.system_prompts = {}
@@ -2522,6 +2335,67 @@ class SettingsView(ft.Column):
         self._on_local_llm_model_change_end(None)
         self._on_local_llm_extra_body_change_end(None)
 
+    def _on_openai_compatible_field_change(self, e) -> None:
+        _ = e
+        if not self._settings:
+            return
+        current = self._provider_settings_draft or self._settings
+        if current.provider.llm != LLMProviderName.OPENAI_COMPATIBLE:
+            return
+        self._ensure_provider_settings_draft()
+        self.has_provider_changes = True
+
+    def _on_openai_compatible_base_url_change_end(self, e) -> None:
+        _ = e
+        if not self._settings:
+            return
+        raw_value = (self._openai_compatible_base_url.value or "").strip()
+        if not raw_value:
+            self._openai_compatible_base_url.error_text = t(
+                "settings.openai_compatible.base_url.required", default="Base URL is required"
+            )
+            _update_control_if_mounted(self._openai_compatible_base_url)
+            return
+
+        self._openai_compatible_base_url.error_text = None
+        self._openai_compatible_base_url.value = raw_value
+        current = self._provider_settings_draft or self._settings
+        if current.provider.openai_compatible.base_url != raw_value:
+            draft = self._ensure_provider_settings_draft()
+            draft.provider.openai_compatible.base_url = raw_value
+            self.has_provider_changes = True
+        _update_control_if_mounted(self._openai_compatible_base_url)
+
+    def _on_openai_compatible_model_change_end(self, e) -> None:
+        _ = e
+        if not self._settings:
+            return
+        model = (self._openai_compatible_model.value or "").strip()
+        if not model:
+            self._openai_compatible_model.error_text = t(
+                "settings.openai_compatible.model.required", default="Model is required"
+            )
+            _update_control_if_mounted(self._openai_compatible_model)
+            return
+
+        self._openai_compatible_model.error_text = None
+        self._openai_compatible_model.value = model
+        current = self._provider_settings_draft or self._settings
+        if current.provider.openai_compatible.model != model:
+            draft = self._ensure_provider_settings_draft()
+            draft.provider.openai_compatible.model = model
+            self.has_provider_changes = True
+        _update_control_if_mounted(self._openai_compatible_model)
+
+    def _commit_openai_compatible_fields_from_controls(self) -> None:
+        if not self._settings:
+            return
+        current = self._provider_settings_draft or self._settings
+        if current.provider.llm != LLMProviderName.OPENAI_COMPATIBLE:
+            return
+        self._on_openai_compatible_base_url_change_end(None)
+        self._on_openai_compatible_model_change_end(None)
+
     def _settings_with_desktop_overlay_runtime_state(
         self,
         settings: AppSettings | None,
@@ -2568,6 +2442,7 @@ class SettingsView(ft.Column):
 
     def build_provider_apply_settings(self) -> AppSettings | None:
         self._commit_local_llm_fields_from_controls()
+        self._commit_openai_compatible_fields_from_controls()
         return self._sanitize_provider_apply_settings(
             self._settings_with_desktop_overlay_runtime_state(
                 self._build_settings_with_provider_draft()
@@ -2644,7 +2519,6 @@ class SettingsView(ft.Column):
         self._set_translation_connection_text(
             self._get_translation_connection_display_label(settings),
         )
-        self._sync_openrouter_fallback_card(settings)
         self._local_llm_base_url.value = settings.local_llm.base_url
         self._local_llm_base_url.error_text = None
         self._local_llm_model.value = settings.local_llm.model
@@ -2655,6 +2529,12 @@ class SettingsView(ft.Column):
             indent=2,
         )
         self._clear_local_llm_extra_body_error()
+
+        # OpenAI Compatible
+        self._openai_compatible_base_url.value = settings.provider.openai_compatible.base_url
+        self._openai_compatible_base_url.error_text = None
+        self._openai_compatible_model.value = settings.provider.openai_compatible.model
+        self._openai_compatible_model.error_text = None
 
         # Qwen Region
         region_label = t(f"region.{settings.qwen.region.value}")
@@ -2717,56 +2597,6 @@ class SettingsView(ft.Column):
         if self.page:
             self.update()
 
-    def refresh_after_openrouter_pkce_success(
-        self,
-        settings: AppSettings,
-        *,
-        config_path: Path,
-    ) -> None:
-        self._settings = settings
-        self._provider_settings_draft = None
-        self._config_path = config_path
-        self.has_provider_changes = False
-        self.has_pending_prompt_changes = False
-        self._desktop_overlay_pending_size_preset = None
-        self._desktop_overlay_pending_position_reset = False
-        self._desktop_overlay_pending_locked = None
-        self._desktop_overlay_captions_locked = False
-
-        self._set_unit_card_value_text(
-            self._llm_text,
-            self._get_llm_display_label(settings),
-        )
-        self._set_translation_connection_text(
-            self._get_translation_connection_display_label(settings),
-        )
-        self._sync_openrouter_fallback_card(settings)
-        self._update_api_visibility(settings)
-
-        provider_name = self._active_prompt_key()
-        self._prompt_editor.set_provider(provider_name)
-        settings.system_prompts = {}
-        if settings.system_prompt.strip():
-            self._prompt_editor.value = settings.system_prompt
-        else:
-            self._prompt_editor.load_default_prompt(emit_change=False)
-            settings.system_prompt = self._prompt_editor.value
-        self._sync_custom_vocabulary_editor_from_settings()
-        self._sync_prompt_tab_copy()
-
-        try:
-            store = create_secret_store(settings.secrets, config_path=config_path)
-        except Exception as exc:
-            self._emit_runtime_basic(f"Failed to load secrets: {exc}", level=logging.WARNING)
-        else:
-            self._openrouter_key.value = store.get("openrouter_api_key") or ""
-            self._deepseek_key.value = store.get("deepseek_api_key") or ""
-            self._cerebras_key.value = store.get("cerebras_api_key") or ""
-            self._restore_api_key_icons(settings)
-
-        if self.page:
-            self.update()
-
     def _load_secrets(self, settings: AppSettings, config_path: Path) -> None:
         """Load secret values into fields."""
         try:
@@ -2775,22 +2605,8 @@ class SettingsView(ft.Column):
             self._emit_runtime_basic(f"Failed to load secrets: {exc}", level=logging.WARNING)
             return
 
-        self._google_key.value = store.get("google_api_key") or ""
-        self._openrouter_key.value = store.get("openrouter_api_key") or ""
-        self._deepseek_key.value = store.get("deepseek_api_key") or ""
-        self._cerebras_key.value = store.get("cerebras_api_key") or ""
+        self._openai_compatible_key.value = store.get("openai_compatible_api_key") or ""
         self._local_llm_api_key.value = store.get("local_llm_api_key") or ""
-
-        # Alibaba keys with legacy fallback
-        beijing_key = _load_secret_value(
-            store, "alibaba_api_key_beijing", legacy_keys=("alibaba_api_key",)
-        )
-        singapore_key = _load_secret_value(
-            store, "alibaba_api_key_singapore", legacy_keys=("alibaba_api_key",)
-        )
-
-        self._alibaba_key_beijing.value = beijing_key
-        self._alibaba_key_singapore.value = singapore_key
 
         # Restore verification status icons from saved settings
         self._restore_api_key_icons(settings)
@@ -2799,18 +2615,8 @@ class SettingsView(ft.Column):
         """Restore API key field icons based on saved verification status."""
         verified = settings.api_key_verified
 
-        # Map field -> (has_key, is_verified)
         field_map = [
-            (self._google_key, self._google_key.value, verified.google),
-            (self._openrouter_key, self._openrouter_key.value, verified.openrouter),
-            (self._deepseek_key, self._deepseek_key.value, verified.deepseek),
-            (self._cerebras_key, self._cerebras_key.value, verified.cerebras),
-            (self._alibaba_key_beijing, self._alibaba_key_beijing.value, verified.alibaba_beijing),
-            (
-                self._alibaba_key_singapore,
-                self._alibaba_key_singapore.value,
-                verified.alibaba_singapore,
-            ),
+            (self._openai_compatible_key, self._openai_compatible_key.value, verified.openai_compatible),
         ]
 
         for field, has_key, is_verified in field_map:
@@ -2819,37 +2625,10 @@ class SettingsView(ft.Column):
                 field._last_verified_hash = ""
             elif is_verified:
                 field._set_status("success")
-                # Restore hash to prevent re-verification on blur
                 field._last_verified_hash = field._get_key_hash(has_key)
             else:
                 field._set_status("error")
                 field._last_verified_hash = ""
-        self._sync_openrouter_pkce_button_state(settings)
-
-    def _sync_openrouter_pkce_button_state(self, settings: AppSettings | None = None) -> None:
-        if settings is None:
-            settings = self._build_settings_with_provider_draft()
-        authenticated = bool(
-            settings is not None
-            and settings.api_key_verified.openrouter
-            and self._openrouter_key.value
-        )
-        _set_text_button_label(
-            self._openrouter_pkce_button,
-            t(
-                "settings.openrouter_authenticated"
-                if authenticated
-                else "settings.openrouter_authenticate"
-            ),
-        )
-        self._openrouter_pkce_button.disabled = authenticated
-        self._openrouter_pkce_button.style = self._get_button_style(
-            font_for_language(get_locale()),
-            default_color=COLOR_NEUTRAL_DARK,
-            disabled_color=COLOR_NEUTRAL_DARK,
-        )
-        if getattr(self._openrouter_pkce_button, "page", None):
-            self._openrouter_pkce_button.update()
 
     # --- Visibility Updates ---
     def _update_api_visibility(self, settings: AppSettings | None = None) -> None:
@@ -2863,29 +2642,11 @@ class SettingsView(ft.Column):
         llm = settings.provider.llm
         peer_stt = self._effective_peer_stt_provider(settings)
         fallback_alias = settings.translation.fallback_selection_alias
-        fallback_source = self._openrouter_fallback_source(settings)
 
-        self._google_key.visible = llm == LLMProviderName.GEMINI
-        openrouter_byok_selected = bool(
-            llm == LLMProviderName.OPENROUTER
-            and settings.openrouter.selected_source == OpenRouterCredentialSource.BYOK
-        )
-        self._openrouter_key.visible = bool(
-            openrouter_byok_selected or fallback_source == OpenRouterCredentialSource.BYOK
-        )
-        self._openrouter_pkce_button_row.visible = openrouter_byok_selected
-        self._deepseek_key.visible = bool(
-            llm == LLMProviderName.DEEPSEEK
-            or fallback_alias == TranslationFallbackSelectionAlias.DEEPSEEK_V4_FLASH_OFFICIAL
-        )
-        self._cerebras_key.visible = bool(
-            llm == LLMProviderName.CEREBRAS
-            or fallback_alias == TranslationFallbackSelectionAlias.CEREBRAS_GEMMA4_31B
-        )
-        self._sync_openrouter_pkce_button_state(settings)
         self._translation_connection_row.visible = True
         self._local_llm_connection_card.visible = llm == LLMProviderName.LOCAL_LLM
-        self._sync_openrouter_fallback_card(settings)
+        self._openai_compatible_key.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
+        self._openai_compatible_card.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
 
         stt_compute_visible = self._is_local_stt(stt)
         peer_compute_visible = self._is_local_stt(peer_stt)
@@ -2919,15 +2680,13 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(self._stt_backend_row)
         _update_control_if_mounted(self._peer_stt_backend_row)
 
-        qwen_regions: set[QwenRegion] = set()
-        if llm == LLMProviderName.QWEN:
-            qwen_regions.add(settings.qwen.region)
-
-        self._qwen_region_btn.visible = llm == LLMProviderName.QWEN
-        self._alibaba_key_beijing.visible = QwenRegion.BEIJING in qwen_regions
-        self._alibaba_key_singapore.visible = QwenRegion.SINGAPORE in qwen_regions
-
     # --- Event Handlers ---
+    def _on_qwen_region_click(self, e) -> None:
+        pass
+
+    def _on_openrouter_fallback_click(self, e) -> None:
+        pass
+
     def _on_stt_click(self, e) -> None:
         """Open STT provider selection modal."""
         if not self.page:
@@ -3380,6 +3139,7 @@ class SettingsView(ft.Column):
             (TranslationModel.DEEPSEEK_V4_FLASH, recommended_section),
             (TranslationModel.GEMMA4_31B_CEREBRAS, others_section),
             (TranslationModel.LOCAL_LLM, others_section),
+            (TranslationModel.OPENAI_COMPATIBLE, others_section),
             (TranslationModel.DEEPSEEK_V4_PRO, others_section),
             (TranslationModel.GEMINI_3_FLASH, others_section),
             (TranslationModel.GEMINI_31_FLASH_LITE, others_section),
@@ -3432,7 +3192,6 @@ class SettingsView(ft.Column):
         self._set_translation_connection_text(
             self._get_translation_connection_display_label(settings),
         )
-        self._sync_openrouter_fallback_card(settings)
 
     def _apply_translation_selection(
         self,
@@ -3510,10 +3269,7 @@ class SettingsView(ft.Column):
         try:
             model = TranslationModel(value)
         except (TypeError, ValueError):
-            if value == LLMProviderName.OPENROUTER.value:
-                model = TranslationModel.GEMMA4
-            else:
-                return
+            return
 
         if current_settings.translation.model == model:
             return
@@ -3566,108 +3322,6 @@ class SettingsView(ft.Column):
             return
         self._apply_translation_selection(model, connection)
 
-    def _on_openrouter_fallback_click(self, e) -> None:
-        if not self.page:
-            return
-        options: list[OptionItem] = [
-            OptionItem(
-                value=alias.value,
-                label=self._translation_fallback_display_label(alias),
-                description=(
-                    t(
-                        _TRANSLATION_FALLBACK_DESCRIPTION_KEYS[alias],
-                        default="",
-                    )
-                    if alias in _TRANSLATION_FALLBACK_DESCRIPTION_KEYS
-                    else ""
-                ),
-            )
-            for alias in _TRANSLATION_FALLBACK_SELECTION_ORDER
-        ]
-        display_settings = self._build_settings_with_provider_draft()
-        if (
-            display_settings is not None
-            and self._legacy_openrouter_fallback_display_active(display_settings)
-            and display_settings.openrouter.fallback_selection_alias
-            not in (
-                OpenRouterFallbackSelectionAlias.NONE,
-                OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH,
-                OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH_CHINA,
-            )
-        ):
-            profile = self._openrouter_fallback_profile(display_settings)
-            legacy_value = f"legacy:{display_settings.openrouter.fallback_selection_alias.value}"
-            options.append(
-                OptionItem(
-                    value=legacy_value,
-                    label=(
-                        self._openrouter_profile_display_label(profile)
-                        if profile is not None
-                        else display_settings.openrouter.fallback_selection_alias.value
-                    ),
-                )
-            )
-        current = self._effective_translation_fallback_modal_value(display_settings)
-        if (
-            display_settings is not None
-            and self._legacy_openrouter_fallback_display_active(display_settings)
-            and display_settings.openrouter.fallback_selection_alias
-            not in (
-                OpenRouterFallbackSelectionAlias.NONE,
-                OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH,
-                OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH_CHINA,
-            )
-        ):
-            current = f"legacy:{display_settings.openrouter.fallback_selection_alias.value}"
-        modal = SettingsModal(
-            self.page,
-            t("settings.fallback.modal_title"),
-            options,
-            self._on_openrouter_fallback_selected,
-            show_description=True,
-        )
-        modal.open(current)
-
-    def _on_openrouter_fallback_selected(self, value: str) -> None:
-        if not self._settings:
-            return
-
-        current_settings = self._build_settings_with_provider_draft()
-        assert current_settings is not None
-        if value.startswith("legacy:"):
-            return
-        try:
-            new_value = TranslationFallbackSelectionAlias(value)
-        except ValueError:
-            new_value = TranslationFallbackSelectionAlias.NONE
-
-        old_value = current_settings.translation.fallback_selection_alias
-        should_clear_legacy_fallback = (
-            new_value == TranslationFallbackSelectionAlias.NONE
-            and current_settings.openrouter.fallback_selection_alias
-            != OpenRouterFallbackSelectionAlias.NONE
-        )
-        if old_value == new_value and not should_clear_legacy_fallback:
-            return
-
-        self._emit_runtime_detailed(
-            "[Settings] Fallback selection changed: " f"{old_value.value}->{new_value.value}"
-        )
-        draft = self._ensure_provider_settings_draft()
-        draft.translation = copy.deepcopy(current_settings.translation)
-        draft.translation.fallback_selection_alias = new_value
-        if new_value == TranslationFallbackSelectionAlias.NONE:
-            draft.openrouter.fallback_selection_alias = OpenRouterFallbackSelectionAlias.NONE
-        self.has_provider_changes = True
-        # Build merged settings once and pass to _update_api_visibility to avoid redundant deepcopy
-        merged = self._build_settings_with_provider_draft()
-        self._update_api_visibility(merged)
-
-        self._sync_openrouter_fallback_card(merged)
-        if self.page:
-            self._api_keys_column.update()
-            self._translation_connection_row.update()
-
     def _on_ui_click(self, e) -> None:
         """Open UI language selection modal."""
         if not self.page:
@@ -3696,75 +3350,6 @@ class SettingsView(ft.Column):
         if self.page:
             self._ui_text.update()
         self._emit_settings_changed()
-
-    def _on_qwen_region_click(self, e) -> None:
-        """Open Qwen region selection modal."""
-        if not self.page:
-            return
-        options = [OptionItem(value=r.value, label=t(f"region.{r.value}")) for r in QwenRegion]
-        display_settings = self._build_settings_with_provider_draft()
-        current = (
-            display_settings.qwen.region.value
-            if display_settings is not None
-            else QwenRegion.BEIJING.value
-        )
-        modal = SettingsModal(
-            self.page,
-            t("settings.qwen_region"),
-            options,
-            self._on_qwen_region_selected,
-            show_description=False,
-        )
-        modal.open(current)
-
-    def _on_qwen_region_selected(self, value: str) -> None:
-        if not self._settings:
-            return
-
-        current_settings = self._build_settings_with_provider_draft()
-        assert current_settings is not None
-        old_region = current_settings.qwen.region.value
-        if old_region == value:
-            return
-        self._emit_runtime_detailed(f"[Settings] Qwen region changed: {old_region} -> {value}")
-        draft = self._ensure_provider_settings_draft()
-        draft.qwen.region = QwenRegion(value)
-        self.has_provider_changes = True
-
-        # Update text
-        _set_text_button_label(
-            self._qwen_region_btn,
-            f"{t('settings.qwen_region')} {t(f'region.{value}')}",
-        )
-        if self.page:
-            self._qwen_region_btn.update()
-
-        self._update_api_visibility()
-        if self.page:
-            self._api_keys_column.update()
-
-    def _on_openrouter_pkce_click(self, _e) -> None:
-        settings = self._build_settings_with_provider_draft()
-        if settings is None or self.on_request_openrouter_pkce is None:
-            return
-        if settings.api_key_verified.openrouter and self._openrouter_key.value:
-            return
-        if settings.provider.llm != LLMProviderName.OPENROUTER:
-            return
-        if settings.openrouter.selected_source != OpenRouterCredentialSource.BYOK:
-            return
-        profile = self._openrouter_selection_profile(settings)
-        if profile is None or profile.openrouter_source != OpenRouterCredentialSource.BYOK.value:
-            return
-
-        target = copy.deepcopy(settings)
-        target.provider.llm = LLMProviderName.OPENROUTER
-        target.openrouter.selection_alias = OpenRouterSelectionAlias(profile.alias)
-        target.openrouter.selected_source = OpenRouterCredentialSource.BYOK
-        assert profile.openrouter_model is not None
-        target.openrouter.llm_model = OpenRouterLLMModel(profile.openrouter_model)
-        target.system_prompt = self._ensure_provider_prompt_value(target, "openrouter")
-        self.on_request_openrouter_pkce(target)
 
     def _write_secret_value(self, key: str, value: str) -> bool:
         if not self._settings or not self._config_path:
@@ -3805,8 +3390,6 @@ class SettingsView(ft.Column):
         if not value and self.on_secret_cleared:
             with contextlib.suppress(Exception):
                 self.on_secret_cleared(key)
-        if key == "openrouter_api_key":
-            self._sync_openrouter_pkce_button_state()
 
     def _on_audio_change(self) -> None:
         if not self._settings:
@@ -4963,8 +4546,6 @@ class SettingsView(ft.Column):
         """Verify API key."""
         if self.on_verify_api_key:
             result = await self.on_verify_api_key(provider, key)
-            if provider == "openrouter":
-                self._sync_openrouter_pkce_button_state()
             return result
         return False, "Verification not available"
 
@@ -5086,8 +4667,6 @@ class SettingsView(ft.Column):
 
         if self._qwen_region_btn:
             self._qwen_region_btn.style = self._get_button_style(ui_font)
-        if self._openrouter_pkce_button:
-            self._sync_openrouter_pkce_button_state(display_settings)
         self._sync_clickable_text_control_fonts(ui_font)
         for glyph_text in (
             getattr(self, "_overlay_distance_decrease_glyph", None),
@@ -5119,7 +4698,6 @@ class SettingsView(ft.Column):
             self._set_translation_connection_text(
                 self._get_translation_connection_display_label(display_settings),
             )
-            self._sync_openrouter_fallback_card(display_settings)
             self._ui_text.content.value = locale_label(display_settings.ui.locale)
             self._low_latency_text.content.value = t(
                 "toggle.on" if display_settings.stt.low_latency_mode else "toggle.off"
@@ -5155,12 +4733,6 @@ class SettingsView(ft.Column):
             )
 
         # Components
-        self._google_key.apply_locale()
-        self._openrouter_key.apply_locale()
-        self._deepseek_key.apply_locale()
-        self._cerebras_key.apply_locale()
-        self._alibaba_key_beijing.apply_locale()
-        self._alibaba_key_singapore.apply_locale()
         self._audio_settings.apply_locale()
         self._prompt_editor.apply_locale()
 

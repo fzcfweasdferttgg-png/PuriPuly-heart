@@ -1,7 +1,7 @@
 """Unified language mapper for UI, STT, and LLM.
 
 Provides consistent language codes and names across:
-- LLM prompts (Gemini, Qwen)
+- LLM prompts (OpenAI-compatible, Local LLM)
 - UI display
 - Local STT providers (Parakeet, GigaAM, Qwen)
 """

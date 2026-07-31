@@ -97,7 +97,6 @@ class TranslatorApp:
         self.overlay_peer_contract = None
         self.debug_ui_preview = bool(debug_ui_preview)
         self.debug_preview_panel: DebugPreviewPanel | None = None
-        self._openrouter_pkce_request_active = False
         self._github_star_prompt_launch_pending = True
         self._launch_high_priority_feedback_shown = False
         self._launch_high_priority_feedback_reason: str | None = None
@@ -119,7 +118,6 @@ class TranslatorApp:
         self.view_settings.on_settings_changed = self._on_settings_changed
         self.view_settings.on_prompt_apply_settings = self._on_prompt_apply_settings
         self.view_settings.on_providers_changed = self._on_providers_changed
-        self.view_settings.on_request_openrouter_pkce = self._on_request_openrouter_pkce
         self.view_settings.on_verify_api_key = self._on_verify_api_key
         self.view_settings.on_secret_cleared = self._on_secret_cleared
         self.view_settings.on_local_llm_secret_changed = self._on_local_llm_secret_changed
@@ -240,7 +238,6 @@ class TranslatorApp:
     def _build_debug_preview_panel(self) -> DebugPreviewPanel:
         return DebugPreviewPanel(
             on_founder_letter=self._preview_founder_letter,
-            on_pkce_failure=self._preview_pkce_failure,
             on_peer_translation_eula=self._preview_peer_translation_eula,
             on_local_qwen_hallucination_modal=self._preview_local_qwen_hallucination_modal,
             on_capture_fault_cycle=self._preview_capture_fault_cycle,
@@ -415,9 +412,6 @@ class TranslatorApp:
         dialog = FounderLetterDialog(self.page, on_readme=self._on_founder_letter_readme)
         self._founder_letter_dialog = dialog
         dialog.open()
-
-    def _preview_pkce_failure(self) -> None:
-        self._show_snackbar(t("openrouter.pkce.failed"), ft.Colors.ORANGE_700)
 
     def _preview_peer_translation_eula(self) -> None:
         self._show_peer_translation_eula(self._debug_preview_noop)
@@ -996,52 +990,6 @@ class TranslatorApp:
 
         self._queue_settings_mutation_task(_task)
 
-    def _on_request_openrouter_pkce(
-        self,
-        target_settings: AppSettings,
-        *,
-        launch_source: str = "settings",
-    ) -> None:
-        if getattr(self, "_openrouter_pkce_request_active", False):
-            reopen_authorization_url = getattr(
-                self.controller,
-                "reopen_openrouter_pkce_authorization_url",
-                None,
-            )
-            if callable(reopen_authorization_url):
-                reopen_authorization_url()
-            return
-        self._openrouter_pkce_request_active = True
-
-        async def _task() -> None:
-            try:
-                ok = await self.controller.connect_openrouter_via_pkce(
-                    target_settings=target_settings,
-                    launch_source=launch_source,
-                )
-                if ok:
-                    refresh_after_openrouter_pkce_success = getattr(
-                        self.view_settings,
-                        "refresh_after_openrouter_pkce_success",
-                        None,
-                    )
-                    if callable(refresh_after_openrouter_pkce_success):
-                        refresh_after_openrouter_pkce_success(
-                            self.controller.settings,
-                            config_path=self.controller.config_path,
-                        )
-                    else:
-                        self.view_settings.load_from_settings(
-                            self.controller.settings,
-                            config_path=self.controller.config_path,
-                            preserve_custom_vocab_draft=True,
-                        )
-                    self._show_snackbar(t("openrouter.pkce.connected"), COLOR_SUCCESS)
-            finally:
-                self._openrouter_pkce_request_active = False
-
-        self._queue_settings_mutation_task(_task)
-
     def _translation_enable_succeeded(self, controller: object, result: object) -> bool:
         if result is False:
             return False
@@ -1065,19 +1013,10 @@ class TranslatorApp:
         dialog.open()
 
     def _api_key_verification_matches_current_field(self, provider: str, key: str) -> bool:
-        field_by_provider = {
-            "google": "_google_key",
-            "openrouter": "_openrouter_key",
-            "deepseek": "_deepseek_key",
-            "cerebras": "_cerebras_key",
-            "alibaba_beijing": "_alibaba_key_beijing",
-            "alibaba_singapore": "_alibaba_key_singapore",
-        }
-        field_name = field_by_provider.get(provider)
-        if field_name is None:
+        if provider != "openai_compatible":
             return True
 
-        field = getattr(getattr(self, "view_settings", None), field_name, None)
+        field = getattr(getattr(self, "view_settings", None), "_openai_compatible_key", None)
         if field is None:
             return True
 
@@ -1097,46 +1036,18 @@ class TranslatorApp:
         setattr(self.controller.settings.api_key_verified, provider, success)
         save_settings(self.controller.config_path, self.controller.settings)
 
-        # Sync verification result with dashboard needs_key flags (UI update on user click)
-        if provider in (
-            "google",
-            "openrouter",
-            "deepseek",
-            "cerebras",
-            "alibaba_beijing",
-            "alibaba_singapore",
-        ):
+        # Sync verification result with dashboard needs_key flags
+        if provider == "openai_compatible":
             self.view_dashboard.set_translation_needs_key(not success, update_ui=False)
 
         return success, msg
 
     def _on_secret_cleared(self, key: str) -> None:
         """Reset verification status when API key is cleared."""
-        # Map secret key name to provider name
-        key_to_provider = {
-            "google_api_key": "google",
-            "openrouter_api_key": "openrouter",
-            "deepseek_api_key": "deepseek",
-            "cerebras_api_key": "cerebras",
-            "alibaba_api_key": "alibaba_beijing",  # Use beijing as default
-            "alibaba_api_key_beijing": "alibaba_beijing",
-            "alibaba_api_key_singapore": "alibaba_singapore",
-        }
-        provider = key_to_provider.get(key)
-        if provider:
-            setattr(self.controller.settings.api_key_verified, provider, False)
+        if key == "openai_compatible_api_key":
+            self.controller.settings.api_key_verified.openai_compatible = False
             save_settings(self.controller.config_path, self.controller.settings)
-
-            # Update dashboard needs_key flag
-            if provider in (
-                "google",
-                "openrouter",
-                "deepseek",
-                "cerebras",
-                "alibaba_beijing",
-                "alibaba_singapore",
-            ):
-                self.view_dashboard.set_translation_needs_key(True, update_ui=False)
+            self.view_dashboard.set_translation_needs_key(True, update_ui=False)
 
     def _show_snackbar(self, message: str, bgcolor, duration: int = 4000) -> None:
         """Show a snackbar above the bottom nav."""

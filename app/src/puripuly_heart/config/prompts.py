@@ -13,7 +13,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 TRANSLATION_PROMPT_NAME = "translation_prompt"
-_LLM_PROVIDER_PROMPT_KEYS = {"gemini", "qwen", "deepseek", "openrouter", "local_llm", "cerebras"}
+_LLM_PROVIDER_PROMPT_KEYS = {"local_llm", "openai_compatible"}
 
 
 @dataclass(frozen=True)
@@ -333,7 +333,7 @@ def load_prompt_for_provider(provider: str) -> str:
     """Load the prompt for a specific LLM provider.
 
     Args:
-        provider: Provider name ('gemini' or 'qwen')
+        provider: Provider name ('local_llm' or 'openai_compatible')
 
     Returns:
         Prompt content for the provider, or default if not found
