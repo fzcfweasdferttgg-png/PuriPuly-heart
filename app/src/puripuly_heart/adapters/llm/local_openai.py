@@ -32,7 +32,7 @@ LOCAL_OPENAI_RESERVED_EXTRA_BODY_KEYS = frozenset(
 LOCAL_OPENAI_SENSITIVE_EXTRA_BODY_KEYS = frozenset(
     {"api_key", "authorization", "headers", "token", "secret", "password"}
 )
-_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1"
+_DEFAULT_BASE_URL = ""
 _MODEL_TOKEN_CHARS = r"A-Za-z0-9_./:+-"
 
 
@@ -366,7 +366,7 @@ def _has_length_finish_reason(data: object) -> bool:
 @dataclass(slots=True)
 class HttpxLocalOpenAIClient:
     base_url: str = _DEFAULT_BASE_URL
-    model: str = "llama3.1:8b"
+    model: str = ""
     api_key: str = ""
     extra_body: Mapping[str, object] = field(default_factory=lambda: {"reasoning_effort": "none"})
     max_tokens: int | None = None
@@ -514,7 +514,7 @@ class HttpxLocalOpenAIClient:
 @dataclass(slots=True)
 class LocalOpenAICompatibleLLMProvider:
     base_url: str = _DEFAULT_BASE_URL
-    model: str = "llama3.1:8b"
+    model: str = ""
     api_key: str = ""
     extra_body: Mapping[str, object] = field(default_factory=lambda: {"reasoning_effort": "none"})
     max_tokens: int | None = None
@@ -577,7 +577,7 @@ class LocalOpenAICompatibleLLMProvider:
     async def verify_connection(
         *,
         base_url: str = _DEFAULT_BASE_URL,
-        model: str = "llama3.1:8b",
+        model: str = "",
         api_key: str = "",
         extra_body: Mapping[str, object] | None = None,
     ) -> bool:

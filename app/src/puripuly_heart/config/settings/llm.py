@@ -61,7 +61,7 @@ def _parse_local_llm_base_url(value: object) -> str:
             return _normalize_local_llm_base_url(value)
         except ValueError:
             pass
-    return "http://127.0.0.1:11434/v1"
+    return ""
 
 
 def _normalize_local_llm_model(value: str) -> str:
@@ -79,7 +79,7 @@ def _parse_local_llm_model(value: object) -> str:
             return _normalize_local_llm_model(value)
         except ValueError:
             pass
-    return "llama3.1:8b"
+    return ""
 
 
 def _parse_local_llm_extra_body(value: object) -> dict[str, object]:
@@ -100,8 +100,8 @@ def _parse_local_llm_extra_body(value: object) -> dict[str, object]:
 
 @dataclass(slots=True)
 class OpenAICompatibleSettings:
-    base_url: str = "https://api.openai.com/v1"
-    model: str = "gpt-4o-mini"
+    base_url: str = ""
+    model: str = ""
     fallback_enabled: bool = False
     fallback_base_url: str = ""
     fallback_model: str = ""
@@ -180,8 +180,8 @@ class QwenSettings:
 @dataclass(slots=True)
 class LocalLLMSettings:
     backend: LocalLLMBackend = LocalLLMBackend.GENERIC
-    base_url: str = "http://127.0.0.1:11434/v1"
-    model: str = "llama3.1:8b"
+    base_url: str = ""
+    model: str = ""
     extra_body: dict[str, object] = field(default_factory=_default_local_llm_extra_body)
 
     def validate(self) -> None:
@@ -215,8 +215,8 @@ class LocalLLMSettings:
 
 
 def _parse_openai_compatible_settings(data: dict) -> OpenAICompatibleSettings:
-    base_url = str(data.get("base_url", "https://api.openai.com/v1")).strip()
-    model = str(data.get("model", "gpt-4o-mini")).strip()
+    base_url = str(data.get("base_url", "")).strip()
+    model = str(data.get("model", "")).strip()
     fallback_enabled = bool(data.get("fallback_enabled", False))
     fallback_base_url = str(data.get("fallback_base_url", "")).strip()
     fallback_model = str(data.get("fallback_model", "")).strip()

@@ -1134,7 +1134,7 @@ class SettingsView(
         )
         self._local_llm_base_url = ft.TextField(
             label=t("settings.local_llm.base_url"),
-            value="http://127.0.0.1:11434/v1",
+            value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -1148,7 +1148,7 @@ class SettingsView(
         )
         self._local_llm_model = ft.TextField(
             label=t("settings.local_llm.model"),
-            value="llama3.1:8b",
+            value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -1268,7 +1268,7 @@ class SettingsView(
         )
         self._openai_compatible_model = ft.TextField(
             label=t("settings.openai_compatible.model", default="Model"),
-            value="gpt-4o-mini",
+            value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
