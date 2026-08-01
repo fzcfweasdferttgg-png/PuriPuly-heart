@@ -307,7 +307,7 @@ def _derive_translation_settings_from_runtime_values(
     normalized_history = _parse_translation_connection_history(history)
     if provider_llm == LLMProviderName.LOCAL_LLM:
         return _normalize_translation_settings(
-            model=TranslationModel.LOCAL_LLM, connection=TranslationConnection.OLLAMA,
+            model=TranslationModel.LOCAL_LLM, connection=TranslationConnection.LOCAL,
             history=normalized_history,
         )
     return _normalize_translation_settings(

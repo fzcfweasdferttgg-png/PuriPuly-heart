@@ -45,11 +45,11 @@ _TRANSLATION_MODEL_LABEL_KEYS = {
     TranslationModel.OPENAI_COMPATIBLE: "provider.openai_compatible",
 }
 _TRANSLATION_CONNECTION_LABEL_KEYS = {
-    TranslationConnection.OLLAMA: "settings.translation_connection.ollama",
+    TranslationConnection.LOCAL: "settings.translation_connection.local",
     TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible",
 }
 _TRANSLATION_CONNECTION_DESCRIPTION_KEYS = {
-    TranslationConnection.OLLAMA: "settings.translation_connection.ollama.description",
+    TranslationConnection.LOCAL: "settings.translation_connection.local.description",
     TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible.description",
 }
 _TRANSLATION_CONNECTION_ONLY_SUPPORTED_KEY = "settings.translation_connection.only_supported"
@@ -272,8 +272,6 @@ class LlmSectionMixin:
         if not selected:
             return
         providers = load_providers()
-        if selected == "custom":
-            return
         provider_info = providers.get(selected)
         if not provider_info:
             return
@@ -303,8 +301,6 @@ class LlmSectionMixin:
         if not selected:
             return
         providers = load_providers()
-        if selected == "custom":
-            return
         provider_info = providers.get(selected)
         if not provider_info:
             return

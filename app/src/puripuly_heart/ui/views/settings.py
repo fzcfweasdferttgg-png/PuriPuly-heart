@@ -1236,13 +1236,13 @@ class SettingsView(
         )
         from puripuly_heart.config.providers import load_providers
         _providers = load_providers()
-        _provider_options = [ft.dropdown.Option(key="custom", text="Custom / Manual")]
+        _provider_options = []
         for key, info in _providers.items():
             _provider_options.append(ft.dropdown.Option(key=key, text=info.get("label", key)))
         self._openai_compatible_provider = ft.Dropdown(
             label=t("settings.openai_compatible.provider", default="Provider"),
             options=_provider_options,
-            value="custom",
+            value=_provider_options[0].key if _provider_options else None,
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -1291,7 +1291,6 @@ class SettingsView(
                     self._openai_compatible_title,
                     ft.Container(height=4),
                     self._openai_compatible_provider,
-                    self._openai_compatible_base_url,
                     ft.Row([self._openai_compatible_model, self._openai_compatible_fetch_btn], spacing=4),
                 ],
                 spacing=8,
@@ -1312,13 +1311,13 @@ class SettingsView(
             value=False,
             on_change=self._on_fallback_toggle,
         )
-        _fallback_provider_options = [ft.dropdown.Option(key="custom", text="Custom / Manual")]
+        _fallback_provider_options = []
         for key, info in _providers.items():
             _fallback_provider_options.append(ft.dropdown.Option(key=key, text=info.get("label", key)))
         self._fallback_provider = ft.Dropdown(
             label=t("settings.fallback.provider", default="Fallback Provider"),
             options=_fallback_provider_options,
-            value="custom",
+            value=_fallback_provider_options[0].key if _fallback_provider_options else None,
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -1359,7 +1358,6 @@ class SettingsView(
                     ft.Container(height=4),
                     self._fallback_enabled,
                     self._fallback_provider,
-                    self._fallback_base_url,
                     self._fallback_model,
                 ],
                 spacing=8,
@@ -1670,7 +1668,8 @@ class SettingsView(
         # Sync provider dropdown from base_url
         from puripuly_heart.config.providers import load_providers
         _loaded_providers = load_providers()
-        _matched = "custom"
+        _opts = self._openai_compatible_provider.options or []
+        _matched = _opts[0].key if _opts else None
         for _pk, _pi in _loaded_providers.items():
             if _pi.get("base_url") == settings.provider.openai_compatible.base_url:
                 _matched = _pk
@@ -1682,7 +1681,8 @@ class SettingsView(
         self._fallback_enabled.value = oc.fallback_enabled
         self._fallback_base_url.value = oc.fallback_base_url
         self._fallback_model.value = oc.fallback_model
-        _fb_matched = "custom"
+        _fb_options = self._fallback_provider.options or []
+        _fb_matched = _fb_options[0].key if _fb_options else None
         for _fpk, _fpi in _loaded_providers.items():
             if _fpi.get("base_url") == oc.fallback_base_url:
                 _fb_matched = _fpk

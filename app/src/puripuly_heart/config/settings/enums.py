@@ -30,7 +30,7 @@ class QwenRegion(str, Enum):
 
 
 class LocalLLMBackend(str, Enum):
-    OLLAMA = "ollama"
+    GENERIC = "generic"
 
 
 class TranslationModel(str, Enum):
@@ -39,7 +39,7 @@ class TranslationModel(str, Enum):
 
 
 class TranslationConnection(str, Enum):
-    OLLAMA = "ollama"
+    LOCAL = "local"
     OPENAI_COMPATIBLE = "openai_compatible"
 
 
@@ -70,7 +70,7 @@ def _parse_local_llm_backend(value: object) -> LocalLLMBackend:
             return LocalLLMBackend(value.strip())
         except ValueError:
             pass
-    return LocalLLMBackend.OLLAMA
+    return LocalLLMBackend.GENERIC
 
 
 def _parse_qwen_region(value: object) -> QwenRegion:
@@ -124,7 +124,7 @@ def _parse_translation_connection_history(value: object) -> dict[str, Translatio
 
 
 TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnection, ...]] = {
-    TranslationModel.LOCAL_LLM: (TranslationConnection.OLLAMA,),
+    TranslationModel.LOCAL_LLM: (TranslationConnection.LOCAL,),
     TranslationModel.OPENAI_COMPATIBLE: (TranslationConnection.OPENAI_COMPATIBLE,),
 }
 

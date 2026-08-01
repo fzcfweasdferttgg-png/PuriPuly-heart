@@ -179,7 +179,7 @@ class QwenSettings:
 
 @dataclass(slots=True)
 class LocalLLMSettings:
-    backend: LocalLLMBackend = LocalLLMBackend.OLLAMA
+    backend: LocalLLMBackend = LocalLLMBackend.GENERIC
     base_url: str = "http://127.0.0.1:11434/v1"
     model: str = "llama3.1:8b"
     extra_body: dict[str, object] = field(default_factory=_default_local_llm_extra_body)
