@@ -22,26 +22,26 @@ from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.audio.desktop_pipeline import DesktopPeerPipeline
 from puripuly_heart.core.audio.desktop_source import DesktopLoopbackAudioSource
 from puripuly_heart.core.audio.diagnostics import compute_audio_frame_metrics
-from puripuly_heart.core.audio.format import AudioFrameF32
+from puripuly_heart.ports.audio import AudioFrameF32
 from puripuly_heart.core.audio.gate import VrcMicAudioGate
 from puripuly_heart.core.audio.source import (
-    AudioSource,
     SoundDeviceAudioSource,
     resolve_sounddevice_input_device,
 )
+from puripuly_heart.ports.audio import AudioSource
 from puripuly_heart.core.audio.streaming_resampler import MonoFirstStreamingResampler
 from puripuly_heart.core.clock import SystemClock
-from puripuly_heart.core.llm.provider import LLMProvider
-from puripuly_heart.core.orchestrator.hub import ClientHub
+from puripuly_heart.ports.llm import LLMProvider
+from puripuly_heart.core.pipeline.pipeline import Pipeline
 from puripuly_heart.core.osc.chatbox_paginator import ChatboxPaginator
 from puripuly_heart.core.osc.receiver import VrcMicState, VrcOscReceiver
 from puripuly_heart.core.osc.udp_sender import VrchatOscUdpSender
-from puripuly_heart.core.storage.secrets import SecretStore
+from puripuly_heart.ports.secrets import SecretStore
 from puripuly_heart.core.stt.controller import ManagedSTTProvider
 from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_vad_onnx
 from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
-from puripuly_heart.core.vad.sink import VadEventSink
+from puripuly_heart.ports.vad import VadEventSink
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def _create_headless_llm_provider(*, settings: AppSettings, secrets: SecretStore
 
 @dataclass(slots=True)
 class _HubVadSink:
-    hub: ClientHub
+    hub: Pipeline
     channel: str = "self"
 
     async def handle_vad_event(self, event) -> None:  # noqa: ANN001
@@ -139,7 +139,7 @@ class HeadlessMicRunner:
             max_chars=self.settings.osc.chatbox_max_chars,
         )
 
-        hub = ClientHub(
+        hub = Pipeline(
             stt=stt,
             llm=llm,
             osc=osc,

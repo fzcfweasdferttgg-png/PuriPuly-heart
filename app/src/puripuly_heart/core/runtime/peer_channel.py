@@ -3,49 +3,25 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
-from typing import Awaitable, Callable, Protocol
+from typing import Awaitable, Callable
 
-from puripuly_heart.app.wiring import ResolvedPeerSTTConfig
+from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig
 from puripuly_heart.core.clock import Clock
-from puripuly_heart.core.orchestrator.hub import ClientHub
+from puripuly_heart.core.pipeline.pipeline import Pipeline
+from puripuly_heart.ports.peer import PeerChannelRuntimeState, PeerRuntimeConfig, SpeechChannelRuntime
 
-
-class PeerChannelRuntimeState(str, Enum):
-    STOPPED = "stopped"
-    STARTING = "starting"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    FAULTED = "faulted"
-
-
-@dataclass(frozen=True, slots=True)
-class PeerRuntimeConfig:
-    backend: ResolvedPeerSTTConfig
-    output_device: str
-    vad_threshold: float
-    vad_hangover_ms: int
-    vad_pre_roll_ms: int
-    provider_signature: tuple[object, ...]
-    runtime_signature: tuple[object, ...]
-
-
-class SpeechChannelRuntime(Protocol):
-    @property
-    def state(self) -> PeerChannelRuntimeState: ...
-
-    @property
-    def current_signature(self) -> object | None: ...
-
-    async def apply_policy(self, *, config: PeerRuntimeConfig, desired_active: bool) -> None: ...
-    async def warmup(self) -> None: ...
-    async def close(self) -> None: ...
+__all__ = [
+    "PeerChannelRuntimeState",
+    "PeerRuntimeConfig",
+    "SpeechChannelRuntime",
+    "PeerChannelRuntime",
+]
 
 
 @dataclass(slots=True)
 class _PeerHubVadSink:
-    hub: ClientHub
+    hub: Pipeline
 
     async def handle_vad_event(self, event) -> None:  # noqa: ANN001
         await self.hub.handle_peer_vad_event(event)
@@ -55,7 +31,7 @@ class PeerChannelRuntime:
     def __init__(
         self,
         *,
-        hub: ClientHub,
+        hub: Pipeline,
         clock: Clock,
         stt_factory: Callable[
             [PeerRuntimeConfig, Callable[[Exception], Awaitable[None]]],

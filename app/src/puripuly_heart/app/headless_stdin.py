@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from puripuly_heart.config.settings import AppSettings
 from puripuly_heart.core.clock import SystemClock
-from puripuly_heart.core.llm.provider import LLMProvider
+from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.core.osc.chatbox_paginator import ChatboxPaginator
 from puripuly_heart.core.osc.udp_sender import VrchatOscUdpSender
 from puripuly_heart.domain.models import OSCMessage

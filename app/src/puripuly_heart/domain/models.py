@@ -3,10 +3,17 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
-from typing import Literal
 from uuid import UUID, uuid4
 
-ChannelId = Literal["self", "peer"]
+from puripuly_heart.domain.overlay_types import ChannelId
+
+__all__ = [
+    "ChannelId",
+    "OSCMessage",
+    "Transcript",
+    "Translation",
+    "UtteranceBundle",
+]
 
 
 def _validate_channel(channel: str) -> None:

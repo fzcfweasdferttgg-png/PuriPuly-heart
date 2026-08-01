@@ -1,1 +1,1 @@
-__all__ = ["events", "models"]
+__all__ = ["events", "models", "overlay_types", "peer_types"]

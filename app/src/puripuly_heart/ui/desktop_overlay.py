@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from concurrent.futures import Future as ConcurrentFuture
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlsplit
 
 import websockets
@@ -42,15 +42,14 @@ from puripuly_heart.config.settings import (
     DESKTOP_FLET_SIZE_PRESETS,
     DesktopFletOverlayVisualSettings,
 )
-from puripuly_heart.core.overlay.manifest import (
+from puripuly_heart.domain.overlay_types import (
     OVERLAY_CONTRACT_VERSION,
     OverlayLaunchManifest,
-    normalize_overlay_logging_mode,
-)
-from puripuly_heart.core.overlay.protocol import (
     OverlayPresentationBlock,
     OverlayPresentationSnapshot,
+    normalize_overlay_logging_mode,
 )
+from puripuly_heart.ports.ui import LifecycleSink, ParentMonitor, RendererWindow
 from puripuly_heart.ui.fonts import assets_dir
 from puripuly_heart.ui.i18n import t_for_locale
 
@@ -1695,22 +1694,6 @@ class DesktopOverlayStartupError(Exception):
     def __init__(self, failure_reason: str, message: str) -> None:
         super().__init__(message)
         self.failure_reason = failure_reason
-
-
-class LifecycleSink(Protocol):
-    async def emit(self, event: dict[str, object]) -> None: ...
-
-
-class RendererWindow(Protocol):
-    async def start(self, initial_snapshot: OverlayPresentationSnapshot) -> None: ...
-    async def run_until_closed(self) -> None: ...
-    async def close(self) -> None: ...
-    async def dispatch_snapshot(self, snapshot: OverlayPresentationSnapshot) -> None: ...
-    async def dispatch_runtime_control(self, payload: dict[str, object]) -> None: ...
-
-
-class ParentMonitor(Protocol):
-    async def wait_for_parent_exit(self, stop_event: asyncio.Event) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)

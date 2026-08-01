@@ -1,0 +1,610 @@
+"""Settings helpers mixin — UI builders, parsers, locale helpers."""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import re
+from typing import TYPE_CHECKING
+
+import flet as ft
+
+from puripuly_heart.ui.components.settings import (
+    SettingsUnitCard,
+)
+from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
+from puripuly_heart.ui.components.subtab_shell import TextSubtab, TextSubtabShell
+from puripuly_heart.ui.fonts import font_for_language
+from puripuly_heart.ui.i18n import (
+    get_locale,
+    provider_label,
+    t,
+)
+from puripuly_heart.ui.overlay_calibration import (
+    OVERLAY_CALIBRATION_ANCHORS,
+)
+from puripuly_heart.ui.theme import (
+    COLOR_DIVIDER,
+    COLOR_NEUTRAL,
+    COLOR_ON_BACKGROUND,
+    COLOR_PRIMARY,
+)
+
+if TYPE_CHECKING:
+    from puripuly_heart.config.settings import AppSettings
+
+logger = logging.getLogger(__name__)
+
+# ── Constants duplicated from settings.py (used only by helpers) ──────────
+
+_CJK_START = 0x3000
+_CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
+_CENTER_RIGHT_ALIGNMENT = ft.alignment.Alignment(1, 0)
+_SETTINGS_SUBTAB_ORDER = ("api", "general", "prompt", "overlay")
+_CUSTOM_VOCAB_DELIMITER_RE = re.compile(r"\s+")
+
+
+# ── Module-level helpers ──────────────────────────────────────────────────
+
+def _make_text_button(label: str, **kwargs) -> ft.TextButton:
+    return ft.TextButton(text=label, **kwargs)
+
+
+def _set_text_button_label(button: ft.TextButton, label: str) -> None:
+    button.text = label
+
+
+def _reject_json_constant(value: str) -> None:
+    raise json.JSONDecodeError(f"invalid JSON constant: {value}", value, 0)
+
+
+def _update_control_if_mounted(control: ft.Control) -> None:
+    """Update a Flet control only while it is attached to a page."""
+    if getattr(control, "page", None) is None:
+        return
+    try:
+        control.update()
+    except AssertionError as exc:
+        if "Control must be added" not in str(exc):
+            raise
+
+
+def _make_overlay_anchor_dropdown(value: str, on_change) -> ft.Dropdown:
+    return ft.Dropdown(
+        value=value,
+        options=[
+            ft.dropdown.Option(
+                key=anchor,
+                text=t(f"settings.overlay.calibration.anchor.{anchor}"),
+            )
+            for anchor in OVERLAY_CALIBRATION_ANCHORS
+        ],
+        text_size=14,
+        border_radius=10,
+        border_color=COLOR_DIVIDER,
+        focused_border_color=COLOR_PRIMARY,
+        on_change=on_change,
+    )
+
+
+def _load_secret_value(store, key: str, *, legacy_keys: tuple[str, ...] = ()) -> str:
+    """Load secret value with legacy key fallback."""
+    value = store.get(key) or ""
+    if value or not legacy_keys:
+        return value
+    for legacy_key in legacy_keys:
+        legacy_value = store.get(legacy_key) or ""
+        if legacy_value:
+            with contextlib.suppress(Exception):
+                store.set(key, legacy_value)
+            return legacy_value
+    return ""
+
+
+def _weighted_len(text: str) -> int:
+    return sum(2 if ord(char) >= _CJK_START else 1 for char in text)
+
+
+def _setting_action_text_size(text: str) -> int:
+    length = _weighted_len(text or "")
+    if length <= 6:
+        return 22
+    if length <= 10:
+        return 20
+    if length <= 18:
+        return 18
+    return 16
+
+
+# ── Mixin class ───────────────────────────────────────────────────────────
+
+class SettingsHelpersMixin:
+    """UI builder and helper methods extracted from SettingsView."""
+
+    # --- Card Wrapper (About page pattern) ---
+    def _wrap_card(
+        self,
+        content: ft.Control,
+        *,
+        expand: bool | None = None,
+        height: float | int | None = SharedCardWrapper.DEFAULT_HEIGHT,
+    ) -> SharedCardWrapper:
+        """Wrap content in the shared card shell used across settings/about."""
+        return SharedCardWrapper(
+            content,
+            expand=expand,
+            height=height,
+        )
+
+    def _wrap_unit_card(
+        self,
+        *,
+        title: ft.Control,
+        value: ft.Control,
+        extra_controls: tuple[ft.Control, ...] = (),
+        height: float | int | None = SettingsUnitCard.DEFAULT_HEIGHT,
+    ) -> SettingsUnitCard:
+        return SettingsUnitCard(
+            title=title,
+            value=value,
+            extra_controls=extra_controls,
+            height=height,
+        )
+
+    def _wrap_empty_unit_card(
+        self,
+        *,
+        height: float | int | None = SettingsUnitCard.DEFAULT_HEIGHT,
+    ) -> SharedCardWrapper:
+        return self._wrap_card(ft.Container(expand=True), expand=True, height=height)
+
+    # --- Clickable Text Builders ---
+    def _build_clickable_text(
+        self,
+        text: str,
+        on_click,
+        *,
+        size: int = 28,
+        text_align: ft.TextAlign = ft.TextAlign.CENTER,
+        alignment=_CENTER_ALIGNMENT,
+        no_wrap: bool = False,
+        max_lines: int | None = None,
+        overflow: ft.TextOverflow | None = None,
+        width: float | int | None = None,
+        height: float | int | None = None,
+        expand: bool | int | None = True,
+    ) -> ft.Container:
+        """Build a clickable centered text with hover effect."""
+        text_control = ft.Text(
+            text,
+            size=size,
+            font_family=font_for_language(get_locale()),
+            color=COLOR_ON_BACKGROUND,
+            text_align=text_align,
+            no_wrap=no_wrap,
+            max_lines=max_lines,
+            overflow=overflow,
+        )
+        return ft.Container(
+            content=text_control,
+            alignment=alignment,
+            width=width,
+            height=height,
+            expand=expand,
+            on_click=on_click,
+            on_hover=self._on_text_hover,
+        )
+
+    def _build_setting_action_text(self, text: str, on_click) -> ft.Container:
+        return self._build_clickable_text(
+            text,
+            on_click,
+            size=_setting_action_text_size(text),
+            text_align=ft.TextAlign.RIGHT,
+            alignment=_CENTER_RIGHT_ALIGNMENT,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+
+    def _set_setting_action_text(self, control: ft.Container, text: str) -> None:
+        text_control = control.content
+        text_control.value = text
+        text_control.size = _setting_action_text_size(text)
+
+    def _set_unit_card_value_text(
+        self, control: ft.Container, text: str, *, size: int = 28
+    ) -> None:
+        text_control = control.content
+        text_control.value = text
+        text_control.size = size
+
+    def _iter_locale_sensitive_clickable_text_controls(self) -> tuple[ft.Container, ...]:
+        return (
+            self._integrated_context_button,
+            self._stt_text,
+            self._peer_stt_text,
+            self._llm_text,
+            self._ui_text,
+            self._chatbox_source_text,
+            self._clipboard_auto_translate_text,
+            self._microphone_test_text,
+            self._vrc_mic_text,
+            self._mic_audio_text,
+            self._audio_host_api_text,
+            self._loopback_audio_text,
+            self._low_latency_text,
+            self._overlay_translation_button,
+            self._overlay_peer_original_button,
+            self._overlay_target_button,
+            self._overlay_anchor_button,
+            self._overlay_text_scale_text,
+            self._desktop_overlay_size_button,
+            self._desktop_overlay_lock_button,
+            self._overlay_vr_reset_button,
+            self._overlay_desktop_reset_button,
+            self._desktop_overlay_primary_action,
+            self._desktop_overlay_view_logs_action,
+            self._translation_connection_text,
+        )
+
+    def _sync_clickable_text_control_fonts(self, font_family: str | None) -> None:
+        for control in self._iter_locale_sensitive_clickable_text_controls():
+            if control:
+                control.content.font_family = font_family
+
+    def _sync_general_audio_card_texts(self) -> None:
+        default_label = t("settings.default_option")
+        self._set_unit_card_value_text(
+            self._mic_audio_text,
+            self._audio_settings.microphone or default_label,
+        )
+        self._set_unit_card_value_text(
+            self._audio_host_api_text,
+            self._audio_settings.host_api_display_label,
+        )
+        self._set_unit_card_value_text(
+            self._loopback_audio_text,
+            self._audio_settings.desktop_output_device or default_label,
+        )
+
+    def _on_text_hover(self, e: ft.ControlEvent) -> None:
+        """Handle hover effect on clickable text."""
+        container = e.control
+        text_control = container.content
+        next_color = COLOR_PRIMARY if e.data == "true" else COLOR_ON_BACKGROUND
+        if text_control.color == next_color:
+            return
+        text_control.color = next_color
+        container.update()
+
+    def _make_overlay_step_hover_handler(self, text_control: ft.Text):
+        def _on_hover(e: ft.ControlEvent) -> None:
+            next_color = COLOR_PRIMARY if e.data == "true" else COLOR_ON_BACKGROUND
+            if text_control.color == next_color:
+                return
+            text_control.color = next_color
+            if text_control.page is not None:
+                text_control.update()
+
+        return _on_hover
+
+    def _build_overlay_step_hit_lane(self, on_click, *, on_hover=None) -> ft.Container:
+        return ft.Container(
+            content=ft.Container(expand=True),
+            expand=1,
+            on_click=on_click,
+            on_hover=on_hover,
+        )
+
+    def _build_overlay_step_visual_lane(
+        self, text: str, *, alignment
+    ) -> tuple[ft.Container, ft.Text]:
+        text_control = ft.Text(
+            text,
+            size=22,
+            font_family=font_for_language(get_locale()),
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        return (
+            ft.Container(
+                content=text_control,
+                expand=1,
+                alignment=alignment,
+            ),
+            text_control,
+        )
+
+    def _build_overlay_step_split_layout(
+        self,
+        *,
+        title: ft.Text,
+        value_text: ft.Text,
+        decrease_text: str,
+        increase_text: str,
+        on_decrease,
+        on_increase,
+    ) -> tuple[ft.Stack, ft.Container, ft.Container, ft.Text, ft.Text]:
+        decrease_visual, decrease_glyph = self._build_overlay_step_visual_lane(
+            decrease_text,
+            alignment=ft.alignment.center_right,
+        )
+        increase_visual, increase_glyph = self._build_overlay_step_visual_lane(
+            increase_text,
+            alignment=ft.alignment.center_left,
+        )
+        decrease_lane = self._build_overlay_step_hit_lane(
+            on_decrease,
+            on_hover=self._make_overlay_step_hover_handler(decrease_glyph),
+        )
+        increase_lane = self._build_overlay_step_hit_lane(
+            on_increase,
+            on_hover=self._make_overlay_step_hover_handler(increase_glyph),
+        )
+        visual_row = ft.Row(
+            controls=[
+                decrease_visual,
+                ft.Container(
+                    content=value_text,
+                    width=84,
+                    alignment=ft.alignment.center,
+                ),
+                increase_visual,
+            ],
+            spacing=4,
+            expand=1,
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        visual_column = ft.Column(
+            controls=[
+                title,
+                ft.Container(
+                    content=visual_row,
+                    expand=True,
+                    alignment=ft.alignment.center,
+                ),
+            ],
+            spacing=0,
+            expand=True,
+        )
+        stack = ft.Stack(
+            controls=[
+                ft.Row(
+                    controls=[decrease_lane, increase_lane],
+                    spacing=0,
+                    expand=1,
+                    vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+                ),
+                ft.TransparentPointer(content=visual_column),
+            ],
+            fit=ft.StackFit.EXPAND,
+            expand=True,
+            alignment=ft.alignment.center,
+        )
+        return stack, decrease_lane, increase_lane, decrease_glyph, increase_glyph
+
+    def _get_button_style(
+        self,
+        font_family: str,
+        *,
+        size: int = 20,
+        default_color: str = COLOR_NEUTRAL,
+        disabled_color: str | None = None,
+    ) -> ft.ButtonStyle:
+        """Create a complete ButtonStyle with the specified font."""
+        color = {
+            ft.ControlState.HOVERED: COLOR_PRIMARY,
+            ft.ControlState.DEFAULT: default_color,
+        }
+        if disabled_color is not None:
+            color[ft.ControlState.DISABLED] = disabled_color
+        return ft.ButtonStyle(
+            color=color,
+            icon_color=color,
+            text_style=ft.TextStyle(
+                size=size,
+                font_family=font_family,
+            ),
+            overlay_color=ft.Colors.TRANSPARENT,
+            animation_duration=0,
+        )
+
+    def _settings_subtab_label(self, key: str) -> str:
+        return t(f"settings.subtab.{key}")
+
+    def _build_settings_subtab_shell(
+        self, tab_rows: dict[str, list[ft.Control]]
+    ) -> TextSubtabShell:
+        return TextSubtabShell(
+            tabs=[
+                TextSubtab(key, self._settings_subtab_label(key), tuple(tab_rows[key]))
+                for key in _SETTINGS_SUBTAB_ORDER
+            ],
+            font_family=font_for_language(get_locale()),
+            initial_key=_SETTINGS_SUBTAB_ORDER[0],
+            subtab_bar_position="bottom",
+        )
+
+    def _build_setting_action_row(self, label: ft.Text, action: ft.Control) -> ft.Row:
+        return ft.Row(
+            controls=[label, ft.Container(expand=True), action],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def _emit_runtime_basic(self, message: str, *, level: int = logging.INFO) -> None:
+        runtime_log_basic = getattr(self, "runtime_log_basic", None)
+        if runtime_log_basic is not None:
+            runtime_log_basic(message, level=level)
+            return
+        logger.log(level, message)
+
+    def _emit_runtime_detailed(self, message: str, *, level: int = logging.INFO) -> None:
+        runtime_log_detailed = getattr(self, "runtime_log_detailed", None)
+        if runtime_log_detailed is not None:
+            runtime_log_detailed(message, level=level)
+            return
+        logger.log(level, message)
+
+    def _build_action_button(
+        self,
+        text: str,
+        on_click,
+        *,
+        size: int = 20,
+        default_color: str = COLOR_NEUTRAL,
+        disabled_color: str | None = None,
+        width: float | int | None = None,
+        height: float | int | None = None,
+    ) -> ft.TextButton:
+        return _make_text_button(
+            text,
+            style=self._get_button_style(
+                font_for_language(get_locale()),
+                size=size,
+                default_color=default_color,
+                disabled_color=disabled_color,
+            ),
+            on_click=on_click,
+            width=width,
+            height=height,
+        )
+
+    def _build_overlay_calibration_field(
+        self,
+        *,
+        value: float,
+        on_blur,
+    ) -> ft.TextField:
+        return ft.TextField(
+            value=self._format_overlay_calibration_number(value),
+            text_size=14,
+            width=120,
+            border_radius=10,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            on_blur=on_blur,
+        )
+
+    def _build_numeric_setting_field(
+        self,
+        *,
+        label: str,
+        value: str,
+        on_change_end,
+    ) -> ft.TextField:
+        return ft.TextField(
+            label=label,
+            value=value,
+            dense=True,
+            expand=True,
+            text_align=ft.TextAlign.CENTER,
+            border_radius=10,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            on_blur=on_change_end,
+            on_submit=on_change_end,
+        )
+
+    def _build_overlay_calibration_column(
+        self,
+        *,
+        label: ft.Text,
+        control: ft.Control,
+    ) -> ft.Column:
+        return ft.Column(
+            controls=[label, control],
+            spacing=6,
+            expand=True,
+        )
+
+    def _format_overlay_calibration_number(self, value: float) -> str:
+        return f"{value:.2f}"
+
+    def _parse_setting_float(
+        self,
+        raw_value: str,
+        *,
+        fallback: float,
+        minimum: float,
+        maximum: float | None = None,
+    ) -> float:
+        try:
+            parsed = float(raw_value)
+        except (TypeError, ValueError):
+            parsed = fallback
+        if parsed < minimum:
+            parsed = minimum
+        if maximum is not None and parsed > maximum:
+            parsed = maximum
+        return parsed
+
+    def _parse_setting_int(
+        self,
+        raw_value: str,
+        *,
+        fallback: int,
+        minimum: int,
+    ) -> int:
+        try:
+            parsed = int(raw_value)
+        except (TypeError, ValueError):
+            parsed = fallback
+        return max(minimum, parsed)
+
+    def _current_source_language(self) -> str:
+        if not self._settings:
+            return "en"
+        return self._settings.languages.source_language
+
+    def _prompt_provider_copy(self) -> str:
+        return t(
+            "settings.prompt_for",
+            provider=provider_label(self._active_prompt_key()),
+        )
+
+    def _custom_vocabulary_description_copy(self) -> str:
+        return t("settings.custom_vocabulary.description")
+
+    def _apply_custom_vocabulary_tag_editor_locale(self) -> None:
+        self._custom_vocab_tag_editor.set_placeholder(
+            t("settings.custom_vocabulary.add_placeholder")
+        )
+        self._custom_vocab_tag_editor.set_add_label(t("settings.custom_vocabulary.add_action"))
+        self._custom_vocab_tag_editor.set_empty_text(t("settings.custom_vocabulary.empty"))
+        self._custom_vocab_tag_editor.set_remove_label_template(
+            t("settings.custom_vocabulary.remove_hint")
+        )
+
+    def _sync_prompt_tab_copy(self) -> None:
+        self._prompt_for_text.value = self._prompt_provider_copy()
+        self._custom_vocab_description_text.value = self._custom_vocabulary_description_copy()
+        self._apply_custom_vocabulary_tag_editor_locale()
+        if self.page:
+            for control in (self._prompt_for_text, self._custom_vocab_description_text):
+                with contextlib.suppress(Exception):
+                    control.update()
+
+    def _sync_custom_vocabulary_editor_from_settings(self) -> None:
+        if not self._settings:
+            self._custom_vocab_tag_editor.set_terms([])
+            self._custom_vocab_tag_editor.clear_input()
+            return
+
+        source_language = self._current_source_language()
+        self._custom_vocab_tag_editor.set_terms(
+            list(self._settings.stt.custom_terms.get(source_language, []))
+        )
+        self._custom_vocab_tag_editor.clear_input()
+
+    def _normalize_custom_vocabulary_submitted_terms(self, raw_terms: list[str]) -> list[str]:
+        terms: list[str] = []
+        for raw_term in raw_terms:
+            for part in _CUSTOM_VOCAB_DELIMITER_RE.split(str(raw_term)):
+                normalized = part.strip()
+                if normalized:
+                    terms.append(normalized)
+        return terms

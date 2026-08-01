@@ -10,7 +10,7 @@ from openai import AsyncOpenAI
 
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.domain.models import Translation
-from puripuly_heart.providers.llm.messages import build_translation_user_message
+from puripuly_heart.adapters.llm.messages import build_translation_user_message
 
 logger = logging.getLogger(__name__)
 

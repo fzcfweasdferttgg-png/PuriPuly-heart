@@ -5,16 +5,13 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
+from puripuly_heart.ports.secrets import SecretStore
 
-class SecretStore(Protocol):
-    def get(self, key: str) -> str | None: ...
-    def set(self, key: str, value: str) -> None: ...
-    def delete(self, key: str) -> None: ...
+__all__ = ["SecretStore", "KeyringSecretStore", "EncryptedFileSecretStore"]
 
 
 @dataclass(slots=True)

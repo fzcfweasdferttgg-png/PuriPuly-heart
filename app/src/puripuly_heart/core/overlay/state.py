@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-from puripuly_heart.core.overlay.protocol import (
+from puripuly_heart.domain.overlay_types import (
     OverlayPresentationBlock,
     OverlayPresentationCalibration,
     OverlayPresentationSnapshot,

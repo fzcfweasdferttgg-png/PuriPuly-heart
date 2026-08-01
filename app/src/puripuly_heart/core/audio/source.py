@@ -11,6 +11,9 @@ import numpy as np
 
 from puripuly_heart.config.audio_host_api import normalize_input_host_api
 from puripuly_heart.core.audio.format import AudioFrameF32
+from puripuly_heart.ports.audio import AudioSource
+
+__all__ = ["AudioSource", "SoundDeviceAudioSource"]
 
 logger = logging.getLogger(__name__)
 
@@ -419,11 +422,6 @@ def observe_microphone_test_route(
         wasapi_auto_convert=profile.wasapi_auto_convert,
         wasapi_exclusive=profile.wasapi_exclusive,
     )
-
-
-class AudioSource(Protocol):
-    async def frames(self) -> AsyncIterator[AudioFrameF32]: ...
-    async def close(self) -> None: ...
 
 
 @dataclass(slots=True)

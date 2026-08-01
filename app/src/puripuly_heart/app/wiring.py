@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -15,30 +14,24 @@ from puripuly_heart.config.settings import (
     SecretsSettings,
     STTProviderName,
 )
-from puripuly_heart.core.llm.provider import LLMProvider, SemaphoreLLMProvider
+from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
+from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig
+from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.core.storage.secrets import (
     EncryptedFileSecretStore,
     KeyringSecretStore,
-    SecretStore,
 )
-from puripuly_heart.core.stt.backend import STTBackend
+from puripuly_heart.ports.secrets import SecretStore
+from puripuly_heart.ports.stt import STTBackend
 from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
 from puripuly_heart.domain.models import Translation
-from puripuly_heart.providers.llm.local_openai import LocalOpenAICompatibleLLMProvider
-from puripuly_heart.providers.llm.openai_compatible import OpenAICompatibleLLMProvider
+from puripuly_heart.adapters.llm.local_openai import LocalOpenAICompatibleLLMProvider
+from puripuly_heart.adapters.llm.openai_compatible import OpenAICompatibleLLMProvider
 
 logger = logging.getLogger(__name__)
 
 SECRETS_PASSPHRASE_ENV = "PURIPULY_HEART_SECRETS_PASSPHRASE"
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedPeerSTTConfig:
-    provider: STTProviderName
-    source_language: str
-    sample_rate_hz: int
-    keyterms: tuple[str, ...]
 
 
 def _portable_passphrase() -> str:

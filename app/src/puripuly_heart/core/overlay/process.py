@@ -17,6 +17,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from puripuly_heart import __version__
+from puripuly_heart.ports.overlay_process import OverlayManagedProcess, OverlayProcessRunner
 
 from . import openvr_vendor
 from .diagnostics import OverlayDiagnosticsRecorder, default_overlay_diagnostics_dir
@@ -155,22 +156,6 @@ class OverlayPreparationError(Exception):
     def __init__(self, failure_reason: str, message: str | None = None) -> None:
         super().__init__(message or failure_reason)
         self.failure_reason = failure_reason
-
-
-class OverlayManagedProcess(Protocol):
-    async def next_event(self) -> dict[str, object]: ...
-    async def wait(self) -> int | None: ...
-    async def terminate(self) -> None: ...
-    def set_logging_mode(self, mode: str) -> None: ...
-
-
-class OverlayProcessRunner(Protocol):
-    def prepare(self, manifest: OverlayLaunchManifest) -> Path: ...
-    async def spawn(
-        self,
-        executable_path: Path,
-        manifest_path: Path,
-    ) -> OverlayManagedProcess: ...
 
 
 @dataclass(slots=True)

@@ -4,13 +4,16 @@ import contextlib
 import logging
 import queue
 from dataclasses import dataclass
-from enum import Enum
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Callable, Protocol
 from uuid import uuid4
 
 from puripuly_heart.config.paths import user_config_dir
+from puripuly_heart.domain.overlay_types import SessionLoggingMode
+from puripuly_heart.ports.logging_sink import RealtimeLogSink
+
+__all__ = ["RealtimeLogSink", "SessionLoggingMode", "RuntimeLoggingSinks", "SessionRuntimeLoggingService"]
 
 MAIN_LOG_FILENAME = "puripuly_heart.log"
 MAIN_LOG_BACKUP_FILENAME = "puripuly_heart.backup.log"
@@ -200,15 +203,6 @@ def format_translation_ready_for_output(
     if elapsed_ms is not None:
         parts.append(f"elapsed_ms={elapsed_ms}")
     return " ".join(parts)
-
-
-class RealtimeLogSink(Protocol):
-    def append_log(self, line: str) -> None: ...
-
-
-class SessionLoggingMode(str, Enum):
-    BASIC = "basic"
-    DETAILED = "detailed"
 
 
 @dataclass(slots=True)

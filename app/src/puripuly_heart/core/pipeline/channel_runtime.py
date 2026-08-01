@@ -6,7 +6,7 @@ from uuid import UUID
 
 from puripuly_heart.domain.models import ChannelId, UtteranceBundle
 
-_RUNTIME_TO_HUB_ALIAS_FIELDS = {
+_RUNTIME_TO_PIPELINE_ALIAS_FIELDS = {
     "stt": "stt",
     "stt_task": "_stt_task",
     "utterances": "_utterances",
@@ -89,10 +89,10 @@ class ChannelRuntime:
         alias_target = getattr(self, "alias_target", None)
         if alias_target is None:
             return
-        hub_field = _RUNTIME_TO_HUB_ALIAS_FIELDS.get(name)
-        if hub_field is None:
+        pipeline_field = _RUNTIME_TO_PIPELINE_ALIAS_FIELDS.get(name)
+        if pipeline_field is None:
             return
-        object.__setattr__(alias_target, hub_field, value)
+        object.__setattr__(alias_target, pipeline_field, value)
 
     def get_or_create_bundle(self, utterance_id: UUID) -> UtteranceBundle:
         bundle = self.utterances.get(utterance_id)

@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Protocol
 
+from puripuly_heart.ports.clock import Clock
 
-class Clock(Protocol):
-    def now(self) -> float:
-        """Return monotonic seconds."""
+__all__ = ["Clock", "SystemClock", "FakeClock"]
 
 
 class SystemClock:

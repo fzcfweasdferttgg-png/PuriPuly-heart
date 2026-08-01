@@ -5,7 +5,7 @@ import logging
 import math
 import uuid
 from dataclasses import dataclass
-from typing import Callable, Literal, Protocol
+from typing import Callable
 from uuid import UUID
 
 import numpy as np
@@ -14,36 +14,19 @@ from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.audio.diagnostics import compute_audio_frame_metrics
 from puripuly_heart.core.audio.format import AudioFrameF32
 from puripuly_heart.core.audio.ring_buffer import RingBufferF32
+from puripuly_heart.ports.vad import SpeechChunk, SpeechEnd, SpeechStart, VadEngine, VadEvent
+
+__all__ = [
+    "VadEngine",
+    "SpeechStart",
+    "SpeechChunk",
+    "SpeechEnd",
+    "VadEvent",
+    "VadGating",
+    "create_peer_vad_gating",
+]
 
 logger = logging.getLogger(__name__)
-
-
-class VadEngine(Protocol):
-    def speech_probability(self, samples: np.ndarray, *, sample_rate_hz: int) -> float: ...
-    def reset(self) -> None: ...
-
-
-@dataclass(frozen=True, slots=True)
-class SpeechStart:
-    utterance_id: UUID
-    pre_roll: np.ndarray
-    chunk: np.ndarray
-
-
-@dataclass(frozen=True, slots=True)
-class SpeechChunk:
-    utterance_id: UUID
-    chunk: np.ndarray
-
-
-@dataclass(frozen=True, slots=True)
-class SpeechEnd:
-    utterance_id: UUID
-    trailing_silence_ms: int = 0
-    reason: Literal["silence", "max_duration"] = "silence"
-
-
-VadEvent = SpeechStart | SpeechChunk | SpeechEnd
 
 
 def default_chunk_samples(sample_rate_hz: int) -> int:

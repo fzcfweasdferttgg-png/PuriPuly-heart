@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Protocol
+from puripuly_heart.ports.osc import OscSender
 
-
-class OscSender(Protocol):
-    def send_chatbox(self, text: str) -> None: ...
-    def send_typing(self, is_typing: bool) -> None: ...
+__all__ = ["OscSender"]

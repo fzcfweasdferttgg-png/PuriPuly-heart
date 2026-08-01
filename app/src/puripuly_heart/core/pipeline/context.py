@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from puripuly_heart.core.clock import Clock, SystemClock
-from puripuly_heart.core.orchestrator.channel_runtime import ChannelRuntime, ContextEntry
+from puripuly_heart.core.pipeline.channel_runtime import ChannelRuntime, ContextEntry
 
 ContextMode = Literal["local", "integrated"]
 

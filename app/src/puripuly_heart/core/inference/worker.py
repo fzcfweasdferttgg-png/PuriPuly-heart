@@ -61,7 +61,7 @@ def _create_recognizer(data: dict[str, object]) -> object:
     model_dir = Path(model_dir_str)
 
     if provider_name in ("local_qwen", "local_qwen_17b"):
-        from puripuly_heart.providers.stt.local_qwen_sherpa import (
+        from puripuly_heart.adapters.stt.local_qwen_sherpa import (
             LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ,
             create_local_qwen_sherpa_recognizer,
         )
@@ -82,7 +82,7 @@ def _create_recognizer(data: dict[str, object]) -> object:
         )
 
     if provider_name == "local_gigaam_rnnt":
-        from puripuly_heart.providers.stt.local_gigaam_rnnt import (
+        from puripuly_heart.adapters.stt.local_gigaam_rnnt import (
             GIGAAM_RECOGNIZER_SAMPLE_RATE_HZ,
             create_local_gigaam_rnnt_recognizer,
         )
@@ -103,7 +103,7 @@ def _create_recognizer(data: dict[str, object]) -> object:
         )
 
     if provider_name == "local_parakeet_tdt":
-        from puripuly_heart.providers.stt.local_parakeet_tdt import (
+        from puripuly_heart.adapters.stt.local_parakeet_tdt import (
             PARAKEET_TDT_SAMPLE_RATE_HZ,
             create_local_parakeet_tdt_recognizer,
         )
@@ -124,7 +124,7 @@ def _create_recognizer(data: dict[str, object]) -> object:
         )
 
     if provider_name == "local_transcribecpp":
-        from puripuly_heart.providers.stt.local_transcribecpp import (
+        from puripuly_heart.adapters.stt.local_transcribecpp import (
             TRANSCRIBECPP_SAMPLE_RATE_HZ,
             create_transcribecpp_recognizer,
         )

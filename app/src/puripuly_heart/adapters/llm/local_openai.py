@@ -6,7 +6,7 @@ import contextlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Mapping, Protocol
+from typing import Mapping
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -14,7 +14,8 @@ import httpx
 
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.domain.models import Translation
-from puripuly_heart.providers.llm.messages import build_translation_user_message
+from puripuly_heart.ports.llm_client import LocalOpenAIClient
+from puripuly_heart.adapters.llm.messages import build_translation_user_message
 
 LOCAL_OPENAI_RESERVED_EXTRA_BODY_KEYS = frozenset(
     {
@@ -360,20 +361,6 @@ def _has_length_finish_reason(data: object) -> bool:
     return any(
         isinstance(choice, dict) and choice.get("finish_reason") == "length" for choice in choices
     )
-
-
-class LocalOpenAIClient(Protocol):
-    async def translate(
-        self,
-        *,
-        text: str,
-        system_prompt: str,
-        source_language: str,
-        target_language: str,
-        context: str = "",
-    ) -> str: ...
-
-    async def close(self) -> None: ...
 
 
 @dataclass(slots=True)
