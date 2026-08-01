@@ -23,7 +23,7 @@ from puripuly_heart.ui.i18n import (
     provider_label,
     t,
 )
-from puripuly_heart.ui.overlay_calibration import (
+from puripuly_heart.domain.overlay_calibration import (
     OVERLAY_CALIBRATION_ANCHORS,
 )
 from puripuly_heart.ui.theme import (

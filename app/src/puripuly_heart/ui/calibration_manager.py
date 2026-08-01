@@ -5,7 +5,7 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
-from puripuly_heart.ui.overlay_calibration import OverlayCalibration
+from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings

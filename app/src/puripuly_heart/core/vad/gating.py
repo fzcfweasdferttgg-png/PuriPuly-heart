@@ -10,7 +10,6 @@ from uuid import UUID
 
 import numpy as np
 
-from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.audio.diagnostics import compute_audio_frame_metrics
 from puripuly_heart.core.audio.format import AudioFrameF32
 from puripuly_heart.core.audio.ring_buffer import RingBufferF32
@@ -70,7 +69,7 @@ class VadGating:
         sample_rate_hz: int,
         ring_buffer_ms: int = 500,
         speech_threshold: float = 0.4,
-        hangover_ms: int = DEFAULT_STABLE_VAD_HANGOVER_MS,
+        hangover_ms: int = 1100,
         max_segment_ms: int | None = None,
         chunk_samples: int | None = None,
         start_debounce_chunks: int = 1,
@@ -184,7 +183,8 @@ class VadGating:
             with contextlib.suppress(Exception):
                 if self._diagnostics_enabled():
                     speech_audio_ms = self._speech_sample_count * 1000.0 / self.sample_rate_hz
-                    assert self.diagnostic_event_callback is not None
+                    if self.diagnostic_event_callback is None:
+                        return
                     self.diagnostic_event_callback(
                         f"[AudioDiag][VAD][{self.diagnostic_label}] event=SpeechEnd "
                         f"utterance_id={str(self._utterance_id)[:8]} "

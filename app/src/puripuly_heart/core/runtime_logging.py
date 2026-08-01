@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Callable, Protocol
 from uuid import uuid4
 
-from puripuly_heart.config.paths import user_config_dir
 from puripuly_heart.domain.logging_types import (  # re-export
     LATENCY_CAUSE_E2E_THRESHOLD_MS,
     LATENCY_DOMINANT_STAGE_NORMAL,
@@ -85,10 +84,9 @@ class RuntimeLoggingSinks:
         _close_file_handler(self.file_handler)
 
 
-def default_main_log_file(*, log_dir: Path | None = None) -> Path:
-    resolved_log_dir = log_dir or user_config_dir()
-    resolved_log_dir.mkdir(parents=True, exist_ok=True)
-    return resolved_log_dir / MAIN_LOG_FILENAME
+def default_main_log_file(*, log_dir: Path) -> Path:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / MAIN_LOG_FILENAME
 
 
 def _main_log_backup_namer(default_name: str) -> str:
@@ -101,7 +99,7 @@ def _main_log_backup_namer(default_name: str) -> str:
 def configure_main_logging(
     *,
     root_logger: logging.Logger | None = None,
-    log_dir: Path | None = None,
+    log_dir: Path,
 ) -> RuntimeLoggingSinks:
     target_logger = root_logger or logging.getLogger()
     log_file = default_main_log_file(log_dir=log_dir)
@@ -173,10 +171,11 @@ class SessionRuntimeLoggingService:
         session_logger: logging.Logger | None = None,
         sinks: RuntimeLoggingSinks | None = None,
         ui_handler_factory: Callable[[RealtimeLogSink], logging.Handler] | None = None,
+        log_dir: Path,
     ) -> None:
         self._root_logger = root_logger or logging.getLogger()
         self._owns_sinks = sinks is None
-        self._sinks = sinks or configure_main_logging(root_logger=self._root_logger)
+        self._sinks = sinks or configure_main_logging(root_logger=self._root_logger, log_dir=log_dir)
         self._session_logger = session_logger or logging.getLogger(_new_session_logger_name())
         self._root_logger.setLevel(logging.INFO)
         self._session_logger.setLevel(logging.INFO)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -172,7 +173,7 @@ class OpenAICompatibleLLMProvider:
                 operation="translate",
                 text=result,
             )
-            return Translation(utterance_id=utterance_id, text=result)
+            return Translation(utterance_id=utterance_id, text=result, origin_wall_clock_ms=int(time.time() * 1000))
 
         except openai.AuthenticationError as exc:
             _log_basic_request_failure(

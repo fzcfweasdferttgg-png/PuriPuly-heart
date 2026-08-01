@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import UUID
 
-from puripuly_heart.core.clock import Clock, SystemClock
+from puripuly_heart.core.clock import Clock
 from puripuly_heart.ports.overlay_transport import OverlayPresentationTransport, RuntimeDetailedLogger
-from puripuly_heart.ui.overlay_calibration import OverlayCalibration
+from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
 from .diagnostics import OverlayDiagnosticsRecorder
 from .protocol import (
@@ -60,7 +60,7 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     bridge: OverlayPresentationTransport | None = None
     diagnostics: OverlayDiagnosticsRecorder | None = None
     runtime_log_detailed: RuntimeDetailedLogger | None = None
-    clock: Clock = field(default_factory=SystemClock)
+    clock: Clock
     sleep: SleepFn = asyncio.sleep
     visible_window_target_blocks: int = VISIBLE_WINDOW_TARGET_BLOCKS
     show_translation: bool = True

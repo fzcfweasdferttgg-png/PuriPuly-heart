@@ -1,15 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import AsyncIterator, Protocol, runtime_checkable
 
-import numpy as np
-
-
-@dataclass(frozen=True, slots=True)
-class STTBackendTranscriptEvent:
-    text: str
-    is_final: bool
+from puripuly_heart.domain.samples import Samples
+from puripuly_heart.domain.stt_events import STTBackendTranscriptEvent
 
 
 class STTBackendSession(Protocol):
@@ -24,8 +18,16 @@ class STTBackendSession(Protocol):
 
 @runtime_checkable
 class STTBackendFloat32Session(Protocol):
-    async def send_audio_f32(self, samples_f32: np.ndarray) -> None: ...
+    async def send_audio_f32(self, samples_f32: Samples) -> None: ...
 
 
 class STTBackend(Protocol):
     async def open_session(self) -> STTBackendSession: ...
+
+
+__all__ = [
+    "STTBackend",
+    "STTBackendFloat32Session",
+    "STTBackendSession",
+    "STTBackendTranscriptEvent",
+]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 
-from puripuly_heart.core import local_qwen_runtime
+from puripuly_heart.adapters import local_qwen_runtime
 
 
 def _print_error(message: str) -> None:

@@ -130,7 +130,8 @@ class OverlayLifecycleMixin:
 
             presenter = self._overlay_presenter
             overlay_instance_id = f"overlay-{secrets.token_hex(8)}"
-            diagnostics = OverlayDiagnosticsRecorder(overlay_instance_id=overlay_instance_id)
+            from puripuly_heart.config.paths import user_config_dir
+            diagnostics = OverlayDiagnosticsRecorder(overlay_instance_id=overlay_instance_id, diagnostics_dir=user_config_dir() / "diagnostics" / "overlay")
             overlay_target = self._active_overlay_target or self._overlay_target_for_settings(
                 self.settings
             )

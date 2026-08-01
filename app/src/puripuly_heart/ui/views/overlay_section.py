@@ -18,7 +18,7 @@ from puripuly_heart.ui.components.settings import (
     SettingsModal,
 )
 from puripuly_heart.ui.i18n import t
-from puripuly_heart.ui.overlay_calibration import OverlayCalibration
+from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings

@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
-import numpy as np
-
-
-@dataclass(frozen=True, slots=True)
-class AudioFrameF32:
-    samples: np.ndarray
-    sample_rate_hz: int
-    channels: int = 1
+from puripuly_heart.domain.audio_types import AudioFrameF32
+from puripuly_heart.domain.samples import Samples
 
 
 class AudioSource(Protocol):
     async def frames(self) -> AsyncIterator[AudioFrameF32]: ...
     async def close(self) -> None: ...
+
+
+__all__ = [
+    "AudioFrameF32",
+    "AudioSource",
+]

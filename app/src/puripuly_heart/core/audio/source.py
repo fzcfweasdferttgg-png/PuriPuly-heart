@@ -9,7 +9,7 @@ from typing import AsyncIterator, Protocol
 import janus
 import numpy as np
 
-from puripuly_heart.config.audio_host_api import normalize_input_host_api
+from puripuly_heart.domain.audio_host_api import normalize_input_host_api
 from puripuly_heart.core.audio.format import AudioFrameF32
 from puripuly_heart.ports.audio import AudioSource
 

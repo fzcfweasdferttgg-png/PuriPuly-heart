@@ -23,10 +23,6 @@ def _default_device() -> int:
     return 0
 
 
-class LocalParakeetCtcLoadError(RuntimeError):
-    """Raised when the Parakeet CTC recognizer cannot be initialized."""
-
-
 class _LocalParakeetCtcImportError(ImportError):
     """Internal sentinel for sherpa_onnx import failures."""
 

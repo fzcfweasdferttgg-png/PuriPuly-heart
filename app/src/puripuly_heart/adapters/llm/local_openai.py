@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Mapping
 from urllib.parse import urlsplit, urlunsplit
@@ -562,6 +563,7 @@ class LocalOpenAICompatibleLLMProvider:
             source_text=text,
             source_language=source_language,
             target_language=target_language,
+            origin_wall_clock_ms=int(time.time() * 1000),
         )
 
     async def close(self) -> None:

@@ -10,12 +10,10 @@ from uuid import UUID, uuid4
 
 logger = logging.getLogger(__name__)
 
-from puripuly_heart.config.prompts import warm_prompt_cache
-from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.clock import Clock, SystemClock
 from puripuly_heart.core.llm.provider import LLMProvider
-from puripuly_heart.application.translation_service import TranslationService
-from puripuly_heart.application.output_dispatcher import OutputDispatcher
+from puripuly_heart.core.translation_service import TranslationService
+from puripuly_heart.core.output_dispatcher import OutputDispatcher
 from puripuly_heart.core.pipeline.channel_runtime import (
     ChannelRuntime,
     ContextEntry,
@@ -87,7 +85,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     peer_translation_enabled: bool = False
     integrated_context_enabled: bool = False
     # Self VAD hangover in seconds for user-facing E2E latency.
-    hangover_s: float = DEFAULT_STABLE_VAD_HANGOVER_MS / 1000.0
+    hangover_s: float = 1.1
     peer_hangover_s: float = 0.6  # Peer VAD hangover in seconds for user-facing E2E latency.
 
     # Context memory settings
@@ -161,7 +159,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             integrated_time_window_s=self.integrated_context_time_window_s,
             integrated_max_entries=self.integrated_context_max_entries,
         )
-        warm_prompt_cache()
         self._latency = LatencyTracker(
             clock=self.clock,
             hangover_s=self.hangover_s,

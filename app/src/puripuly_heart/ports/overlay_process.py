@@ -3,14 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from puripuly_heart.domain.overlay_types import OverlayLaunchManifest
+from puripuly_heart.domain.overlay_types import OverlayLaunchManifest, SessionLoggingMode
 
 
 class OverlayManagedProcess(Protocol):
     async def next_event(self) -> dict[str, object]: ...
     async def wait(self) -> int | None: ...
     async def terminate(self) -> None: ...
-    def set_logging_mode(self, mode: str) -> None: ...
+    def set_logging_mode(self, mode: SessionLoggingMode | str) -> None: ...
 
 
 class OverlayProcessRunner(Protocol):

@@ -12,7 +12,7 @@ from typing import Any
 
 from puripuly_heart.config.audio_host_api import WINDOWS_WASAPI_COMPATIBILITY_HOST_API
 from puripuly_heart.config.vad_defaults import DEFAULT_LOW_LATENCY_VAD_HANGOVER_MS
-from puripuly_heart.ui.overlay_calibration import OverlayCalibration
+from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
 from .constants import (
     DEFAULT_CUSTOM_VOCAB_TERMS,

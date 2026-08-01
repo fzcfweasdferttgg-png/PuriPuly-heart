@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from puripuly_heart.config.paths import default_settings_path, default_vad_model_path
+from puripuly_heart.config.paths import default_settings_path, default_vad_model_path, user_config_dir
 from puripuly_heart.core.runtime_logging import configure_main_logging
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,7 @@ def _run_desktop_overlay_preview() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging_sinks = configure_main_logging()
+    logging_sinks = configure_main_logging(log_dir=user_config_dir())
     try:
         parser = build_parser()
         args = parser.parse_args(argv)

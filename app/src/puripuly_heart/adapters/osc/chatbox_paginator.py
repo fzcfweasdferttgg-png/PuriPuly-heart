@@ -4,7 +4,7 @@ import logging
 import textwrap
 from dataclasses import dataclass, field
 
-from puripuly_heart.core.clock import Clock
+from puripuly_heart.ports.clock import Clock
 from puripuly_heart.ports.osc import OscSender
 from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.domain.models import OSCMessage

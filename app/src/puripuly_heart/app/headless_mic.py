@@ -129,6 +129,8 @@ class HeadlessMicRunner:
 
         osc, sender = create_osc_sink(self.settings, clock=self.clock)
 
+        from puripuly_heart.config.prompts import warm_prompt_cache
+        warm_prompt_cache()
         hub = Pipeline(
             stt=stt,
             llm=llm,
@@ -153,8 +155,8 @@ class HeadlessMicRunner:
             ),
         )
 
-        from puripuly_heart.application.translation_service import TranslationService
-        from puripuly_heart.application.output_dispatcher import OutputDispatcher
+        from puripuly_heart.core.translation_service import TranslationService
+        from puripuly_heart.core.output_dispatcher import OutputDispatcher
 
         hub.translation_service = TranslationService(
             llm=llm,

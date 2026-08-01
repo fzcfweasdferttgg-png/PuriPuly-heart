@@ -4,7 +4,7 @@ import copy
 import math
 from dataclasses import dataclass, field
 
-from puripuly_heart.ui.overlay_calibration import OverlayCalibration
+from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
 from .constants import (
     DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,

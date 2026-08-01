@@ -7,8 +7,6 @@ from importlib import resources
 from pathlib import Path
 from typing import Literal
 
-from puripuly_heart.config import paths
-
 LOCAL_STT_MODEL_ID = "qwen3-asr-0.6b-int8-sherpa"
 LOCAL_STT_ENGINE = "sherpa-onnx"
 LOCAL_STT_INSTALL_DIRNAME = "qwen3-asr-0.6b/onnx/int8"
@@ -269,18 +267,18 @@ class LocalSTTAssetManifest:
         )
 
 
-def default_local_stt_model_root() -> Path:
-    return paths.default_models_dir()
+def default_local_stt_model_root(data_dir: Path) -> Path:
+    return data_dir / "models"
 
 
-def default_local_stt_model_dir(model_id: str | None = None) -> Path:
+def default_local_stt_model_dir(model_id: str | None = None, *, data_dir: Path) -> Path:
     resolved = model_id or LOCAL_STT_INSTALL_DIRNAME
     mapped = _MODEL_DIR_MAP.get(resolved, resolved)
-    return default_local_stt_model_root() / mapped
+    return default_local_stt_model_root(data_dir) / mapped
 
 
-def default_local_stt_installed_manifest_path(model_dir: Path | None = None) -> Path:
-    resolved_model_dir = model_dir or default_local_stt_model_dir()
+def default_local_stt_installed_manifest_path(model_dir: Path | None = None, *, data_dir: Path | None = None) -> Path:
+    resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     return resolved_model_dir / LOCAL_STT_INSTALLED_MANIFEST_FILENAME
 
 
@@ -384,9 +382,10 @@ def _validate_required_model_files(
 def validate_local_stt_runtime_ready(
     model_dir: Path | None = None,
     *,
+    data_dir: Path | None = None,
     manifest: LocalSTTAssetManifest | None = None,
 ) -> InstalledLocalSTTManifest:
-    resolved_model_dir = model_dir or default_local_stt_model_dir()
+    resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     resolved_manifest = manifest or load_local_stt_asset_manifest()
 
     _validate_local_stt_model_dir(resolved_model_dir)
@@ -409,9 +408,10 @@ def validate_local_stt_runtime_ready(
 def validate_local_stt_install(
     model_dir: Path | None = None,
     *,
+    data_dir: Path | None = None,
     manifest: LocalSTTAssetManifest | None = None,
 ) -> InstalledLocalSTTManifest:
-    resolved_model_dir = model_dir or default_local_stt_model_dir()
+    resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     resolved_manifest = manifest or load_local_stt_asset_manifest()
 
     _validate_local_stt_model_dir(resolved_model_dir)
@@ -430,9 +430,10 @@ def validate_local_stt_install(
 def inspect_local_stt_install_state(
     model_dir: Path | None = None,
     *,
+    data_dir: Path | None = None,
     manifest: LocalSTTAssetManifest | None = None,
 ) -> LocalSTTInstallState:
-    resolved_model_dir = model_dir or default_local_stt_model_dir()
+    resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     resolved_manifest = manifest or load_local_stt_asset_manifest()
     try:
         installed = validate_local_stt_runtime_ready(

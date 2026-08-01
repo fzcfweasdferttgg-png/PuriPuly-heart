@@ -23,10 +23,6 @@ def _default_device() -> int:
     return 0
 
 
-class LocalGigaamRnntLoadError(RuntimeError):
-    """Raised when the GigaAM RNNT recognizer cannot be initialized."""
-
-
 class _LocalGigaamRnntImportError(ImportError):
     """Internal sentinel for sherpa_onnx import failures."""
 

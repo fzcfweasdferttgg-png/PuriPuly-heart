@@ -46,12 +46,12 @@ class ProviderSignaturesMixin:
             return (
                 settings.stt.custom_vocabulary_enabled,
                 tuple(
-                    get_effective_local_qwen_hotwords(settings, settings.languages.source_language)
+                    get_effective_local_qwen_hotwords(settings.stt.custom_terms, settings.stt.custom_vocabulary_enabled, settings.languages.source_language)
                 ),
             )
         return (
             settings.stt.custom_vocabulary_enabled,
-            tuple(get_effective_custom_terms(settings, settings.languages.source_language)),
+            tuple(get_effective_custom_terms(settings.stt.custom_terms, settings.stt.custom_vocabulary_enabled, settings.languages.source_language)),
         )
 
     def _build_self_stt_runtime_signature(self, settings: AppSettings) -> tuple[object, ...]:
@@ -85,8 +85,9 @@ class ProviderSignaturesMixin:
         local_qwen_identity = None
         if settings.provider.stt in self._LOCAL_STT_PROVIDERS:
             from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
+            from puripuly_heart.config.paths import default_models_dir
             model_id = resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)
-            local_qwen_identity = str(default_local_stt_model_dir(model_id))
+            local_qwen_identity = str(default_local_stt_model_dir(model_id, data_dir=default_models_dir()))
 
         return (
             settings.provider.stt,

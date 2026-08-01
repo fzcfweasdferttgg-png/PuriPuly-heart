@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import time
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -23,10 +22,6 @@ def _validate_channel(channel: str) -> None:
 
 def _new_update_id() -> str:
     return uuid4().hex
-
-
-def _wall_clock_ms_now() -> int:
-    return int(time.time() * 1000)
 
 
 def _hash_source_text(source_text: str) -> str | None:
@@ -101,7 +96,7 @@ class Translation:
         object.__setattr__(
             self,
             "origin_wall_clock_ms",
-            origin_wall_clock_ms if origin_wall_clock_ms is not None else _wall_clock_ms_now(),
+            origin_wall_clock_ms,
         )
         object.__setattr__(self, "session_scope", session_scope)
         object.__setattr__(

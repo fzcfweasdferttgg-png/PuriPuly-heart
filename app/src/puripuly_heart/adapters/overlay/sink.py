@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from puripuly_heart.core.clock import Clock, SystemClock
+from puripuly_heart.ports.clock import Clock
 from puripuly_heart.domain.models import ChannelId, Transcript
 from puripuly_heart.ports.overlay import (
     AppliedContextMode,
@@ -39,7 +39,7 @@ __all__ = [
 
 @dataclass(slots=True)
 class OverlayEventAdapter:
-    clock: Clock = field(default_factory=SystemClock)
+    clock: Clock
     _seq: int = 0
 
     def transcript_final(

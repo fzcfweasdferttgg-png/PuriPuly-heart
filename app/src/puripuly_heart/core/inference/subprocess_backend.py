@@ -7,7 +7,6 @@ import ctypes
 import ctypes.wintypes
 import json
 import logging
-import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -27,88 +26,10 @@ logger = logging.getLogger(__name__)
 
 _CREATE_NO_WINDOW = 0x08000000
 
-# --- Job Object: kills all child processes when parent exits ---
-_JOB_HANDLE: int | None = None
 
-
-def _get_job_handle() -> int | None:
-    """Return (or lazily create) a Windows Job Object with kill-on-close."""
-    global _JOB_HANDLE
-    if _JOB_HANDLE is not None:
-        return _JOB_HANDLE
-    if sys.platform != "win32":
-        return None
-    try:
-        kernel32 = ctypes.windll.kernel32
-
-        job = kernel32.CreateJobObjectW(None, None)
-        if not job:
-            logger.warning("[JobObject] CreateJobObject failed")
-            return None
-
-        # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
-        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_int64),
-                ("PerJobUserTimeLimit", ctypes.c_int64),
-                ("LimitFlags", ctypes.c_uint32),
-                ("_pad1", ctypes.c_uint32),  # alignment padding on x64
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", ctypes.c_uint32),
-                ("_pad2", ctypes.c_uint32),  # alignment padding
-                ("Affinity", ctypes.c_size_t),  # DWORD_PTR
-                ("PriorityClass", ctypes.c_uint32),
-                ("SchedulingClass", ctypes.c_uint32),
-            ]
-
-        class IO_COUNTERS(ctypes.Structure):
-            _fields_ = [
-                ("ReadOperationCount", ctypes.c_uint64),
-                ("WriteOperationCount", ctypes.c_uint64),
-                ("OtherOperationCount", ctypes.c_uint64),
-                ("ReadTransferCount", ctypes.c_uint64),
-                ("WriteTransferCount", ctypes.c_uint64),
-                ("OtherTransferCount", ctypes.c_uint64),
-            ]
-
-        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                ("IoInfo", IO_COUNTERS),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
-
-        JobObjectExtendedLimitInformation = 9
-        result = kernel32.SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            ctypes.byref(info),
-            ctypes.sizeof(info),
-        )
-        if not result:
-            logger.warning("[JobObject] SetInformationJobObject failed")
-            kernel32.CloseHandle(job)
-            return None
-
-        _JOB_HANDLE = job
-        logger.info("[JobObject] Created with KILL_ON_JOB_CLOSE, handle=%d", job)
-        return job
-    except Exception as exc:
-        logger.warning("[JobObject] Failed to create: %s", exc)
-        return None
-
-
-def _assign_to_job(pid: int) -> None:
-    """Assign a process to the Job Object by PID."""
-    job = _get_job_handle()
-    if job is None:
+def _assign_to_job(pid: int, job_handle: int | None) -> None:
+    """Assign a process to a Job Object by PID."""
+    if job_handle is None:
         return
     try:
         kernel32 = ctypes.windll.kernel32
@@ -116,7 +37,7 @@ def _assign_to_job(pid: int) -> None:
         if not proc_handle:
             logger.warning("[JobObject] OpenProcess failed for pid=%d", pid)
             return
-        result = kernel32.AssignProcessToJobObject(job, proc_handle)
+        result = kernel32.AssignProcessToJobObject(job_handle, proc_handle)
         kernel32.CloseHandle(proc_handle)
         if result:
             logger.info("[JobObject] Assigned pid=%d to job", pid)
@@ -124,19 +45,6 @@ def _assign_to_job(pid: int) -> None:
             logger.warning("[JobObject] AssignProcessToJobObject failed for pid=%d", pid)
     except Exception as exc:
         logger.warning("[JobObject] Failed to assign pid=%d: %s", pid, exc)
-
-
-def _default_provider_type() -> str:
-    return "cpu" if os.environ.get("PURIPULY_MODE", "gpu").lower() == "cpu" else "directml"
-
-
-def _default_device() -> int:
-    if _default_provider_type() == "cpu":
-        return 0
-    env_device = os.environ.get("SHERPA_GPU_DEVICE", "")
-    if env_device.isdigit() and int(env_device) > 0:
-        return int(env_device)
-    return 0
 
 
 class SubprocessSTTError(RuntimeError):
@@ -147,12 +55,13 @@ class SubprocessSTTError(RuntimeError):
 class SubprocessSTTBackend(STTBackend):
     provider: str
     model_dir: Path
-    provider_type: str = field(default_factory=_default_provider_type)
-    device: int = field(default_factory=_default_device)
+    provider_type: str
+    device: int
     num_threads: int = 3
     feature_dim: int = 128
     language_hint: str | None = None
     hotwords: tuple[str, ...] = ()
+    job_handle: int | None = None
 
     _proc: subprocess.Popen | None = field(init=False, default=None, repr=False)
     _init_lock: asyncio.Lock = field(init=False, repr=False)
@@ -193,7 +102,7 @@ class SubprocessSTTBackend(STTBackend):
         )
 
         try:
-            proc = await asyncio.to_thread(self._spawn_worker, python_exe, worker_script)
+            proc = await asyncio.to_thread(self._spawn_worker, python_exe, worker_script, self.job_handle)
         except Exception as exc:
             raise SubprocessSTTError(f"failed to start inference worker: {exc}") from exc
 
@@ -245,7 +154,7 @@ class SubprocessSTTBackend(STTBackend):
         logger.info("[InferenceWorker] Worker initialized successfully")
 
     @staticmethod
-    def _spawn_worker(python_exe: str, worker_script: str) -> subprocess.Popen:
+    def _spawn_worker(python_exe: str, worker_script: str, job_handle: int | None = None) -> subprocess.Popen:
         proc = subprocess.Popen(
             [python_exe, "-u", worker_script],
             stdin=subprocess.PIPE,
@@ -254,7 +163,7 @@ class SubprocessSTTBackend(STTBackend):
             creationflags=_CREATE_NO_WINDOW,
             cwd=str(Path(worker_script).resolve().parent.parent.parent.parent),
         )
-        _assign_to_job(proc.pid)
+        _assign_to_job(proc.pid, job_handle)
         return proc
 
     async def _write_command(self, payload: dict) -> None:

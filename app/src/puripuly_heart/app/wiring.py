@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import ctypes.wintypes
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -37,6 +40,102 @@ from puripuly_heart.adapters.llm.openai_compatible import OpenAICompatibleLLMPro
 logger = logging.getLogger(__name__)
 
 SECRETS_PASSPHRASE_ENV = "PURIPULY_HEART_SECRETS_PASSPHRASE"
+
+# --- Job Object: kills all child processes when parent exits ---
+_JOB_HANDLE: int | None = None
+
+
+def get_or_create_job_handle() -> int | None:
+    """Return (or lazily create) a Windows Job Object with kill-on-close."""
+    global _JOB_HANDLE
+    if _JOB_HANDLE is not None:
+        return _JOB_HANDLE
+    if sys.platform != "win32":
+        return None
+    try:
+        kernel32 = ctypes.windll.kernel32
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            logger.warning("[JobObject] CreateJobObject failed")
+            return None
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32),
+                ("_pad1", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.c_uint32),
+                ("_pad2", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+
+        JobObjectExtendedLimitInformation = 9
+        result = kernel32.SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not result:
+            logger.warning("[JobObject] SetInformationJobObject failed")
+            kernel32.CloseHandle(job)
+            return None
+
+        _JOB_HANDLE = job
+        logger.info("[JobObject] Created with KILL_ON_JOB_CLOSE, handle=%d", job)
+        return job
+    except Exception as exc:
+        logger.warning("[JobObject] Failed to create: %s", exc)
+        return None
+
+
+def assign_to_job(pid: int, job_handle: int | None) -> None:
+    """Assign a process to a Job Object by PID."""
+    if job_handle is None:
+        return
+    try:
+        kernel32 = ctypes.windll.kernel32
+        proc_handle = kernel32.OpenProcess(0x1F0FFF, False, pid)  # PROCESS_ALL_ACCESS
+        if not proc_handle:
+            logger.warning("[JobObject] OpenProcess failed for pid=%d", pid)
+            return
+        result = kernel32.AssignProcessToJobObject(job_handle, proc_handle)
+        kernel32.CloseHandle(proc_handle)
+        if result:
+            logger.info("[JobObject] Assigned pid=%d to job", pid)
+        else:
+            logger.warning("[JobObject] AssignProcessToJobObject failed for pid=%d", pid)
+    except Exception as exc:
+        logger.warning("[JobObject] Failed to assign pid=%d: %s", pid, exc)
 
 
 def _portable_passphrase() -> str:
@@ -231,105 +330,70 @@ def _resolve_compute_transcribecpp(compute: str) -> tuple[str, int]:
     return "vulkan", device
 
 
+_QWEN_PROVIDER_NAMES: dict[STTProviderName, str] = {
+    STTProviderName.LOCAL_QWEN: "local_qwen",
+    STTProviderName.LOCAL_QWEN_17B: "local_qwen_17b",
+}
+
+_PROVIDER_STRING_NAMES: dict[STTProviderName, str] = {
+    STTProviderName.LOCAL_GIGAAM_RNNT: "local_gigaam_rnnt",
+    STTProviderName.LOCAL_PARAKEET_TDT: "local_parakeet_tdt",
+}
+
+
+def _create_subprocess_stt_backend(
+    provider: STTProviderName,
+    compute: str,
+    quant: str,
+    language: str,
+    *,
+    data_dir: Path,
+) -> STTBackend:
+    from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
+    from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
+
+    language_hint: str | None = None
+    if provider in _QWEN_PROVIDER_NAMES:
+        from puripuly_heart.domain.language import get_local_qwen_language_hint
+        provider_str = _QWEN_PROVIDER_NAMES[provider]
+        provider_type, device = _resolve_compute(compute)
+        language_hint = get_local_qwen_language_hint(language)
+    elif provider in _PROVIDER_STRING_NAMES:
+        provider_str = _PROVIDER_STRING_NAMES[provider]
+        provider_type, device = _resolve_compute(compute)
+    else:
+        provider_str = "local_transcribecpp"
+        provider_type, device = _resolve_compute_transcribecpp(compute)
+
+    kwargs: dict[str, object] = {
+        "provider": provider_str,
+        "model_dir": default_local_stt_model_dir(resolve_model_id(provider.value, quant), data_dir=data_dir),
+        "provider_type": provider_type,
+        "device": device,
+        "job_handle": get_or_create_job_handle(),
+    }
+    if language_hint is not None:
+        kwargs["language_hint"] = language_hint
+    return SubprocessSTTBackend(**kwargs)
+
+
 def create_stt_backend(
     settings: AppSettings,
     *,
     secrets: SecretStore,
     diagnostics_enabled: Callable[[], bool] | None = None,
 ) -> STTBackend:
-    effective_terms = get_effective_custom_terms(settings, settings.languages.source_language)
+    effective_terms = get_effective_custom_terms(settings.stt.custom_terms, settings.stt.custom_vocabulary_enabled, settings.languages.source_language)
+    from puripuly_heart.config.paths import default_models_dir
+    data_dir = default_models_dir()
 
-    if settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.domain.language import get_local_qwen_language_hint
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_name = {
-            STTProviderName.LOCAL_QWEN: "local_qwen",
-            STTProviderName.LOCAL_QWEN_17B: "local_qwen_17b",
-        }[settings.provider.stt]
-        _provider_type, _device = _resolve_compute(settings.provider.stt_compute)
-        return SubprocessSTTBackend(
-            provider=_provider_name,
-            model_dir=default_local_stt_model_dir(resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)),
-            language_hint=get_local_qwen_language_hint(settings.languages.source_language),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if settings.provider.stt == STTProviderName.LOCAL_GIGAAM_RNNT:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute(settings.provider.stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_gigaam_rnnt",
-            model_dir=default_local_stt_model_dir(resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if settings.provider.stt == STTProviderName.LOCAL_PARAKEET_TDT:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute(settings.provider.stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_parakeet_tdt",
-            model_dir=default_local_stt_model_dir(resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if settings.provider.stt == STTProviderName.LOCAL_GIGAAM_RNNT_GGUF:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute_transcribecpp(settings.provider.stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_transcribecpp",
-            model_dir=default_local_stt_model_dir(resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if settings.provider.stt == STTProviderName.LOCAL_PARAKEET_TDT_GGUF:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute_transcribecpp(settings.provider.stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_transcribecpp",
-            model_dir=default_local_stt_model_dir(resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if settings.provider.stt == STTProviderName.LOCAL_QWEN3_ASR_GGUF:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute_transcribecpp(settings.provider.stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_transcribecpp",
-            model_dir=default_local_stt_model_dir(resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if settings.provider.stt == STTProviderName.LOCAL_QWEN_17B_GGUF:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute_transcribecpp(settings.provider.stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_transcribecpp",
-            model_dir=default_local_stt_model_dir(resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    raise ValueError(f"Unsupported STT provider: {settings.provider.stt}")
+    return _create_subprocess_stt_backend(
+        settings.provider.stt,
+        settings.provider.stt_compute,
+        settings.provider.stt_quant,
+        settings.languages.source_language,
+        data_dir=data_dir,
+    )
 
 
 def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
@@ -363,95 +427,13 @@ def create_peer_stt_backend(
     diagnostics_enabled: Callable[[], bool] | None = None,
 ) -> STTBackend:
     resolved = resolve_peer_stt_config(settings)
+    from puripuly_heart.config.paths import default_models_dir
+    data_dir = default_models_dir()
 
-    if resolved.provider in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.domain.language import get_local_qwen_language_hint
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_name = {
-            STTProviderName.LOCAL_QWEN: "local_qwen",
-            STTProviderName.LOCAL_QWEN_17B: "local_qwen_17b",
-        }[resolved.provider]
-        _provider_type, _device = _resolve_compute(settings.provider.peer_stt_compute)
-        return SubprocessSTTBackend(
-            provider=_provider_name,
-            model_dir=default_local_stt_model_dir(resolve_model_id(resolved.provider.value, settings.provider.peer_stt_quant)),
-            language_hint=get_local_qwen_language_hint(resolved.source_language),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if resolved.provider == STTProviderName.LOCAL_GIGAAM_RNNT:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute(settings.provider.peer_stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_gigaam_rnnt",
-            model_dir=default_local_stt_model_dir(resolve_model_id(resolved.provider.value, settings.provider.peer_stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if resolved.provider == STTProviderName.LOCAL_PARAKEET_TDT:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute(settings.provider.peer_stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_parakeet_tdt",
-            model_dir=default_local_stt_model_dir(resolve_model_id(resolved.provider.value, settings.provider.peer_stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if resolved.provider == STTProviderName.LOCAL_GIGAAM_RNNT_GGUF:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute_transcribecpp(settings.provider.peer_stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_transcribecpp",
-            model_dir=default_local_stt_model_dir(resolve_model_id(resolved.provider.value, settings.provider.peer_stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if resolved.provider == STTProviderName.LOCAL_PARAKEET_TDT_GGUF:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute_transcribecpp(settings.provider.peer_stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_transcribecpp",
-            model_dir=default_local_stt_model_dir(resolve_model_id(resolved.provider.value, settings.provider.peer_stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if resolved.provider == STTProviderName.LOCAL_QWEN3_ASR_GGUF:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute_transcribecpp(settings.provider.peer_stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_transcribecpp",
-            model_dir=default_local_stt_model_dir(resolve_model_id(resolved.provider.value, settings.provider.peer_stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    if resolved.provider == STTProviderName.LOCAL_QWEN_17B_GGUF:
-        from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
-
-        _provider_type, _device = _resolve_compute_transcribecpp(settings.provider.peer_stt_compute)
-        return SubprocessSTTBackend(
-            provider="local_transcribecpp",
-            model_dir=default_local_stt_model_dir(resolve_model_id(resolved.provider.value, settings.provider.peer_stt_quant)),
-            provider_type=_provider_type,
-            device=_device,
-        )
-
-    raise ValueError(f"Unsupported peer STT provider: {resolved.provider}")
+    return _create_subprocess_stt_backend(
+        resolved.provider,
+        settings.provider.peer_stt_compute,
+        settings.provider.peer_stt_quant,
+        resolved.source_language,
+        data_dir=data_dir,
+    )

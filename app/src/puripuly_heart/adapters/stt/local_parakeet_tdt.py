@@ -23,10 +23,6 @@ def _default_device() -> int:
     return 0
 
 
-class LocalParakeetTdtLoadError(RuntimeError):
-    """Raised when the Parakeet TDT recognizer cannot be initialized."""
-
-
 class _LocalParakeetTdtImportError(ImportError):
     """Internal sentinel for sherpa_onnx import failures."""
 

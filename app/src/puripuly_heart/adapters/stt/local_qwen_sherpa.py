@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from puripuly_heart.core.local_qwen_runtime import (
+from puripuly_heart.adapters.local_qwen_runtime import (
     ensure_local_qwen_windows_runtime,
 )
 
@@ -24,10 +24,6 @@ def _default_device() -> int:
     if env_device.isdigit() and int(env_device) > 0:
         return int(env_device)
     return 0
-
-
-class LocalQwenSherpaLoadError(RuntimeError):
-    """Raised when the local sherpa recognizer cannot be initialized."""
 
 
 class _LocalQwenSherpaImportError(ImportError):

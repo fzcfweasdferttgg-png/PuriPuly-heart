@@ -97,16 +97,9 @@ from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_va
 from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
 from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTError
-from puripuly_heart.domain.stt_errors import (
-    LocalGigaamRnntLoadError,
-    LocalParakeetCtcLoadError,
-    LocalParakeetTdtLoadError,
-    LocalQwenSherpaLoadError,
-    LocalTranscribecppLoadError,
-)
 from puripuly_heart.ui.event_bridge import UIEventBridge
 from puripuly_heart.ui.i18n import get_locale, set_locale, t
-from puripuly_heart.ui.overlay_calibration import OverlayCalibration
+from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 from puripuly_heart.ui.overlay_peer_contract import (
     OverlayPeerConsumerContract,
     build_overlay_peer_consumer_contract,
@@ -597,9 +590,10 @@ class GuiController(
                 load_local_stt_asset_manifest,
                 resolve_model_id,
             )
+            from puripuly_heart.config.paths import default_models_dir
             model_id = resolve_model_id(self.settings.provider.stt.value, self.settings.provider.stt_quant)
             if model_id is not None:
-                model_dir = default_local_stt_model_dir(model_id)
+                model_dir = default_local_stt_model_dir(model_id, data_dir=default_models_dir())
                 manifest = load_local_stt_asset_manifest(model_id)
                 install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
                 if install_state.status != "ready":
@@ -623,7 +617,7 @@ class GuiController(
                 self._local_stt_runtime_status = "ready"
             self._sync_local_stt_notice()
             return True
-        except (LocalSTTModelMissingError, LocalSTTManifestInvalidError, LocalQwenSherpaLoadError, LocalGigaamRnntLoadError, LocalParakeetTdtLoadError, LocalParakeetCtcLoadError, LocalTranscribecppLoadError, SubprocessSTTError) as exc:
+        except (LocalSTTModelMissingError, LocalSTTManifestInvalidError, SubprocessSTTError) as exc:
             self._log_error(f"Local STT warmup failed: {exc}")
             self._stt_desired = False
             dash = getattr(self.app, "view_dashboard", None)
@@ -640,9 +634,10 @@ class GuiController(
                 load_local_stt_asset_manifest,
                 resolve_model_id,
             )
+            from puripuly_heart.config.paths import default_models_dir
             model_id = resolve_model_id(self.settings.provider.peer_stt.value, self.settings.provider.peer_stt_quant)
             if model_id is not None:
-                model_dir = default_local_stt_model_dir(model_id)
+                model_dir = default_local_stt_model_dir(model_id, data_dir=default_models_dir())
                 manifest = load_local_stt_asset_manifest(model_id)
                 install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
                 if install_state.status != "ready":
@@ -660,7 +655,7 @@ class GuiController(
                 self._local_stt_runtime_status = "ready"
             self._sync_local_stt_notice()
             return True
-        except (LocalSTTModelMissingError, LocalSTTManifestInvalidError, LocalQwenSherpaLoadError, LocalGigaamRnntLoadError, LocalParakeetTdtLoadError, LocalParakeetCtcLoadError, LocalTranscribecppLoadError, SubprocessSTTError) as exc:
+        except (LocalSTTModelMissingError, LocalSTTManifestInvalidError, SubprocessSTTError) as exc:
             self._log_error(f"Peer local STT warmup failed: {exc}")
             self._show_short_stt_message("local_stt.not_installed")
             return False
@@ -1113,6 +1108,8 @@ class GuiController(
             self.settings, clock=self.clock, runtime_logging=self.runtime_logging,
         )
 
+        from puripuly_heart.config.prompts import warm_prompt_cache
+        warm_prompt_cache()
         hub = Pipeline(
             stt=stt,
             llm=llm,
@@ -1144,8 +1141,8 @@ class GuiController(
             peer_hangover_s=self.settings.desktop_audio.vad_hangover_ms / 1000.0,
         )
 
-        from puripuly_heart.application.translation_service import TranslationService
-        from puripuly_heart.application.output_dispatcher import OutputDispatcher
+        from puripuly_heart.core.translation_service import TranslationService
+        from puripuly_heart.core.output_dispatcher import OutputDispatcher
 
         hub.translation_service = TranslationService(
             llm=llm,
@@ -1187,13 +1184,14 @@ class GuiController(
         self.osc = osc
         self.hub = hub
 
+        from puripuly_heart.config.paths import default_vad_model_path as _default_vad_model_path
         self._peer_runtime = PeerChannelRuntime(
             hub=hub,
             clock=self.clock,
             stt_factory=self._create_peer_stt_provider_from_runtime_config,
             source_factory=self._create_peer_audio_source_from_runtime_config,
             vad_factory=self._create_peer_vad_from_runtime_config,
-            vad_model_resolver=ensure_silero_vad_onnx,
+            vad_model_resolver=lambda: ensure_silero_vad_onnx(target_path=_default_vad_model_path()),
             run_audio_loop=self._run_peer_audio_vad_loop,
         )
         self._last_peer_translation_enabled = self.settings.ui.peer_translation_enabled
@@ -1218,7 +1216,8 @@ class GuiController(
                 return
 
         try:
-            model_path = ensure_silero_vad_onnx()
+            from puripuly_heart.config.paths import default_vad_model_path
+            model_path = ensure_silero_vad_onnx(target_path=default_vad_model_path())
         except Exception as exc:
             self._log_error(f"Failed to prepare Silero VAD model ({SILERO_VAD_VERSION}): {exc}")
             return
@@ -1560,7 +1559,8 @@ class GuiController(
     @property
     def runtime_logging(self) -> SessionRuntimeLoggingService:
         if self._runtime_logging is None:
-            self._runtime_logging = SessionRuntimeLoggingService(ui_handler_factory=FletLogHandler)
+            from puripuly_heart.config.paths import user_config_dir
+            self._runtime_logging = SessionRuntimeLoggingService(ui_handler_factory=FletLogHandler, log_dir=user_config_dir())
         logs_view = getattr(self.app, "view_logs", None)
         if logs_view is not None:
             self._runtime_logging.attach_realtime_sink(logs_view)
@@ -1573,7 +1573,6 @@ class GuiController(
     def set_runtime_logging_mode(self, mode: SessionLoggingMode | str) -> None:
         previous_mode = self.runtime_logging.mode
         self.runtime_logging.set_mode(mode)
-        normalized_mode = self.runtime_logging.mode.value
         if (
             previous_mode is not SessionLoggingMode.DETAILED
             and self.runtime_logging.mode is SessionLoggingMode.DETAILED
@@ -1583,7 +1582,7 @@ class GuiController(
         if manager is not None:
             set_logging_mode = getattr(manager, "set_logging_mode", None)
             if callable(set_logging_mode):
-                set_logging_mode(normalized_mode)
+                set_logging_mode(self.runtime_logging.mode)
         self._schedule_overlay_runtime_logging_mode_update()
 
 

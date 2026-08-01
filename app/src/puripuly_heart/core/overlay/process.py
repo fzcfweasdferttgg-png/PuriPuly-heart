@@ -24,6 +24,7 @@ from .diagnostics import OverlayDiagnosticsRecorder, default_overlay_diagnostics
 from .manifest import (
     OVERLAY_CONTRACT_VERSION,
     OverlayLaunchManifest,
+    SessionLoggingMode,
     normalize_overlay_logging_mode,
 )
 
@@ -31,86 +32,10 @@ logger = logging.getLogger(__name__)
 
 QUIET_TAIL_PROFILE_ENV = "PURIPULY_OVERLAY_QUIET_TAIL_PROFILE"
 
-_OVERLAY_JOB_HANDLE: int | None = None
 
-
-def _get_overlay_job_handle() -> int | None:
-    """Return (or lazily create) a Windows Job Object with kill-on-close."""
-    global _OVERLAY_JOB_HANDLE
-    if _OVERLAY_JOB_HANDLE is not None:
-        return _OVERLAY_JOB_HANDLE
-    if sys.platform != "win32":
-        return None
-    try:
-        kernel32 = ctypes.windll.kernel32
-
-        job = kernel32.CreateJobObjectW(None, None)
-        if not job:
-            logger.warning("[OverlayJobObject] CreateJobObject failed")
-            return None
-
-        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_int64),
-                ("PerJobUserTimeLimit", ctypes.c_int64),
-                ("LimitFlags", ctypes.c_uint32),
-                ("_pad1", ctypes.c_uint32),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", ctypes.c_uint32),
-                ("_pad2", ctypes.c_uint32),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", ctypes.c_uint32),
-                ("SchedulingClass", ctypes.c_uint32),
-            ]
-
-        class IO_COUNTERS(ctypes.Structure):
-            _fields_ = [
-                ("ReadOperationCount", ctypes.c_uint64),
-                ("WriteOperationCount", ctypes.c_uint64),
-                ("OtherOperationCount", ctypes.c_uint64),
-                ("ReadTransferCount", ctypes.c_uint64),
-                ("WriteTransferCount", ctypes.c_uint64),
-                ("OtherTransferCount", ctypes.c_uint64),
-            ]
-
-        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                ("IoInfo", IO_COUNTERS),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
-
-        JobObjectExtendedLimitInformation = 9
-        result = kernel32.SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            ctypes.byref(info),
-            ctypes.sizeof(info),
-        )
-        if not result:
-            logger.warning("[OverlayJobObject] SetInformationJobObject failed")
-            kernel32.CloseHandle(job)
-            return None
-
-        _OVERLAY_JOB_HANDLE = job
-        logger.info("[OverlayJobObject] Created with KILL_ON_JOB_CLOSE, handle=%d", job)
-        return job
-    except Exception as exc:
-        logger.warning("[OverlayJobObject] Failed to create: %s", exc)
-        return None
-
-
-def _assign_overlay_to_job(pid: int) -> None:
-    """Assign a process to the overlay Job Object by PID."""
-    job = _get_overlay_job_handle()
-    if job is None:
+def _assign_overlay_to_job(pid: int, job_handle: int | None) -> None:
+    """Assign a process to a Job Object by PID."""
+    if job_handle is None:
         return
     try:
         kernel32 = ctypes.windll.kernel32
@@ -119,7 +44,7 @@ def _assign_overlay_to_job(pid: int) -> None:
             logger.warning("[OverlayJobObject] OpenProcess failed for pid=%d", pid)
             return
         try:
-            if not kernel32.AssignProcessToJobObject(job, proc):
+            if not kernel32.AssignProcessToJobObject(job_handle, proc):
                 logger.warning("[OverlayJobObject] AssignProcessToJobObject failed for pid=%d", pid)
             else:
                 logger.info("[OverlayJobObject] Assigned pid=%d to job", pid)
@@ -180,7 +105,7 @@ class _AsyncioOverlayProcess:
         self._diagnostics = diagnostics
         self.overlay_instance_id = overlay_instance_id
 
-    def set_logging_mode(self, mode: str) -> None:
+    def set_logging_mode(self, mode: SessionLoggingMode | str) -> None:
         self._logging_mode = normalize_overlay_logging_mode(mode)
 
     async def next_event(self) -> dict[str, object]:
@@ -278,6 +203,7 @@ class _AsyncioOverlayProcess:
 class DefaultOverlayProcessRunner:
     executable_path: Path | None = None
     quiet_tail_profile: str = "p05"
+    job_handle: int | None = None
 
     def set_quiet_tail_profile(self, profile: str) -> None:
         self.quiet_tail_profile = profile
@@ -319,7 +245,7 @@ class DefaultOverlayProcessRunner:
             stderr=asyncio.subprocess.PIPE,
             env=child_env,
         )
-        _assign_overlay_to_job(process.pid)
+        _assign_overlay_to_job(process.pid, self.job_handle)
         return _AsyncioOverlayProcess(process=process)
 
     @classmethod
@@ -504,7 +430,7 @@ class DesktopFletOverlayRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _assign_overlay_to_job(process.pid)
+        _assign_overlay_to_job(process.pid, self.job_handle)
         return _AsyncioOverlayProcess(process=process)
 
     def _is_frozen(self) -> bool:
@@ -556,7 +482,7 @@ class OverlayProcessManager:
                 diagnostics_dir=self.diagnostics_dir,
             )
 
-    def set_logging_mode(self, mode: str) -> None:
+    def set_logging_mode(self, mode: SessionLoggingMode | str) -> None:
         self.logging_mode = normalize_overlay_logging_mode(mode)
         process = self._process
         if process is not None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import inspect
 import logging
 from collections import deque
 from dataclasses import dataclass, field
@@ -9,7 +11,7 @@ from uuid import UUID
 
 import numpy as np
 
-from puripuly_heart.config.settings import STTProviderName
+from puripuly_heart.domain.providers import STTProviderName
 
 logger = logging.getLogger(__name__)
 MANAGED_STT_SAMPLE_RATE_HZ = 16000
@@ -896,7 +898,3 @@ class ManagedSTTProvider:
                 await self._reset_on_silence()
         except asyncio.CancelledError:
             pass
-
-
-import contextlib  # placed at bottom to keep the main logic compact
-import inspect
