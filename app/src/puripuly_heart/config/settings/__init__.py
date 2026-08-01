@@ -56,7 +56,6 @@ from puripuly_heart.config.settings.enums import (
     SecretsBackend,
     STTProviderName,
     TranslationConnection,
-    TranslationFallbackSelectionAlias,
     TranslationModel,
     default_translation_connection,
     supported_translation_connections,

@@ -15,12 +15,7 @@ class STTProviderName(str, Enum):
 
 
 class LLMProviderName(str, Enum):
-    GEMINI = "gemini"
-    OPENROUTER = "openrouter"
-    QWEN = "qwen"
-    DEEPSEEK = "deepseek"
     LOCAL_LLM = "local_llm"
-    CEREBRAS = "cerebras"
     OPENAI_COMPATIBLE = "openai_compatible"
 
 
@@ -38,29 +33,12 @@ class LocalLLMBackend(str, Enum):
     OLLAMA = "ollama"
 
 
-class TranslationFallbackSelectionAlias(str, Enum):
-    NONE = "none"
-    DEEPSEEK_V4_FLASH_OFFICIAL = "deepseek_v4_flash_official"
-    OPENROUTER_DEEPSEEK_V4_FLASH = "openrouter_deepseek_v4_flash"
-    CEREBRAS_GEMMA4_31B = "cerebras_gemma4_31b"
-    OPENROUTER_GEMMA4_26B_A4B = "openrouter_gemma4_26b_a4b"
-
-
 class TranslationModel(str, Enum):
-    GEMMA4 = "gemma4"
-    DEEPSEEK_V4_FLASH = "deepseek_v4_flash"
-    DEEPSEEK_V4_PRO = "deepseek_v4_pro"
-    GEMINI_3_FLASH = "gemini3_flash"
-    GEMINI_31_FLASH_LITE = "gemini31_flash_lite"
-    QWEN_35_PLUS = "qwen35_plus"
     LOCAL_LLM = "local_llm"
-    GEMMA4_31B_CEREBRAS = "gemma4_31b_cerebras"
     OPENAI_COMPATIBLE = "openai_compatible"
 
 
 class TranslationConnection(str, Enum):
-    OPENROUTER = "openrouter"
-    OFFICIAL_BYOK = "official_byok"
     OLLAMA = "ollama"
     OPENAI_COMPATIBLE = "openai_compatible"
 
@@ -129,20 +107,6 @@ def _parse_translation_connection(value: object) -> TranslationConnection | None
     return None
 
 
-def _parse_translation_fallback_selection_alias(
-    value: object,
-) -> TranslationFallbackSelectionAlias:
-    if isinstance(value, TranslationFallbackSelectionAlias):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip()
-        try:
-            return TranslationFallbackSelectionAlias(normalized)
-        except ValueError:
-            pass
-    return TranslationFallbackSelectionAlias.NONE
-
-
 def _parse_translation_connection_history(value: object) -> dict[str, TranslationConnection]:
     if not isinstance(value, dict):
         return {}
@@ -160,31 +124,9 @@ def _parse_translation_connection_history(value: object) -> dict[str, Translatio
 
 
 TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnection, ...]] = {
-    TranslationModel.GEMMA4: (
-        TranslationConnection.OPENROUTER,
-    ),
-    TranslationModel.DEEPSEEK_V4_FLASH: (
-        TranslationConnection.OPENROUTER,
-        TranslationConnection.OFFICIAL_BYOK,
-    ),
-    TranslationModel.DEEPSEEK_V4_PRO: (TranslationConnection.OFFICIAL_BYOK,),
-    TranslationModel.GEMINI_3_FLASH: (
-        TranslationConnection.OFFICIAL_BYOK,
-        TranslationConnection.OPENROUTER,
-    ),
-    TranslationModel.GEMINI_31_FLASH_LITE: (
-        TranslationConnection.OFFICIAL_BYOK,
-        TranslationConnection.OPENROUTER,
-    ),
-    TranslationModel.QWEN_35_PLUS: (TranslationConnection.OFFICIAL_BYOK,),
     TranslationModel.LOCAL_LLM: (TranslationConnection.OLLAMA,),
-    TranslationModel.GEMMA4_31B_CEREBRAS: (TranslationConnection.OFFICIAL_BYOK,),
     TranslationModel.OPENAI_COMPATIBLE: (TranslationConnection.OPENAI_COMPATIBLE,),
 }
-TRANSLATION_CONNECTION_PRIORITY: tuple[TranslationConnection, ...] = (
-    TranslationConnection.OPENROUTER,
-    TranslationConnection.OFFICIAL_BYOK,
-)
 
 
 def supported_translation_connections(
@@ -194,13 +136,7 @@ def supported_translation_connections(
 
 
 def default_translation_connection(model: TranslationModel) -> TranslationConnection:
-    if model in (TranslationModel.GEMINI_3_FLASH, TranslationModel.GEMINI_31_FLASH_LITE):
-        return TranslationConnection.OFFICIAL_BYOK
-    supported_connections = supported_translation_connections(model)
-    for connection in TRANSLATION_CONNECTION_PRIORITY:
-        if connection in supported_connections:
-            return connection
-    return supported_connections[0]
+    return TRANSLATION_CONNECTIONS_BY_MODEL[model][0]
 
 
 def _supported_translation_connections(

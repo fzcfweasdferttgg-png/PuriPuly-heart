@@ -41,25 +41,14 @@ def _reject_json_constant(value: str) -> None:
 
 
 _TRANSLATION_MODEL_LABEL_KEYS = {
-    TranslationModel.GEMMA4: "provider.gemma4_26b_a4b_it",
-    TranslationModel.DEEPSEEK_V4_FLASH: "provider.deepseek_v4_flash",
-    TranslationModel.DEEPSEEK_V4_PRO: "provider.deepseek_v4_pro",
-    TranslationModel.GEMINI_3_FLASH: "provider.gemini3_flash",
-    TranslationModel.GEMINI_31_FLASH_LITE: "provider.gemini31_flash_lite",
-    TranslationModel.QWEN_35_PLUS: "provider.qwen35_plus",
     TranslationModel.LOCAL_LLM: "provider.local_llms",
-    TranslationModel.GEMMA4_31B_CEREBRAS: "provider.gemma4_31b_cerebras",
     TranslationModel.OPENAI_COMPATIBLE: "provider.openai_compatible",
 }
 _TRANSLATION_CONNECTION_LABEL_KEYS = {
-    TranslationConnection.OPENROUTER: "settings.translation_connection.openrouter",
-    TranslationConnection.OFFICIAL_BYOK: "settings.translation_connection.official_byok",
     TranslationConnection.OLLAMA: "settings.translation_connection.ollama",
     TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible",
 }
 _TRANSLATION_CONNECTION_DESCRIPTION_KEYS = {
-    TranslationConnection.OPENROUTER: "settings.translation_connection.openrouter.description",
-    TranslationConnection.OFFICIAL_BYOK: "settings.translation_connection.official_byok.description",
     TranslationConnection.OLLAMA: "settings.translation_connection.ollama.description",
     TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible.description",
 }
@@ -338,15 +327,8 @@ class LlmSectionMixin:
         recommended_section = t("settings.translation_model.section.recommended")
         others_section = t("settings.translation_model.section.others")
         model_sections = (
-            (TranslationModel.GEMMA4, recommended_section),
-            (TranslationModel.DEEPSEEK_V4_FLASH, recommended_section),
-            (TranslationModel.GEMMA4_31B_CEREBRAS, others_section),
-            (TranslationModel.LOCAL_LLM, others_section),
-            (TranslationModel.OPENAI_COMPATIBLE, others_section),
-            (TranslationModel.DEEPSEEK_V4_PRO, others_section),
-            (TranslationModel.GEMINI_3_FLASH, others_section),
-            (TranslationModel.GEMINI_31_FLASH_LITE, others_section),
-            (TranslationModel.QWEN_35_PLUS, others_section),
+            (TranslationModel.LOCAL_LLM, recommended_section),
+            (TranslationModel.OPENAI_COMPATIBLE, recommended_section),
         )
         options = [
             OptionItem(
@@ -361,7 +343,7 @@ class LlmSectionMixin:
         current = (
             self._get_llm_modal_value(display_settings)
             if display_settings is not None
-            else TranslationModel.GEMMA4.value
+            else TranslationModel.OPENAI_COMPATIBLE.value
         )
         modal = SettingsModal(
             self.page,
@@ -487,7 +469,7 @@ class LlmSectionMixin:
         model = (
             display_settings.translation.model
             if display_settings is not None
-            else TranslationModel.GEMMA4
+            else TranslationModel.OPENAI_COMPATIBLE
         )
         connections = supported_translation_connections(model)
         options = [

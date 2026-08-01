@@ -26,7 +26,6 @@ from .enums import (
     STTProviderName,
     SecretsBackend,
     TranslationConnection,
-    TranslationFallbackSelectionAlias,
     TranslationModel,
     _parse_llm_provider,
     _parse_peer_stt_provider,
@@ -296,9 +295,6 @@ def new_settings_for_first_run(system_locale: str | None = None) -> AppSettings:
     if system_locale is None:
         system_locale = detect_system_locale()
     settings = AppSettings()
-    settings.translation.fallback_selection_alias = (
-        TranslationFallbackSelectionAlias.NONE
-    )
     settings.ui.locale = resolve_first_run_ui_locale(system_locale)
     ensure_prompt_defaults(settings)
     settings.validate()
@@ -306,17 +302,17 @@ def new_settings_for_first_run(system_locale: str | None = None) -> AppSettings:
 
 
 def _derive_translation_settings_from_runtime_values(
-    *, provider_llm: LLMProviderName, fallback_selection_alias: object = None, history: object = None,
+    *, provider_llm: LLMProviderName, history: object = None,
 ) -> TranslationSettings:
     normalized_history = _parse_translation_connection_history(history)
     if provider_llm == LLMProviderName.LOCAL_LLM:
         return _normalize_translation_settings(
             model=TranslationModel.LOCAL_LLM, connection=TranslationConnection.OLLAMA,
-            fallback_selection_alias=fallback_selection_alias, history=normalized_history,
+            history=normalized_history,
         )
     return _normalize_translation_settings(
         model=TranslationModel.OPENAI_COMPATIBLE, connection=TranslationConnection.OPENAI_COMPATIBLE,
-        fallback_selection_alias=fallback_selection_alias, history=normalized_history,
+        history=normalized_history,
     )
 
 
@@ -326,7 +322,6 @@ def _derive_translation_settings_from_runtime(
 ) -> TranslationSettings:
     return _derive_translation_settings_from_runtime_values(
         provider_llm=settings.provider.llm,
-        fallback_selection_alias=settings.translation.fallback_selection_alias,
         history=history,
     )
 
@@ -335,7 +330,6 @@ def materialize_translation_settings(settings: AppSettings) -> AppSettings:
     settings.translation = _normalize_translation_settings(
         model=_parse_translation_model(settings.translation.model),
         connection=_parse_translation_connection(settings.translation.connection),
-        fallback_selection_alias=settings.translation.fallback_selection_alias,
         history=settings.translation.connection_history,
     )
     model = settings.translation.model
@@ -372,7 +366,6 @@ def _apply_materialized_translation_to_data(
     translation = _normalize_translation_settings(
         model=_parse_translation_model(translation.model),
         connection=_parse_translation_connection(translation.connection),
-        fallback_selection_alias=translation.fallback_selection_alias,
         history=translation.connection_history,
     )
     if translation.model == TranslationModel.LOCAL_LLM:
@@ -511,7 +504,7 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     td = data.get("translation") if isinstance(data.get("translation"), dict) else {}
     th = _parse_translation_connection_history(td.get("connection_history") if isinstance(td, dict) else None)
     if _translation_data_has_valid_model(td):
-        nts = _normalize_translation_settings(model=_parse_translation_model(td.get("model")), connection=_parse_translation_connection(td.get("connection")), fallback_selection_alias=td.get("fallback_selection_alias"), history=th)
+        nts = _normalize_translation_settings(model=_parse_translation_model(td.get("model")), connection=_parse_translation_connection(td.get("connection")), history=th)
     else:
         nts = _derive_translation_settings_from_runtime_values(provider_llm=_parse_llm_provider(pd.get("llm", LLMProviderName.OPENAI_COMPATIBLE.value)), history=th)
     ntd = _translation_settings_to_dict(nts)
@@ -767,7 +760,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
         settings.translation = _normalize_translation_settings(
             model=_parse_translation_model(translation_data.get("model")),
             connection=_parse_translation_connection(translation_data.get("connection")),
-            fallback_selection_alias=translation_data.get("fallback_selection_alias"),
             history=translation_history,
         )
     else:
