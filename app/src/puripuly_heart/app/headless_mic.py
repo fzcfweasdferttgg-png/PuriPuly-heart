@@ -33,9 +33,10 @@ from puripuly_heart.core.audio.streaming_resampler import MonoFirstStreamingResa
 from puripuly_heart.core.clock import SystemClock
 from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.core.pipeline.pipeline import Pipeline
-from puripuly_heart.adapters.osc.chatbox_paginator import ChatboxPaginator
+from puripuly_heart.adapters.overlay.sink import OverlayEventAdapter
+from puripuly_heart.config.prompts import render_dual_translation_prompt_template, render_translation_prompt_template
+from puripuly_heart.app.wiring import create_osc_sink
 from puripuly_heart.core.osc.receiver import VrcMicState, VrcOscReceiver
-from puripuly_heart.adapters.osc.udp_sender import VrchatOscUdpSender
 from puripuly_heart.ports.secrets import SecretStore
 from puripuly_heart.core.stt.controller import ManagedSTTProvider
 from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_vad_onnx
@@ -126,23 +127,13 @@ class HeadlessMicRunner:
             except Exception as exc:
                 logger.warning("Peer STT backend unavailable: %s", exc)
 
-        sender = VrchatOscUdpSender(
-            host=self.settings.osc.host,
-            port=self.settings.osc.port,
-            chatbox_address=self.settings.osc.chatbox_address,
-            chatbox_send=self.settings.osc.chatbox_send,
-            chatbox_clear=self.settings.osc.chatbox_clear,
-        )
-        osc = ChatboxPaginator(
-            sender=sender,
-            clock=self.clock,
-            max_chars=self.settings.osc.chatbox_max_chars,
-        )
+        osc, sender = create_osc_sink(self.settings, clock=self.clock)
 
         hub = Pipeline(
             stt=stt,
             llm=llm,
             osc=osc,
+            overlay_event_adapter=OverlayEventAdapter(clock=self.clock),
             peer_stt=peer_stt,
             clock=self.clock,
             source_language=self.settings.languages.source_language,
@@ -178,6 +169,8 @@ class HeadlessMicRunner:
             target_language=self.settings.languages.target_language,
             peer_source_language="",
             peer_target_language="",
+            render_prompt=render_translation_prompt_template,
+            render_dual_prompt=render_dual_translation_prompt_template,
         )
         hub.output_dispatcher = OutputDispatcher(
             osc=osc,

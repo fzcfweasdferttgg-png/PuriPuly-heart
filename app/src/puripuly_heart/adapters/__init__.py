@@ -1,1 +1,1 @@
-__all__ = ["llm", "osc", "overlay", "storage", "stt"]
+__all__ = ["inference", "llm", "osc", "overlay", "storage", "stt"]

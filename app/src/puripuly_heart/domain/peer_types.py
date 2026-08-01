@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from puripuly_heart.config.settings import STTProviderName
+from puripuly_heart.domain.providers import STTProviderName
 
 
 @dataclass(frozen=True, slots=True)

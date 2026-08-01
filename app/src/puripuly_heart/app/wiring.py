@@ -15,6 +15,7 @@ from puripuly_heart.config.settings import (
     STTProviderName,
 )
 from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
+from puripuly_heart.core.clock import Clock
 from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig
 from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
@@ -22,6 +23,10 @@ from puripuly_heart.adapters.storage.secrets import (
     EncryptedFileSecretStore,
     KeyringSecretStore,
 )
+from puripuly_heart.adapters.osc.chatbox_paginator import ChatboxPaginator
+from puripuly_heart.adapters.osc.udp_sender import VrchatOscUdpSender
+from puripuly_heart.ports.logging import SessionLogger
+from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.ports.secrets import SecretStore
 from puripuly_heart.ports.stt import STTBackend
 from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
@@ -80,6 +85,28 @@ def create_secret_store(
         return EncryptedFileSecretStore(path=path, passphrase=passphrase)
 
     raise ValueError(f"Unsupported secrets backend: {settings.backend}")
+
+
+def create_osc_sink(
+    settings: AppSettings,
+    *,
+    clock: Clock,
+    runtime_logging: SessionLogger | None = None,
+) -> tuple[OscSink, VrchatOscUdpSender]:
+    sender = VrchatOscUdpSender(
+        host=settings.osc.host,
+        port=settings.osc.port,
+        chatbox_address=settings.osc.chatbox_address,
+        chatbox_send=settings.osc.chatbox_send,
+        chatbox_clear=settings.osc.chatbox_clear,
+    )
+    sink = ChatboxPaginator(
+        sender=sender,
+        clock=clock,
+        max_chars=settings.osc.chatbox_max_chars,
+        runtime_logging=runtime_logging,
+    )
+    return sink, sender
 
 
 def create_llm_provider(

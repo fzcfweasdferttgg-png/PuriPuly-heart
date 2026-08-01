@@ -22,6 +22,7 @@ from puripuly_heart.app.wiring import (
     build_peer_stt_provider_signature,
     create_llm_provider,
     create_fallback_llm_provider,
+    create_osc_sink,
     create_peer_stt_backend,
     create_secret_store,
     create_stt_backend,
@@ -57,6 +58,7 @@ from puripuly_heart.core.audio.source import (
     resolve_sounddevice_input_device,
 )
 from puripuly_heart.ports.ui import ClipboardWatcherRuntime
+from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.core.clipboard.watcher import create_clipboard_watcher
 from puripuly_heart.core.clock import SystemClock
 from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
@@ -67,14 +69,14 @@ from puripuly_heart.core.local_stt_assets import (
     inspect_local_stt_install_state,
 )
 from puripuly_heart.core.pipeline.pipeline import Pipeline
-from puripuly_heart.adapters.osc.chatbox_paginator import ChatboxPaginator
+from puripuly_heart.adapters.overlay.sink import OverlayEventAdapter
+from puripuly_heart.config.prompts import render_dual_translation_prompt_template, render_translation_prompt_template
 from puripuly_heart.core.osc.receiver import (
     VRC_OSC_RECEIVER_HOST,
     VRC_OSC_RECEIVER_PORT,
     VrcMicState,
     VrcOscReceiver,
 )
-from puripuly_heart.adapters.osc.udp_sender import VrchatOscUdpSender
 from puripuly_heart.core.overlay.bridge import OverlayBridge
 from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
 from puripuly_heart.core.overlay.presenter import OverlayPresenter
@@ -95,11 +97,13 @@ from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_va
 from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
 from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTError
-from puripuly_heart.adapters.stt.local_qwen_sherpa import LocalQwenSherpaLoadError
-from puripuly_heart.adapters.stt.local_gigaam_rnnt import LocalGigaamRnntLoadError
-from puripuly_heart.adapters.stt.local_parakeet_tdt import LocalParakeetTdtLoadError
-from puripuly_heart.adapters.stt.local_parakeet_ctc import LocalParakeetCtcLoadError
-from puripuly_heart.adapters.stt.local_transcribecpp import LocalTranscribecppLoadError
+from puripuly_heart.domain.stt_errors import (
+    LocalGigaamRnntLoadError,
+    LocalParakeetCtcLoadError,
+    LocalParakeetTdtLoadError,
+    LocalQwenSherpaLoadError,
+    LocalTranscribecppLoadError,
+)
 from puripuly_heart.ui.event_bridge import UIEventBridge
 from puripuly_heart.ui.i18n import get_locale, set_locale, t
 from puripuly_heart.ui.overlay_calibration import OverlayCalibration
@@ -158,8 +162,8 @@ class GuiController(
     settings: AppSettings | None = None
     clock: SystemClock = SystemClock()
 
-    sender: VrchatOscUdpSender | None = None
-    osc: ChatboxPaginator | None = None
+    sender: object | None = None
+    osc: OscSink | None = None
     hub: Pipeline | None = None
     _peer_runtime: PeerChannelRuntime | None = None
     receiver: VrcOscReceiver | None = None
@@ -1105,18 +1109,8 @@ class GuiController(
         except Exception as exc:
             self._log_error(f"STT backend not available: {exc}")
 
-        sender = VrchatOscUdpSender(
-            host=self.settings.osc.host,
-            port=self.settings.osc.port,
-            chatbox_address=self.settings.osc.chatbox_address,
-            chatbox_send=self.settings.osc.chatbox_send,
-            chatbox_clear=self.settings.osc.chatbox_clear,
-        )
-        osc = ChatboxPaginator(
-            sender=sender,
-            clock=self.clock,
-            max_chars=self.settings.osc.chatbox_max_chars,
-            runtime_logging=self.runtime_logging,
+        osc, sender = create_osc_sink(
+            self.settings, clock=self.clock, runtime_logging=self.runtime_logging,
         )
 
         hub = Pipeline(
@@ -1124,6 +1118,7 @@ class GuiController(
             llm=llm,
             fallback_llm=fallback_llm,
             osc=osc,
+            overlay_event_adapter=OverlayEventAdapter(clock=self.clock),
             peer_stt=None,
             clock=self.clock,
             runtime_logging=self.runtime_logging,
@@ -1166,6 +1161,8 @@ class GuiController(
             peer_source_language=self.settings.languages.peer_source_language,
             peer_target_language=self.settings.languages.peer_target_language,
             runtime_logging=self.runtime_logging,
+            render_prompt=render_translation_prompt_template,
+            render_dual_prompt=render_dual_translation_prompt_template,
         )
         hub.output_dispatcher = OutputDispatcher(
             osc=osc,

@@ -5,7 +5,7 @@ to stdout.  Handles model loading and audio decoding; the parent process
 (GUI) never imports onnxruntime or sherpa_onnx directly.
 
 Usage:
-    python -m puripuly_heart.core.inference.worker
+    python -m puripuly_heart.adapters.inference.worker
 """
 
 from __future__ import annotations

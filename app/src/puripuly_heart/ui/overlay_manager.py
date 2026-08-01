@@ -5,7 +5,6 @@ import copy
 import logging
 import math
 import sys
-from typing import TYPE_CHECKING
 
 from puripuly_heart.config.settings import (
     DESKTOP_FLET_MIN_HEIGHT,
@@ -20,9 +19,6 @@ from puripuly_heart.core.overlay.process import (
     DesktopFletOverlayRunner,
     OverlayProcessRunner,
 )
-
-if TYPE_CHECKING:
-    from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 
 logger = logging.getLogger(__name__)
 

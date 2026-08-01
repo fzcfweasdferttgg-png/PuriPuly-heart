@@ -24,7 +24,6 @@ from puripuly_heart.core.pipeline.channel_runtime import (
 from puripuly_heart.core.pipeline.context import ContextMode, ContextResolver
 from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
-from puripuly_heart.adapters.overlay.sink import OverlayEventAdapter
 from puripuly_heart.ports.overlay import OverlayEventFactory, OverlaySink
 from puripuly_heart.core.runtime_logging import (
     SessionLoggingMode,
@@ -127,7 +126,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     _peer_parent_speech_end_times: dict[UUID, float] = field(default_factory=dict)
     context_resolver: ContextResolver = field(init=False)
     active_chatbox_channel: ChannelId = field(init=False, default="self")
-    overlay_event_adapter: OverlayEventFactory = field(init=False)
+    overlay_event_adapter: OverlayEventFactory
     overlay_stream_coalesce_ms: int = 300
     last_error_source: str | None = None
     _last_overlay_secondary_runtime_signature: tuple[object, ...] | None = field(
@@ -141,7 +140,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     _latency: LatencyTracker = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.overlay_event_adapter = OverlayEventAdapter(clock=self.clock)
         self.self_runtime = ChannelRuntime(
             channel="self",
             stt=self.stt,

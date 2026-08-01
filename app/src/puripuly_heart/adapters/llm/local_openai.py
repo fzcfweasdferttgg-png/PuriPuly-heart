@@ -12,7 +12,7 @@ from uuid import UUID
 
 import httpx
 
-from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
+from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.domain.models import Translation
 from puripuly_heart.ports.llm_client import LocalOpenAIClient
 from puripuly_heart.adapters.llm.messages import build_translation_user_message
@@ -371,7 +371,7 @@ class HttpxLocalOpenAIClient:
     extra_body: Mapping[str, object] = field(default_factory=lambda: {"reasoning_effort": "none"})
     max_tokens: int | None = None
     timeout: httpx.Timeout | float = field(default_factory=_default_timeout)
-    runtime_logging: SessionRuntimeLoggingService | None = None
+    runtime_logging: SessionLogger | None = None
     _client: httpx.AsyncClient | None = field(init=False, default=None, repr=False)
     _client_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock, repr=False)
 
@@ -519,7 +519,7 @@ class LocalOpenAICompatibleLLMProvider:
     extra_body: Mapping[str, object] = field(default_factory=lambda: {"reasoning_effort": "none"})
     max_tokens: int | None = None
     timeout: httpx.Timeout | float = field(default_factory=_default_timeout)
-    runtime_logging: SessionRuntimeLoggingService | None = None
+    runtime_logging: SessionLogger | None = None
     client: LocalOpenAIClient | None = None
     _internal_client: HttpxLocalOpenAIClient | None = field(init=False, default=None, repr=False)
     _external_client_closed: bool = field(init=False, default=False, repr=False)

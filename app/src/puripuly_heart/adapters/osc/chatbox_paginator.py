@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from puripuly_heart.core.clock import Clock
 from puripuly_heart.ports.osc import OscSender
-from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
+from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.domain.models import OSCMessage
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class ChatboxPaginator:
     clock: Clock
     max_chars: int = 144
     page_interval_s: float = 3.0
-    runtime_logging: SessionRuntimeLoggingService | None = None
+    runtime_logging: SessionLogger | None = None
     _pending_pages: list[str] | None = None
     _pending_messages: list[OSCMessage] | None = None
     _typing_reasons: set[str] = field(init=False, default_factory=set)

@@ -8,7 +8,7 @@ from uuid import UUID
 import openai
 from openai import AsyncOpenAI
 
-from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
+from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.domain.models import Translation
 from puripuly_heart.adapters.llm.messages import build_translation_user_message
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def _log_basic_request(
     *,
-    runtime_logging: SessionRuntimeLoggingService | None,
+    runtime_logging: SessionLogger | None,
     operation: str,
     text: str,
     source_language: str,
@@ -38,7 +38,7 @@ def _log_basic_request(
 
 
 def _log_basic_response(
-    *, runtime_logging: SessionRuntimeLoggingService | None, operation: str, text: str
+    *, runtime_logging: SessionLogger | None, operation: str, text: str
 ) -> None:
     message = "[Basic][LLM] OpenAI-compatible response [%s]: %r" % (operation, text)
     if runtime_logging is not None:
@@ -49,7 +49,7 @@ def _log_basic_response(
 
 def _log_basic_request_failure(
     *,
-    runtime_logging: SessionRuntimeLoggingService | None,
+    runtime_logging: SessionLogger | None,
     operation: str,
     message: str,
 ) -> None:
@@ -97,7 +97,7 @@ class OpenAICompatibleLLMProvider:
     base_url: str
     model: str
     timeout: float = 30.0
-    runtime_logging: SessionRuntimeLoggingService | None = None
+    runtime_logging: SessionLogger | None = None
     _client: AsyncOpenAI | None = field(init=False, default=None, repr=False)
     _client_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock, repr=False)
 

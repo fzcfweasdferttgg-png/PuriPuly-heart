@@ -3,6 +3,7 @@ from puripuly_heart.ports.clock import Clock
 from puripuly_heart.ports.hub import STTProvider
 from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.ports.llm_client import LocalOpenAIClient
+from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.ports.logging_sink import RealtimeLogSink
 from puripuly_heart.ports.osc import OscSender, OscSink
 from puripuly_heart.ports.overlay import (
@@ -76,6 +77,7 @@ __all__ = [
     "SelfActiveClear",
     "SelfActiveUpdate",
     "SelfTranscriptFinal",
+    "SessionLogger",
     "SpeechChannelRuntime",
     "SpeechChunk",
     "SpeechEnd",

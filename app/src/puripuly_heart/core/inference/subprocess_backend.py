@@ -182,7 +182,7 @@ class SubprocessSTTBackend(STTBackend):
 
     async def _start_worker(self) -> None:
         worker_script = str(
-            Path(__file__).resolve().parent.parent.parent / "core" / "inference" / "worker.py"
+            Path(__file__).resolve().parent.parent.parent / "adapters" / "inference" / "worker.py"
         )
 
         python_exe = sys.executable

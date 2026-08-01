@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Callable, Protocol
 
-from puripuly_heart.config.prompts import (
-    render_dual_translation_prompt_template,
-    render_translation_prompt_template,
-)
 from puripuly_heart.domain.language import get_llm_language_name
-from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
+from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.domain.models import ChannelId, Translation
 
 logger = logging.getLogger(__name__)
@@ -75,7 +71,9 @@ class TranslationService:
     target_language: str
     peer_source_language: str
     peer_target_language: str
-    runtime_logging: SessionRuntimeLoggingService | None = None
+    runtime_logging: SessionLogger | None = None
+    render_prompt: Callable[..., str] | None = None
+    render_dual_prompt: Callable[..., str] | None = None
     _last_logged_context_modes: dict[ChannelId, str | None] = field(
         init=False, default_factory=lambda: {"self": None, "peer": None}
     )
@@ -104,19 +102,14 @@ class TranslationService:
         target_name = get_llm_language_name(self._target_language_for(runtime))
         if self.second_target_language and runtime.channel != "peer":
             second_name = get_llm_language_name(self.second_target_language)
-            try:
-                return render_dual_translation_prompt_template(
-                    source_name=source_name,
-                    target_name=target_name,
-                    second_target_name=second_name,
-                )
-            except FileNotFoundError:
-                logger.warning("Dual translation prompt template not found, falling back to single")
-        return render_translation_prompt_template(
-            self.system_prompt,
-            source_name=source_name,
-            target_name=target_name,
-        )
+            if self.render_dual_prompt:
+                try:
+                    return self.render_dual_prompt(source_name, target_name, second_name)
+                except FileNotFoundError:
+                    logger.warning("Dual translation prompt template not found, falling back to single")
+        if self.render_prompt:
+            return self.render_prompt(self.system_prompt, source_name, target_name)
+        return self.system_prompt
 
     def prepare_request(
         self,
