@@ -82,6 +82,7 @@ _SELF_SPEECH_TYPING_REASON = "self_speech_pending"
 class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     stt: STTProvider | None
     llm: LLMProvider | None
+    fallback_llm: LLMProvider | None = None
     osc: ChatboxPaginator
     peer_stt: STTProvider | None = None
     overlay_sink: OverlaySink | None = None
@@ -1144,27 +1145,43 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             )
         request_source_language = self._source_language_for(runtime)
         request_target_language = self._target_language_for(runtime)
-        translation = await self.llm.translate(
-            utterance_id=utterance_id,
-            text=text,
-            system_prompt=formatted_prompt,
-            source_language=request_source_language,
-            target_language=request_target_language,
-            context=context_str,
-        )
-        if record_latency:
-            self._record_latency_stage(
-                channel=runtime.channel,
-                utterance_id=utterance_id,
-                stage="llm_done",
-            )
-        return self._normalize_translation(
-            translation,
-            runtime=runtime,
-            text=text,
-            source_language=request_source_language,
-            target_language=request_target_language,
-        )
+
+        providers_to_try = [self.llm]
+        if self.fallback_llm is not None:
+            providers_to_try.append(self.fallback_llm)
+
+        last_error = None
+        for provider in providers_to_try:
+            try:
+                translation = await provider.translate(
+                    utterance_id=utterance_id,
+                    text=text,
+                    system_prompt=formatted_prompt,
+                    source_language=request_source_language,
+                    target_language=request_target_language,
+                    context=context_str,
+                )
+                if record_latency:
+                    self._record_latency_stage(
+                        channel=runtime.channel,
+                        utterance_id=utterance_id,
+                        stage="llm_done",
+                    )
+                return self._normalize_translation(
+                    translation,
+                    runtime=runtime,
+                    text=text,
+                    source_language=request_source_language,
+                    target_language=request_target_language,
+                )
+            except Exception as exc:
+                last_error = exc
+                if provider is not self.fallback_llm:
+                    logger.warning("[LLM] Primary provider failed: %s, trying fallback", exc)
+                else:
+                    logger.error("[LLM] Fallback provider also failed: %s", exc)
+
+        raise last_error or RuntimeError("LLM translation failed")
 
     async def _ensure_translation(self, transcript: Transcript) -> None:
         if self.llm is None:

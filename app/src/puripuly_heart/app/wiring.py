@@ -138,6 +138,31 @@ def create_llm_provider(
     )
 
 
+def create_fallback_llm_provider(
+    settings: AppSettings,
+    *,
+    secrets: SecretStore,
+    runtime_logging: SessionRuntimeLoggingService | None = None,
+) -> LLMProvider | None:
+    if settings.provider.llm != LLMProviderName.OPENAI_COMPATIBLE:
+        return None
+    oc = settings.provider.openai_compatible
+    if not oc.fallback_enabled or not oc.fallback_base_url.strip() or not oc.fallback_model.strip():
+        return None
+    api_key = (secrets.get("openai_compatible_api_key") or "").strip()
+    logger.info(
+        "[LLM] Creating fallback provider: base_url=%s model=%s",
+        oc.fallback_base_url,
+        oc.fallback_model,
+    )
+    return OpenAICompatibleLLMProvider(
+        api_key=api_key,
+        base_url=oc.fallback_base_url,
+        model=oc.fallback_model,
+        runtime_logging=runtime_logging,
+    )
+
+
 def _resolve_compute(compute: str) -> tuple[str, int]:
     """Map settings compute ("gpu"/"cpu") to (provider_type, device)."""
     import os

@@ -1300,6 +1300,74 @@ class SettingsView(
         )
         self._openai_compatible_card.visible = False
 
+        # Fallback provider card
+        self._fallback_title = ft.Text(
+            t("settings.fallback.title", default="Fallback Provider"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._fallback_enabled = ft.Switch(
+            label=t("settings.fallback.enabled", default="Enable fallback"),
+            value=False,
+            on_change=self._on_fallback_toggle,
+        )
+        _fallback_provider_options = [ft.dropdown.Option(key="custom", text="Custom / Manual")]
+        for key, info in _providers.items():
+            _fallback_provider_options.append(ft.dropdown.Option(key=key, text=info.get("label", key)))
+        self._fallback_provider = ft.Dropdown(
+            label=t("settings.fallback.provider", default="Fallback Provider"),
+            options=_fallback_provider_options,
+            value="custom",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_fallback_provider_change,
+        )
+        self._fallback_base_url = ft.TextField(
+            label=t("settings.fallback.base_url", default="Fallback Base URL"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_fallback_field_change,
+        )
+        self._fallback_model = ft.TextField(
+            label=t("settings.fallback.model", default="Fallback Model"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_fallback_field_change,
+        )
+        self._fallback_card = self._wrap_card(
+            ft.Column(
+                [
+                    self._fallback_title,
+                    ft.Container(height=4),
+                    self._fallback_enabled,
+                    self._fallback_provider,
+                    self._fallback_base_url,
+                    self._fallback_model,
+                ],
+                spacing=8,
+            ),
+            height=None,
+        )
+        self._fallback_card.visible = False
+
         # === Row 8: Persona (2x2) - Licenses style ===
         self._prompt_editor = PromptEditor(
             on_change=self._on_prompt_change,
@@ -1418,6 +1486,7 @@ class SettingsView(
                     self._translation_connection_row,
                     self._local_llm_connection_card,
                     self._openai_compatible_card,
+                    self._fallback_card,
                     api_keys_row,
                 ],
                 "general": [
@@ -1608,6 +1677,18 @@ class SettingsView(
                 break
         self._openai_compatible_provider.value = _matched
 
+        # Fallback
+        oc = settings.provider.openai_compatible
+        self._fallback_enabled.value = oc.fallback_enabled
+        self._fallback_base_url.value = oc.fallback_base_url
+        self._fallback_model.value = oc.fallback_model
+        _fb_matched = "custom"
+        for _fpk, _fpi in _loaded_providers.items():
+            if _fpi.get("base_url") == oc.fallback_base_url:
+                _fb_matched = _fpk
+                break
+        self._fallback_provider.value = _fb_matched
+
         # Qwen Region
         region_label = t(f"region.{settings.qwen.region.value}")
         _set_text_button_label(self._qwen_region_btn, f"{t('settings.qwen_region')} {region_label}")
@@ -1684,6 +1765,7 @@ class SettingsView(
         self._local_llm_connection_card.visible = llm == LLMProviderName.LOCAL_LLM
         self._openai_compatible_key.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
         self._openai_compatible_card.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
+        self._fallback_card.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
 
         stt_compute_visible = self._is_local_stt(stt)
         peer_compute_visible = self._is_local_stt(peer_stt)

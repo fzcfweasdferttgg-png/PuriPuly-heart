@@ -21,6 +21,7 @@ import numpy as np
 from puripuly_heart.app.wiring import (
     build_peer_stt_provider_signature,
     create_llm_provider,
+    create_fallback_llm_provider,
     create_peer_stt_backend,
     create_secret_store,
     create_stt_backend,
@@ -1055,6 +1056,14 @@ class GuiController(
                 runtime_logging=self.runtime_logging,
             )
 
+        fallback_llm = None
+        with contextlib.suppress(Exception):
+            fallback_llm = create_fallback_llm_provider(
+                self.settings,
+                secrets=secrets,
+                runtime_logging=self.runtime_logging,
+            )
+
         stt = None
         try:
             backend = create_stt_backend(
@@ -1097,6 +1106,7 @@ class GuiController(
         hub = Pipeline(
             stt=stt,
             llm=llm,
+            fallback_llm=fallback_llm,
             osc=osc,
             peer_stt=None,
             clock=self.clock,

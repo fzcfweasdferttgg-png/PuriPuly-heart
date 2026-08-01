@@ -288,6 +288,46 @@ class LlmSectionMixin:
                     draft.provider.openai_compatible.base_url = base_url
                     self.has_provider_changes = True
 
+    def _on_fallback_toggle(self, e) -> None:
+        if not self._settings:
+            return
+        enabled = e.data if e else False
+        draft = self._ensure_provider_settings_draft()
+        draft.provider.openai_compatible.fallback_enabled = bool(enabled)
+        self.has_provider_changes = True
+        _update_control_if_mounted(self._fallback_card)
+
+    def _on_fallback_provider_change(self, e) -> None:
+        from puripuly_heart.config.providers import load_providers
+        selected = e.data if e else None
+        if not selected:
+            return
+        providers = load_providers()
+        if selected == "custom":
+            return
+        provider_info = providers.get(selected)
+        if not provider_info:
+            return
+        base_url = provider_info.get("base_url", "")
+        if base_url and hasattr(self, "_fallback_base_url"):
+            self._fallback_base_url.value = base_url
+            _update_control_if_mounted(self._fallback_base_url)
+            if self._settings:
+                draft = self._ensure_provider_settings_draft()
+                draft.provider.openai_compatible.fallback_base_url = base_url
+                self.has_provider_changes = True
+
+    def _on_fallback_field_change(self, e) -> None:
+        _ = e
+        if not self._settings:
+            return
+        draft = self._ensure_provider_settings_draft()
+        if hasattr(self, "_fallback_base_url"):
+            draft.provider.openai_compatible.fallback_base_url = (self._fallback_base_url.value or "").strip()
+        if hasattr(self, "_fallback_model"):
+            draft.provider.openai_compatible.fallback_model = (self._fallback_model.value or "").strip()
+        self.has_provider_changes = True
+
     def _fetch_models(self, e) -> None:
         import asyncio
         import httpx

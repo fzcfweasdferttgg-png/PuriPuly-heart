@@ -102,12 +102,20 @@ def _parse_local_llm_extra_body(value: object) -> dict[str, object]:
 class OpenAICompatibleSettings:
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
+    fallback_enabled: bool = False
+    fallback_base_url: str = ""
+    fallback_model: str = ""
 
     def validate(self) -> None:
         if not isinstance(self.base_url, str) or not self.base_url.strip():
             raise ValueError("openai_compatible base_url must be a non-empty string")
         if not isinstance(self.model, str) or not self.model.strip():
             raise ValueError("openai_compatible model must be a non-empty string")
+        if self.fallback_enabled:
+            if not self.fallback_base_url.strip():
+                raise ValueError("fallback base_url is required when fallback is enabled")
+            if not self.fallback_model.strip():
+                raise ValueError("fallback model is required when fallback is enabled")
 
 
 @dataclass(slots=True)
@@ -209,7 +217,16 @@ class LocalLLMSettings:
 def _parse_openai_compatible_settings(data: dict) -> OpenAICompatibleSettings:
     base_url = str(data.get("base_url", "https://api.openai.com/v1")).strip()
     model = str(data.get("model", "gpt-4o-mini")).strip()
-    return OpenAICompatibleSettings(base_url=base_url, model=model)
+    fallback_enabled = bool(data.get("fallback_enabled", False))
+    fallback_base_url = str(data.get("fallback_base_url", "")).strip()
+    fallback_model = str(data.get("fallback_model", "")).strip()
+    return OpenAICompatibleSettings(
+        base_url=base_url,
+        model=model,
+        fallback_enabled=fallback_enabled,
+        fallback_base_url=fallback_base_url,
+        fallback_model=fallback_model,
+    )
 
 
 def _normalize_local_llm_data(data: dict) -> bool:

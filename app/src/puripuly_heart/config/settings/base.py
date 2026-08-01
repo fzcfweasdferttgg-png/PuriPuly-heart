@@ -451,6 +451,9 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
         "openai_compatible": {
             "base_url": settings.provider.openai_compatible.base_url,
             "model": settings.provider.openai_compatible.model,
+            "fallback_enabled": settings.provider.openai_compatible.fallback_enabled,
+            "fallback_base_url": settings.provider.openai_compatible.fallback_base_url,
+            "fallback_model": settings.provider.openai_compatible.fallback_model,
         },
         "llm": {"concurrency_limit": settings.llm.concurrency_limit},
         "osc": {
