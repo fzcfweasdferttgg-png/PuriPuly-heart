@@ -44,12 +44,14 @@ from .llm import (
     ProviderSettings,
     QwenSettings,
     SecretsSettings,
+    BackupTranslationSettings,
     _default_secrets_backend,
     _parse_local_llm_backend,
     _parse_local_llm_base_url,
     _parse_local_llm_extra_body,
     _parse_local_llm_model,
     _parse_openai_compatible_settings,
+    _parse_backup_translation_settings,
     _normalize_local_llm_data,
 )
 from .overlay import (
@@ -90,6 +92,7 @@ class AppSettings:
     api_key_verified: ApiKeyVerificationSettings = field(default_factory=ApiKeyVerificationSettings)
     system_prompt: str = ""
     system_prompts: dict[str, str] = field(default_factory=dict)
+    backup_translation: BackupTranslationSettings = field(default_factory=BackupTranslationSettings)
 
     @property
     def overlay_calibration(self) -> OverlayCalibration:
@@ -111,6 +114,7 @@ class AppSettings:
         self.stt.validate()
         self.qwen.validate()
         self.local_llm.validate()
+        self.backup_translation.validate()
         self.llm.validate()
         self.osc.validate()
         self.secrets.validate()
@@ -451,9 +455,19 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
         "openai_compatible": {
             "base_url": settings.provider.openai_compatible.base_url,
             "model": settings.provider.openai_compatible.model,
-            "fallback_enabled": settings.provider.openai_compatible.fallback_enabled,
-            "fallback_base_url": settings.provider.openai_compatible.fallback_base_url,
-            "fallback_model": settings.provider.openai_compatible.fallback_model,
+        },
+        "backup_translation": {
+            "enabled": settings.backup_translation.enabled,
+            "mode": settings.backup_translation.mode.value,
+            "openai_compatible": {
+                "base_url": settings.backup_translation.openai_compatible.base_url,
+                "model": settings.backup_translation.openai_compatible.model,
+            },
+            "local_llm": {
+                "base_url": _parse_local_llm_base_url(settings.backup_translation.local_llm.base_url),
+                "model": _parse_local_llm_model(settings.backup_translation.local_llm.model),
+                "extra_body": _parse_local_llm_extra_body(settings.backup_translation.local_llm.extra_body),
+            },
         },
         "llm": {"concurrency_limit": settings.llm.concurrency_limit},
         "osc": {
@@ -753,6 +767,9 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
         ),
         system_prompt=legacy_system_prompt,
         system_prompts={},
+        backup_translation=_parse_backup_translation_settings(
+            data.get("backup_translation") if isinstance(data.get("backup_translation"), dict) else {}
+        ),
     )
 
     translation_data = data.get("translation") if isinstance(data.get("translation"), dict) else {}

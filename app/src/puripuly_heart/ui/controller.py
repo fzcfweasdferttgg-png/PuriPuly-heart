@@ -964,6 +964,22 @@ class GuiController(
         # Update hub's LLM provider
         self.hub.llm = llm
 
+        # Rebuild fallback provider
+        previous_fallback = self.hub.fallback_llm
+        self.hub.fallback_llm = None
+        if previous_fallback is not None:
+            with contextlib.suppress(Exception):
+                await previous_fallback.close()
+        try:
+            fallback_llm = create_fallback_llm_provider(
+                self.settings,
+                secrets=secrets,
+                runtime_logging=self.runtime_logging,
+            )
+            self.hub.fallback_llm = fallback_llm
+        except Exception as exc:
+            logger.warning("[LLM] Failed to create fallback provider: %s", exc)
+
         dash = getattr(self.app, "view_dashboard", None)
 
         # Stop translation if provider changed while translation was active.

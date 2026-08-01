@@ -518,5 +518,8 @@
   "locale.cs": "Чешский",
   "provider.local_qwen_17b_gguf.description": "Быстрое многоязычное распознавание речи, 1.7B",
   "locale.lv": "Латышский",
-  "settings.quant.label": "Качество:"
+  "settings.quant.label": "Качество:",
+  "settings.backup_translation": "Резервный перевод",
+  "option.disabled": "Отключено",
+  "settings.backup_api_key": "API ключ"
 }

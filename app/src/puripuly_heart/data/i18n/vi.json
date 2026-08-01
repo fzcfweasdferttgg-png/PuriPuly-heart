@@ -421,5 +421,8 @@
   "provider.local_qwen_17b_gguf.description": "Nhận diện giọng nói đa ngôn ngữ nhanh, 1.7B",
   "warning.gigaam_not_supported": "GigaAM chỉ hỗ trợ tiếng Nga. Thử Qwen ASR hoặc Deepgram",
   "settings.backend.label": "Cơ chế:",
-  "settings.quant.label": "Chất lượng:"
+  "settings.quant.label": "Chất lượng:",
+  "settings.backup_translation": "Bản dịch dự phòng",
+  "option.disabled": "Tắt",
+  "settings.backup_api_key": "Khóa API"
 }

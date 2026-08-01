@@ -418,5 +418,8 @@
   "provider.local_qwen_17b_gguf.description": "Fast multilingual speech recognition, 1.7B",
   "warning.gigaam_not_supported": "GigaAM supports only Russian. Consider Qwen ASR or Deepgram",
   "settings.backend.label": "المحرك:",
-  "settings.quant.label": "الجودة:"
+  "settings.quant.label": "الجودة:",
+  "settings.backup_translation": "ترجمة احتياطية",
+  "option.disabled": "معطل",
+  "settings.backup_api_key": "مفتاح API"
 }

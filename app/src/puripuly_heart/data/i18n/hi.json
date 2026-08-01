@@ -421,5 +421,8 @@
   "provider.local_qwen_17b_gguf.description": "तेज़ बहुभाषी भाषा पहचान, 1.7B",
   "warning.gigaam_not_supported": "GigaAM केवल रूसी का समर्थन करता है。Qwen ASR या Deepgram आज़माएं",
   "settings.backend.label": "इंजन:",
-  "settings.quant.label": "गुणवत्ता:"
+  "settings.quant.label": "गुणवत्ता:",
+  "settings.backup_translation": "बैकअप अनुवाद",
+  "option.disabled": "अक्षम",
+  "settings.backup_api_key": "API कुंजी"
 }

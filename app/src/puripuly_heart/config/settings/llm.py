@@ -102,20 +102,12 @@ def _parse_local_llm_extra_body(value: object) -> dict[str, object]:
 class OpenAICompatibleSettings:
     base_url: str = ""
     model: str = ""
-    fallback_enabled: bool = False
-    fallback_base_url: str = ""
-    fallback_model: str = ""
 
     def validate(self) -> None:
-        if not isinstance(self.base_url, str) or not self.base_url.strip():
-            raise ValueError("openai_compatible base_url must be a non-empty string")
+        if not self.base_url.strip():
+            return
         if not isinstance(self.model, str) or not self.model.strip():
             raise ValueError("openai_compatible model must be a non-empty string")
-        if self.fallback_enabled:
-            if not self.fallback_base_url.strip():
-                raise ValueError("fallback base_url is required when fallback is enabled")
-            if not self.fallback_model.strip():
-                raise ValueError("fallback model is required when fallback is enabled")
 
 
 @dataclass(slots=True)
@@ -187,6 +179,8 @@ class LocalLLMSettings:
     def validate(self) -> None:
         if not isinstance(self.backend, LocalLLMBackend):
             raise ValueError("invalid local llm backend")
+        if not self.base_url.strip():
+            return
         self.base_url = _normalize_local_llm_base_url(self.base_url)
         if not isinstance(self.base_url, str) or not self.base_url.strip():
             raise ValueError("invalid local llm base url")
@@ -217,15 +211,9 @@ class LocalLLMSettings:
 def _parse_openai_compatible_settings(data: dict) -> OpenAICompatibleSettings:
     base_url = str(data.get("base_url", "")).strip()
     model = str(data.get("model", "")).strip()
-    fallback_enabled = bool(data.get("fallback_enabled", False))
-    fallback_base_url = str(data.get("fallback_base_url", "")).strip()
-    fallback_model = str(data.get("fallback_model", "")).strip()
     return OpenAICompatibleSettings(
         base_url=base_url,
         model=model,
-        fallback_enabled=fallback_enabled,
-        fallback_base_url=fallback_base_url,
-        fallback_model=fallback_model,
     )
 
 
@@ -242,3 +230,47 @@ def _normalize_local_llm_data(data: dict) -> bool:
         data["local_llm"] = normalized
         return True
     return False
+
+
+@dataclass(slots=True)
+class BackupTranslationSettings:
+    enabled: bool = False
+    mode: LLMProviderName = LLMProviderName.OPENAI_COMPATIBLE
+    openai_compatible: OpenAICompatibleSettings = field(default_factory=OpenAICompatibleSettings)
+    local_llm: LocalLLMSettings = field(default_factory=LocalLLMSettings)
+
+    def validate(self) -> None:
+        if not isinstance(self.mode, LLMProviderName):
+            raise ValueError("invalid backup translation mode")
+        if not self.enabled:
+            return
+        if self.mode == LLMProviderName.OPENAI_COMPATIBLE:
+            if not self.openai_compatible.base_url.strip():
+                return
+            if not self.openai_compatible.model.strip():
+                raise ValueError("backup openai_compatible model required when enabled")
+        elif self.mode == LLMProviderName.LOCAL_LLM:
+            if not self.local_llm.base_url.strip():
+                return
+            if not self.local_llm.model.strip():
+                raise ValueError("backup local_llm model required when enabled")
+
+
+def _parse_backup_translation_settings(data: dict) -> BackupTranslationSettings:
+    enabled = bool(data.get("enabled", False))
+    mode = _parse_llm_provider(data.get("mode", LLMProviderName.OPENAI_COMPATIBLE.value))
+    oc_data = data.get("openai_compatible") if isinstance(data.get("openai_compatible"), dict) else {}
+    llm_data = data.get("local_llm") if isinstance(data.get("local_llm"), dict) else {}
+    return BackupTranslationSettings(
+        enabled=enabled,
+        mode=mode,
+        openai_compatible=OpenAICompatibleSettings(
+            base_url=str(oc_data.get("base_url", "")).strip(),
+            model=str(oc_data.get("model", "")).strip(),
+        ),
+        local_llm=LocalLLMSettings(
+            base_url=_parse_local_llm_base_url(llm_data.get("base_url")),
+            model=_parse_local_llm_model(llm_data.get("model")),
+            extra_body=_parse_local_llm_extra_body(llm_data.get("extra_body")),
+        ),
+    )

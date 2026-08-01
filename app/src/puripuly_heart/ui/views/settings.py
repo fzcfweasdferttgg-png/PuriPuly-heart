@@ -27,12 +27,7 @@ from puripuly_heart.config.settings import (
     AppSettings,
     LLMProviderName,
     STTProviderName,
-    TranslationConnection,
-    TranslationModel,
     _normalize_local_llm_base_url,
-    default_translation_connection,
-    materialize_translation_settings,
-    supported_translation_connections,
 )
 from puripuly_heart.core.language import get_stt_compatibility_warning
 from puripuly_heart.ui.components.settings import (
@@ -297,10 +292,22 @@ class SettingsView(
                 self.show_snackbar(msg, bg) if self.show_snackbar else None
             ),
         )
+        self._backup_api_key = ApiKeyField(
+            "settings.backup_api_key",
+            "backup_api_key",
+            "openai_compatible",
+            on_verify=self._verify_key,
+            on_save=self._on_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
 
         self._api_keys_column = ft.Column(
             [
                 self._openai_compatible_key,
+                self._backup_api_key,
             ],
             spacing=12,
         )
@@ -1099,25 +1106,40 @@ class SettingsView(
         self._sync_overlay_target_specific_visibility()
 
         # === Row 7: Response Mode / Translation Connection / Fallback ===
-        self._translation_connection_title = ft.Text(
-            t("settings.translation_connection"),
+        self._stub_title = ft.Text(
+            "Stub",
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
-        self._translation_connection_text = self._build_clickable_text(
-            t("settings.translation_connection.openrouter"),
-            self._on_translation_connection_click,
+        self._stub_text = self._build_clickable_text(
+            "Stub",
+            self._on_stub_click,
         )
         self._translation_connection_card = self._wrap_unit_card(
-            title=self._translation_connection_title,
-            value=self._translation_connection_text,
+            title=self._stub_title,
+            value=self._stub_text,
+        )
+        self._fallback_status_title = ft.Text(
+            t("settings.backup_translation"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._fallback_status_text = self._build_clickable_text(
+            t("option.disabled"),
+            self._on_fallback_status_click,
+        )
+        self._fallback_status_card = self._wrap_unit_card(
+            title=self._fallback_status_title,
+            value=self._fallback_status_text,
         )
         self._translation_connection_row = ft.Container(
             content=ft.Row(
                 [
                     self._low_latency_card,
                     self._translation_connection_card,
+                    self._fallback_status_card,
                 ],
                 spacing=16,
                 expand=True,
@@ -1298,79 +1320,6 @@ class SettingsView(
         )
         self._openai_compatible_card.visible = False
 
-        # Fallback provider card
-        self._fallback_title = ft.Text(
-            t("settings.fallback.title", default="Fallback Provider"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._fallback_enabled = ft.Switch(
-            label=t("settings.fallback.enabled", default="Enable fallback"),
-            value=False,
-            on_change=self._on_fallback_toggle,
-        )
-        _fallback_provider_options = []
-        for key, info in _providers.items():
-            _fallback_provider_options.append(ft.dropdown.Option(key=key, text=info.get("label", key)))
-        self._fallback_provider = ft.Dropdown(
-            label=t("settings.fallback.provider", default="Fallback Provider"),
-            options=_fallback_provider_options,
-            value=_fallback_provider_options[0].key if _fallback_provider_options else None,
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_fallback_provider_change,
-        )
-        self._fallback_base_url = ft.TextField(
-            label=t("settings.fallback.base_url", default="Fallback Base URL"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_fallback_field_change,
-        )
-        self._fallback_model = ft.Dropdown(
-            label=t("settings.fallback.model", default="Fallback Model"),
-            hint_text=t("settings.fallback.model.hint", default="Click refresh to load models"),
-            options=[],
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_fallback_model_selected,
-        )
-        self._fallback_fetch_btn = ft.IconButton(
-            icon=ft.Icons.REFRESH,
-            tooltip=t("settings.fallback.fetch_models", default="Fetch fallback models"),
-            on_click=self._fetch_fallback_models,
-        )
-        self._fallback_card = self._wrap_card(
-            ft.Column(
-                [
-                    self._fallback_title,
-                    ft.Container(height=4),
-                    self._fallback_enabled,
-                    self._fallback_provider,
-                    ft.Row([self._fallback_model, self._fallback_fetch_btn], spacing=4),
-                ],
-                spacing=8,
-            ),
-            height=None,
-        )
-        self._fallback_card.visible = False
-
         # === Row 8: Persona (2x2) - Licenses style ===
         self._prompt_editor = PromptEditor(
             on_change=self._on_prompt_change,
@@ -1489,7 +1438,6 @@ class SettingsView(
                     self._translation_connection_row,
                     self._local_llm_connection_card,
                     self._openai_compatible_card,
-                    self._fallback_card,
                     api_keys_row,
                 ],
                 "general": [
@@ -1537,6 +1485,7 @@ class SettingsView(
         target.translation = copy.deepcopy(source.translation)
         target.qwen.region = source.qwen.region
         target.local_llm = copy.deepcopy(source.local_llm)
+        target.backup_translation = copy.deepcopy(source.backup_translation)
         target.system_prompt = source.system_prompt
         target.system_prompts = {}
 
@@ -1651,9 +1600,6 @@ class SettingsView(
             self._llm_text,
             self._get_llm_display_label(settings),
         )
-        self._set_translation_connection_text(
-            self._get_translation_connection_display_label(settings),
-        )
         self._local_llm_base_url.value = settings.local_llm.base_url
         self._local_llm_base_url.error_text = None
         self._local_llm_model.value = settings.local_llm.model
@@ -1680,18 +1626,16 @@ class SettingsView(
                 break
         self._openai_compatible_provider.value = _matched
 
-        # Fallback
-        oc = settings.provider.openai_compatible
-        self._fallback_enabled.value = oc.fallback_enabled
-        self._fallback_base_url.value = oc.fallback_base_url
-        self._fallback_model.value = oc.fallback_model or None
-        _fb_options = self._fallback_provider.options or []
-        _fb_matched = _fb_options[0].key if _fb_options else None
-        for _fpk, _fpi in _loaded_providers.items():
-            if _fpi.get("base_url") == oc.fallback_base_url:
-                _fb_matched = _fpk
-                break
-        self._fallback_provider.value = _fb_matched
+        # Backup translation status display
+        bt = settings.backup_translation
+        if bt.enabled:
+            if bt.mode == LLMProviderName.LOCAL_LLM:
+                _fb_label = t("provider.local_llms")
+            else:
+                _fb_label = t("provider.openai_compatible")
+            self._set_unit_card_value_text(self._fallback_status_text, _fb_label)
+        else:
+            self._set_unit_card_value_text(self._fallback_status_text, t("option.disabled"))
 
         # Qwen Region
         region_label = t(f"region.{settings.qwen.region.value}")
@@ -1769,7 +1713,10 @@ class SettingsView(
         self._local_llm_connection_card.visible = llm == LLMProviderName.LOCAL_LLM
         self._openai_compatible_key.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
         self._openai_compatible_card.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
-        self._fallback_card.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
+        self._backup_api_key.visible = (
+            settings.backup_translation.enabled
+            and settings.backup_translation.mode == LLMProviderName.OPENAI_COMPATIBLE
+        )
 
         stt_compute_visible = self._is_local_stt(stt)
         peer_compute_visible = self._is_local_stt(peer_stt)
@@ -1855,7 +1802,6 @@ class SettingsView(
         self._peer_hangover_field.label = t("settings.vad.peer_hangover_ms")
         self._peer_pre_roll_field.label = t("settings.vad.peer_pre_roll_ms")
         self._low_latency_title.value = t("settings.low_latency_mode")
-        self._translation_connection_title.value = t("settings.translation_connection")
         self._local_llm_connection_title.value = t("settings.local_llm.connection")
         self._local_llm_base_url.label = t("settings.local_llm.base_url")
         self._local_llm_model.label = t("settings.local_llm.model")
@@ -1948,9 +1894,6 @@ class SettingsView(
             self._set_unit_card_value_text(
                 self._llm_text,
                 self._get_llm_display_label(display_settings),
-            )
-            self._set_translation_connection_text(
-                self._get_translation_connection_display_label(display_settings),
             )
             self._ui_text.content.value = locale_label(display_settings.ui.locale)
             self._low_latency_text.content.value = t(

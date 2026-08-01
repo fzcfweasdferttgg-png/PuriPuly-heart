@@ -418,5 +418,8 @@
   "provider.local_qwen_17b_gguf.description": "빠른 다국어 음성인식, 1.7B",
   "warning.gigaam_not_supported": "GigaAM은 러시아어만 지원합니다. Qwen ASR 또는 Deepgram을 사용하세요",
   "settings.backend.label": "엔진:",
-  "settings.quant.label": "품질:"
+  "settings.quant.label": "품질:",
+  "settings.backup_translation": "백업 번역",
+  "option.disabled": "비활성화",
+  "settings.backup_api_key": "API 키"
 }

@@ -81,6 +81,7 @@ def founder_readme_url_for_locale(locale: str | None) -> str:
 class TranslatorApp:
     def __init__(self, page: ft.Page, *, config_path, debug_ui_preview: bool = False):
         self.page = page
+        self.config_path = config_path
         self.controller = GuiController(
             page=page,
             app=self,

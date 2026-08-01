@@ -122,6 +122,12 @@ class ProviderSignaturesMixin:
                 if settings.provider.llm == LLMProviderName.LOCAL_LLM
                 else None
             ),
+            settings.backup_translation.enabled,
+            settings.backup_translation.mode.value,
+            settings.backup_translation.openai_compatible.base_url,
+            settings.backup_translation.openai_compatible.model,
+            settings.backup_translation.local_llm.base_url,
+            settings.backup_translation.local_llm.model,
         )
 
     def _sync_signature_caches(self, settings: AppSettings) -> None:

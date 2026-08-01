@@ -67,6 +67,7 @@ from puripuly_heart.config.settings.llm import (
     ProviderSettings,
     QwenSettings,
     SecretsSettings,
+    BackupTranslationSettings,
     _normalize_local_llm_base_url,
 )
 from puripuly_heart.config.settings.overlay import (

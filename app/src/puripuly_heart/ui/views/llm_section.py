@@ -44,15 +44,6 @@ _TRANSLATION_MODEL_LABEL_KEYS = {
     TranslationModel.LOCAL_LLM: "provider.local_llms",
     TranslationModel.OPENAI_COMPATIBLE: "provider.openai_compatible",
 }
-_TRANSLATION_CONNECTION_LABEL_KEYS = {
-    TranslationConnection.LOCAL: "settings.translation_connection.local",
-    TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible",
-}
-_TRANSLATION_CONNECTION_DESCRIPTION_KEYS = {
-    TranslationConnection.LOCAL: "settings.translation_connection.local.description",
-    TranslationConnection.OPENAI_COMPATIBLE: "settings.translation_connection.openai_compatible.description",
-}
-_TRANSLATION_CONNECTION_ONLY_SUPPORTED_KEY = "settings.translation_connection.only_supported"
 
 
 class LlmSectionMixin:
@@ -64,27 +55,8 @@ class LlmSectionMixin:
     def _translation_model_display_label(self, model: TranslationModel) -> str:
         return t(_TRANSLATION_MODEL_LABEL_KEYS[model])
 
-    def _translation_connection_display_label(self, connection: TranslationConnection) -> str:
-        return t(_TRANSLATION_CONNECTION_LABEL_KEYS[connection])
-
-    def _translation_connection_display_description(self, connection: TranslationConnection) -> str:
-        return t(_TRANSLATION_CONNECTION_DESCRIPTION_KEYS[connection], default="")
-
-    def _translation_connection_only_supported_description(self) -> str:
-        return t(_TRANSLATION_CONNECTION_ONLY_SUPPORTED_KEY, default="")
-
-    def _set_translation_connection_text(self, text: str) -> None:
-        text_control = self._translation_connection_text.content
-        text_control.value = text
-        text_control.size = 28
-
     def _get_llm_display_label(self, settings: AppSettings) -> str:
         return self._translation_model_display_label(settings.translation.model)
-
-    def _get_translation_connection_display_label(self, settings: AppSettings | None) -> str:
-        if settings is None:
-            return self._translation_connection_display_label(TranslationConnection.OPENAI_COMPATIBLE)
-        return self._translation_connection_display_label(settings.translation.connection)
 
     def _active_prompt_key_for_settings(self, settings: AppSettings | None) -> str:
         if settings is None:
@@ -274,14 +246,6 @@ class LlmSectionMixin:
         draft.provider.openai_compatible.model = model
         self.has_provider_changes = True
 
-    def _on_fallback_model_selected(self, e) -> None:
-        model = e.data if e else None
-        if not model or not self._settings:
-            return
-        draft = self._ensure_provider_settings_draft()
-        draft.provider.openai_compatible.fallback_model = model
-        self.has_provider_changes = True
-
     def _on_openai_compatible_provider_change(self, e) -> None:
         from puripuly_heart.config.providers import load_providers
         selected = e.data if e else None
@@ -307,59 +271,10 @@ class LlmSectionMixin:
                 self._openai_compatible_model.value = None
                 _update_control_if_mounted(self._openai_compatible_model)
 
-    def _on_fallback_toggle(self, e) -> None:
-        if not self._settings:
-            return
-        enabled = e.data if e else False
-        draft = self._ensure_provider_settings_draft()
-        draft.provider.openai_compatible.fallback_enabled = bool(enabled)
-        self.has_provider_changes = True
-        _update_control_if_mounted(self._fallback_card)
-
-    def _on_fallback_provider_change(self, e) -> None:
-        from puripuly_heart.config.providers import load_providers
-        selected = e.data if e else None
-        if not selected:
-            return
-        providers = load_providers()
-        provider_info = providers.get(selected)
-        if not provider_info:
-            return
-        base_url = provider_info.get("base_url", "")
-        if base_url and hasattr(self, "_fallback_base_url"):
-            self._fallback_base_url.value = base_url
-            _update_control_if_mounted(self._fallback_base_url)
-            if self._settings:
-                draft = self._ensure_provider_settings_draft()
-                draft.provider.openai_compatible.fallback_base_url = base_url
-                draft.provider.openai_compatible.fallback_model = ""
-                self.has_provider_changes = True
-            if hasattr(self, "_fallback_model"):
-                self._fallback_model.options = []
-                self._fallback_model.value = None
-                _update_control_if_mounted(self._fallback_model)
-
-    def _on_fallback_field_change(self, e) -> None:
-        _ = e
-        if not self._settings:
-            return
-        draft = self._ensure_provider_settings_draft()
-        if hasattr(self, "_fallback_base_url"):
-            draft.provider.openai_compatible.fallback_base_url = (self._fallback_base_url.value or "").strip()
-        if hasattr(self, "_fallback_model"):
-            draft.provider.openai_compatible.fallback_model = (self._fallback_model.value or "").strip()
-        self.has_provider_changes = True
-
     def _fetch_models(self, e) -> None:
         self._do_fetch_models(
             base_url_field=self._openai_compatible_base_url,
             model_dropdown=self._openai_compatible_model,
-        )
-
-    def _fetch_fallback_models(self, e) -> None:
-        self._do_fetch_models(
-            base_url_field=self._fallback_base_url,
-            model_dropdown=self._fallback_model,
         )
 
     def _do_fetch_models(self, *, base_url_field, model_dropdown) -> None:
@@ -488,9 +403,6 @@ class LlmSectionMixin:
             self._llm_text,
             self._get_llm_display_label(settings),
         )
-        self._set_translation_connection_text(
-            self._get_translation_connection_display_label(settings),
-        )
 
     def _apply_translation_selection(
         self,
@@ -574,49 +486,4 @@ class LlmSectionMixin:
             return
         history = copy.deepcopy(current_settings.translation.connection_history)
         connection = self._restore_translation_connection_for_model(model, history)
-        self._apply_translation_selection(model, connection)
-
-    def _on_translation_connection_click(self, e) -> None:
-        if not self.page:
-            return
-        display_settings = self._build_settings_with_provider_draft()
-        model = (
-            display_settings.translation.model
-            if display_settings is not None
-            else TranslationModel.OPENAI_COMPATIBLE
-        )
-        connections = supported_translation_connections(model)
-        options = [
-            OptionItem(
-                value=connection.value,
-                label=self._translation_connection_display_label(connection),
-            )
-            for connection in connections
-        ]
-        current = (
-            display_settings.translation.connection.value
-            if display_settings is not None
-            else default_translation_connection(model).value
-        )
-        modal = SettingsModal(
-            self.page,
-            t("settings.translation_connection"),
-            options,
-            self._on_translation_connection_selected,
-            show_description=False,
-        )
-        modal.open(current)
-
-    def _on_translation_connection_selected(self, value: str) -> None:
-        if not self._settings:
-            return
-        current_settings = self._build_settings_with_provider_draft()
-        assert current_settings is not None
-        model = current_settings.translation.model
-        try:
-            connection = TranslationConnection(value)
-        except (TypeError, ValueError):
-            return
-        if connection not in supported_translation_connections(model):
-            return
         self._apply_translation_selection(model, connection)

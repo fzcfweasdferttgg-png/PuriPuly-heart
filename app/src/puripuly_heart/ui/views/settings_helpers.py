@@ -12,6 +12,8 @@ import flet as ft
 
 from puripuly_heart.ui.components.settings import (
     SettingsUnitCard,
+    OptionItem,
+    SettingsModal,
 )
 from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
 from puripuly_heart.ui.components.subtab_shell import TextSubtab, TextSubtabShell
@@ -246,7 +248,6 @@ class SettingsHelpersMixin:
             self._overlay_desktop_reset_button,
             self._desktop_overlay_primary_action,
             self._desktop_overlay_view_logs_action,
-            self._translation_connection_text,
         )
 
     def _sync_clickable_text_control_fonts(self, font_family: str | None) -> None:
@@ -608,3 +609,64 @@ class SettingsHelpersMixin:
                 if normalized:
                     terms.append(normalized)
         return terms
+
+    def _on_stub_click(self, e) -> None:
+        if not self.page:
+            return
+        modal = SettingsModal(
+            self.page,
+            "Stub",
+            [OptionItem(value="stub", label="Stub")],
+            lambda value: None,
+            show_description=False,
+        )
+        modal.open("stub")
+
+    def _on_fallback_status_click(self, e) -> None:
+        if not self.page:
+            return
+        from puripuly_heart.config.settings import LLMProviderName
+        display_settings = self._build_settings_with_provider_draft()
+        bt = display_settings.backup_translation if display_settings else None
+        if bt and bt.enabled:
+            current_key = bt.mode.value
+        else:
+            current_key = "_disabled"
+        options = [
+            OptionItem(value="_disabled", label=t("option.disabled")),
+            OptionItem(value="local_llm", label=t("provider.local_llms")),
+            OptionItem(value="openai_compatible", label=t("provider.openai_compatible")),
+        ]
+        modal = SettingsModal(
+            self.page,
+            t("settings.backup_translation"),
+            options,
+            self._on_fallback_status_selected,
+            show_description=False,
+        )
+        modal.open(current_key)
+
+    def _on_fallback_status_selected(self, value: str) -> None:
+        if not self._settings:
+            return
+        from puripuly_heart.config.providers import load_providers
+        from puripuly_heart.config.settings import LLMProviderName
+        draft = self._ensure_provider_settings_draft()
+        if value == "_disabled":
+            draft.backup_translation.enabled = False
+            self._set_unit_card_value_text(self._fallback_status_text, t("option.disabled"))
+        elif value == "local_llm":
+            draft.backup_translation.enabled = True
+            draft.backup_translation.mode = LLMProviderName.LOCAL_LLM
+            self._set_unit_card_value_text(self._fallback_status_text, t("provider.local_llms"))
+        else:
+            providers = load_providers()
+            first = next(iter(providers.values()), None)
+            draft.backup_translation.enabled = True
+            draft.backup_translation.mode = LLMProviderName.OPENAI_COMPATIBLE
+            if first:
+                draft.backup_translation.openai_compatible.base_url = first.get("base_url", "")
+            draft.backup_translation.openai_compatible.model = ""
+            self._set_unit_card_value_text(self._fallback_status_text, t("provider.openai_compatible"))
+        self.has_provider_changes = True
+        self._update_api_visibility(draft)

@@ -147,21 +147,39 @@ def create_fallback_llm_provider(
     secrets: SecretStore,
     runtime_logging: SessionRuntimeLoggingService | None = None,
 ) -> LLMProvider | None:
-    if settings.provider.llm != LLMProviderName.OPENAI_COMPATIBLE:
+    bt = settings.backup_translation
+    if not bt.enabled:
         return None
-    oc = settings.provider.openai_compatible
-    if not oc.fallback_enabled or not oc.fallback_base_url.strip() or not oc.fallback_model.strip():
+    if bt.mode == LLMProviderName.LOCAL_LLM:
+        local = bt.local_llm
+        if not local.base_url.strip():
+            return None
+        api_key = (secrets.get("local_llm_api_key") or "").strip()
+        logger.info(
+            "[LLM] Creating backup LOCAL_LLM provider: base_url=%s model=%s",
+            local.base_url,
+            local.model,
+        )
+        return LocalOpenAICompatibleLLMProvider(
+            base_url=local.base_url,
+            model=local.model,
+            extra_body=local.extra_body,
+            api_key=api_key,
+            runtime_logging=runtime_logging,
+        )
+    oc = bt.openai_compatible
+    if not oc.base_url.strip() or not oc.model.strip():
         return None
-    api_key = (secrets.get("openai_compatible_api_key") or "").strip()
+    api_key = (secrets.get("backup_api_key") or secrets.get("openai_compatible_api_key") or "").strip()
     logger.info(
-        "[LLM] Creating fallback provider: base_url=%s model=%s",
-        oc.fallback_base_url,
-        oc.fallback_model,
+        "[LLM] Creating backup OPENAI_COMPATIBLE provider: base_url=%s model=%s",
+        oc.base_url,
+        oc.model,
     )
     return OpenAICompatibleLLMProvider(
         api_key=api_key,
-        base_url=oc.fallback_base_url,
-        model=oc.fallback_model,
+        base_url=oc.base_url,
+        model=oc.model,
         runtime_logging=runtime_logging,
     )
 

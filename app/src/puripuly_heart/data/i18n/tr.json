@@ -421,5 +421,8 @@
   "provider.local_qwen_17b_gguf.description": "Hızlı çok dilli konuşma tanıma, 1.7B",
   "warning.gigaam_not_supported": "GigaAM yalnızca Rusçayı destekler. Qwen ASR veya Deepgram'ı deneyin",
   "settings.backend.label": "Motor:",
-  "settings.quant.label": "Kalite:"
+  "settings.quant.label": "Kalite:",
+  "settings.backup_translation": "Yedek çeviri",
+  "option.disabled": "Devre dışı",
+  "settings.backup_api_key": "API Anahtarı"
 }
