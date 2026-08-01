@@ -1266,9 +1266,9 @@ class SettingsView(
             on_blur=self._on_openai_compatible_base_url_change_end,
             on_submit=self._on_openai_compatible_base_url_change_end,
         )
-        self._openai_compatible_model = ft.TextField(
+        self._openai_compatible_model = ft.Dropdown(
             label=t("settings.openai_compatible.model", default="Model"),
-            value="",
+            options=[],
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -1276,9 +1276,7 @@ class SettingsView(
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_openai_compatible_field_change,
-            on_blur=self._on_openai_compatible_model_change_end,
-            on_submit=self._on_openai_compatible_model_change_end,
+            on_change=self._on_openai_compatible_model_selected,
         )
         self._openai_compatible_fetch_btn = ft.IconButton(
             icon=ft.Icons.REFRESH,
@@ -1339,9 +1337,9 @@ class SettingsView(
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
             on_change=self._on_fallback_field_change,
         )
-        self._fallback_model = ft.TextField(
+        self._fallback_model = ft.Dropdown(
             label=t("settings.fallback.model", default="Fallback Model"),
-            value="",
+            options=[],
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -1349,7 +1347,12 @@ class SettingsView(
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_fallback_field_change,
+            on_change=self._on_fallback_model_selected,
+        )
+        self._fallback_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH,
+            tooltip=t("settings.fallback.fetch_models", default="Fetch fallback models"),
+            on_click=self._fetch_fallback_models,
         )
         self._fallback_card = self._wrap_card(
             ft.Column(
@@ -1358,7 +1361,7 @@ class SettingsView(
                     ft.Container(height=4),
                     self._fallback_enabled,
                     self._fallback_provider,
-                    self._fallback_model,
+                    ft.Row([self._fallback_model, self._fallback_fetch_btn], spacing=4),
                 ],
                 spacing=8,
             ),
@@ -1663,8 +1666,7 @@ class SettingsView(
         # OpenAI Compatible
         self._openai_compatible_base_url.value = settings.provider.openai_compatible.base_url
         self._openai_compatible_base_url.error_text = None
-        self._openai_compatible_model.value = settings.provider.openai_compatible.model
-        self._openai_compatible_model.error_text = None
+        self._openai_compatible_model.value = settings.provider.openai_compatible.model or None
         # Sync provider dropdown from base_url
         from puripuly_heart.config.providers import load_providers
         _loaded_providers = load_providers()
@@ -1680,7 +1682,7 @@ class SettingsView(
         oc = settings.provider.openai_compatible
         self._fallback_enabled.value = oc.fallback_enabled
         self._fallback_base_url.value = oc.fallback_base_url
-        self._fallback_model.value = oc.fallback_model
+        self._fallback_model.value = oc.fallback_model or None
         _fb_options = self._fallback_provider.options or []
         _fb_matched = _fb_options[0].key if _fb_options else None
         for _fpk, _fpi in _loaded_providers.items():

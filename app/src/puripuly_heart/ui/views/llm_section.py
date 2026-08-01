@@ -266,6 +266,22 @@ class LlmSectionMixin:
         self._ensure_provider_settings_draft()
         self.has_provider_changes = True
 
+    def _on_openai_compatible_model_selected(self, e) -> None:
+        model = e.data if e else None
+        if not model or not self._settings:
+            return
+        draft = self._ensure_provider_settings_draft()
+        draft.provider.openai_compatible.model = model
+        self.has_provider_changes = True
+
+    def _on_fallback_model_selected(self, e) -> None:
+        model = e.data if e else None
+        if not model or not self._settings:
+            return
+        draft = self._ensure_provider_settings_draft()
+        draft.provider.openai_compatible.fallback_model = model
+        self.has_provider_changes = True
+
     def _on_openai_compatible_provider_change(self, e) -> None:
         from puripuly_heart.config.providers import load_providers
         selected = e.data if e else None
@@ -325,35 +341,52 @@ class LlmSectionMixin:
         self.has_provider_changes = True
 
     def _fetch_models(self, e) -> None:
+        self._do_fetch_models(
+            base_url_field=self._openai_compatible_base_url,
+            model_dropdown=self._openai_compatible_model,
+        )
+
+    def _fetch_fallback_models(self, e) -> None:
+        self._do_fetch_models(
+            base_url_field=self._fallback_base_url,
+            model_dropdown=self._fallback_model,
+        )
+
+    def _do_fetch_models(self, *, base_url_field, model_dropdown) -> None:
         import asyncio
         import httpx
 
-        base_url = (self._openai_compatible_base_url.value or "").strip()
+        base_url = (base_url_field.value or "").strip()
         if not base_url:
             return
         api_key = ""
         if hasattr(self, "_openai_compatible_key") and self._openai_compatible_key:
             api_key = (self._openai_compatible_key.value or "").strip()
-        if not api_key:
-            return
 
         models_url = base_url.rstrip("/") + "/models"
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
         async def _do_fetch():
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get(
-                        models_url,
-                        headers={"Authorization": f"Bearer {api_key}"},
-                    )
+                    resp = await client.get(models_url, headers=headers)
                     resp.raise_for_status()
                     data = resp.json()
                     model_ids = sorted(
                         m.get("id", "") for m in data.get("data", []) if m.get("id")
                     )
-                    if model_ids and hasattr(self, "_openai_compatible_model"):
-                        self._openai_compatible_model.value = model_ids[0]
-                        _update_control_if_mounted(self._openai_compatible_model)
+                    if model_ids and model_dropdown:
+                        current_value = model_dropdown.value
+                        model_dropdown.options = [
+                            ft.dropdown.Option(key=m, text=m) for m in model_ids
+                        ]
+                        if current_value in model_ids:
+                            model_dropdown.value = current_value
+                        else:
+                            model_dropdown.value = model_ids[0]
+                        _update_control_if_mounted(model_dropdown)
             except Exception:
                 pass
 
@@ -380,27 +413,6 @@ class LlmSectionMixin:
             self.has_provider_changes = True
         _update_control_if_mounted(self._openai_compatible_base_url)
 
-    def _on_openai_compatible_model_change_end(self, e) -> None:
-        _ = e
-        if not self._settings:
-            return
-        model = (self._openai_compatible_model.value or "").strip()
-        if not model:
-            self._openai_compatible_model.error_text = t(
-                "settings.openai_compatible.model.required", default="Model is required"
-            )
-            _update_control_if_mounted(self._openai_compatible_model)
-            return
-
-        self._openai_compatible_model.error_text = None
-        self._openai_compatible_model.value = model
-        current = self._provider_settings_draft or self._settings
-        if current.provider.openai_compatible.model != model:
-            draft = self._ensure_provider_settings_draft()
-            draft.provider.openai_compatible.model = model
-            self.has_provider_changes = True
-        _update_control_if_mounted(self._openai_compatible_model)
-
     def _commit_openai_compatible_fields_from_controls(self) -> None:
         if not self._settings:
             return
@@ -408,7 +420,6 @@ class LlmSectionMixin:
         if current.provider.llm != LLMProviderName.OPENAI_COMPATIBLE:
             return
         self._on_openai_compatible_base_url_change_end(None)
-        self._on_openai_compatible_model_change_end(None)
 
     def _on_qwen_region_click(self, e) -> None:
         pass
