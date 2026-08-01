@@ -4,10 +4,11 @@ from puripuly_heart.ports.hub import STTProvider
 from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.ports.llm_client import LocalOpenAIClient
 from puripuly_heart.ports.logging_sink import RealtimeLogSink
-from puripuly_heart.ports.osc import OscSender
+from puripuly_heart.ports.osc import OscSender, OscSink
 from puripuly_heart.ports.overlay import (
     AppliedContextMode,
     OverlayEvent,
+    OverlayEventFactory,
     OverlayEventUnion,
     OverlaySink,
     PeerActiveUpdate,
@@ -50,12 +51,14 @@ __all__ = [
     "LifecycleSink",
     "LocalOpenAIClient",
     "OverlayEvent",
+    "OverlayEventFactory",
     "OverlayEventUnion",
     "OverlayManagedProcess",
     "OverlayPresentationTransport",
     "OverlayProcessRunner",
     "OverlaySink",
     "OscSender",
+    "OscSink",
     "ParentMonitor",
     "PeerActiveUpdate",
     "PeerChannelRuntimeState",

@@ -127,7 +127,7 @@ def _load_headless_stdin_runner():
 def _load_vrchat_osc_udp_sender():
     global VrchatOscUdpSender
     if VrchatOscUdpSender is None:
-        from puripuly_heart.core.osc.udp_sender import VrchatOscUdpSender as LoadedSender
+        from puripuly_heart.adapters.osc.udp_sender import VrchatOscUdpSender as LoadedSender
 
         VrchatOscUdpSender = LoadedSender
     return VrchatOscUdpSender

@@ -9,7 +9,7 @@ __all__ = ["LLMProvider", "SemaphoreLLMProvider"]
 
 
 @dataclass(slots=True)
-class SemaphoreLLMProvider(LLMProvider):
+class SemaphoreLLMProvider:
     inner: LLMProvider
     semaphore: asyncio.Semaphore
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from puripuly_heart.core.language import get_language_info
+from puripuly_heart.domain.language import get_language_info
 
 if TYPE_CHECKING:
     import flet as ft

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from typing import Protocol
 from uuid import UUID
 
 from puripuly_heart.domain.models import Translation
 
 
-class LLMProvider:
+class LLMProvider(Protocol):
     async def translate(
         self,
         *,
@@ -15,9 +16,6 @@ class LLMProvider:
         source_language: str,
         target_language: str,
         context: str = "",
-    ) -> Translation:
-        _ = utterance_id, text, system_prompt, source_language, target_language, context
-        raise NotImplementedError
+    ) -> Translation: ...
 
-    async def close(self) -> None:
-        raise NotImplementedError
+    async def close(self) -> None: ...

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from pythonosc.osc_message_builder import OscMessageBuilder
 
-from puripuly_heart.core.osc.sender import OscSender
+from puripuly_heart.ports.osc import OscSender
 
 
 @dataclass(slots=True)

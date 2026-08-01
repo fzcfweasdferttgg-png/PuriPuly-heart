@@ -10,27 +10,22 @@ from uuid import UUID, uuid4
 
 logger = logging.getLogger(__name__)
 
-from puripuly_heart.config.prompts import (
-    render_dual_translation_prompt_template,
-    render_translation_prompt_template,
-    warm_prompt_cache,
-)
+from puripuly_heart.config.prompts import warm_prompt_cache
 from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.clock import Clock, SystemClock
-from puripuly_heart.core.language import get_llm_language_name
 from puripuly_heart.core.llm.provider import LLMProvider
+from puripuly_heart.application.translation_service import TranslationService
+from puripuly_heart.application.output_dispatcher import OutputDispatcher
 from puripuly_heart.core.pipeline.channel_runtime import (
     ChannelRuntime,
     ContextEntry,
     _MergeBuffer,
 )
 from puripuly_heart.core.pipeline.context import ContextMode, ContextResolver
-from puripuly_heart.core.osc.chatbox_paginator import ChatboxPaginator
+from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
-from puripuly_heart.core.overlay.sink import (
-    OverlayEventAdapter,
-    OverlaySink,
-)
+from puripuly_heart.adapters.overlay.sink import OverlayEventAdapter
+from puripuly_heart.ports.overlay import OverlayEventFactory, OverlaySink
 from puripuly_heart.core.runtime_logging import (
     SessionLoggingMode,
     SessionRuntimeLoggingService,
@@ -64,17 +59,6 @@ __all__ = ["STTProvider", "Pipeline"]
 
 
 _PROMO_INTERVAL_SEC: float = 300.0  # 5 minutes
-_SELF_RUNTIME_FIELDS = {
-    "stt": "stt",
-    "_stt_task": "stt_task",
-    "_utterances": "utterances",
-    "_translation_tasks": "translation_tasks",
-    "_utterance_sources": "utterance_sources",
-    "_utterance_start_times": "utterance_start_times",
-    "_translation_history": "translation_history",
-    "_speech_ended_ids": "speech_ended_ids",
-    "_merge_buffer": "merge_buffer",
-}
 _SELF_SPEECH_TYPING_REASON = "self_speech_pending"
 
 
@@ -82,11 +66,13 @@ _SELF_SPEECH_TYPING_REASON = "self_speech_pending"
 class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     stt: STTProvider | None
     llm: LLMProvider | None
-    osc: ChatboxPaginator
+    osc: OscSink
     fallback_llm: LLMProvider | None = None
     peer_stt: STTProvider | None = None
     overlay_sink: OverlaySink | None = None
     overlay_diagnostics: OverlayDiagnosticsRecorder | None = None
+    translation_service: TranslationService | None = None
+    output_dispatcher: OutputDispatcher | None = None
     clock: Clock = SystemClock()
     runtime_logging: SessionRuntimeLoggingService | None = None
 
@@ -141,11 +127,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     _peer_parent_speech_end_times: dict[UUID, float] = field(default_factory=dict)
     context_resolver: ContextResolver = field(init=False)
     active_chatbox_channel: ChannelId = field(init=False, default="self")
-    overlay_event_adapter: OverlayEventAdapter = field(init=False)
-    _last_logged_context_modes: dict[ChannelId, ContextMode | None] = field(
-        init=False,
-        default_factory=lambda: {"self": None, "peer": None},
-    )
+    overlay_event_adapter: OverlayEventFactory = field(init=False)
     overlay_stream_coalesce_ms: int = 300
     last_error_source: str | None = None
     _last_overlay_secondary_runtime_signature: tuple[object, ...] | None = field(
@@ -189,56 +171,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             emit_basic=self._emit_basic,
             emit_detailed=self._emit_detailed,
         )
-        self._sync_self_runtime_aliases()
-
-    def __setattr__(self, name: str, value: object) -> None:
-        object.__setattr__(self, name, value)
-        if name in {
-            "clock",
-            "context_time_window_s",
-            "context_max_entries",
-            "integrated_context_time_window_s",
-            "integrated_context_max_entries",
-        }:
-            try:
-                resolver = object.__getattribute__(self, "context_resolver")
-            except AttributeError:
-                resolver = None
-            try:
-                overlay_event_adapter = object.__getattribute__(self, "overlay_event_adapter")
-            except AttributeError:
-                overlay_event_adapter = None
-            if resolver is not None:
-                if name == "clock":
-                    resolver.clock = value  # type: ignore[assignment]
-                elif name == "context_time_window_s":
-                    resolver.local_time_window_s = value  # type: ignore[assignment]
-                elif name == "context_max_entries":
-                    resolver.local_max_entries = value  # type: ignore[assignment]
-                elif name == "integrated_context_time_window_s":
-                    resolver.integrated_time_window_s = value  # type: ignore[assignment]
-                elif name == "integrated_context_max_entries":
-                    resolver.integrated_max_entries = value  # type: ignore[assignment]
-            if name == "clock" and overlay_event_adapter is not None:
-                overlay_event_adapter.clock = value  # type: ignore[assignment]
-        runtime_field = _SELF_RUNTIME_FIELDS.get(name)
-        if runtime_field is None:
-            return
-        try:
-            runtime = object.__getattribute__(self, "self_runtime")
-        except AttributeError:
-            return
-        object.__setattr__(runtime, runtime_field, value)
-
-    def _sync_self_runtime_aliases(self) -> None:
-        self._stt_task = self.self_runtime.stt_task
-        self._utterances = self.self_runtime.utterances
-        self._translation_tasks = self.self_runtime.translation_tasks
-        self._utterance_sources = self.self_runtime.utterance_sources
-        self._utterance_start_times = self.self_runtime.utterance_start_times
-        self._translation_history = self.self_runtime.translation_history
-        self._speech_ended_ids = self.self_runtime.speech_ended_ids
-        self._merge_buffer = self.self_runtime.merge_buffer
 
     @staticmethod
     def _format_log_message(message: str, *args: object) -> str:
@@ -278,92 +210,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     @staticmethod
     def _latency_key(channel: ChannelId, utterance_id: UUID) -> tuple[ChannelId, UUID]:
         return LatencyTracker._latency_key(channel, utterance_id)
-
-    def _get_latency_timeline(
-        self,
-        *,
-        channel: ChannelId,
-        utterance_id: UUID,
-        create: bool = False,
-    ) -> _LatencyTimeline | None:
-        return self._latency._get_latency_timeline(channel=channel, utterance_id=utterance_id, create=create)
-
-    @staticmethod
-    def _elapsed_latency_ms(start_at: float | None, end_at: float | None) -> int | None:
-        return LatencyTracker._elapsed_latency_ms(start_at, end_at)
-
-    def _latency_hangover_ms(self, channel: ChannelId) -> int:
-        return self._latency._latency_hangover_ms(channel)
-
-    def _emit_latency_trace_if_ready(
-        self,
-        *,
-        channel: ChannelId,
-        utterance_id: UUID,
-        stage: str,
-    ) -> None:
-        self._latency._emit_latency_trace_if_ready(channel=channel, utterance_id=utterance_id, stage=stage)
-
-    def _emit_latency_summary_if_ready(
-        self,
-        *,
-        channel: ChannelId,
-        utterance_id: UUID,
-        final_output_stage: str,
-    ) -> None:
-        self._latency._emit_latency_summary_if_ready(channel=channel, utterance_id=utterance_id, final_output_stage=final_output_stage)
-
-    def _emit_latency_contract_if_ready(
-        self,
-        *,
-        channel: ChannelId,
-        utterance_id: UUID,
-    ) -> None:
-        self._latency._emit_latency_contract_if_ready(channel=channel, utterance_id=utterance_id)
-
-    def _record_latency_stage(
-        self,
-        *,
-        channel: ChannelId,
-        utterance_id: UUID,
-        stage: str,
-        timestamp: float | None = None,
-        overwrite: bool = True,
-        publish_now: bool = True,
-    ) -> None:
-        self._latency._record_latency_stage(channel=channel, utterance_id=utterance_id, stage=stage, timestamp=timestamp, overwrite=overwrite, publish_now=publish_now)
-
-    def _inherit_latency_for_output(
-        self,
-        *,
-        channel: ChannelId,
-        output_utterance_id: UUID,
-        source_utterance_ids: list[UUID],
-    ) -> None:
-        self._latency._inherit_latency_for_output(channel=channel, output_utterance_id=output_utterance_id, source_utterance_ids=source_utterance_ids)
-
-    def _clear_latency_timeline(self, *, channel: ChannelId, utterance_id: UUID) -> None:
-        self._latency._clear_latency_timeline(channel=channel, utterance_id=utterance_id)
-
-    def _clear_latency_state(self, *, channel: ChannelId | None = None) -> None:
-        self._latency._clear_latency_state(channel=channel)
-
-    def _clear_runtime_latency_bookkeeping(self, *, channel: ChannelId, utterance_id: UUID) -> None:
-        runtime = self._runtime_for_channel(channel)
-        self._latency._clear_runtime_latency_bookkeeping(runtime=runtime, utterance_id=utterance_id)
-
-    def _finalize_latency_timeline(self, *, channel: ChannelId, utterance_id: UUID) -> None:
-        runtime = self._runtime_for_channel(channel)
-        self._latency._finalize_latency_timeline(runtime=runtime, channel=channel, utterance_id=utterance_id)
-
-
-
-
-
-
-
-
-
 
     def _emit_exception_summary(
         self,
@@ -464,8 +310,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         await self._stop_stt_task("_stt_task")
         await self.reset_overlay_preview()
         await self.self_runtime.reset_runtime_state()
-        self._clear_latency_state(channel="self")
-        self._sync_self_runtime_aliases()
+        self._latency._clear_latency_state(channel="self")
 
         if old_stt is not None:
             await old_stt.close()
@@ -480,7 +325,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         await self._stop_stt_task("_peer_stt_task")
         await self.peer_runtime.reset_runtime_state()
         self._clear_peer_logical_turn_state()
-        self._clear_latency_state(channel="peer")
+        self._latency._clear_latency_state(channel="peer")
 
         if old_stt is not None:
             await old_stt.close()
@@ -500,65 +345,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         self.peer_runtime.clear_context()
         self._emit_basic("[Hub] Context history cleared")
 
-    def _remember_context_entry(
-        self,
-        text: str,
-        timestamp: float,
-        *,
-        runtime: ChannelRuntime | None = None,
-    ) -> None:
-        runtime = runtime or self.self_runtime
-        runtime.remember_context(
-            text,
-            timestamp=timestamp,
-            source_language=self._source_language_for(runtime),
-            target_language=self._target_language_for(runtime),
-            max_entries=max(self.context_max_entries, self.integrated_context_max_entries),
-        )
-
-    def _log_context_mode_change(
-        self,
-        *,
-        runtime: ChannelRuntime,
-        applied_mode: ContextMode,
-    ) -> None:
-        last_mode = self._last_logged_context_modes.get(runtime.channel)
-        if last_mode == applied_mode:
-            return
-        self._last_logged_context_modes[runtime.channel] = applied_mode
-        self._emit_basic("[Hub] Context mode: channel=%s mode=%s", runtime.channel, applied_mode)
-
-    def _log_context_application(
-        self,
-        *,
-        text: str,
-        runtime: ChannelRuntime,
-        context: str,
-    ) -> None:
-        context_lines = context.splitlines() if context else []
-        applied_mode = self._last_logged_context_modes.get(runtime.channel)
-        if runtime.channel == "peer" and applied_mode in (None, "local"):
-            peer_entries = len(context_lines)
-            self_entries = 0
-        else:
-            peer_entries = sum(
-                1
-                for line in context_lines
-                if line.startswith("- [peer,") or line.startswith("- [others,")
-            )
-            self_entries = len(context_lines) - peer_entries
-        self._emit_basic(
-            "[Hub] Context apply: channel=%s mode=%s request_chars=%s "
-            "entries=%s self_entries=%s peer_entries=%s context_chars=%s",
-            runtime.channel,
-            applied_mode,
-            len(text),
-            len(context_lines),
-            self_entries,
-            peer_entries,
-            len(context),
-        )
-
     async def handle_vad_event(self, event: VadEvent) -> None:
         resume_overlay_resync_buffer: _MergeBuffer | None = None
 
@@ -576,7 +362,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             self._set_osc_typing_reason(_SELF_SPEECH_TYPING_REASON, True)
             self._utterance_start_times[event.utterance_id] = speech_end_at
             self._speech_ended_ids.add(event.utterance_id)
-            self._record_latency_stage(
+            self._latency._record_latency_stage(
                 channel="self",
                 utterance_id=event.utterance_id,
                 stage="speech_end",
@@ -603,7 +389,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             self.peer_runtime.utterance_start_times[event.utterance_id] = speech_end_at
             self.peer_runtime.speech_ended_ids.add(event.utterance_id)
             self._peer_parent_speech_end_times[event.utterance_id] = speech_end_at
-            self._record_latency_stage(
+            self._latency._record_latency_stage(
                 channel="peer",
                 utterance_id=event.utterance_id,
                 stage="speech_end",
@@ -652,10 +438,9 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         await runtime.clear_live_translation_state()
         if channel == "peer":
             self._clear_peer_logical_turn_state()
-        self._clear_latency_state(channel=channel)
+        self._latency._clear_latency_state(channel=channel)
         if channel == "self":
             await self.reset_overlay_preview()
-            self._sync_self_runtime_aliases()
 
     def _runtime_for_utterance(
         self, utterance_id: UUID, *, default_channel: ChannelId = "self"
@@ -703,8 +488,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         await self.self_runtime.reset_runtime_state()
         await self.peer_runtime.reset_runtime_state()
         self._clear_peer_logical_turn_state()
-        self._clear_latency_state()
-        self._sync_self_runtime_aliases()
+        self._latency._clear_latency_state()
 
     async def _handle_stt_event(self, event: object) -> None:
         if isinstance(event, STTSessionStateEvent):
@@ -767,7 +551,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             if self.low_latency_mode and runtime.channel == "self":
                 await self._handle_low_latency_final(event.transcript)
                 return
-            self._record_latency_stage(
+            self._latency._record_latency_stage(
                 channel=runtime.channel,
                 utterance_id=event.transcript.utterance_id,
                 stage="stt_final",
@@ -786,8 +570,8 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                         translation_text=None,
                     )
                 else:
-                    self._finalize_latency_timeline(
-                        channel=runtime.channel,
+                    self._latency._finalize_latency_timeline(
+                        runtime=runtime, channel=runtime.channel,
                         utterance_id=event.transcript.utterance_id,
                     )
             else:
@@ -834,7 +618,8 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                         finalize_latency=not peer_terminal_work_will_follow,
                     )
                 elif not peer_terminal_work_will_follow:
-                    self._finalize_latency_timeline(
+                    self._latency._finalize_latency_timeline(
+                        runtime=self._runtime_for_channel(transcript.channel),
                         channel=transcript.channel,
                         utterance_id=transcript.utterance_id,
                     )
@@ -867,7 +652,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                 source=source,
             )
         )
-        self._record_latency_stage(
+        self._latency._record_latency_stage(
             channel="peer",
             utterance_id=transcript.utterance_id,
             stage="stt_final",
@@ -907,19 +692,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
 
 
 
-    @staticmethod
-
-
-
-
-    def _translation_ready_elapsed_ms(
-        self,
-        *,
-        channel: ChannelId,
-        utterance_id: UUID,
-    ) -> int | None:
-        return self._latency._translation_ready_elapsed_ms(channel=channel, utterance_id=utterance_id)
-
     def _emit_translation_ready_for_output(
         self,
         *,
@@ -939,7 +711,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                 source_text_len=translation.source_text_len,
                 logical_turn_key=translation.logical_turn_key,
                 translation_len=len(translation.text),
-                elapsed_ms=self._translation_ready_elapsed_ms(
+                elapsed_ms=self._latency._translation_ready_elapsed_ms(
                     channel=runtime.channel,
                     utterance_id=translation.utterance_id,
                 ),
@@ -1020,27 +792,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             return self.peer_target_language
         return self.target_language
 
-    def _format_system_prompt(self, runtime: ChannelRuntime | None = None) -> str:
-        runtime = runtime or self.self_runtime
-        source_name = get_llm_language_name(self._source_language_for(runtime))
-        target_name = get_llm_language_name(self._target_language_for(runtime))
-        if self.second_target_language and runtime.channel != "peer":
-            second_name = get_llm_language_name(self.second_target_language)
-            try:
-                return render_dual_translation_prompt_template(
-                    source_name=source_name,
-                    target_name=target_name,
-                    second_target_name=second_name,
-                )
-            except FileNotFoundError:
-                logger.warning("Dual translation prompt template not found, falling back to single")
-                pass
-        return render_translation_prompt_template(
-            self.system_prompt,
-            source_name=source_name,
-            target_name=target_name,
-        )
-
     def _other_runtime(self, runtime: ChannelRuntime) -> ChannelRuntime:
         return self.peer_runtime if runtime is self.self_runtime else self.self_runtime
 
@@ -1051,137 +802,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         if runtime.channel == "peer":
             return self.translation_enabled and self.peer_translation_enabled
         return self.translation_enabled
-
-    def _prepare_llm_request(
-        self,
-        text: str,
-        *,
-        runtime: ChannelRuntime | None = None,
-    ) -> tuple[str, str, float]:
-        formatted_prompt, context_str, now, _ = self._prepare_llm_request_with_mode(
-            text,
-            runtime=runtime,
-        )
-        return formatted_prompt, context_str, now
-
-    def _prepare_llm_request_with_mode(
-        self,
-        text: str,
-        *,
-        runtime: ChannelRuntime | None = None,
-    ) -> tuple[str, str, float, ContextMode]:
-        _ = text
-        runtime = runtime or self.self_runtime
-        requested_mode: ContextMode = "integrated" if self.integrated_context_enabled else "local"
-        now = self.clock.now()
-        other_runtime = self._other_runtime(runtime)
-        context_str, applied_mode = self.context_resolver.resolve_for_request(
-            runtime=runtime,
-            other_runtime=other_runtime,
-            requested_mode=requested_mode,
-            peer_translation_enabled=self.peer_translation_enabled,
-            source_language=self._source_language_for(runtime),
-            target_language=self._target_language_for(runtime),
-            other_source_language=self._source_language_for(other_runtime),
-            other_target_language=self._target_language_for(other_runtime),
-        )
-        self._log_context_mode_change(runtime=runtime, applied_mode=applied_mode)
-        self._log_context_application(text=text, runtime=runtime, context=context_str)
-        formatted_prompt = self._format_system_prompt(runtime)
-        return formatted_prompt, context_str, now, applied_mode
-
-    def _normalize_translation(
-        self,
-        translation: Translation,
-        *,
-        runtime: ChannelRuntime,
-        text: str,
-        source_language: str,
-        target_language: str,
-    ) -> Translation:
-        return Translation(
-            utterance_id=translation.utterance_id,
-            translated_text=translation.text,
-            source_text=text,
-            source_language=self._language_or_fallback(
-                translation.source_language,
-                source_language,
-            ),
-            target_language=self._language_or_fallback(
-                translation.target_language,
-                target_language,
-            ),
-            channel=runtime.channel,
-            created_at=translation.created_at,
-            update_id=translation.update_id,
-            origin_wall_clock_ms=translation.origin_wall_clock_ms,
-            session_scope=translation.session_scope,
-            source_text_hash=translation.source_text_hash,
-            source_text_len=translation.source_text_len,
-            logical_turn_key=f"{runtime.channel}:{translation.utterance_id}",
-        )
-
-    async def _translate_text(
-        self,
-        utterance_id: UUID,
-        text: str,
-        *,
-        runtime: ChannelRuntime | None = None,
-        record_latency: bool = True,
-    ) -> Translation:
-        if self.llm is None:
-            raise RuntimeError("LLM is not configured")
-
-        runtime = runtime or self.self_runtime
-        formatted_prompt, context_str, _ = self._prepare_llm_request(
-            text,
-            runtime=runtime,
-        )
-        if record_latency:
-            self._record_latency_stage(
-                channel=runtime.channel,
-                utterance_id=utterance_id,
-                stage="llm_request_start",
-            )
-        request_source_language = self._source_language_for(runtime)
-        request_target_language = self._target_language_for(runtime)
-
-        providers_to_try = [self.llm]
-        if self.fallback_llm is not None:
-            providers_to_try.append(self.fallback_llm)
-
-        last_error = None
-        for provider in providers_to_try:
-            try:
-                translation = await provider.translate(
-                    utterance_id=utterance_id,
-                    text=text,
-                    system_prompt=formatted_prompt,
-                    source_language=request_source_language,
-                    target_language=request_target_language,
-                    context=context_str,
-                )
-                if record_latency:
-                    self._record_latency_stage(
-                        channel=runtime.channel,
-                        utterance_id=utterance_id,
-                        stage="llm_done",
-                    )
-                return self._normalize_translation(
-                    translation,
-                    runtime=runtime,
-                    text=text,
-                    source_language=request_source_language,
-                    target_language=request_target_language,
-                )
-            except Exception as exc:
-                last_error = exc
-                if provider is not self.fallback_llm:
-                    logger.warning("[LLM] Primary provider failed: %s, trying fallback", exc)
-                else:
-                    logger.error("[LLM] Fallback provider also failed: %s", exc)
-
-        raise last_error or RuntimeError("LLM translation failed")
 
     async def _ensure_translation(self, transcript: Transcript) -> None:
         if self.llm is None:
@@ -1215,60 +835,28 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         applied_mode: ContextMode | None = None
         peer_overlay_active = runtime.channel == "peer" and self.overlay_sink is not None
         try:
-            formatted_prompt, context_str, now, applied_mode = self._prepare_llm_request_with_mode(
-                text,
-                runtime=runtime,
-            )
-
-            # Add current text to context history at REQUEST time
-            self._remember_context_entry(
-                text,
-                now,
-                runtime=runtime,
-            )
-            self._record_latency_stage(
+            if self.translation_service is not None:
+                formatted_prompt, context_str, now, applied_mode = self.translation_service.prepare_request(
+                    text, runtime=runtime, self_rt=self.self_runtime, peer_rt=self.peer_runtime,
+                )
+                self.translation_service.remember_context(text, now, runtime=runtime)
+            self._latency._record_latency_stage(
                 channel=runtime.channel,
                 utterance_id=utterance_id,
                 stage="llm_request_start",
             )
 
-            request_source_language = self._source_language_for(runtime)
-            request_target_language = self._target_language_for(runtime)
-
-            providers_to_try = [self.llm]
-            if self.fallback_llm is not None:
-                providers_to_try.append(self.fallback_llm)
-
-            raw_translation = None
-            last_error = None
-            for provider in providers_to_try:
-                try:
-                    raw_translation = await provider.translate(
-                        utterance_id=utterance_id,
-                        text=text,
-                        system_prompt=formatted_prompt,
-                        source_language=request_source_language,
-                        target_language=request_target_language,
-                        context=context_str,
-                    )
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    if provider is not self.fallback_llm:
-                        logger.warning("[LLM] Primary failed in _translate_and_enqueue: %s", exc)
-                    else:
-                        logger.error("[LLM] Fallback also failed: %s", exc)
-
-            if raw_translation is None:
-                raise last_error or RuntimeError("LLM translation failed")
-            translation = self._normalize_translation(
-                raw_translation,
-                runtime=runtime,
-                text=text,
-                source_language=request_source_language,
-                target_language=request_target_language,
-            )
-            self._record_latency_stage(
+            if self.translation_service is not None:
+                translation = await self.translation_service.translate(
+                    text, utterance_id=utterance_id, runtime=runtime,
+                    self_rt=self.self_runtime, peer_rt=self.peer_runtime,
+                    _prepared_prompt=formatted_prompt, _prepared_context=context_str,
+                )
+            else:
+                translation = None
+            if translation is None:
+                raise RuntimeError("LLM translation failed")
+            self._latency._record_latency_stage(
                 channel=runtime.channel,
                 utterance_id=utterance_id,
                 stage="llm_done",
@@ -1294,7 +882,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                     finalize_latency=True,
                 )
             else:
-                self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
+                self._latency._finalize_latency_timeline(runtime=runtime, channel=runtime.channel, utterance_id=utterance_id)
             raise
         except Exception as exc:
             self._log_translation_failure(stage="final", runtime=runtime, exc=exc)
@@ -1340,7 +928,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                     translation_text=None,
                 )
             elif runtime.channel != "peer":
-                self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
+                self._latency._finalize_latency_timeline(runtime=runtime, channel=runtime.channel, utterance_id=utterance_id)
             return
 
         publish_to_chatbox = self._should_publish_to_chatbox(runtime)
@@ -1388,7 +976,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                 translation_text=translation.text,
             )
         else:
-            self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
+            self._latency._finalize_latency_timeline(runtime=runtime, channel=runtime.channel, utterance_id=utterance_id)
         if runtime.channel == "peer":
             self._complete_peer_logical_turn(utterance_id)
 
@@ -1399,33 +987,31 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         transcript_text: str,
         translation_text: str | None,
     ) -> None:
-        if translation_text is None:
-            merged = transcript_text
-        elif self.chatbox_include_source:
-            merged = f"{transcript_text} ({translation_text})"
-        else:
-            merged = translation_text
-
-        msg = OSCMessage(utterance_id=utterance_id, text=merged, created_at=self.clock.now())
         runtime = self._runtime_for_utterance(utterance_id)
 
         self._emit_detailed(
             "[Hub] OSC enqueue preview: channel=%s text=%r",
             runtime.channel,
-            merged,
+            translation_text or transcript_text,
             fallback_level=logging.INFO,
         )
         if runtime.channel == "self":
-            self._record_latency_stage(
+            self._latency._record_latency_stage(
                 channel=runtime.channel,
                 utterance_id=utterance_id,
                 stage="self_chatbox_enqueue",
             )
 
-        runtime.utterance_start_times.pop(utterance_id, None)
-        runtime.speech_ended_ids.discard(utterance_id)
-
-        self.osc.enqueue(msg)
+        if self.output_dispatcher is not None:
+            await self.output_dispatcher.dispatch_osc(
+                utterance_id,
+                transcript_text=transcript_text,
+                translation_text=translation_text,
+                runtime=runtime,
+            )
+        else:
+            runtime.utterance_start_times.pop(utterance_id, None)
+            runtime.speech_ended_ids.discard(utterance_id)
 
         if runtime.channel == "self":
             self._set_osc_typing_reason(_SELF_SPEECH_TYPING_REASON, False)
@@ -1434,12 +1020,12 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             UIEvent(
                 type=UIEventType.OSC_SENT,
                 utterance_id=utterance_id,
-                payload=msg,
+                payload=None,
                 source=self._get_source(utterance_id),
                 channel=runtime.channel,
             )
         )
-        self._clear_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
+        self._latency._clear_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
 
     def enqueue_peer_translation_disclosure(self, text: str) -> None:
         msg = OSCMessage(utterance_id=uuid4(), text=text, created_at=self.clock.now())
@@ -1465,9 +1051,5 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         self.osc.send_typing(False)
 
     async def _run_osc_flush_loop(self) -> None:
-        try:
-            while True:
-                self.osc.process_due()
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            raise
+        if self.output_dispatcher is not None:
+            await self.output_dispatcher.run_osc_flush()

@@ -67,14 +67,14 @@ from puripuly_heart.core.local_stt_assets import (
     inspect_local_stt_install_state,
 )
 from puripuly_heart.core.pipeline.pipeline import Pipeline
-from puripuly_heart.core.osc.chatbox_paginator import ChatboxPaginator
+from puripuly_heart.adapters.osc.chatbox_paginator import ChatboxPaginator
 from puripuly_heart.core.osc.receiver import (
     VRC_OSC_RECEIVER_HOST,
     VRC_OSC_RECEIVER_PORT,
     VrcMicState,
     VrcOscReceiver,
 )
-from puripuly_heart.core.osc.udp_sender import VrchatOscUdpSender
+from puripuly_heart.adapters.osc.udp_sender import VrchatOscUdpSender
 from puripuly_heart.core.overlay.bridge import OverlayBridge
 from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
 from puripuly_heart.core.overlay.presenter import OverlayPresenter
@@ -1147,6 +1147,30 @@ class GuiController(
                 else DEFAULT_STABLE_VAD_HANGOVER_MS / 1000.0
             ),
             peer_hangover_s=self.settings.desktop_audio.vad_hangover_ms / 1000.0,
+        )
+
+        from puripuly_heart.application.translation_service import TranslationService
+        from puripuly_heart.application.output_dispatcher import OutputDispatcher
+
+        hub.translation_service = TranslationService(
+            llm=llm,
+            fallback_llm=fallback_llm,
+            context_resolver=hub.context_resolver,
+            clock=self.clock,
+            system_prompt=self.settings.system_prompt,
+            second_target_language=self.settings.languages.second_target_language,
+            integrated_context_enabled=False,
+            peer_translation_enabled=False,
+            source_language=self.settings.languages.source_language,
+            target_language=self.settings.languages.target_language,
+            peer_source_language=self.settings.languages.peer_source_language,
+            peer_target_language=self.settings.languages.peer_target_language,
+            runtime_logging=self.runtime_logging,
+        )
+        hub.output_dispatcher = OutputDispatcher(
+            osc=osc,
+            clock=self.clock,
+            chatbox_include_source=self.settings.osc.chatbox_include_source,
         )
 
         if self.vrc_mic_state is None:

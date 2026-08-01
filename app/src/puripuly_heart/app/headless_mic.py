@@ -33,9 +33,9 @@ from puripuly_heart.core.audio.streaming_resampler import MonoFirstStreamingResa
 from puripuly_heart.core.clock import SystemClock
 from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.core.pipeline.pipeline import Pipeline
-from puripuly_heart.core.osc.chatbox_paginator import ChatboxPaginator
+from puripuly_heart.adapters.osc.chatbox_paginator import ChatboxPaginator
 from puripuly_heart.core.osc.receiver import VrcMicState, VrcOscReceiver
-from puripuly_heart.core.osc.udp_sender import VrchatOscUdpSender
+from puripuly_heart.adapters.osc.udp_sender import VrchatOscUdpSender
 from puripuly_heart.ports.secrets import SecretStore
 from puripuly_heart.core.stt.controller import ManagedSTTProvider
 from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_vad_onnx
@@ -160,6 +160,29 @@ class HeadlessMicRunner:
                 if self.settings.stt.low_latency_mode
                 else DEFAULT_STABLE_VAD_HANGOVER_MS / 1000.0
             ),
+        )
+
+        from puripuly_heart.application.translation_service import TranslationService
+        from puripuly_heart.application.output_dispatcher import OutputDispatcher
+
+        hub.translation_service = TranslationService(
+            llm=llm,
+            fallback_llm=None,
+            context_resolver=hub.context_resolver,
+            clock=self.clock,
+            system_prompt=self.settings.system_prompt,
+            second_target_language="",
+            integrated_context_enabled=self.settings.ui.integrated_context_enabled,
+            peer_translation_enabled=self.settings.ui.peer_translation_enabled and peer_stt is not None,
+            source_language=self.settings.languages.source_language,
+            target_language=self.settings.languages.target_language,
+            peer_source_language="",
+            peer_target_language="",
+        )
+        hub.output_dispatcher = OutputDispatcher(
+            osc=osc,
+            clock=self.clock,
+            chatbox_include_source=True,
         )
 
         if self.vad_model_path == default_vad_model_path():

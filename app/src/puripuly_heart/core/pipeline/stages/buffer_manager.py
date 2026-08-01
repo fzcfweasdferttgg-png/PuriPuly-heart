@@ -86,7 +86,7 @@ class BufferManagerMixin:
             timestamp = buffer.spec_latency_stage_times.get(stage)
             if timestamp is None:
                 continue
-            self._record_latency_stage(
+            self._latency._record_latency_stage(
                 channel="self",
                 utterance_id=buffer.merge_id,
                 stage=stage,
@@ -94,7 +94,7 @@ class BufferManagerMixin:
                 publish_now=False,
             )
         self._clear_spec_latency_state(buffer)
-        self._emit_latency_contract_if_ready(channel="self", utterance_id=buffer.merge_id)
+        self._latency._emit_latency_contract_if_ready(channel="self", utterance_id=buffer.merge_id)
 
     # ------------------------------------------------------------------
     # Speculative translation state
@@ -376,7 +376,7 @@ class BufferManagerMixin:
         if not text:
             return
 
-        self._record_latency_stage(
+        self._latency._record_latency_stage(
             channel="self",
             utterance_id=transcript.utterance_id,
             stage="stt_final",
@@ -516,13 +516,13 @@ class BufferManagerMixin:
             self._utterance_start_times[buffer.merge_id] = buffer.last_end_time
         elif buffer.start_time is not None:
             self._utterance_start_times[buffer.merge_id] = buffer.start_time
-        self._inherit_latency_for_output(
+        self._latency._inherit_latency_for_output(
             channel="self",
             output_utterance_id=buffer.merge_id,
             source_utterance_ids=buffer.utterance_ids,
         )
         for utterance_id in buffer.utterance_ids:
-            self._clear_latency_timeline(channel="self", utterance_id=utterance_id)
+            self._latency._clear_latency_timeline(channel="self", utterance_id=utterance_id)
 
         transcript = Transcript(
             utterance_id=buffer.merge_id,
@@ -573,7 +573,10 @@ class BufferManagerMixin:
                     translation=translation,
                     runtime=self.self_runtime,
                 )
-                self._remember_context_entry(final_text, self.clock.now())
+                if self.translation_service is not None:
+                    self.translation_service.remember_context(
+                        final_text, self.clock.now(), runtime=self.self_runtime,
+                    )
                 await self.ui_events.put(
                     UIEvent(
                         type=UIEventType.TRANSLATION_DONE,

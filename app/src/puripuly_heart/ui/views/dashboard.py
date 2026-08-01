@@ -2,7 +2,7 @@ from typing import Callable
 
 import flet as ft
 
-from puripuly_heart.core.language import get_all_language_options
+from puripuly_heart.domain.language import get_all_language_options
 from puripuly_heart.ui.components.display_card import DisplayCard
 from puripuly_heart.ui.components.glow import create_background_glow_stack
 from puripuly_heart.ui.components.language_card import LanguageCard

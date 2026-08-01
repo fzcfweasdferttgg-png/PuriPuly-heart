@@ -18,7 +18,7 @@ from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
 from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig
 from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
-from puripuly_heart.core.storage.secrets import (
+from puripuly_heart.adapters.storage.secrets import (
     EncryptedFileSecretStore,
     KeyringSecretStore,
 )
@@ -214,7 +214,7 @@ def create_stt_backend(
 
     if settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
         from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.language import get_local_qwen_language_hint
+        from puripuly_heart.domain.language import get_local_qwen_language_hint
         from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
 
         _provider_name = {
@@ -339,7 +339,7 @@ def create_peer_stt_backend(
 
     if resolved.provider in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
         from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
-        from puripuly_heart.core.language import get_local_qwen_language_hint
+        from puripuly_heart.domain.language import get_local_qwen_language_hint
         from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
 
         _provider_name = {

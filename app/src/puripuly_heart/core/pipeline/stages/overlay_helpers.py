@@ -65,7 +65,7 @@ class OverlayHelpersMixin:
                 channel="peer",
                 secondary_len=len(transcript.text.strip()),
             )
-            self._record_latency_stage(
+            self._latency._record_latency_stage(
                 channel="peer",
                 utterance_id=transcript.utterance_id,
                 stage="peer_overlay_first_emit",
@@ -99,7 +99,9 @@ class OverlayHelpersMixin:
     ) -> None:
         if self.overlay_sink is None:
             if finalize_latency is True or (finalize_latency is None and channel == "peer"):
-                self._finalize_latency_timeline(channel=channel, utterance_id=utterance_id)
+                self._latency._finalize_latency_timeline(
+                    runtime=self._runtime_for_channel(channel), channel=channel, utterance_id=utterance_id,
+                )
             return
         await self._emit_overlay_event(
             self.overlay_event_adapter.utterance_closed(
@@ -109,7 +111,9 @@ class OverlayHelpersMixin:
             )
         )
         if finalize_latency is True or (finalize_latency is None and channel == "peer"):
-            self._finalize_latency_timeline(channel=channel, utterance_id=utterance_id)
+            self._latency._finalize_latency_timeline(
+                runtime=self._runtime_for_channel(channel), channel=channel, utterance_id=utterance_id,
+            )
 
     async def _emit_translation_to_overlay(
         self,
@@ -161,7 +165,7 @@ class OverlayHelpersMixin:
             channel=translation.channel,
             secondary_len=len(translation.text.strip()),
         )
-        self._record_latency_stage(
+        self._latency._record_latency_stage(
             channel=runtime.channel,
             utterance_id=translation.utterance_id,
             stage="peer_overlay_first_emit",

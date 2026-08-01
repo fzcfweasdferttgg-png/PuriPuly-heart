@@ -5,7 +5,7 @@ import logging
 from importlib import resources
 from typing import Any
 
-from puripuly_heart.core.language import get_language_info
+from puripuly_heart.domain.language import get_language_info
 
 logger = logging.getLogger(__name__)
 

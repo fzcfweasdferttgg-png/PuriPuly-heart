@@ -11,7 +11,7 @@ from puripuly_heart.config.settings import (
     LLMProviderName,
     save_settings,
 )
-from puripuly_heart.core.language import get_stt_compatibility_warning
+from puripuly_heart.domain.language import get_stt_compatibility_warning
 from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
 from puripuly_heart.ui.components.founder_letter_dialog import FounderLetterDialog

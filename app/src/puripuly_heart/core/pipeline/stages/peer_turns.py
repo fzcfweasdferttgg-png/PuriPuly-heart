@@ -55,7 +55,7 @@ class PeerTurnsMixin:
         parent_end_time = self._peer_parent_speech_end_time(parent_utterance_id)
         if parent_end_time is not None:
             runtime.utterance_start_times[peer_turn_id] = parent_end_time
-            self._record_latency_stage(
+            self._latency._record_latency_stage(
                 channel="peer",
                 utterance_id=peer_turn_id,
                 stage="speech_end",
@@ -64,7 +64,7 @@ class PeerTurnsMixin:
             )
         if self._peer_parent_speech_ended(parent_utterance_id):
             runtime.speech_ended_ids.add(peer_turn_id)
-        self._inherit_latency_for_output(
+        self._latency._inherit_latency_for_output(
             channel="peer",
             output_utterance_id=peer_turn_id,
             source_utterance_ids=[parent_utterance_id],
@@ -84,7 +84,7 @@ class PeerTurnsMixin:
         self.peer_runtime.speech_ended_ids.discard(parent_utterance_id)
         if not preserve_parent_speech_end_time:
             self._peer_parent_speech_end_times.pop(parent_utterance_id, None)
-        self._clear_latency_timeline(channel="peer", utterance_id=parent_utterance_id)
+        self._latency._clear_latency_timeline(channel="peer", utterance_id=parent_utterance_id)
 
     def _maybe_clear_completed_peer_parent(
         self,

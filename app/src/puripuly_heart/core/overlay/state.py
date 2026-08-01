@@ -11,7 +11,7 @@ from puripuly_heart.domain.overlay_types import (
     OverlayPresentationCalibration,
     OverlayPresentationSnapshot,
 )
-from puripuly_heart.core.overlay.sink import (
+from puripuly_heart.ports.overlay import (
     PeerActiveUpdate,
     PeerTranscriptFinal,
     SelfActiveClear,
