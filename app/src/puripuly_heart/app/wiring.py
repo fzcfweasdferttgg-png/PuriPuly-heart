@@ -105,16 +105,19 @@ def create_llm_provider(
         )
     elif settings.provider.llm == LLMProviderName.OPENAI_COMPATIBLE:
         api_key = (secrets.get("openai_compatible_api_key") or "").strip()
+        oc = settings.provider.openai_compatible
+        if not oc.base_url.strip() or not oc.model.strip():
+            raise ValueError("OpenAI Compatible: base_url and model are required")
         logger.info(
             "[LLM] Creating OPENAI_COMPATIBLE provider: base_url=%s model=%s has_key=%s",
-            settings.provider.openai_compatible.base_url,
-            settings.provider.openai_compatible.model,
+            oc.base_url,
+            oc.model,
             bool(api_key),
         )
         base = OpenAICompatibleLLMProvider(
             api_key=api_key,
-            base_url=settings.provider.openai_compatible.base_url,
-            model=settings.provider.openai_compatible.model,
+            base_url=oc.base_url,
+            model=oc.model,
             runtime_logging=runtime_logging,
         )
     else:

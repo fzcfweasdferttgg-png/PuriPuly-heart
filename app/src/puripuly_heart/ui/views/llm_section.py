@@ -300,7 +300,12 @@ class LlmSectionMixin:
                 if current.provider.openai_compatible.base_url != base_url:
                     draft = self._ensure_provider_settings_draft()
                     draft.provider.openai_compatible.base_url = base_url
+                    draft.provider.openai_compatible.model = ""
                     self.has_provider_changes = True
+            if self._openai_compatible_model:
+                self._openai_compatible_model.options = []
+                self._openai_compatible_model.value = None
+                _update_control_if_mounted(self._openai_compatible_model)
 
     def _on_fallback_toggle(self, e) -> None:
         if not self._settings:
@@ -327,7 +332,12 @@ class LlmSectionMixin:
             if self._settings:
                 draft = self._ensure_provider_settings_draft()
                 draft.provider.openai_compatible.fallback_base_url = base_url
+                draft.provider.openai_compatible.fallback_model = ""
                 self.has_provider_changes = True
+            if hasattr(self, "_fallback_model"):
+                self._fallback_model.options = []
+                self._fallback_model.value = None
+                _update_control_if_mounted(self._fallback_model)
 
     def _on_fallback_field_change(self, e) -> None:
         _ = e

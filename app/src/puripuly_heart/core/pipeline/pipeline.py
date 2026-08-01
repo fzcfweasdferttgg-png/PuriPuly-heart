@@ -1234,14 +1234,33 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
 
             request_source_language = self._source_language_for(runtime)
             request_target_language = self._target_language_for(runtime)
-            raw_translation = await self.llm.translate(
-                utterance_id=utterance_id,
-                text=text,
-                system_prompt=formatted_prompt,
-                source_language=request_source_language,
-                target_language=request_target_language,
-                context=context_str,
-            )
+
+            providers_to_try = [self.llm]
+            if self.fallback_llm is not None:
+                providers_to_try.append(self.fallback_llm)
+
+            raw_translation = None
+            last_error = None
+            for provider in providers_to_try:
+                try:
+                    raw_translation = await provider.translate(
+                        utterance_id=utterance_id,
+                        text=text,
+                        system_prompt=formatted_prompt,
+                        source_language=request_source_language,
+                        target_language=request_target_language,
+                        context=context_str,
+                    )
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if provider is not self.fallback_llm:
+                        logger.warning("[LLM] Primary failed in _translate_and_enqueue: %s", exc)
+                    else:
+                        logger.error("[LLM] Fallback also failed: %s", exc)
+
+            if raw_translation is None:
+                raise last_error or RuntimeError("LLM translation failed")
             translation = self._normalize_translation(
                 raw_translation,
                 runtime=runtime,

@@ -1268,6 +1268,7 @@ class SettingsView(
         )
         self._openai_compatible_model = ft.Dropdown(
             label=t("settings.openai_compatible.model", default="Model"),
+            hint_text=t("settings.openai_compatible.model.hint", default="Click refresh to load models"),
             options=[],
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -1339,6 +1340,7 @@ class SettingsView(
         )
         self._fallback_model = ft.Dropdown(
             label=t("settings.fallback.model", default="Fallback Model"),
+            hint_text=t("settings.fallback.model.hint", default="Click refresh to load models"),
             options=[],
             border_radius=12,
             border_color=COLOR_DIVIDER,
