@@ -288,6 +288,41 @@ class LlmSectionMixin:
                     draft.provider.openai_compatible.base_url = base_url
                     self.has_provider_changes = True
 
+    def _fetch_models(self, e) -> None:
+        import asyncio
+        import httpx
+
+        base_url = (self._openai_compatible_base_url.value or "").strip()
+        if not base_url:
+            return
+        api_key = ""
+        if hasattr(self, "_openai_compatible_key") and self._openai_compatible_key:
+            api_key = (self._openai_compatible_key.value or "").strip()
+        if not api_key:
+            return
+
+        models_url = base_url.rstrip("/") + "/models"
+
+        async def _do_fetch():
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.get(
+                        models_url,
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    model_ids = sorted(
+                        m.get("id", "") for m in data.get("data", []) if m.get("id")
+                    )
+                    if model_ids and hasattr(self, "_openai_compatible_model"):
+                        self._openai_compatible_model.value = model_ids[0]
+                        _update_control_if_mounted(self._openai_compatible_model)
+            except Exception:
+                pass
+
+        asyncio.ensure_future(_do_fetch())
+
     def _on_openai_compatible_base_url_change_end(self, e) -> None:
         _ = e
         if not self._settings:

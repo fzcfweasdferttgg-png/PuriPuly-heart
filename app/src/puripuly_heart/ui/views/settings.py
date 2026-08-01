@@ -1280,6 +1280,11 @@ class SettingsView(
             on_blur=self._on_openai_compatible_model_change_end,
             on_submit=self._on_openai_compatible_model_change_end,
         )
+        self._openai_compatible_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH,
+            tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
+            on_click=self._fetch_models,
+        )
         self._openai_compatible_card = self._wrap_card(
             ft.Column(
                 [
@@ -1287,7 +1292,7 @@ class SettingsView(
                     ft.Container(height=4),
                     self._openai_compatible_provider,
                     self._openai_compatible_base_url,
-                    self._openai_compatible_model,
+                    ft.Row([self._openai_compatible_model, self._openai_compatible_fetch_btn], spacing=4),
                 ],
                 spacing=8,
             ),
