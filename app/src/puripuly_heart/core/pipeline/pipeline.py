@@ -82,8 +82,8 @@ _SELF_SPEECH_TYPING_REASON = "self_speech_pending"
 class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     stt: STTProvider | None
     llm: LLMProvider | None
-    fallback_llm: LLMProvider | None = None
     osc: ChatboxPaginator
+    fallback_llm: LLMProvider | None = None
     peer_stt: STTProvider | None = None
     overlay_sink: OverlaySink | None = None
     overlay_diagnostics: OverlayDiagnosticsRecorder | None = None
