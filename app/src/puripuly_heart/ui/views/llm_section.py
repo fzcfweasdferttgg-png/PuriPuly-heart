@@ -266,6 +266,28 @@ class LlmSectionMixin:
         self._ensure_provider_settings_draft()
         self.has_provider_changes = True
 
+    def _on_openai_compatible_provider_change(self, e) -> None:
+        from puripuly_heart.config.providers import load_providers
+        selected = e.data if e else None
+        if not selected:
+            return
+        providers = load_providers()
+        if selected == "custom":
+            return
+        provider_info = providers.get(selected)
+        if not provider_info:
+            return
+        base_url = provider_info.get("base_url", "")
+        if base_url and self._openai_compatible_base_url:
+            self._openai_compatible_base_url.value = base_url
+            _update_control_if_mounted(self._openai_compatible_base_url)
+            if self._settings:
+                current = self._provider_settings_draft or self._settings
+                if current.provider.openai_compatible.base_url != base_url:
+                    draft = self._ensure_provider_settings_draft()
+                    draft.provider.openai_compatible.base_url = base_url
+                    self.has_provider_changes = True
+
     def _on_openai_compatible_base_url_change_end(self, e) -> None:
         _ = e
         if not self._settings:

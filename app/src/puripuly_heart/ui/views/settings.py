@@ -1234,6 +1234,24 @@ class SettingsView(
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
+        from puripuly_heart.config.providers import load_providers
+        _providers = load_providers()
+        _provider_options = [ft.dropdown.Option(key="custom", text="Custom / Manual")]
+        for key, info in _providers.items():
+            _provider_options.append(ft.dropdown.Option(key=key, text=info.get("label", key)))
+        self._openai_compatible_provider = ft.Dropdown(
+            label=t("settings.openai_compatible.provider", default="Provider"),
+            options=_provider_options,
+            value="custom",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_openai_compatible_provider_change,
+        )
         self._openai_compatible_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url", default="Base URL"),
             value="https://api.openai.com/v1",
@@ -1267,6 +1285,7 @@ class SettingsView(
                 [
                     self._openai_compatible_title,
                     ft.Container(height=4),
+                    self._openai_compatible_provider,
                     self._openai_compatible_base_url,
                     self._openai_compatible_model,
                 ],
@@ -1574,6 +1593,15 @@ class SettingsView(
         self._openai_compatible_base_url.error_text = None
         self._openai_compatible_model.value = settings.provider.openai_compatible.model
         self._openai_compatible_model.error_text = None
+        # Sync provider dropdown from base_url
+        from puripuly_heart.config.providers import load_providers
+        _loaded_providers = load_providers()
+        _matched = "custom"
+        for _pk, _pi in _loaded_providers.items():
+            if _pi.get("base_url") == settings.provider.openai_compatible.base_url:
+                _matched = _pk
+                break
+        self._openai_compatible_provider.value = _matched
 
         # Qwen Region
         region_label = t(f"region.{settings.qwen.region.value}")
