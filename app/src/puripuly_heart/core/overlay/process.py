@@ -404,6 +404,7 @@ class DesktopFletOverlayRunner:
     python_executable: Path | None = None
     app_executable: Path | None = None
     module_name: str = "puripuly_heart.ui.desktop_overlay"
+    job_handle: int | None = None
 
     def prepare(self, manifest: OverlayLaunchManifest) -> Path:
         _ = manifest

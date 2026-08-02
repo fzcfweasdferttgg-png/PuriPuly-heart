@@ -64,9 +64,9 @@ class OverlayManagerMixin:
         return self._overlay_target_for_settings(self.settings)
 
     def _overlay_process_runner_for_target(self, target: str) -> OverlayProcessRunner:
-        if target == OVERLAY_TARGET_DESKTOP:
-            return DesktopFletOverlayRunner()
         from puripuly_heart.app.wiring import get_or_create_job_handle
+        if target == OVERLAY_TARGET_DESKTOP:
+            return DesktopFletOverlayRunner(job_handle=get_or_create_job_handle())
         return DefaultOverlayProcessRunner(job_handle=get_or_create_job_handle())
 
     def _build_initial_desktop_runtime_controls(

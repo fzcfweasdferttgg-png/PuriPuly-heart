@@ -234,11 +234,14 @@ class OverlayLifecycleMixin:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self.log_detailed(
-                "[Overlay] Failed to start overlay runtime",
-                level=logging.ERROR,
-                exception=exc,
+            import traceback as _traceback
+
+            _error_detail = (
+                f"[Overlay] Failed to start overlay runtime\n"
+                f"{_traceback.format_exception(type(exc), exc, exc.__traceback__)}"
             )
+            self.runtime_logging.emit_persisted(_error_detail, level=logging.ERROR)
+            logger.error("[Overlay] Failed to start overlay runtime: %s", exc, exc_info=True)
             await self._handle_overlay_start_failure("unknown")
         finally:
             if self._overlay_start_task is current_task:
