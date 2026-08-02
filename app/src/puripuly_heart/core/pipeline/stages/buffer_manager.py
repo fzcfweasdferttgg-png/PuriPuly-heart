@@ -6,12 +6,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from puripuly_heart.core.pipeline import text_merge
+from puripuly_heart.core.pipeline.channel_runtime import _MergeBuffer
+from puripuly_heart.domain.models import Transcript, Translation
 
 if TYPE_CHECKING:
-    from puripuly_heart.core.pipeline.channel_runtime import _MergeBuffer
     from puripuly_heart.core.vad.gating import SpeechChunk, SpeechEnd, SpeechStart
-    from puripuly_heart.domain.models import Translation
-    from puripuly_heart.domain.models import Transcript
 
 logger = logging.getLogger(__name__)
 
@@ -567,7 +566,6 @@ class BufferManagerMixin:
                     True,
                 )
                 bundle = self.get_or_create_bundle(buffer.merge_id)
-                bundle.with_translation(translation)
                 bundle.with_translation(translation)
                 self._emit_translation_ready_for_output(
                     translation=translation,

@@ -20,6 +20,7 @@ from puripuly_heart.core.pipeline.channel_runtime import (
     _MergeBuffer,
 )
 from puripuly_heart.core.pipeline.context import ContextMode, ContextResolver
+from puripuly_heart.domain.models import Transcript
 from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
 from puripuly_heart.ports.overlay import OverlayEventFactory, OverlaySink
