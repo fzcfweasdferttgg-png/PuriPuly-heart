@@ -634,15 +634,23 @@ class SettingsHelpersMixin:
             current_key = "_disabled"
         options = [
             OptionItem(value="_disabled", label=t("option.disabled")),
-            OptionItem(value="local_llm", label=t("provider.local_llms")),
-            OptionItem(value="openai_compatible", label=t("provider.openai_compatible")),
+            OptionItem(
+                value="local_llm",
+                label=t("provider.local_llms"),
+                description=t("settings.translation_model.local_llm.description", default=""),
+            ),
+            OptionItem(
+                value="openai_compatible",
+                label=t("provider.openai_compatible"),
+                description=t("settings.translation_model.openai_compatible.description", default=""),
+            ),
         ]
         modal = SettingsModal(
             self.page,
             t("settings.backup_translation"),
             options,
             self._on_fallback_status_selected,
-            show_description=False,
+            show_description=True,
         )
         modal.open(current_key)
 
@@ -658,6 +666,13 @@ class SettingsHelpersMixin:
         elif value == "local_llm":
             draft.backup_translation.enabled = True
             draft.backup_translation.mode = LLMProviderName.LOCAL_LLM
+            # Sync fallback local_llm card controls
+            self._fallback_local_llm_base_url.value = draft.backup_translation.local_llm.base_url
+            self._fallback_local_llm_base_url.error_text = None
+            self._fallback_local_llm_model.value = draft.backup_translation.local_llm.model or ""
+            self._fallback_local_llm_model.error_text = None
+            _update_control_if_mounted(self._fallback_local_llm_base_url)
+            _update_control_if_mounted(self._fallback_local_llm_model)
             self._set_unit_card_value_text(self._fallback_status_text, t("provider.local_llms"))
         else:
             providers = load_providers()
@@ -667,6 +682,20 @@ class SettingsHelpersMixin:
             if first:
                 draft.backup_translation.openai_compatible.base_url = first.get("base_url", "")
             draft.backup_translation.openai_compatible.model = ""
+            # Sync fallback card controls
+            self._fallback_openai_base_url.value = draft.backup_translation.openai_compatible.base_url
+            self._fallback_openai_base_url.error_text = None
+            self._fallback_openai_model.value = ""
+            _fb_opts = self._fallback_openai_provider.options or []
+            _fb_matched = _fb_opts[0].key if _fb_opts else None
+            for _pk, _pi in providers.items():
+                if _pi.get("base_url") == draft.backup_translation.openai_compatible.base_url:
+                    _fb_matched = _pk
+                    break
+            self._fallback_openai_provider.value = _fb_matched
+            _update_control_if_mounted(self._fallback_openai_base_url)
+            _update_control_if_mounted(self._fallback_openai_model)
+            _update_control_if_mounted(self._fallback_openai_provider)
             self._set_unit_card_value_text(self._fallback_status_text, t("provider.openai_compatible"))
         self.has_provider_changes = True
         self._update_api_visibility(draft)

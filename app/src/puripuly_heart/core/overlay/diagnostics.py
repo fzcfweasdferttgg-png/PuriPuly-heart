@@ -6,12 +6,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from puripuly_heart.config.paths import user_config_dir
+
 _PROCESS_EVENT_LIMIT = 50
 _CHILD_LINE_LIMIT = 100
 _PRESENTER_SNAPSHOT_LIMIT = 30
 _PRESENTER_REMOVAL_LIMIT = 50
 _BRIDGE_EVENT_LIMIT = 30
 _HUB_EVENT_LIMIT = 50
+
+
+def default_overlay_diagnostics_dir() -> Path:
+    return user_config_dir() / "diagnostics" / "overlay"
 
 
 def _json_safe(value: Any) -> Any:

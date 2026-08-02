@@ -57,10 +57,10 @@ SleepFn = Callable[[float], Awaitable[None]]
 @dataclass(slots=True)
 class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMixin, PresenterRetryMixin, PresenterRefreshBurstMixin):
     calibration: OverlayCalibration
+    clock: Clock
     bridge: OverlayPresentationTransport | None = None
     diagnostics: OverlayDiagnosticsRecorder | None = None
     runtime_log_detailed: RuntimeDetailedLogger | None = None
-    clock: Clock
     sleep: SleepFn = asyncio.sleep
     visible_window_target_blocks: int = VISIBLE_WINDOW_TARGET_BLOCKS
     show_translation: bool = True

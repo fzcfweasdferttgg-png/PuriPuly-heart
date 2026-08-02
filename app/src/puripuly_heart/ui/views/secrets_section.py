@@ -30,7 +30,8 @@ class SecretsSectionMixin:
             return
 
         self._openai_compatible_key.value = store.get("openai_compatible_api_key") or ""
-        self._backup_api_key.value = store.get("backup_api_key") or ""
+        self._fallback_api_key.value = store.get("backup_api_key") or ""
+        self._fallback_local_llm_api_key.value = store.get("fallback_local_llm_api_key") or ""
         self._local_llm_api_key.value = store.get("local_llm_api_key") or ""
 
         # Restore verification status icons from saved settings

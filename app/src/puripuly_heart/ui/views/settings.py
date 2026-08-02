@@ -75,6 +75,8 @@ from puripuly_heart.ui.views.settings_helpers import (
 )
 from puripuly_heart.ui.views.stt_section import SttSectionMixin
 from puripuly_heart.ui.views.llm_section import LlmSectionMixin
+from puripuly_heart.ui.views.fallback_section import FallbackSectionMixin
+from puripuly_heart.ui.views.fallback_local_llm_section import FallbackLocalLlmSectionMixin
 from puripuly_heart.ui.views.overlay_section import OverlaySectionMixin
 from puripuly_heart.ui.views.calibration_section import CalibrationSectionMixin
 from puripuly_heart.ui.views.audio_section import AudioSectionMixin
@@ -91,6 +93,8 @@ class SettingsView(
     SettingsHelpersMixin,
     SttSectionMixin,
     LlmSectionMixin,
+    FallbackSectionMixin,
+    FallbackLocalLlmSectionMixin,
     OverlaySectionMixin,
     CalibrationSectionMixin,
     AudioSectionMixin,
@@ -261,8 +265,19 @@ class SettingsView(
             value=self._llm_text,
         )
 
-        # === Row 2: API Keys (2x1) ===
-        # Qwen region selection button (in header)
+        # API Key for Translation card (inline)
+        self._openai_compatible_key = ApiKeyField(
+            "settings.openai_compatible_api_key",
+            "openai_compatible_api_key",
+            "openai_compatible",
+            on_verify=self._verify_key,
+            on_save=self._on_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+        )
+
+        # Qwen region button (hidden by default)
         self._qwen_region_btn = _make_text_button(
             f"{t('settings.qwen_region')} {t('region.beijing')}",
             style=ft.ButtonStyle(
@@ -278,71 +293,8 @@ class SettingsView(
                 animation_duration=0,
             ),
             on_click=self._on_qwen_region_click,
-            visible=False,  # Hidden by default, updated by visibility logic
+            visible=False,
         )
-
-        # API Key fields
-        self._openai_compatible_key = ApiKeyField(
-            "settings.openai_compatible_api_key",
-            "openai_compatible_api_key",
-            "openai_compatible",
-            on_verify=self._verify_key,
-            on_save=self._on_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-        )
-        self._backup_api_key = ApiKeyField(
-            "settings.backup_api_key",
-            "backup_api_key",
-            "openai_compatible",
-            on_verify=self._verify_key,
-            on_save=self._on_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-            show_status=False,
-        )
-
-        self._api_keys_column = ft.Column(
-            [
-                self._openai_compatible_key,
-                self._backup_api_key,
-            ],
-            spacing=12,
-        )
-
-        self._api_title = ft.Text(
-            t("settings.section.api_keys"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
-        )
-        self._api_credentials_helper_text = ft.Text(
-            t("settings.api_credentials_helper"),
-            size=16,
-            color=COLOR_NEUTRAL,
-        )
-        # Header row with title and region button
-        api_header = ft.Row(
-            controls=[
-                self._api_title,
-                ft.Container(expand=True),
-                self._qwen_region_btn,
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        api_card = self._wrap_card(
-            ft.Column(
-                [
-                    api_header,
-                    ft.Container(height=16),
-                    self._api_keys_column,
-                ],
-                spacing=0,
-            ),
-            height=None,
-        )
-        api_keys_row = api_card
 
         # === General Tab Row 1: UI / Include Original / Integrated Context ===
         self._ui_text = self._build_clickable_text(
@@ -1249,9 +1201,9 @@ class SettingsView(
         )
         self._local_llm_connection_card.visible = False
 
-        # OpenAI Compatible provider card
+        # Translation OpenAI-compatible provider card
         self._openai_compatible_title = ft.Text(
-            t("settings.openai_compatible.connection", default="OpenAI Compatible Settings"),
+            t("settings.openai_compatible.connection", default="Translation Provider Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -1288,10 +1240,10 @@ class SettingsView(
             on_blur=self._on_openai_compatible_base_url_change_end,
             on_submit=self._on_openai_compatible_base_url_change_end,
         )
-        self._openai_compatible_model = ft.Dropdown(
+        self._openai_compatible_model = ft.TextField(
             label=t("settings.openai_compatible.model", default="Model"),
-            hint_text=t("settings.openai_compatible.model.hint", default="Click refresh to load models"),
-            options=[],
+            hint_text=t("settings.openai_compatible.model.hint", default="Enter model name or click refresh"),
+            value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -1299,26 +1251,91 @@ class SettingsView(
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_openai_compatible_model_selected,
+            on_change=self._on_openai_compatible_field_change,
+            on_blur=self._on_openai_compatible_model_change_end,
+            on_submit=self._on_openai_compatible_model_change_end,
         )
         self._openai_compatible_fetch_btn = ft.IconButton(
             icon=ft.Icons.REFRESH,
             tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
             on_click=self._fetch_models,
         )
-        self._openai_compatible_card = self._wrap_card(
+        self._translation_openai_card = self._wrap_card(
             ft.Column(
                 [
                     self._openai_compatible_title,
                     ft.Container(height=4),
                     self._openai_compatible_provider,
                     ft.Row([self._openai_compatible_model, self._openai_compatible_fetch_btn], spacing=4),
+                    self._openai_compatible_key,
                 ],
                 spacing=8,
             ),
             height=None,
         )
-        self._openai_compatible_card.visible = False
+        self._translation_openai_card.visible = False
+
+        # Fallback OpenAI-compatible card
+        self._init_fallback_openai_controls(
+            on_verify=self._verify_key,
+            on_save=self._on_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+        )
+        self._fallback_openai_title = ft.Text(
+            t("settings.backup_translation", default="Fallback Provider Settings"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._fallback_openai_card = self._wrap_card(
+            ft.Column(
+                [
+                    self._fallback_openai_title,
+                    ft.Container(height=4),
+                    self._fallback_openai_provider,
+                    ft.Row([self._fallback_openai_model, self._fallback_openai_fetch_btn], spacing=4),
+                    self._fallback_api_key,
+                ],
+                spacing=8,
+            ),
+            height=None,
+        )
+        self._fallback_openai_card.visible = False
+
+        # Fallback local LLM card
+        self._init_fallback_local_llm_controls(
+            on_verify=self._verify_key,
+            on_save=self._on_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+        )
+        self._fallback_local_llm_title = ft.Text(
+            t("settings.backup_translation", default="Fallback"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._fallback_local_llm_card = self._wrap_card(
+            ft.Column(
+                [
+                    self._fallback_local_llm_title,
+                    ft.Container(height=4),
+                    self._fallback_local_llm_base_url,
+                    self._fallback_local_llm_model,
+                    self._fallback_local_llm_api_key,
+                    self._fallback_local_llm_api_key_helper,
+                    self._fallback_local_llm_extra_body,
+                    self._fallback_local_llm_extra_body_helper,
+                    self._fallback_local_llm_extra_body_error,
+                ],
+                spacing=8,
+            ),
+            height=None,
+        )
+        self._fallback_local_llm_card.visible = False
 
         # === Row 8: Persona (2x2) - Licenses style ===
         self._prompt_editor = PromptEditor(
@@ -1437,8 +1454,9 @@ class SettingsView(
                     row1,
                     self._translation_connection_row,
                     self._local_llm_connection_card,
-                    self._openai_compatible_card,
-                    api_keys_row,
+                    self._translation_openai_card,
+                    self._fallback_openai_card,
+                    self._fallback_local_llm_card,
                 ],
                 "general": [
                     general_primary_row,
@@ -1482,6 +1500,7 @@ class SettingsView(
         target.provider.peer_stt_backend = source.provider.peer_stt_backend
         target.provider.stt_quant = source.provider.stt_quant
         target.provider.peer_stt_quant = source.provider.peer_stt_quant
+        target.provider.openai_compatible = copy.deepcopy(source.provider.openai_compatible)
         target.translation = copy.deepcopy(source.translation)
         target.qwen.region = source.qwen.region
         target.local_llm = copy.deepcopy(source.local_llm)
@@ -1527,6 +1546,8 @@ class SettingsView(
     def build_provider_apply_settings(self) -> AppSettings | None:
         self._commit_local_llm_fields_from_controls()
         self._commit_openai_compatible_fields_from_controls()
+        self._commit_fallback_fields_from_controls()
+        self._commit_fallback_local_llm_fields_from_controls()
         return self._sanitize_provider_apply_settings(
             self._settings_with_desktop_overlay_runtime_state(
                 self._build_settings_with_provider_draft()
@@ -1614,7 +1635,7 @@ class SettingsView(
         # OpenAI Compatible
         self._openai_compatible_base_url.value = settings.provider.openai_compatible.base_url
         self._openai_compatible_base_url.error_text = None
-        self._openai_compatible_model.value = settings.provider.openai_compatible.model or None
+        self._openai_compatible_model.value = settings.provider.openai_compatible.model or ""
         # Sync provider dropdown from base_url
         from puripuly_heart.config.providers import load_providers
         _loaded_providers = load_providers()
@@ -1625,6 +1646,32 @@ class SettingsView(
                 _matched = _pk
                 break
         self._openai_compatible_provider.value = _matched
+
+        # Fallback OpenAI Compatible
+        bt = settings.backup_translation
+        if bt.enabled and bt.mode == LLMProviderName.OPENAI_COMPATIBLE:
+            self._fallback_openai_base_url.value = bt.openai_compatible.base_url
+            self._fallback_openai_base_url.error_text = None
+            self._fallback_openai_model.value = bt.openai_compatible.model or ""
+            _fb_opts = self._fallback_openai_provider.options or []
+            _fb_matched = _fb_opts[0].key if _fb_opts else None
+            for _pk, _pi in _loaded_providers.items():
+                if _pi.get("base_url") == bt.openai_compatible.base_url:
+                    _fb_matched = _pk
+                    break
+            self._fallback_openai_provider.value = _fb_matched
+
+        # Fallback local LLM
+        if bt.enabled and bt.mode == LLMProviderName.LOCAL_LLM:
+            self._fallback_local_llm_base_url.value = bt.local_llm.base_url
+            self._fallback_local_llm_base_url.error_text = None
+            self._fallback_local_llm_model.value = bt.local_llm.model or ""
+            self._fallback_local_llm_model.error_text = None
+            self._fallback_local_llm_extra_body.value = (
+                json.dumps(bt.local_llm.extra_body, ensure_ascii=False, indent=2)
+                if bt.local_llm.extra_body else ""
+            )
+            self._fallback_local_llm_extra_body_error.visible = False
 
         # Backup translation status display
         bt = settings.backup_translation
@@ -1711,12 +1758,19 @@ class SettingsView(
 
         self._translation_connection_row.visible = True
         self._local_llm_connection_card.visible = llm == LLMProviderName.LOCAL_LLM
-        self._openai_compatible_key.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
-        self._openai_compatible_card.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
-        self._backup_api_key.visible = (
+        self._translation_openai_card.visible = llm == LLMProviderName.OPENAI_COMPATIBLE
+        self._fallback_openai_card.visible = (
             settings.backup_translation.enabled
             and settings.backup_translation.mode == LLMProviderName.OPENAI_COMPATIBLE
         )
+        self._fallback_local_llm_card.visible = (
+            settings.backup_translation.enabled
+            and settings.backup_translation.mode == LLMProviderName.LOCAL_LLM
+        )
+        _update_control_if_mounted(self._local_llm_connection_card)
+        _update_control_if_mounted(self._translation_openai_card)
+        _update_control_if_mounted(self._fallback_openai_card)
+        _update_control_if_mounted(self._fallback_local_llm_card)
 
         stt_compute_visible = self._is_local_stt(stt)
         peer_compute_visible = self._is_local_stt(peer_stt)
@@ -1787,10 +1841,10 @@ class SettingsView(
         self._trans_title.value = t("settings.section.translation")
         self._stt_compute_label.value = t("settings.compute.label")
         self._peer_stt_compute_label.value = t("settings.compute.label")
-        self._api_title.value = t("settings.section.api_keys")
         self._stt_provider_label.value = t("settings.self_stt_provider")
         self._translation_provider_label.value = t("settings.shared_translation_provider")
-        self._api_credentials_helper_text.value = t("settings.api_credentials_helper")
+        self._fallback_openai_title.value = t("settings.backup_translation", default="Fallback")
+        self._fallback_local_llm_title.value = t("settings.backup_translation", default="Fallback")
         self._ui_title.value = t("settings.section.ui")
         self._audio_host_api_title.value = t("settings.audio_host_api")
         self._mic_audio_title.value = t("settings.section.microphone_audio")
@@ -1806,6 +1860,8 @@ class SettingsView(
         self._local_llm_base_url.label = t("settings.local_llm.base_url")
         self._local_llm_model.label = t("settings.local_llm.model")
         self._local_llm_api_key.apply_locale()
+        self._fallback_api_key.apply_locale()
+        self._fallback_local_llm_api_key.apply_locale()
         local_llm_api_key_description = t("settings.local_llm.api_key.description")
         self._local_llm_api_key_helper.value = local_llm_api_key_description
         self._local_llm_api_key_helper.visible = bool(local_llm_api_key_description.strip())

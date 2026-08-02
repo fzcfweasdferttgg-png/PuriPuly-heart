@@ -147,11 +147,6 @@ class LlmSectionMixin:
         if not self._settings:
             return
         model = (self._local_llm_model.value or "").strip()
-        if not model:
-            self._local_llm_model.error_text = t("settings.local_llm.model.required")
-            _update_control_if_mounted(self._local_llm_model)
-            return
-
         self._local_llm_model.error_text = None
         self._local_llm_model.value = model
         current = self._provider_settings_draft or self._settings
@@ -238,13 +233,16 @@ class LlmSectionMixin:
         self._ensure_provider_settings_draft()
         self.has_provider_changes = True
 
-    def _on_openai_compatible_model_selected(self, e) -> None:
-        model = e.data if e else None
-        if not model or not self._settings:
+    def _on_openai_compatible_model_change_end(self, e) -> None:
+        _ = e
+        if not self._settings:
             return
-        draft = self._ensure_provider_settings_draft()
-        draft.provider.openai_compatible.model = model
-        self.has_provider_changes = True
+        raw_value = (self._openai_compatible_model.value or "").strip()
+        current = self._provider_settings_draft or self._settings
+        if current.provider.openai_compatible.model != raw_value:
+            draft = self._ensure_provider_settings_draft()
+            draft.provider.openai_compatible.model = raw_value
+            self.has_provider_changes = True
 
     def _on_openai_compatible_provider_change(self, e) -> None:
         from puripuly_heart.config.providers import load_providers
@@ -267,17 +265,17 @@ class LlmSectionMixin:
                     draft.provider.openai_compatible.model = ""
                     self.has_provider_changes = True
             if self._openai_compatible_model:
-                self._openai_compatible_model.options = []
-                self._openai_compatible_model.value = None
+                self._openai_compatible_model.value = ""
                 _update_control_if_mounted(self._openai_compatible_model)
 
     def _fetch_models(self, e) -> None:
         self._do_fetch_models(
             base_url_field=self._openai_compatible_base_url,
-            model_dropdown=self._openai_compatible_model,
+            model_field=self._openai_compatible_model,
+            api_key_field=self._openai_compatible_key,
         )
 
-    def _do_fetch_models(self, *, base_url_field, model_dropdown) -> None:
+    def _do_fetch_models(self, *, base_url_field, model_field, api_key_field=None) -> None:
         import asyncio
         import httpx
 
@@ -285,8 +283,8 @@ class LlmSectionMixin:
         if not base_url:
             return
         api_key = ""
-        if hasattr(self, "_openai_compatible_key") and self._openai_compatible_key:
-            api_key = (self._openai_compatible_key.value or "").strip()
+        if api_key_field is not None:
+            api_key = (api_key_field.value or "").strip()
 
         models_url = base_url.rstrip("/") + "/models"
         headers = {}
@@ -302,16 +300,11 @@ class LlmSectionMixin:
                     model_ids = sorted(
                         m.get("id", "") for m in data.get("data", []) if m.get("id")
                     )
-                    if model_ids and model_dropdown:
-                        current_value = model_dropdown.value
-                        model_dropdown.options = [
-                            ft.dropdown.Option(key=m, text=m) for m in model_ids
-                        ]
-                        if current_value in model_ids:
-                            model_dropdown.value = current_value
-                        else:
-                            model_dropdown.value = model_ids[0]
-                        _update_control_if_mounted(model_dropdown)
+                    if model_ids and model_field:
+                        current_value = (model_field.value or "").strip()
+                        if not current_value or current_value not in model_ids:
+                            model_field.value = model_ids[0]
+                            _update_control_if_mounted(model_field)
             except Exception:
                 pass
 
@@ -353,11 +346,9 @@ class LlmSectionMixin:
         """Open LLM provider selection modal."""
         if not self.page:
             return
-        recommended_section = t("settings.translation_model.section.recommended")
-        others_section = t("settings.translation_model.section.others")
         model_sections = (
-            (TranslationModel.LOCAL_LLM, recommended_section),
-            (TranslationModel.OPENAI_COMPATIBLE, recommended_section),
+            (TranslationModel.LOCAL_LLM, None),
+            (TranslationModel.OPENAI_COMPATIBLE, None),
         )
         options = [
             OptionItem(

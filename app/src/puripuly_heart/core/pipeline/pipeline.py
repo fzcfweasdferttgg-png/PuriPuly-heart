@@ -64,6 +64,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     stt: STTProvider | None
     llm: LLMProvider | None
     osc: OscSink
+    overlay_event_adapter: OverlayEventFactory
     fallback_llm: LLMProvider | None = None
     peer_stt: STTProvider | None = None
     overlay_sink: OverlaySink | None = None
@@ -124,7 +125,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     _peer_parent_speech_end_times: dict[UUID, float] = field(default_factory=dict)
     context_resolver: ContextResolver = field(init=False)
     active_chatbox_channel: ChannelId = field(init=False, default="self")
-    overlay_event_adapter: OverlayEventFactory
     overlay_stream_coalesce_ms: int = 300
     last_error_source: str | None = None
     _last_overlay_secondary_runtime_signature: tuple[object, ...] | None = field(

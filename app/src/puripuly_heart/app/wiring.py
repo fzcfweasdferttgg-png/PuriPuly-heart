@@ -280,7 +280,7 @@ def create_fallback_llm_provider(
         local = bt.local_llm
         if not local.base_url.strip():
             return None
-        api_key = (secrets.get("local_llm_api_key") or "").strip()
+        api_key = (secrets.get("fallback_local_llm_api_key") or "").strip()
         logger.info(
             "[LLM] Creating backup LOCAL_LLM provider: base_url=%s model=%s",
             local.base_url,

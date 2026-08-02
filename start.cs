@@ -1481,6 +1481,11 @@ class Launcher
         foreach (string arg in args) cmdArgs += " \"" + arg + "\"";
         if (isDebug) cmdArgs += " \"--debug-ui-preview\"";
         psi.Arguments = cmdArgs;
+        if (isDebug)
+        {
+            psi.RedirectStandardError = true;
+            psi.StandardErrorEncoding = System.Text.Encoding.UTF8;
+        }
 
         // Kill any leftover python/flet processes before launching with new GPU
         try
@@ -1498,6 +1503,8 @@ class Launcher
 
         try
         {
+            string debugStderr = null;
+            int debugExitCode = 0;
             using (var proc = Process.Start(psi))
             {
                 // Apply performance settings directly to Python process
@@ -1509,8 +1516,19 @@ class Launcher
                             if (pcoreInfo.Mask != 0) proc.ProcessorAffinity = (IntPtr)pcoreInfo.Mask;
                         } catch { }
                     }
+                    if (isDebug)
+                    {
+                        var stderrReader = proc.StandardError.ReadToEndAsync();
+                        proc.WaitForExit();
+                        debugStderr = stderrReader.IsCompleted ? stderrReader.Result : "";
+                        debugExitCode = proc.ExitCode;
+                    }
                 }
-                if (splash != null) { for (int i = 0; i < 20; i++) { Thread.Sleep(100); Application.DoEvents(); } splash.Close(); splash.Dispose(); }
+                if (!isDebug && splash != null) { for (int i = 0; i < 20; i++) { Thread.Sleep(100); Application.DoEvents(); } splash.Close(); splash.Dispose(); }
+            }
+            if (isDebug && debugExitCode != 0 && debugStderr != null && debugStderr.Trim().Length > 0)
+            {
+                MessageBox.Show(debugStderr, "PuriPuly Heart — Python stderr (exit " + debugExitCode + ")", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             return 0;
         }
