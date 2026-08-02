@@ -916,14 +916,18 @@ class TranslatorApp:
         return current_key == key
 
     async def _on_verify_api_key(self, provider: str, key: str) -> tuple[bool, str]:
+        logger.info("[VerifyKey][UI] provider=%s key_len=%d", provider, len(key))
         success, msg = await self.controller.verify_api_key(provider, key)
+        logger.info("[VerifyKey][UI] provider=%s success=%s msg=%s", provider, success, msg)
 
         if not self._api_key_verification_matches_current_field(provider, key):
+            logger.info("[VerifyKey][UI] field changed since request, discarding result")
             return success, msg
 
         # Save verification result to settings
         setattr(self.controller.settings.api_key_verified, provider, success)
         save_settings(self.controller.config_path, self.controller.settings)
+        logger.info("[VerifyKey][UI] saved api_key_verified.%s=%s", provider, success)
 
         # Sync verification result with dashboard needs_key flags
         if provider == "openai_compatible":
@@ -933,6 +937,7 @@ class TranslatorApp:
 
     def _on_secret_cleared(self, key: str) -> None:
         """Reset verification status when API key is cleared."""
+        logger.info("[VerifyKey][UI] secret_cleared key=%s", key)
         if key == "openai_compatible_api_key":
             self.controller.settings.api_key_verified.openai_compatible = False
             save_settings(self.controller.config_path, self.controller.settings)

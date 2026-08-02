@@ -26,13 +26,23 @@ class SecretsSectionMixin:
         try:
             store = create_secret_store(config_path=config_path)
         except Exception as exc:
+            logger.warning("[Secrets] Failed to create store: %s", exc)
             self._emit_runtime_basic(f"Failed to load secrets: {exc}", level=logging.WARNING)
             return
 
-        self._openai_compatible_key.value = store.get("openai_compatible_api_key") or ""
-        self._fallback_api_key.value = store.get("backup_api_key") or ""
-        self._fallback_local_llm_api_key.value = store.get("fallback_local_llm_api_key") or ""
-        self._local_llm_api_key.value = store.get("local_llm_api_key") or ""
+        oc_key = store.get("openai_compatible_api_key") or ""
+        backup_key = store.get("backup_api_key") or ""
+        fallback_llm_key = store.get("fallback_local_llm_api_key") or ""
+        local_llm_key = store.get("local_llm_api_key") or ""
+        logger.info(
+            "[Secrets] Loaded keys: oc=%s backup=%s fallback_llm=%s local_llm=%s",
+            bool(oc_key), bool(backup_key), bool(fallback_llm_key), bool(local_llm_key),
+        )
+
+        self._openai_compatible_key.value = oc_key
+        self._fallback_api_key.value = backup_key
+        self._fallback_local_llm_api_key.value = fallback_llm_key
+        self._local_llm_api_key.value = local_llm_key
 
         # Restore verification status icons from saved settings
         self._restore_api_key_icons(settings)
@@ -58,16 +68,20 @@ class SecretsSectionMixin:
 
     def _write_secret_value(self, key: str, value: str) -> bool:
         if not self._settings or not self._config_path:
+            logger.warning("[Secrets] Write skipped: no settings or config_path")
             return False
 
         try:
             store = create_secret_store(config_path=self._config_path)
             if value:
                 store.set(key, value)
+                logger.info("[Secrets] Saved key=%s len=%d", key, len(value))
             else:
                 store.delete(key)
+                logger.info("[Secrets] Deleted key=%s", key)
             return True
         except Exception as exc:
+            logger.warning("[Secrets] Failed to write key=%s: %s", key, exc)
             self._emit_runtime_basic(
                 f"Failed to update secret {key}: {type(exc).__name__}",
                 level=logging.WARNING,

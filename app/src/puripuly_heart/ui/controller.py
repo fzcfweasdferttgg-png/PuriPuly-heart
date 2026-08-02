@@ -822,7 +822,11 @@ class GuiController(
     async def verify_api_key(self, provider: str, key: str) -> tuple[bool, str]:
         """Verify API key using the respective provider's static check. Returns (success, error_msg)."""
         if not key:
+            self.log_basic(f"[VerifyKey] provider={provider} result=empty_key")
             return False, "API Key is empty"
+
+        masked = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
+        self.log_basic(f"[VerifyKey] provider={provider} key={masked} base_url={self.settings.provider.openai_compatible.base_url} model={self.settings.provider.openai_compatible.model}")
 
         try:
             success = False
@@ -833,11 +837,14 @@ class GuiController(
                     base_url=self.settings.provider.openai_compatible.base_url,
                     model=self.settings.provider.openai_compatible.model,
                 ).verify_connection()
+                self.log_basic(f"[VerifyKey] provider={provider} api_key_valid={result.api_key_valid} error={result.error_message}")
                 return result.api_key_valid, result.error_message or "OK" if result.api_key_valid else result.error_message
             else:
+                self.log_basic(f"[VerifyKey] provider={provider} result=unknown_provider")
                 return False, f"Unknown provider: {provider}"
         except Exception as exc:
             msg = f"Verification error for {provider}: {exc}"
+            self.log_basic(f"[VerifyKey] provider={provider} exception={exc}")
             self._log_error(msg)
             return False, str(exc)
 
