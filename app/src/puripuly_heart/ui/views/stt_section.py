@@ -161,7 +161,6 @@ class SttSectionMixin:
 
         if self.page:
             self._qwen_region_btn.update()
-            self._api_keys_column.update()
             self._stt_text.update()
 
     def _on_peer_stt_click(self, e) -> None:
@@ -231,7 +230,6 @@ class SttSectionMixin:
         if self.page:
             self._peer_stt_text.update()
             self._qwen_region_btn.update()
-            self._api_keys_column.update()
         self.has_provider_changes = True
 
     def _is_local_stt(self, provider: STTProviderName) -> bool:

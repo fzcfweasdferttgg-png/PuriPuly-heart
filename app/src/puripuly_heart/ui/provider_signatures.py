@@ -154,6 +154,7 @@ class ProviderSignaturesMixin:
         target.provider.openai_compatible = copy.deepcopy(source.provider.openai_compatible)
         target.translation = copy.deepcopy(source.translation)
         target.local_llm = copy.deepcopy(source.local_llm)
+        target.backup_translation = copy.deepcopy(source.backup_translation)
         target.system_prompt = source.system_prompt
         target.system_prompts = {}
 

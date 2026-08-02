@@ -277,7 +277,10 @@ class LlmSectionMixin:
 
     def _do_fetch_models(self, *, base_url_field, model_field, api_key_field=None) -> None:
         import asyncio
-        import httpx
+        import logging
+        from puripuly_heart.ui.components.settings.settings_modal import OptionItem, SettingsModal
+
+        logger = logging.getLogger(__name__)
 
         base_url = (base_url_field.value or "").strip()
         if not base_url:
@@ -286,29 +289,132 @@ class LlmSectionMixin:
         if api_key_field is not None:
             api_key = (api_key_field.value or "").strip()
 
-        models_url = base_url.rstrip("/") + "/models"
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        logger.info("[FetchModels] Requesting %s/models (has_key=%s)", base_url, bool(api_key))
 
-        async def _do_fetch():
-            try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get(models_url, headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    model_ids = sorted(
-                        m.get("id", "") for m in data.get("data", []) if m.get("id")
-                    )
-                    if model_ids and model_field:
-                        current_value = (model_field.value or "").strip()
-                        if not current_value or current_value not in model_ids:
-                            model_field.value = model_ids[0]
-                            _update_control_if_mounted(model_field)
-            except Exception:
-                pass
+        if self.model_discovery is None:
+            logger.error("[FetchModels] model_discovery not initialized")
+            return
 
-        asyncio.ensure_future(_do_fetch())
+        try:
+            model_ids = asyncio.run(self.model_discovery.fetch_models(base_url, api_key))
+        except Exception as exc:
+            logger.error("[FetchModels] Failed: %s", exc)
+            return
+
+        logger.info("[FetchModels] Got %d models: %s", len(model_ids), model_ids[:5])
+
+        if not model_ids:
+            return
+
+        if len(model_ids) == 1:
+            model_field.value = model_ids[0]
+            logger.info("[FetchModels] Single model, set to %s", model_ids[0])
+            _update_control_if_mounted(model_field)
+            return
+
+        options = [OptionItem(value=m, label=m) for m in model_ids]
+        current_value = (model_field.value or "").strip()
+
+        def _on_model_selected(value: str) -> None:
+            model_field.value = value
+            logger.info("[FetchModels] User selected %s", value)
+            _update_control_if_mounted(model_field)
+            if self._settings:
+                draft = self._ensure_provider_settings_draft()
+                draft.provider.openai_compatible.model = value
+                self.has_provider_changes = True
+
+        modal = SettingsModal(
+            self.page,
+            title=t("settings.openai_compatible.select_model", default="Select Model"),
+            options=options,
+            on_select=_on_model_selected,
+            searchable=True,
+            search_hint=t("settings.filter", default="Filter..."),
+        )
+        modal.open(current=current_value or model_ids[0])
+
+    def _fetch_local_llm_models(self, e) -> None:
+        self._do_fetch_models(
+            base_url_field=self._local_llm_base_url,
+            model_field=self._local_llm_model,
+            api_key_field=self._local_llm_api_key,
+        )
+
+    def _test_local_llm_connection(self, e) -> None:
+        import asyncio
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        base_url = (self._local_llm_base_url.value or "").strip()
+        if not base_url:
+            return
+        api_key = (self._local_llm_api_key.value or "").strip()
+
+        logger.info("[TestConnection] Pinging %s (has_key=%s)", base_url, bool(api_key))
+
+        if self.model_discovery is None:
+            logger.error("[TestConnection] model_discovery not initialized")
+            return
+
+        try:
+            status_code, body = asyncio.run(self.model_discovery.test_connection(base_url, api_key))
+        except Exception as exc:
+            logger.error("[TestConnection] Failed: %s", exc)
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
+            return
+
+        if status_code == 200:
+            logger.info("[TestConnection] OK (%d)", status_code)
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
+        elif status_code == 401:
+            logger.info("[TestConnection] 401 — server reachable but needs API key")
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
+        else:
+            logger.warning("[TestConnection] %d — %s", status_code, body)
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
+
+    def _test_openai_compatible_connection(self, e) -> None:
+        import asyncio
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        base_url = (self._openai_compatible_base_url.value or "").strip()
+        if not base_url:
+            return
+        api_key = (self._openai_compatible_key.value or "").strip()
+
+        logger.info("[TestConnection][OpenAI] Pinging %s (has_key=%s)", base_url, bool(api_key))
+
+        if self.model_discovery is None:
+            return
+
+        try:
+            status_code, body = asyncio.run(self.model_discovery.test_connection(base_url, api_key))
+        except Exception as exc:
+            logger.error("[TestConnection][OpenAI] Failed: %s", exc)
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
+            return
+
+        if status_code == 200:
+            logger.info("[TestConnection][OpenAI] OK (%d)", status_code)
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
+        elif status_code == 401:
+            logger.info("[TestConnection][OpenAI] 401 — needs API key")
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
+        else:
+            logger.warning("[TestConnection][OpenAI] %d — %s", status_code, body)
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _on_openai_compatible_base_url_change_end(self, e) -> None:
         _ = e
@@ -456,11 +562,10 @@ class LlmSectionMixin:
         self._sync_prompt_tab_copy()
 
         if self.page:
-            self._qwen_region_btn.update()
-            self._llm_text.update()
-            self._translation_connection_row.update()
-            self._local_llm_connection_card.update()
-            self._api_keys_column.update()
+            _update_control_if_mounted(self._qwen_region_btn)
+            _update_control_if_mounted(self._llm_text)
+            _update_control_if_mounted(self._translation_connection_row)
+            _update_control_if_mounted(self._local_llm_connection_card)
 
     def _on_llm_selected(self, value: str) -> None:
         """Handle LLM provider selection from modal."""

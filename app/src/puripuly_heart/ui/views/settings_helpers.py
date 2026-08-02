@@ -659,6 +659,9 @@ class SettingsHelpersMixin:
             return
         from puripuly_heart.config.providers import load_providers
         from puripuly_heart.config.settings import LLMProviderName
+        # Commit current fallback fields before switching mode
+        self._commit_fallback_fields_from_controls()
+        self._commit_fallback_local_llm_fields_from_controls()
         draft = self._ensure_provider_settings_draft()
         if value == "_disabled":
             draft.backup_translation.enabled = False
@@ -671,21 +674,24 @@ class SettingsHelpersMixin:
             self._fallback_local_llm_base_url.error_text = None
             self._fallback_local_llm_model.value = draft.backup_translation.local_llm.model or ""
             self._fallback_local_llm_model.error_text = None
-            _update_control_if_mounted(self._fallback_local_llm_base_url)
-            _update_control_if_mounted(self._fallback_local_llm_model)
+            self._fallback_local_llm_extra_body.value = (
+                json.dumps(draft.backup_translation.local_llm.extra_body, ensure_ascii=False, indent=2)
+                if draft.backup_translation.local_llm.extra_body else ""
+            )
+            self._fallback_local_llm_extra_body_error.visible = False
             self._set_unit_card_value_text(self._fallback_status_text, t("provider.local_llms"))
         else:
             providers = load_providers()
-            first = next(iter(providers.values()), None)
             draft.backup_translation.enabled = True
             draft.backup_translation.mode = LLMProviderName.OPENAI_COMPATIBLE
-            if first:
-                draft.backup_translation.openai_compatible.base_url = first.get("base_url", "")
-            draft.backup_translation.openai_compatible.model = ""
-            # Sync fallback card controls
+            if not draft.backup_translation.openai_compatible.base_url:
+                first = next(iter(providers.values()), None)
+                if first:
+                    draft.backup_translation.openai_compatible.base_url = first.get("base_url", "")
+            # Sync fallback card controls from draft
             self._fallback_openai_base_url.value = draft.backup_translation.openai_compatible.base_url
             self._fallback_openai_base_url.error_text = None
-            self._fallback_openai_model.value = ""
+            self._fallback_openai_model.value = draft.backup_translation.openai_compatible.model or ""
             _fb_opts = self._fallback_openai_provider.options or []
             _fb_matched = _fb_opts[0].key if _fb_opts else None
             for _pk, _pi in providers.items():
@@ -693,9 +699,7 @@ class SettingsHelpersMixin:
                     _fb_matched = _pk
                     break
             self._fallback_openai_provider.value = _fb_matched
-            _update_control_if_mounted(self._fallback_openai_base_url)
-            _update_control_if_mounted(self._fallback_openai_model)
-            _update_control_if_mounted(self._fallback_openai_provider)
             self._set_unit_card_value_text(self._fallback_status_text, t("provider.openai_compatible"))
         self.has_provider_changes = True
+        _update_control_if_mounted(self._fallback_status_card)
         self._update_api_visibility(draft)

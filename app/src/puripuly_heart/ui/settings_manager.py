@@ -298,8 +298,16 @@ class SettingsManagerMixin:
 
     def _save_settings(self) -> None:
         assert self.settings is not None
+        logger = logging.getLogger(__name__)
         try:
             save_settings(self.config_path, self.settings)
+            bt = self.settings.backup_translation
+            logger.info(
+                "[Settings] Saved: backup.enabled=%s mode=%s oc.base_url=%s oc.model=%s llm.base_url=%s llm.model=%s",
+                bt.enabled, bt.mode.value,
+                bt.openai_compatible.base_url, bt.openai_compatible.model,
+                bt.local_llm.base_url, bt.local_llm.model,
+            )
         except Exception as exc:
             self._log_error(f"Failed to save settings: {exc}")
 

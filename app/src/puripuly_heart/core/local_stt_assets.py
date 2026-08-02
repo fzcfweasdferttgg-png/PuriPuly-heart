@@ -268,7 +268,7 @@ class LocalSTTAssetManifest:
 
 
 def default_local_stt_model_root(data_dir: Path) -> Path:
-    return data_dir / "models"
+    return data_dir
 
 
 def default_local_stt_model_dir(model_id: str | None = None, *, data_dir: Path) -> Path:

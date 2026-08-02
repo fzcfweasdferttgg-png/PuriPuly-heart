@@ -129,6 +129,7 @@ class SettingsView(
         self.on_view_logs: Callable[[], None] | None = None
         self.on_start_microphone_test: Callable[[], None] | None = None
         self.show_snackbar: Callable[[str, str], None] | None = None
+        self.model_discovery: object | None = None
         self.runtime_log_basic: Callable[..., None] | None = None
         self.runtime_log_detailed: Callable[..., None] | None = None
 
@@ -1073,7 +1074,7 @@ class SettingsView(
             value=self._stub_text,
         )
         self._fallback_status_title = ft.Text(
-            t("settings.backup_translation"),
+            t("settings.backup_translation.connection", default="Backup Translation Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -1101,7 +1102,7 @@ class SettingsView(
         self._openrouter_routing_row = self._translation_connection_row
 
         self._local_llm_connection_title = ft.Text(
-            t("settings.local_llm.connection"),
+            t("settings.openai_compatible.connection", default="Translation Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -1133,6 +1134,15 @@ class SettingsView(
             on_change=self._on_local_llm_field_change,
             on_blur=self._on_local_llm_model_change_end,
             on_submit=self._on_local_llm_model_change_end,
+        )
+        self._local_llm_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH,
+            tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
+            on_click=self._fetch_local_llm_models,
+        )
+        self._local_llm_test_btn = ft.TextButton(
+            text=t("settings.local_llm.test_connection", default="Test connection"),
+            on_click=self._test_local_llm_connection,
         )
         self._local_llm_api_key = ApiKeyField(
             "settings.local_llm.api_key",
@@ -1187,12 +1197,12 @@ class SettingsView(
                 [
                     self._local_llm_connection_title,
                     ft.Container(height=4),
-                    self._local_llm_extra_body_helper,
-                    self._local_llm_base_url,
-                    self._local_llm_model,
+                    ft.Row([self._local_llm_base_url, self._local_llm_test_btn], spacing=4),
+                    ft.Row([self._local_llm_model, self._local_llm_fetch_btn], spacing=4),
                     self._local_llm_api_key,
                     self._local_llm_api_key_helper,
                     self._local_llm_extra_body,
+                    self._local_llm_extra_body_helper,
                     self._local_llm_extra_body_error,
                 ],
                 spacing=8,
@@ -1260,6 +1270,10 @@ class SettingsView(
             tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
             on_click=self._fetch_models,
         )
+        self._openai_compatible_test_btn = ft.TextButton(
+            text=t("settings.local_llm.test_connection", default="Test connection"),
+            on_click=self._test_openai_compatible_connection,
+        )
         self._translation_openai_card = self._wrap_card(
             ft.Column(
                 [
@@ -1268,6 +1282,7 @@ class SettingsView(
                     self._openai_compatible_provider,
                     ft.Row([self._openai_compatible_model, self._openai_compatible_fetch_btn], spacing=4),
                     self._openai_compatible_key,
+                    self._openai_compatible_test_btn,
                 ],
                 spacing=8,
             ),
@@ -1284,7 +1299,7 @@ class SettingsView(
             ),
         )
         self._fallback_openai_title = ft.Text(
-            t("settings.backup_translation", default="Fallback Provider Settings"),
+            t("settings.backup_translation.connection", default="Backup Translation Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -1297,6 +1312,7 @@ class SettingsView(
                     self._fallback_openai_provider,
                     ft.Row([self._fallback_openai_model, self._fallback_openai_fetch_btn], spacing=4),
                     self._fallback_api_key,
+                    self._fallback_openai_test_btn,
                 ],
                 spacing=8,
             ),
@@ -1313,7 +1329,7 @@ class SettingsView(
             ),
         )
         self._fallback_local_llm_title = ft.Text(
-            t("settings.backup_translation", default="Fallback"),
+            t("settings.backup_translation.connection", default="Backup Translation Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -1323,8 +1339,8 @@ class SettingsView(
                 [
                     self._fallback_local_llm_title,
                     ft.Container(height=4),
-                    self._fallback_local_llm_base_url,
-                    self._fallback_local_llm_model,
+                    ft.Row([self._fallback_local_llm_base_url, self._fallback_local_llm_test_btn], spacing=4),
+                    ft.Row([self._fallback_local_llm_model, self._fallback_local_llm_fetch_btn], spacing=4),
                     self._fallback_local_llm_api_key,
                     self._fallback_local_llm_api_key_helper,
                     self._fallback_local_llm_extra_body,
@@ -1555,9 +1571,22 @@ class SettingsView(
         )
 
     def consume_provider_apply_settings(self) -> AppSettings | None:
+        import logging
+        logger = logging.getLogger(__name__)
         settings = self.build_provider_apply_settings()
         if settings is None:
+            logger.warning("[Settings] consume: build returned None")
             return None
+        logger.info(
+            "[Settings] consume: backup.enabled=%s backup.mode=%s backup.oc.base_url=%s backup.oc.model=%s backup.llm.base_url=%s backup.llm.model=%s has_changes=%s",
+            settings.backup_translation.enabled,
+            settings.backup_translation.mode.value,
+            settings.backup_translation.openai_compatible.base_url,
+            settings.backup_translation.openai_compatible.model,
+            settings.backup_translation.local_llm.base_url,
+            settings.backup_translation.local_llm.model,
+            self.has_provider_changes,
+        )
         self._settings = settings
         self._provider_settings_draft = None
         self.has_provider_changes = False
@@ -1843,8 +1872,10 @@ class SettingsView(
         self._peer_stt_compute_label.value = t("settings.compute.label")
         self._stt_provider_label.value = t("settings.self_stt_provider")
         self._translation_provider_label.value = t("settings.shared_translation_provider")
-        self._fallback_openai_title.value = t("settings.backup_translation", default="Fallback")
-        self._fallback_local_llm_title.value = t("settings.backup_translation", default="Fallback")
+        self._fallback_openai_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
+        self._fallback_openai_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
+        self._fallback_local_llm_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
+        self._fallback_local_llm_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
         self._ui_title.value = t("settings.section.ui")
         self._audio_host_api_title.value = t("settings.audio_host_api")
         self._mic_audio_title.value = t("settings.section.microphone_audio")
@@ -1856,9 +1887,12 @@ class SettingsView(
         self._peer_hangover_field.label = t("settings.vad.peer_hangover_ms")
         self._peer_pre_roll_field.label = t("settings.vad.peer_pre_roll_ms")
         self._low_latency_title.value = t("settings.low_latency_mode")
-        self._local_llm_connection_title.value = t("settings.local_llm.connection")
+        self._local_llm_connection_title.value = t("settings.openai_compatible.connection", default="Translation Settings")
         self._local_llm_base_url.label = t("settings.local_llm.base_url")
         self._local_llm_model.label = t("settings.local_llm.model")
+        self._local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
+        self._local_llm_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
+        self._openai_compatible_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
         self._local_llm_api_key.apply_locale()
         self._fallback_api_key.apply_locale()
         self._fallback_local_llm_api_key.apply_locale()
@@ -1867,10 +1901,50 @@ class SettingsView(
         self._local_llm_api_key_helper.visible = bool(local_llm_api_key_description.strip())
         self._local_llm_extra_body.label = t("settings.local_llm.extra_body")
         self._local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description")
+        # Translation OpenAI-compatible labels
+        self._openai_compatible_title.value = t("settings.openai_compatible.connection", default="Translation Provider Settings")
+        self._openai_compatible_provider.label = t("settings.openai_compatible.provider", default="Provider")
+        self._openai_compatible_base_url.label = t("settings.openai_compatible.base_url", default="Base URL")
+        self._openai_compatible_model.label = t("settings.openai_compatible.model", default="Model")
+        self._openai_compatible_model.hint_text = t("settings.openai_compatible.model.hint", default="Enter model name or click refresh")
+        self._openai_compatible_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
+        self._openai_compatible_key.apply_locale()
+        # Fallback OpenAI labels
+        self._fallback_openai_provider.label = t("settings.openai_compatible.provider", default="Provider")
+        self._fallback_openai_base_url.label = t("settings.openai_compatible.base_url", default="Base URL")
+        self._fallback_openai_model.label = t("settings.openai_compatible.model", default="Model")
+        self._fallback_openai_model.hint_text = t("settings.openai_compatible.model.hint", default="Enter model name or click refresh")
+        # Fallback Local LLM labels
+        self._fallback_local_llm_base_url.label = t("settings.local_llm.base_url", default="Base URL")
+        self._fallback_local_llm_model.label = t("settings.local_llm.model", default="Model")
+        self._fallback_local_llm_extra_body.label = t("settings.local_llm.extra_body", default="Extra Body")
+        self._fallback_local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description", default="")
+        self._fallback_openai_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
+        self._fallback_local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
+        _fb_helper = t("settings.local_llm.api_key.description", default="")
+        self._fallback_local_llm_api_key_helper.value = _fb_helper
+        self._fallback_local_llm_api_key_helper.visible = bool(_fb_helper.strip())
+        # Fallback status card
+        self._fallback_status_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
+        if self._settings:
+            _bt = self._settings.backup_translation
+            if _bt.enabled:
+                _fb_label = t("provider.local_llms") if _bt.mode == LLMProviderName.LOCAL_LLM else t("provider.openai_compatible")
+            else:
+                _fb_label = t("option.disabled")
+            self._set_unit_card_value_text(self._fallback_status_text, _fb_label)
         if self._local_llm_base_url.error_text:
             self._local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
         if self._local_llm_model.error_text:
             self._local_llm_model.error_text = t("settings.local_llm.model.required")
+        if self._fallback_local_llm_base_url.error_text:
+            self._fallback_local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
+        if self._fallback_local_llm_model.error_text:
+            self._fallback_local_llm_model.error_text = t("settings.local_llm.model.required")
+        if self._fallback_openai_base_url.error_text:
+            self._fallback_openai_base_url.error_text = t(
+                "settings.openai_compatible.base_url.required", default="Base URL is required"
+            )
         if self._local_llm_extra_body_error.visible:
             error_key = self._local_llm_extra_body_error_key
             error_kwargs = self._local_llm_extra_body_error_kwargs
@@ -1878,6 +1952,20 @@ class SettingsView(
                 message = self._local_llm_extra_body_error_message(error_key, **error_kwargs)
                 self._local_llm_extra_body_error.value = message
                 self._local_llm_extra_body.error_text = message
+        if self._fallback_local_llm_extra_body_error.visible:
+            fb_error_key = self._fallback_local_llm_extra_body_error_key
+            fb_error_kwargs = self._fallback_local_llm_extra_body_error_kwargs
+            if fb_error_key:
+                if "key" not in fb_error_kwargs:
+                    fb_msg = t(fb_error_key, default="")
+                else:
+                    template = t(fb_error_key, default="")
+                    try:
+                        fb_msg = template.format(**fb_error_kwargs)
+                    except Exception:
+                        fb_msg = template
+                self._fallback_local_llm_extra_body_error.value = fb_msg
+                self._fallback_local_llm_extra_body.error_text = fb_msg
         self._persona_title.value = t("settings.section.persona")
         self._custom_vocab_title.value = t("settings.section.custom_vocabulary")
         self._vrc_mic_title.value = t("settings.vrc_mic_intercept")
@@ -1913,6 +2001,11 @@ class SettingsView(
         )
         _set_text_button_label(self._reset_prompt_btn, t("settings.reset_prompt"))
         self._sync_prompt_tab_copy()
+        # Prompt mode buttons
+        self._prompt_single_btn.content.value = t("settings.prompt_mode.single", default="Single")
+        self._prompt_dual_btn.content.value = t("settings.prompt_mode.dual", default="Dual")
+        # Desktop overlay view logs
+        self._desktop_overlay_view_logs_action.content.value = t("settings.overlay.desktop.recovery.action.view_details")
 
         # Update dynamic buttons by replacing the entire style object
         ui_font = font_for_language(get_locale())

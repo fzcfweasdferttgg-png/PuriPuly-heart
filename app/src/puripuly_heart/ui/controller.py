@@ -57,6 +57,7 @@ from puripuly_heart.core.audio.source import (
     observe_microphone_test_route,
     resolve_sounddevice_input_device,
 )
+from puripuly_heart.ports.model_discovery import ModelDiscovery
 from puripuly_heart.ports.ui import ClipboardWatcherRuntime
 from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.core.clipboard.watcher import create_clipboard_watcher
@@ -158,6 +159,7 @@ class GuiController(
     sender: object | None = None
     osc: OscSink | None = None
     hub: Pipeline | None = None
+    model_discovery: ModelDiscovery | None = None
     _peer_runtime: PeerChannelRuntime | None = None
     receiver: VrcOscReceiver | None = None
     vrc_mic_state: VrcMicState | None = None
@@ -1062,6 +1064,14 @@ class GuiController(
         assert self.settings is not None
         self._sync_signature_caches(self.settings)
         secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+
+        from puripuly_heart.adapters.model_discovery.httpx_discovery import HttpxModelDiscovery
+        if self.model_discovery is None:
+            self.model_discovery = HttpxModelDiscovery()
+
+        settings_view = getattr(self.app, "view_settings", None)
+        if settings_view is not None:
+            settings_view.model_discovery = self.model_discovery
 
         llm = None
         with contextlib.suppress(Exception):

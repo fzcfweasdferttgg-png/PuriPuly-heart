@@ -516,8 +516,6 @@ class OverlaySectionMixin:
             self._settings.ui.overlay_enabled = contract.overlay.intent_enabled
             self._settings.ui.peer_translation_enabled = contract.peer.intent_enabled
             self._update_api_visibility()
-            if self.page:
-                self._api_keys_column.update()
         self._sync_overlay_controls()
 
     def _sync_overlay_controls(self) -> None:
