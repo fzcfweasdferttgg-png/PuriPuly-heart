@@ -24,7 +24,7 @@ class SecretsSectionMixin:
     def _load_secrets(self, settings: AppSettings, config_path: Path) -> None:
         """Load secret values into fields."""
         try:
-            store = create_secret_store(settings.secrets, config_path=config_path)
+            store = create_secret_store(config_path=config_path)
         except Exception as exc:
             self._emit_runtime_basic(f"Failed to load secrets: {exc}", level=logging.WARNING)
             return
@@ -61,7 +61,7 @@ class SecretsSectionMixin:
             return False
 
         try:
-            store = create_secret_store(self._settings.secrets, config_path=self._config_path)
+            store = create_secret_store(config_path=self._config_path)
             if value:
                 store.set(key, value)
             else:

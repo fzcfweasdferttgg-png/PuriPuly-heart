@@ -5,11 +5,6 @@ from enum import Enum
 from puripuly_heart.domain.providers import LLMProviderName, STTProviderName
 
 
-class SecretsBackend(str, Enum):
-    KEYRING = "keyring"
-    ENCRYPTED_FILE = "encrypted_file"
-
-
 class QwenRegion(str, Enum):
     BEIJING = "beijing"
     SINGAPORE = "singapore"

@@ -63,7 +63,7 @@ class PeerRuntimeManagerMixin:
         from puripuly_heart.app.wiring import create_peer_stt_backend, create_secret_store
 
         assert self.settings is not None
-        secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+        secrets = create_secret_store(config_path=self.config_path)
         peer_backend = create_peer_stt_backend(
             self.settings,
             secrets=secrets,

@@ -11,21 +11,12 @@ from .enums import (
     LocalLLMBackend,
     QwenRegion,
     STTProviderName,
-    SecretsBackend,
     _parse_local_llm_backend,
     _parse_llm_provider,
     _parse_qwen_region,
     _parse_stt_provider,
     _parse_peer_stt_provider,
 )
-
-
-def _default_secrets_backend() -> SecretsBackend:
-    from puripuly_heart.config.paths import is_portable
-
-    if is_portable():
-        return SecretsBackend.ENCRYPTED_FILE
-    return SecretsBackend.KEYRING
 
 
 def _default_local_llm_extra_body() -> dict[str, object]:
@@ -146,18 +137,6 @@ class ProviderSettings:
             raise ValueError("invalid openai_compatible settings")
         if self.llm == LLMProviderName.OPENAI_COMPATIBLE:
             self.openai_compatible.validate()
-
-
-@dataclass(slots=True)
-class SecretsSettings:
-    backend: SecretsBackend = SecretsBackend.KEYRING
-    encrypted_file_path: str = "secrets.json"
-
-    def validate(self) -> None:
-        if not isinstance(self.backend, SecretsBackend):
-            raise ValueError("invalid secrets backend")
-        if self.backend == SecretsBackend.ENCRYPTED_FILE and not self.encrypted_file_path:
-            raise ValueError("encrypted_file_path must be set for encrypted_file backend")
 
 
 @dataclass(slots=True)

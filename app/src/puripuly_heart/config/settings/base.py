@@ -24,7 +24,6 @@ from .constants import (
 from .enums import (
     LLMProviderName,
     STTProviderName,
-    SecretsBackend,
     TranslationConnection,
     TranslationModel,
     _parse_llm_provider,
@@ -43,9 +42,7 @@ from .llm import (
     OpenAICompatibleSettings,
     ProviderSettings,
     QwenSettings,
-    SecretsSettings,
     BackupTranslationSettings,
-    _default_secrets_backend,
     _parse_local_llm_backend,
     _parse_local_llm_base_url,
     _parse_local_llm_extra_body,
@@ -87,7 +84,6 @@ class AppSettings:
     local_llm: LocalLLMSettings = field(default_factory=LocalLLMSettings)
     llm: LLMSettings = field(default_factory=LLMSettings)
     osc: OSCSettings = field(default_factory=OSCSettings)
-    secrets: SecretsSettings = field(default_factory=SecretsSettings)
     ui: UiSettings = field(default_factory=UiSettings)
     api_key_verified: ApiKeyVerificationSettings = field(default_factory=ApiKeyVerificationSettings)
     system_prompt: str = ""
@@ -117,7 +113,6 @@ class AppSettings:
         self.backup_translation.validate()
         self.llm.validate()
         self.osc.validate()
-        self.secrets.validate()
         self.ui.validate()
         self.api_key_verified.validate()
         for key, value in self.system_prompts.items():
@@ -480,10 +475,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "vrc_mic_intercept": settings.osc.vrc_mic_intercept,
             "chatbox_include_source": settings.osc.chatbox_include_source,
         },
-        "secrets": {
-            "backend": settings.secrets.backend.value,
-            "encrypted_file_path": settings.secrets.encrypted_file_path,
-        },
         "ui": {
             "locale": settings.ui.locale,
             "peer_translation_eula_accepted": settings.ui.peer_translation_eula_accepted,
@@ -740,12 +731,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             chatbox_max_chars=int(data.get("osc", {}).get("chatbox_max_chars", 144)),
             vrc_mic_intercept=bool(data.get("osc", {}).get("vrc_mic_intercept", False)),
             chatbox_include_source=bool(data.get("osc", {}).get("chatbox_include_source", False)),
-        ),
-        secrets=SecretsSettings(
-            backend=SecretsBackend(
-                data.get("secrets", {}).get("backend", _default_secrets_backend().value)
-            ),
-            encrypted_file_path=data.get("secrets", {}).get("encrypted_file_path", "secrets.json"),
         ),
         ui=UiSettings(
             locale=str(ui_data.get("locale", "en")),

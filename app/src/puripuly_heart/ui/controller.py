@@ -664,7 +664,7 @@ class GuiController(
 
     async def _probe_peer_local_stt_runtime_load(self) -> None:
         assert self.settings is not None
-        secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+        secrets = create_secret_store(config_path=self.config_path)
         peer_backend = create_peer_stt_backend(
             self.settings,
             secrets=secrets,
@@ -950,7 +950,7 @@ class GuiController(
         llm = None
         llm_error: Exception | None = None
         try:
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+            secrets = create_secret_store(config_path=self.config_path)
             llm = create_llm_provider(
                 self.settings,
                 secrets=secrets,
@@ -1017,7 +1017,7 @@ class GuiController(
         stt = None
         stt_error: Exception | None = None
         try:
-            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+            secrets = create_secret_store(config_path=self.config_path)
             backend = create_stt_backend(
                 self.settings,
                 secrets=secrets,
@@ -1063,7 +1063,7 @@ class GuiController(
     async def _init_pipeline(self) -> None:
         assert self.settings is not None
         self._sync_signature_caches(self.settings)
-        secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+        secrets = create_secret_store(config_path=self.config_path)
 
         from puripuly_heart.adapters.model_discovery.httpx_discovery import HttpxModelDiscovery
         if self.model_discovery is None:

@@ -11,38 +11,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from puripuly_heart.ports.secrets import SecretStore
 
-__all__ = ["SecretStore", "KeyringSecretStore", "EncryptedFileSecretStore"]
-
-
-@dataclass(slots=True)
-class KeyringSecretStore:
-    service_name: str = "puripuly-heart"
-
-    def _keyring(self):
-        import keyring  # type: ignore
-
-        return keyring
-
-    def get(self, key: str) -> str | None:
-        keyring = self._keyring()
-        return keyring.get_password(self.service_name, key)
-
-    def set(self, key: str, value: str) -> None:
-        keyring = self._keyring()
-        keyring.set_password(self.service_name, key, value)
-
-    def delete(self, key: str) -> None:
-        keyring = self._keyring()
-        try:
-            keyring.delete_password(self.service_name, key)
-        except Exception as exc:
-            errors = getattr(keyring, "errors", None)
-            password_delete_error = getattr(errors, "PasswordDeleteError", None)
-            if password_delete_error is not None and isinstance(exc, password_delete_error):
-                if keyring.get_password(self.service_name, key) is None:
-                    return
-                raise
-            raise
+__all__ = ["SecretStore", "EncryptedFileSecretStore"]
 
 
 @dataclass(slots=True)

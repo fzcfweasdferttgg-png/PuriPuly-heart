@@ -93,7 +93,7 @@ class HeadlessMicRunner:
     clock: SystemClock = SystemClock()
 
     async def run(self) -> int:
-        secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+        secrets = create_secret_store(config_path=self.config_path)
         llm = (
             _create_headless_llm_provider(settings=self.settings, secrets=secrets)
             if self.use_llm

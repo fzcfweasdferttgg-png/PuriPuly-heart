@@ -13,8 +13,6 @@ from puripuly_heart.config.settings import (
     STT_INTERNAL_SAMPLE_RATE_HZ,
     AppSettings,
     LLMProviderName,
-    SecretsBackend,
-    SecretsSettings,
     STTProviderName,
 )
 from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
@@ -22,10 +20,7 @@ from puripuly_heart.core.clock import Clock
 from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig
 from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
-from puripuly_heart.adapters.storage.secrets import (
-    EncryptedFileSecretStore,
-    KeyringSecretStore,
-)
+from puripuly_heart.adapters.storage.secrets import EncryptedFileSecretStore
 from puripuly_heart.adapters.osc.chatbox_paginator import ChatboxPaginator
 from puripuly_heart.adapters.osc.udp_sender import VrchatOscUdpSender
 from puripuly_heart.ports.logging import SessionLogger
@@ -38,8 +33,6 @@ from puripuly_heart.adapters.llm.local_openai import LocalOpenAICompatibleLLMPro
 from puripuly_heart.adapters.llm.openai_compatible import OpenAICompatibleLLMProvider
 
 logger = logging.getLogger(__name__)
-
-SECRETS_PASSPHRASE_ENV = "PURIPULY_HEART_SECRETS_PASSPHRASE"
 
 # --- Job Object: kills all child processes when parent exits ---
 _JOB_HANDLE: int | None = None
@@ -138,11 +131,9 @@ def assign_to_job(pid: int, job_handle: int | None) -> None:
         logger.warning("[JobObject] Failed to assign pid=%d: %s", pid, exc)
 
 
-def _portable_passphrase() -> str:
-    """Generate or load a passphrase for the portable encrypted-file secret store."""
-    from puripuly_heart.config.paths import portable_data_dir
-
-    key_file = portable_data_dir() / ".secret_key"
+def _auto_passphrase(key_dir: Path) -> str:
+    """Generate or load a passphrase for the encrypted-file secret store."""
+    key_file = key_dir / ".secret_key"
     if key_file.exists():
         return key_file.read_text(encoding="utf-8").strip()
 
@@ -155,35 +146,19 @@ def _portable_passphrase() -> str:
 
 
 def create_secret_store(
-    settings: SecretsSettings,
     *,
     config_path: Path,
-    passphrase: str | None = None,
 ) -> SecretStore:
     from puripuly_heart.config.paths import is_portable, portable_data_dir
 
-    passphrase = passphrase or os.getenv(SECRETS_PASSPHRASE_ENV)
+    if is_portable():
+        secrets_dir = portable_data_dir()
+    else:
+        secrets_dir = config_path.parent
 
-    if is_portable() and settings.backend == SecretsBackend.KEYRING:
-        passphrase = passphrase or _portable_passphrase()
-        path = portable_data_dir() / "secrets.json"
-        return EncryptedFileSecretStore(path=path, passphrase=passphrase)
-
-    if settings.backend == SecretsBackend.KEYRING:
-        return KeyringSecretStore()
-
-    if settings.backend == SecretsBackend.ENCRYPTED_FILE:
-        if not passphrase:
-            raise ValueError(
-                "encrypted_file secrets backend requires a passphrase; "
-                f"set {SECRETS_PASSPHRASE_ENV} or pass passphrase explicitly"
-            )
-        path = Path(settings.encrypted_file_path)
-        if not path.is_absolute():
-            path = config_path.parent / path
-        return EncryptedFileSecretStore(path=path, passphrase=passphrase)
-
-    raise ValueError(f"Unsupported secrets backend: {settings.backend}")
+    passphrase = _auto_passphrase(secrets_dir)
+    path = secrets_dir / "secrets.json"
+    return EncryptedFileSecretStore(path=path, passphrase=passphrase)
 
 
 def create_osc_sink(

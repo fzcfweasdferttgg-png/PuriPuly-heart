@@ -162,10 +162,10 @@ def run_soxr_runtime_check() -> int:
     return run()
 
 
-def create_secret_store(*args, **kwargs):
+def create_secret_store(**kwargs):
     from puripuly_heart.app.wiring import create_secret_store as create
 
-    return create(*args, **kwargs)
+    return create(**kwargs)
 
 
 def create_llm_provider(*args, **kwargs):
@@ -276,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
             llm = None
             if args.use_llm:
                 try:
-                    secrets = create_secret_store(settings.secrets, config_path=args.config)
+                    secrets = create_secret_store(config_path=args.config)
                     llm = create_llm_provider(settings, secrets=secrets)
                 except Exception as exc:
                     return _print_initialization_error("LLM provider", exc)
