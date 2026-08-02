@@ -92,6 +92,10 @@ class _AsyncioOverlayProcess:
     _diagnostics: OverlayDiagnosticsRecorder | None = None
     _logging_mode: str = field(init=False, default="basic")
 
+    @property
+    def pid(self) -> int | None:
+        return self.process.pid
+
     def __post_init__(self) -> None:
         self._start_reader(self.process.stdout, "stdout")
         self._start_reader(self.process.stderr, "stderr")
@@ -203,7 +207,6 @@ class _AsyncioOverlayProcess:
 class DefaultOverlayProcessRunner:
     executable_path: Path | None = None
     quiet_tail_profile: str = "p05"
-    job_handle: int | None = None
 
     def set_quiet_tail_profile(self, profile: str) -> None:
         self.quiet_tail_profile = profile
@@ -245,7 +248,6 @@ class DefaultOverlayProcessRunner:
             stderr=asyncio.subprocess.PIPE,
             env=child_env,
         )
-        _assign_overlay_to_job(process.pid, self.job_handle)
         return _AsyncioOverlayProcess(process=process)
 
     @classmethod
@@ -404,7 +406,6 @@ class DesktopFletOverlayRunner:
     python_executable: Path | None = None
     app_executable: Path | None = None
     module_name: str = "puripuly_heart.ui.desktop_overlay"
-    job_handle: int | None = None
 
     def prepare(self, manifest: OverlayLaunchManifest) -> Path:
         _ = manifest
@@ -431,7 +432,6 @@ class DesktopFletOverlayRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _assign_overlay_to_job(process.pid, self.job_handle)
         return _AsyncioOverlayProcess(process=process)
 
     def _is_frozen(self) -> bool:
@@ -460,6 +460,7 @@ class OverlayProcessManager:
     overlay_instance_id: str = field(default_factory=lambda: f"overlay-{uuid4()}")
     diagnostics_dir: Path = field(default_factory=default_overlay_diagnostics_dir)
     diagnostics: OverlayDiagnosticsRecorder | None = None
+    job_handle: int | None = None
 
     state: str = field(init=False, default="off")
     failure_reason: str | None = field(init=False, default=None)
@@ -521,6 +522,7 @@ class OverlayProcessManager:
             self._manifest_path = self._write_manifest(manifest)
             self._record_process("manifest_written", manifest_path=self._manifest_path)
             self._process = await self.process_runner.spawn(executable_path, self._manifest_path)
+            _assign_overlay_to_job(getattr(self._process, "pid", None), self.job_handle)
             self._attach_process_diagnostics(self._process)
             self._record_process("process_spawned", manifest_path=self._manifest_path)
             await self._wait_for_startup()
