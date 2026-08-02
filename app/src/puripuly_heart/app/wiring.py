@@ -161,6 +161,11 @@ def create_secret_store(
     return EncryptedFileSecretStore(path=path, passphrase=passphrase)
 
 
+def create_model_discovery() -> "ModelDiscovery":
+    from puripuly_heart.adapters.model_discovery.httpx_discovery import HttpxModelDiscovery
+    return HttpxModelDiscovery()
+
+
 def create_osc_sink(
     settings: AppSettings,
     *,

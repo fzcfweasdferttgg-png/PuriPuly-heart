@@ -327,9 +327,7 @@ class GuiController(
             # LLM: check current provider's verification status
             llm_provider = self.settings.provider.llm.value
             if self._llm_provider_requires_secret(self.settings.provider.llm):
-                llm_verified = getattr(
-                    self.settings.api_key_verified, llm_provider, False
-                )
+                llm_verified = self.settings.api_key_verified.is_verified(llm_provider)
                 dash.translation_needs_key = (self.hub.llm is None) or (not llm_verified)
             else:
                 dash.translation_needs_key = False
@@ -819,33 +817,46 @@ class GuiController(
             stt._closing = False
 
 
-    async def verify_api_key(self, provider: str, key: str) -> tuple[bool, str]:
-        """Verify API key using the respective provider's static check. Returns (success, error_msg)."""
+    async def verify_api_key(self, provider: str, key: str, base_url: str | None = None) -> tuple[bool, str]:
+        """Verify API key using model_discovery (works reliably in Flet event loop)."""
+
         if not key:
             self.log_basic(f"[VerifyKey] provider={provider} result=empty_key")
             return False, "API Key is empty"
 
         masked = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
-        self.log_basic(f"[VerifyKey] provider={provider} key={masked} base_url={self.settings.provider.openai_compatible.base_url} model={self.settings.provider.openai_compatible.model}")
 
-        try:
-            success = False
+        if base_url is None:
             if provider == "openai_compatible":
-                from puripuly_heart.adapters.llm.openai_compatible import OpenAICompatibleLLMProvider
-                result = await OpenAICompatibleLLMProvider(
-                    api_key=key,
-                    base_url=self.settings.provider.openai_compatible.base_url,
-                    model=self.settings.provider.openai_compatible.model,
-                ).verify_connection()
-                self.log_basic(f"[VerifyKey] provider={provider} api_key_valid={result.api_key_valid} error={result.error_message}")
-                return result.api_key_valid, result.error_message or "OK" if result.api_key_valid else result.error_message
+                base_url = self.settings.provider.openai_compatible.base_url
+            elif provider == "local_llm":
+                base_url = self.settings.provider.local_llm.base_url
             else:
                 self.log_basic(f"[VerifyKey] provider={provider} result=unknown_provider")
                 return False, f"Unknown provider: {provider}"
+
+        self.log_basic(f"[VerifyKey] provider={provider} key={masked} base_url={base_url}")
+
+        try:
+            discovery = self.model_discovery
+            if discovery is None:
+                return False, "Model discovery not initialized"
+            status_code, body = await discovery.test_connection(base_url, key)
+
+            if status_code == 200:
+                self.log_basic(f"[VerifyKey] provider={provider} result=OK status={status_code}")
+                return True, ""
+            if status_code == 401:
+                self.log_basic(f"[VerifyKey] provider={provider} result=bad_key status=401")
+                return False, "API key invalid (401 Unauthorized)"
+            if status_code == 0:
+                self.log_basic(f"[VerifyKey] provider={provider} result=connection_error detail={body}")
+                return False, f"Cannot reach endpoint {base_url}: {body}"
+            self.log_basic(f"[VerifyKey] provider={provider} result=unexpected_status={status_code} body={body}")
+            return False, f"Server returned {status_code}: {body}"
         except Exception as exc:
-            msg = f"Verification error for {provider}: {exc}"
             self.log_basic(f"[VerifyKey] provider={provider} exception={exc}")
-            self._log_error(msg)
+            self._log_error(f"Verification error for {provider}: {exc}")
             return False, str(exc)
 
     async def apply_providers(
@@ -1072,9 +1083,9 @@ class GuiController(
         self._sync_signature_caches(self.settings)
         secrets = create_secret_store(config_path=self.config_path)
 
-        from puripuly_heart.adapters.model_discovery.httpx_discovery import HttpxModelDiscovery
+        from puripuly_heart.app.wiring import create_model_discovery
         if self.model_discovery is None:
-            self.model_discovery = HttpxModelDiscovery()
+            self.model_discovery = create_model_discovery()
 
         settings_view = getattr(self.app, "view_settings", None)
         if settings_view is not None:

@@ -150,13 +150,6 @@
     "github_star_prompt_translation_success_observed": false,
     "github_star_prompt_eligible_launch_count": 0
   },
-  "api_key_verified": {
-    "google": false,
-    "openrouter": false,
-    "deepseek": false,
-    "alibaba_beijing": false,
-    "alibaba_singapore": false,
-    "cerebras": false
-  },
+  "api_key_verified": {},
   "system_prompt": ""
 }

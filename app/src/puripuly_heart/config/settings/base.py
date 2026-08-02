@@ -482,9 +482,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "integrated_context_bootstrapped": settings.ui.integrated_context_bootstrapped,
             "clipboard_auto_translate_enabled": settings.ui.clipboard_auto_translate_enabled,
         },
-        "api_key_verified": {
-            "openai_compatible": settings.api_key_verified.openai_compatible,
-        },
+        "api_key_verified": dict(settings.api_key_verified.verified),
         "system_prompt": settings.system_prompt,
     }
     return _enum_to_value(data)  # type: ignore[return-value]
@@ -520,7 +518,8 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     if _apply_materialized_translation_to_data(data, nts): changed = True
     av = data.get("api_key_verified")
     if not isinstance(av, dict): av = {}; data["api_key_verified"] = av; changed = True
-    if "openai_compatible" not in av: av["openai_compatible"] = False; changed = True
+    for _k in ("openai_compatible", "local_llm", "backup_openai_compatible", "fallback_local_llm"):
+        if _k not in av: av[_k] = False; changed = True
     od = data.get("overlay")
     if not isinstance(od, dict): od = {}; data["overlay"] = od; changed = True
     ocd = od.get("calibration") if isinstance(od.get("calibration"), dict) else {}
@@ -748,7 +747,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             ),
         ),
         api_key_verified=ApiKeyVerificationSettings(
-            openai_compatible=bool(data.get("api_key_verified", {}).get("openai_compatible", False)),
+            verified=dict(data.get("api_key_verified", {})),
         ),
         system_prompt=legacy_system_prompt,
         system_prompts={},

@@ -71,11 +71,14 @@ class FallbackLocalLlmSectionMixin:
             text=t("settings.local_llm.test_connection", default="Test connection"),
             on_click=self._test_fallback_local_llm_connection,
         )
+        async def _verify_with_base_url(provider: str, key: str):
+            return await on_verify(provider, key, base_url=self._fallback_local_llm_base_url.value or None)
+
         self._fallback_local_llm_api_key = ApiKeyField(
             "settings.fallback_local_llm_api_key",
             "fallback_local_llm_api_key",
-            "local_llm",
-            on_verify=on_verify,
+            "fallback_local_llm",
+            on_verify=_verify_with_base_url if on_verify else None,
             on_save=on_save,
             show_snackbar=show_snackbar,
         )

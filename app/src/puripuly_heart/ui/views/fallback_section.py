@@ -80,11 +80,14 @@ class FallbackSectionMixin:
             text=t("settings.local_llm.test_connection", default="Test connection"),
             on_click=self._test_fallback_openai_connection,
         )
+        async def _verify_with_base_url(provider: str, key: str):
+            return await on_verify(provider, key, base_url=self._fallback_openai_base_url.value or None)
+
         self._fallback_api_key = ApiKeyField(
             "settings.backup_api_key",
             "backup_api_key",
-            "openai_compatible",
-            on_verify=on_verify,
+            "backup_openai_compatible",
+            on_verify=_verify_with_base_url if on_verify else None,
             on_save=on_save,
             show_snackbar=show_snackbar,
         )

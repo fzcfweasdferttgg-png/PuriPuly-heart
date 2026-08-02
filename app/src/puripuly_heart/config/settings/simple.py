@@ -53,7 +53,13 @@ class UiSettings:
 
 @dataclass(slots=True)
 class ApiKeyVerificationSettings:
-    openai_compatible: bool = False
+    verified: dict[str, bool] = field(default_factory=dict)
 
     def validate(self) -> None:
         pass
+
+    def is_verified(self, key: str) -> bool:
+        return self.verified.get(key, False)
+
+    def set_verified(self, key: str, value: bool) -> None:
+        self.verified[key] = value

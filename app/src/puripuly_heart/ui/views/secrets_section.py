@@ -52,7 +52,10 @@ class SecretsSectionMixin:
         verified = settings.api_key_verified
 
         field_map = [
-            (self._openai_compatible_key, self._openai_compatible_key.value, verified.openai_compatible),
+            (self._openai_compatible_key, self._openai_compatible_key.value, verified.is_verified("openai_compatible")),
+            (self._fallback_api_key, self._fallback_api_key.value, verified.is_verified("backup_openai_compatible")),
+            (self._local_llm_api_key, self._local_llm_api_key.value, verified.is_verified("local_llm")),
+            (self._fallback_local_llm_api_key, self._fallback_local_llm_api_key.value, verified.is_verified("fallback_local_llm")),
         ]
 
         for field, has_key, is_verified in field_map:
@@ -110,9 +113,9 @@ class SecretsSectionMixin:
             with contextlib.suppress(Exception):
                 self.on_secret_cleared(key)
 
-    async def _verify_key(self, provider: str, key: str) -> tuple[bool, str]:
+    async def _verify_key(self, provider: str, key: str, *, base_url: str | None = None) -> tuple[bool, str]:
         """Verify API key."""
         if self.on_verify_api_key:
-            result = await self.on_verify_api_key(provider, key)
+            result = await self.on_verify_api_key(provider, key, base_url=base_url)
             return result
         return False, "Verification not available"

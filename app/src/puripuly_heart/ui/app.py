@@ -902,10 +902,16 @@ class TranslatorApp:
         webbrowser.open(founder_readme_url_for_locale(get_locale()))
 
     def _api_key_verification_matches_current_field(self, provider: str, key: str) -> bool:
-        if provider != "openai_compatible":
+        field_name_map = {
+            "openai_compatible": "_openai_compatible_key",
+            "backup_openai_compatible": "_fallback_api_key",
+            "fallback_local_llm": "_fallback_local_llm_api_key",
+        }
+        field_name = field_name_map.get(provider)
+        if field_name is None:
             return True
 
-        field = getattr(getattr(self, "view_settings", None), "_openai_compatible_key", None)
+        field = getattr(getattr(self, "view_settings", None), field_name, None)
         if field is None:
             return True
 
@@ -915,9 +921,9 @@ class TranslatorApp:
 
         return current_key == key
 
-    async def _on_verify_api_key(self, provider: str, key: str) -> tuple[bool, str]:
-        logger.info("[VerifyKey][UI] provider=%s key_len=%d", provider, len(key))
-        success, msg = await self.controller.verify_api_key(provider, key)
+    async def _on_verify_api_key(self, provider: str, key: str, *, base_url: str | None = None) -> tuple[bool, str]:
+        logger.info("[VerifyKey][UI] provider=%s key_len=%d base_url=%s", provider, len(key), base_url or "(from settings)")
+        success, msg = await self.controller.verify_api_key(provider, key, base_url=base_url)
         logger.info("[VerifyKey][UI] provider=%s success=%s msg=%s", provider, success, msg)
 
         if not self._api_key_verification_matches_current_field(provider, key):
@@ -925,12 +931,14 @@ class TranslatorApp:
             return success, msg
 
         # Save verification result to settings
-        setattr(self.controller.settings.api_key_verified, provider, success)
+        self.controller.settings.api_key_verified.set_verified(provider, success)
         save_settings(self.controller.config_path, self.controller.settings)
         logger.info("[VerifyKey][UI] saved api_key_verified.%s=%s", provider, success)
 
         # Sync verification result with dashboard needs_key flags
         if provider == "openai_compatible":
+            self.view_dashboard.set_translation_needs_key(not success, update_ui=False)
+        elif provider == "local_llm":
             self.view_dashboard.set_translation_needs_key(not success, update_ui=False)
 
         return success, msg
@@ -938,10 +946,18 @@ class TranslatorApp:
     def _on_secret_cleared(self, key: str) -> None:
         """Reset verification status when API key is cleared."""
         logger.info("[VerifyKey][UI] secret_cleared key=%s", key)
-        if key == "openai_compatible_api_key":
-            self.controller.settings.api_key_verified.openai_compatible = False
+        field_map = {
+            "openai_compatible_api_key": "openai_compatible",
+            "local_llm_api_key": "local_llm",
+            "backup_api_key": "backup_openai_compatible",
+            "fallback_local_llm_api_key": "fallback_local_llm",
+        }
+        verified_key = field_map.get(key)
+        if verified_key is not None:
+            self.controller.settings.api_key_verified.set_verified(verified_key, False)
             save_settings(self.controller.config_path, self.controller.settings)
-            self.view_dashboard.set_translation_needs_key(True, update_ui=False)
+            if key in ("openai_compatible_api_key", "local_llm_api_key"):
+                self.view_dashboard.set_translation_needs_key(True, update_ui=False)
 
     def _show_snackbar(self, message: str, bgcolor, duration: int = 4000) -> None:
         """Show a snackbar above the bottom nav."""
