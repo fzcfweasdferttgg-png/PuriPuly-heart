@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from puripuly_heart.domain.models import Transcript
+
 if TYPE_CHECKING:
-    from puripuly_heart.domain.models import Transcript
+    pass
 
 
 class PeerTurnsMixin:

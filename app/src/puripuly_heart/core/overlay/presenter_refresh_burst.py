@@ -8,20 +8,20 @@ from .presenter_constants import (
     PEER_PRESENTATION_REFRESH_BURST_INTERVAL_SECONDS,
     PEER_PRESENTATION_REFRESH_BURST_SECONDS,
 )
+from .sink import (
+    PeerActiveUpdate,
+    PeerTranscriptFinal,
+    SelfTranscriptFinal,
+    TranslationFinal,
+    TranslationStreamUpdate,
+)
 
 if TYPE_CHECKING:
     from .protocol import (
         OverlayPresentationBlock,
         OverlayPresentationSnapshot,
     )
-    from .sink import (
-        OverlayEventUnion,
-        PeerActiveUpdate,
-        PeerTranscriptFinal,
-        SelfTranscriptFinal,
-        TranslationFinal,
-        TranslationStreamUpdate,
-    )
+    from .sink import OverlayEventUnion
 
 
 class PresenterRefreshBurstMixin:
