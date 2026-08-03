@@ -187,6 +187,14 @@ class SettingsManagerMixin:
             self.hub.source_language = settings.languages.source_language
             self.hub.target_language = settings.languages.target_language
             self.hub.second_target_language = settings.languages.second_target_language
+            if self.hub.translation_service is not None:
+                ts = self.hub.translation_service
+                ts.source_language = settings.languages.source_language
+                ts.target_language = settings.languages.target_language
+                ts.second_target_language = settings.languages.second_target_language
+                ts.peer_source_language = settings.languages.peer_source_language
+                ts.peer_target_language = settings.languages.peer_target_language
+                ts.system_prompt = settings.system_prompt
             self.hub.peer_source_language = settings.languages.peer_source_language
             self.hub.peer_target_language = settings.languages.peer_target_language
             self.hub.system_prompt = settings.system_prompt
