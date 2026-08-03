@@ -1001,6 +1001,11 @@ class GuiController(
         except Exception as exc:
             logger.warning("[LLM] Failed to create fallback provider: %s", exc)
 
+        # Sync TranslationService LLM references
+        if self.hub.translation_service is not None:
+            self.hub.translation_service.llm = llm
+            self.hub.translation_service.fallback_llm = self.hub.fallback_llm
+
         dash = getattr(self.app, "view_dashboard", None)
 
         # Stop translation if provider changed while translation was active.
