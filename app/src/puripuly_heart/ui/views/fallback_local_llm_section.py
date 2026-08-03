@@ -30,7 +30,6 @@ class FallbackLocalLlmSectionMixin:
     def _init_fallback_local_llm_controls(
         self,
         *,
-        on_verify,
         on_save,
         show_snackbar,
     ) -> None:
@@ -71,22 +70,22 @@ class FallbackLocalLlmSectionMixin:
             text=t("settings.local_llm.test_connection", default="Test connection"),
             on_click=self._test_fallback_local_llm_connection,
         )
-        async def _verify_with_base_url(provider: str, key: str):
-            return await on_verify(provider, key, base_url=self._fallback_local_llm_base_url.value or None)
 
         self._fallback_local_llm_api_key = ApiKeyField(
             "settings.fallback_local_llm_api_key",
             "fallback_local_llm_api_key",
             "fallback_local_llm",
-            on_verify=_verify_with_base_url if on_verify else None,
+            on_verify=None,
             on_save=on_save,
             show_snackbar=show_snackbar,
+            show_status=False,
         )
+        fallback_local_llm_api_key_description = t("settings.local_llm.api_key.description")
         self._fallback_local_llm_api_key_helper = ft.Text(
-            t("settings.local_llm.api_key.description"),
+            fallback_local_llm_api_key_description,
             size=15,
             color=COLOR_NEUTRAL,
-            visible=False,
+            visible=bool(fallback_local_llm_api_key_description.strip()),
         )
         self._fallback_local_llm_extra_body = ft.TextField(
             label=t("settings.local_llm.extra_body"),

@@ -139,7 +139,9 @@ class ApiKeyField(ft.Row):
 
     def _handle_blur(self, e) -> None:
         """Handle blur event - save and verify."""
-        key = self.value
+        key = self.value.strip()
+        if key != self.value:
+            self._text_field.value = key
 
         if self._dirty:
             self._dirty = False

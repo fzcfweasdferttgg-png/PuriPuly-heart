@@ -55,7 +55,6 @@ class SecretsSectionMixin:
             (self._openai_compatible_key, self._openai_compatible_key.value, verified.is_verified("openai_compatible")),
             (self._fallback_api_key, self._fallback_api_key.value, verified.is_verified("backup_openai_compatible")),
             (self._local_llm_api_key, self._local_llm_api_key.value, verified.is_verified("local_llm")),
-            (self._fallback_local_llm_api_key, self._fallback_local_llm_api_key.value, verified.is_verified("fallback_local_llm")),
         ]
 
         for field, has_key, is_verified in field_map:

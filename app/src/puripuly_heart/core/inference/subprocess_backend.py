@@ -9,6 +9,7 @@ import json
 import logging
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator
@@ -342,6 +343,7 @@ class SubprocessSTTSession(STTBackendSession):
             return
 
         audio_b64 = base64.b64encode(samples.tobytes()).decode("ascii")
+        audio_ms = len(samples) * 1000.0 / 16000
 
         decode_cmd = {
             "cmd": "decode",
@@ -350,6 +352,8 @@ class SubprocessSTTSession(STTBackendSession):
             "is_final": True,
         }
 
+        logger.info("[InferenceWorker] Decode start: audio_ms=%.0f", audio_ms)
+        t0 = time.monotonic()
         try:
             async with self.backend._io_lock:
                 await self.backend._write_command(decode_cmd)
@@ -357,6 +361,8 @@ class SubprocessSTTSession(STTBackendSession):
         except SubprocessSTTError as exc:
             await self._events.put(exc)
             return
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.info("[InferenceWorker] Decode done: elapsed_ms=%.0f", elapsed_ms)
 
         status = resp.get("status")
         if status == "transcript":

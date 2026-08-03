@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from puripuly_heart.core.pipeline import text_merge
 from puripuly_heart.core.pipeline.channel_runtime import _MergeBuffer
+from puripuly_heart.domain.events import UIEvent, UIEventType
 from puripuly_heart.domain.models import Transcript, Translation
 
 if TYPE_CHECKING:

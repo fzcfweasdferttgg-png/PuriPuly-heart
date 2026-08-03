@@ -532,6 +532,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         if isinstance(event, STTFinalEvent):
             runtime = self._runtime_for_channel(event.channel)
             source = "Peer" if runtime.channel == "peer" else "Mic"
+            logger.info("[Pipeline][%s] STT final: '%s'", runtime.channel, event.transcript.text)
             if runtime.channel == "peer":
                 parent_utterance_id, peer_transcript = self._peer_logical_turn_transcript(
                     event.transcript
@@ -613,6 +614,12 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                         close_is_final=True,
                         finalize_latency=not peer_terminal_work_will_follow,
                     )
+                    if not self._overlay_translation_will_follow(runtime) and self._should_publish_to_chatbox(runtime):
+                        await self._enqueue_osc(
+                            transcript.utterance_id,
+                            transcript_text=transcript.text,
+                            translation_text=None,
+                        )
                 elif not peer_terminal_work_will_follow:
                     self._latency._finalize_latency_timeline(
                         runtime=self._runtime_for_channel(transcript.channel),
@@ -627,6 +634,12 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                     channel=transcript.channel,
                     is_final=True,
                 )
+                if self._should_publish_to_chatbox(runtime):
+                    await self._enqueue_osc(
+                        transcript.utterance_id,
+                        transcript_text=transcript.text,
+                        translation_text=None,
+                    )
 
     async def _handle_peer_final_transcript(
         self,
@@ -675,15 +688,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         await self._ensure_translation(transcript)
 
 
-
-
-
-
-    @staticmethod
-
-    @staticmethod
-
-    @staticmethod
 
 
 
@@ -817,6 +821,46 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         )
         runtime.translation_tasks[utterance_id] = task
         task.add_done_callback(lambda _t: runtime.translation_tasks.pop(utterance_id, None))
+
+    async def _translate_text(
+        self,
+        utterance_id: UUID,
+        text: str,
+        *,
+        record_latency: bool = True,
+    ) -> Translation:
+        """Translate text and return the Translation object. Used by speculative translation."""
+        if self.llm is None or self.translation_service is None:
+            raise RuntimeError("LLM or translation service not available")
+
+        runtime = self.self_runtime
+        if record_latency:
+            self._latency._record_latency_stage(
+                channel="self",
+                utterance_id=utterance_id,
+                stage="llm_request_start",
+            )
+
+        formatted_prompt, context_str, now, _applied_mode = self.translation_service.prepare_request(
+            text, runtime=runtime, self_rt=self.self_runtime, peer_rt=self.peer_runtime,
+        )
+        self.translation_service.remember_context(text, now, runtime=runtime)
+
+        translation = await self.translation_service.translate(
+            text, utterance_id=utterance_id, runtime=runtime,
+            self_rt=self.self_runtime, peer_rt=self.peer_runtime,
+            _prepared_prompt=formatted_prompt, _prepared_context=context_str,
+        )
+        if translation is None:
+            raise RuntimeError("LLM translation failed")
+
+        if record_latency:
+            self._latency._record_latency_stage(
+                channel="self",
+                utterance_id=utterance_id,
+                stage="llm_done",
+            )
+        return translation
 
     async def _translate_and_enqueue(
         self,

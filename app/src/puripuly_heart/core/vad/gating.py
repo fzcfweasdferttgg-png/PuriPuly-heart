@@ -176,7 +176,8 @@ class VadGating:
                 round(self._silence_run * (self.chunk_samples / self.sample_rate_hz) * 1000.0)
             )
             logger.info(
-                "[VAD] SpeechEnd: id=%s, trailing_silence_ms=%s",
+                "[VAD][%s] SpeechEnd: id=%s, trailing_silence_ms=%s",
+                self.diagnostic_label,
                 str(self._utterance_id)[:8],
                 trailing_silence_ms,
             )
@@ -254,7 +255,7 @@ class VadGating:
         start_prob = self._pending_start_prob if self._pending_start_prob is not None else prob
         buffered_chunks = list(self._pending_start_chunks)
         self._log_candidate("committed", buffered_chunks=len(buffered_chunks))
-        logger.info("[VAD] SpeechStart: id=%s, prob=%.2f", str(utterance_id)[:8], start_prob)
+        logger.info("[VAD][%s] SpeechStart: id=%s, prob=%.2f", self.diagnostic_label, str(utterance_id)[:8], start_prob)
         self._speech_chunk_count = len(buffered_chunks)
         self._speech_sample_count = sum(int(buffered.size) for buffered in buffered_chunks)
 
@@ -294,7 +295,8 @@ class VadGating:
             return
 
         logger.info(
-            "[VAD] SpeechEnd: id=%s, reason=max_duration, speech_audio_ms=%.1f",
+            "[VAD][%s] SpeechEnd: id=%s, reason=max_duration, speech_audio_ms=%.1f",
+            self.diagnostic_label,
             str(utterance_id)[:8],
             self._speech_sample_count * 1000.0 / self.sample_rate_hz,
         )

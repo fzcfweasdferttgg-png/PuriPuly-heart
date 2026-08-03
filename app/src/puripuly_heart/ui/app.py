@@ -905,7 +905,6 @@ class TranslatorApp:
         field_name_map = {
             "openai_compatible": "_openai_compatible_key",
             "backup_openai_compatible": "_fallback_api_key",
-            "fallback_local_llm": "_fallback_local_llm_api_key",
         }
         field_name = field_name_map.get(provider)
         if field_name is None:

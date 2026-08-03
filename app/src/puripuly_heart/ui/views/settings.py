@@ -1322,7 +1322,6 @@ class SettingsView(
 
         # Fallback local LLM card
         self._init_fallback_local_llm_controls(
-            on_verify=self._verify_key,
             on_save=self._on_secret_change,
             show_snackbar=lambda msg, bg: (
                 self.show_snackbar(msg, bg) if self.show_snackbar else None

@@ -269,9 +269,18 @@ def main() -> int:
                     continue
                 try:
                     audio_b64: str = str(data.get("audio_b64", ""))
+                    import time as _time
+                    t_b64 = _time.monotonic()
                     raw = base64.b64decode(audio_b64)
                     samples = np.frombuffer(raw, dtype=np.float32)
+                    t_b64_ms = (_time.monotonic() - t_b64) * 1000
+
+                    t_decode = _time.monotonic()
                     text = handle.decode(samples)
+                    t_decode_ms = (_time.monotonic() - t_decode) * 1000
+
+                    logger.info("[Worker] b64=%.0fms decode=%.0fms audio_ms=%.0f text=%r",
+                                t_b64_ms, t_decode_ms, len(samples) * 1000.0 / handle.sample_rate_hz, text)
                     _send_transcript(text, is_final=bool(data.get("is_final", True)))
                 except Exception as exc:
                     _send_error(f"decode failed: {exc}")

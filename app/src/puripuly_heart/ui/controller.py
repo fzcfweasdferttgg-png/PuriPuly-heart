@@ -931,6 +931,8 @@ class GuiController(
             )
             self.hub.peer_hangover_s = next_settings.desktop_audio.vad_hangover_ms / 1000.0
             self.hub.chatbox_include_source = next_settings.osc.chatbox_include_source
+            if self.hub.output_dispatcher is not None:
+                self.hub.output_dispatcher.chatbox_include_source = next_settings.osc.chatbox_include_source
             self._sync_effective_hub_flags(next_settings)
 
         if should_rebuild_llm:
