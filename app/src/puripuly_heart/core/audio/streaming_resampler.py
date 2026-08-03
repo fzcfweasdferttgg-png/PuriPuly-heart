@@ -1,3 +1,17 @@
+"""Streaming audio resampler — soxr-based with noop fast path.
+
+MonoFirstStreamingResampler converts multi-channel audio at any sample rate
+to mono at output_sample_rate_hz (default 16kHz for STT).
+
+Key design:
+- **MonoFirst**: reshapes to mono BEFORE resampling (mixdown_to_mono_f32).
+- **Noop path**: when input and output are both 16kHz, skips soxr entirely
+  (just does mono mixdown).  Avoids soxr import overhead.
+- **Lazy soxr import**: soxr is only imported when actually needed (not 16kHz).
+
+Called by audio/desktop_pipeline.py and app/headless_mic.py for peer STT resampling.
+"""
+
 from __future__ import annotations
 
 import importlib

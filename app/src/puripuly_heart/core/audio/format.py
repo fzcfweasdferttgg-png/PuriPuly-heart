@@ -1,15 +1,32 @@
-from __future__ import annotations
+"""PCM/float32 conversion utilities + re-export of AudioFrameF32.
 
-from dataclasses import dataclass
+AudioFrameF32 is defined in domain/audio_types.py and re-exported here
+for convenience.  Conversion functions operate on numpy arrays directly.
+
+Conversion functions:
+- reshape_audio_samples_f32: interleaved 1D → 2D (frames, channels)
+- mixdown_to_mono_f32: multi-channel → mono (mean)
+- float32_to_pcm16le_bytes: float32 [-1,1] → PCM16 little-endian bytes
+- pcm16le_bytes_to_float32: PCM16 bytes → float32 [-1,1]
+
+Called by audio/source.py, audio/desktop_source.py, audio/diagnostics.py,
+audio/streaming_resampler.py, audio/desktop_pipeline.py, vad/gating.py,
+inference/subprocess_backend.py, stt/controller.py.
+"""
+
+from __future__ import annotations
 
 import numpy as np
 
+from puripuly_heart.domain.audio_types import AudioFrameF32
 
-@dataclass(frozen=True, slots=True)
-class AudioFrameF32:
-    samples: np.ndarray
-    sample_rate_hz: int
-    channels: int = 1
+__all__ = [
+    "AudioFrameF32",
+    "reshape_audio_samples_f32",
+    "mixdown_to_mono_f32",
+    "float32_to_pcm16le_bytes",
+    "pcm16le_bytes_to_float32",
+]
 
 
 def reshape_audio_samples_f32(samples: np.ndarray, *, channels: int = 1) -> np.ndarray:

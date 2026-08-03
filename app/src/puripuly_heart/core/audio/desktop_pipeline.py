@@ -1,3 +1,17 @@
+"""Desktop peer audio pipeline — resample loopback to 16kHz mono for STT.
+
+Wraps a desktop audio source (loopback from desktop_source.py), resamples
+to target_sample_rate_hz (default 16kHz) mono using MonoFirstStreamingResampler.
+
+Key behavior:
+- Format change detection: raises if source format (rate/channels) changes
+  mid-stream (shouldn't happen for loopback, but defensive).
+- Resampler flush: yields remaining samples at end of stream.
+- Diagnostic logging: periodic RMS/peak metrics when detailed mode enabled.
+
+Called by ui/peer_runtime_manager.py, ui/controller.py, app/headless_mic.py.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -15,13 +29,6 @@ from puripuly_heart.core.audio.streaming_resampler import MonoFirstStreamingResa
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class DesktopPeerAudioFrame:
-    samples: np.ndarray
-    sample_rate_hz: int
-    channels: int = 1
-
-
 @dataclass(slots=True)
 class DesktopPeerPipeline:
     source: AudioSource
@@ -31,7 +38,7 @@ class DesktopPeerPipeline:
     _logged_formats: set[tuple[int, int]] = field(default_factory=set, init=False, repr=False)
     _diag_accumulated_audio_ms: float = field(default=0.0, init=False, repr=False)
 
-    async def frames(self) -> AsyncIterator[DesktopPeerAudioFrame]:
+    async def frames(self) -> AsyncIterator[AudioFrameF32]:
         resampler: MonoFirstStreamingResampler | None = None
         source_format: tuple[int, int] | None = None
 
@@ -116,8 +123,8 @@ class DesktopPeerPipeline:
                 f"zero_ratio={metrics.zero_ratio:.3f}"
             )
 
-    def _build_output_frame(self, samples: np.ndarray) -> DesktopPeerAudioFrame:
-        return DesktopPeerAudioFrame(
+    def _build_output_frame(self, samples: np.ndarray) -> AudioFrameF32:
+        return AudioFrameF32(
             samples=samples,
             sample_rate_hz=self.target_sample_rate_hz,
             channels=1,

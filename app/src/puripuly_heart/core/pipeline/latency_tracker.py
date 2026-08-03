@@ -1,3 +1,17 @@
+"""Per-utterance latency tracking from VAD speech_end to output.
+
+Records timestamps at each pipeline stage (speech_end, stt_final,
+llm_request_start, llm_first_chunk, llm_done, output) and emits:
+- **trace** — per-stage elapsed time (detailed log, one line per stage)
+- **summary** — E2E latency + dominant stage breakdown (basic log)
+- **cause metric** — only when dominant stage is abnormal or E2E exceeds threshold
+
+Timelines are keyed by (channel, utterance_id).  A "hangover" is added
+to E2E to account for rendering/display delay not captured by the pipeline.
+
+Called by pipeline.py and buffer_manager.py.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -19,6 +33,7 @@ from puripuly_heart.domain.models import ChannelId
 
 __all__ = ["LatencyTracker", "latency_key", "elapsed_latency_ms"]
 
+# Stage ordering for trace emission — each stage emits once per utterance.
 _LATENCY_TRACE_ORDER = (
     "speech_end",
     "stt_final",
@@ -29,11 +44,18 @@ _LATENCY_TRACE_ORDER = (
     "peer_overlay_first_emit",
     "peer_overlay_first_render",
 )
+# Output stages that trigger summary emission (one summary per utterance).
 _LATENCY_SUMMARY_OUTPUT_STAGES = {"self_chatbox_enqueue", "peer_overlay_first_emit"}
 
 
 @dataclass(slots=True)
 class _LatencyTimeline:
+    """Accumulates timestamps for one (channel, utterance) pair.
+
+    stage_times: maps stage name → clock timestamp (e.g. "speech_end" → 1234.5).
+    emitted_trace_points: tracks which trace lines were already emitted
+    (each stage fires at most once per utterance).
+    """
     channel: ChannelId
     stage_times: dict[str, float] = field(default_factory=dict)
     emitted_trace_points: set[str] = field(default_factory=set)
@@ -60,6 +82,10 @@ class LatencyTracker:
         emit_basic: Callable[[str], None],
         emit_detailed: Callable[[str], bool],
     ) -> None:
+        # hangover_s: display/render delay added to E2E to approximate
+        # wall-clock time the user actually sees the output.
+        # peer_hangover_s is separate because peer overlay has different
+        # rendering latency than self chatbox.
         self._timelines: dict[tuple[ChannelId, UUID], _LatencyTimeline] = {}
         self.clock = clock
         self.hangover_s = hangover_s
@@ -191,6 +217,10 @@ class LatencyTracker:
         channel: ChannelId,
         utterance_id: UUID,
     ) -> None:
+        # "Contract": called after every _record_latency_stage().
+        # Iterates all known stages and output stages, emitting trace/summary
+        # lines for any stage whose timestamp is now available and not yet emitted.
+        # This is a fire-and-forget sweep — missing stages are silently skipped.
         for trace_stage in _LATENCY_TRACE_ORDER:
             self._emit_latency_trace_if_ready(
                 channel=channel,
@@ -239,6 +269,9 @@ class LatencyTracker:
         output_utterance_id: UUID,
         source_utterance_ids: list[UUID],
     ) -> None:
+        # Used when merge buffer commits: the merged output utterance inherits
+        # speech_end/stt_final timestamps from the source utterances that were
+        # combined.  Takes the latest timestamp when multiple sources exist.
         output_timeline = self._get_latency_timeline(
             channel=channel,
             utterance_id=output_utterance_id,

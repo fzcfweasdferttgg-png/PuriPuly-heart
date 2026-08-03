@@ -1,3 +1,17 @@
+"""Desktop audio loopback source — Windows WASAPI peer STT input.
+
+Captures desktop audio (system sounds, music, other apps) via
+pyaudiowpatch (WASAPI loopback) and feeds it to the peer STT pipeline.
+
+Architecture: PyAudio callback (separate thread) → janus.Queue (sync→async
+bridge) → async frames() iterator consumed by audio loop.
+
+Windows-only: pyaudiowpatch is a Windows-specific fork of PyAudio that
+exposes WASAPI loopback endpoints.
+
+Called by peer_channel.py via run_audio_loop.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -115,6 +129,10 @@ class DesktopLoopbackAudioSource:
             continue_flag = getattr(pyaudio, "paContinue", 0)
             float32_format = getattr(pyaudio, "paFloat32")
 
+            # PyAudio callback — runs in a SEPARATE THREAD.
+            # Puts samples into janus sync_q (thread-safe).
+            # If queue is full → drop frame silently, increment counter.
+            # frames() on the async side will see gaps via _queue_drop_count.
             def _callback(in_data, _frame_count, _time_info, status_flags):
                 if self._closed:
                     return (None, continue_flag)
@@ -179,6 +197,8 @@ class DesktopLoopbackAudioSource:
         return self._last_callback_status
 
     async def frames(self) -> AsyncIterator[AudioFrameF32]:
+        # Async iterator consumed by run_audio_loop.
+        # None sentinel from close() signals end of stream.
         while True:
             item = await self._queue.async_q.get()
             if item is None:
@@ -267,6 +287,9 @@ def _get_default_loopback_device(manager: Any) -> DesktopLoopbackDevice | None:
 
 
 def _coerce_device_info(info: Any) -> DesktopLoopbackDevice:
+    # Normalizes device info dict from pyaudiowpatch.
+    # Field names vary across PyAudio versions (camelCase vs snake_case,
+    # input vs output channels for loopback devices), so we try all variants.
     if not isinstance(info, dict):
         raise TypeError("loopback device info must be a dictionary")
 

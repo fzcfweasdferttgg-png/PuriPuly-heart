@@ -1,3 +1,25 @@
+"""Runtime logging infrastructure — file, stream, and UI log sinks.
+
+Architecture:
+- **RotatingFileHandler** backed by a **QueueHandler + QueueListener** to
+  avoid blocking the main thread on disk I/O.  File writes happen in a
+  background thread managed by QueueListener.
+- **Reference counting**: multiple RuntimeLoggingSinks can share the same
+  file queue handler (e.g. root logger + session logger).  Refcount stored
+  as custom attribute on the handler; closes only when refcount reaches 0.
+- **Custom attributes on handlers**: metadata (log file path, file handler,
+  listener, closed flag, refcount, queue) stored via setattr on handler
+  objects — workaround for not subclassing standard logging handlers.
+- **Session loggers**: unique name per session, propagate=False to avoid
+  duplicate messages on root logger.
+- **emit modes**: BASIC (always), DETAILED (only when mode=DETAILED),
+  PERSISTED (bypasses queue, writes directly to file handler).
+
+Called by controller.py, main.py, wiring.py, event_bridge.py,
+diagnostics_manager.py.
+Re-exports latency formatting functions from domain.logging_types.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -101,6 +123,9 @@ def configure_main_logging(
     root_logger: logging.Logger | None = None,
     log_dir: Path,
 ) -> RuntimeLoggingSinks:
+    # Sets up: stream handler + QueueHandler→QueueListener→RotatingFileHandler.
+    # If a queue handler for the same log file already exists (e.g. from a
+    # previous session restart), reuses it and increments refcount.
     target_logger = root_logger or logging.getLogger()
     log_file = default_main_log_file(log_dir=log_dir)
 
@@ -253,6 +278,9 @@ class SessionRuntimeLoggingService:
         return True
 
     def emit_persisted(self, message: str, *, level: int = logging.INFO) -> None:
+        # Bypass queue — write directly to file handler.
+        # Used for critical messages that must survive process crash.
+        # Joins pending queue first to maintain chronological order.
         record = self._session_logger.makeRecord(
             self._session_logger.name,
             level,

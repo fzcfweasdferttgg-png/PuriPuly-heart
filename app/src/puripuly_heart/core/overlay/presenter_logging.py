@@ -1,3 +1,17 @@
+"""Overlay presenter logging — diagnostics recording and lazy emit.
+
+Mixin for OverlayPresenter.  Provides:
+- _emit_detailed / _emit_detailed_lazy: log messages (lazy = only build
+  string if logging is actually enabled)
+- _emit_turn_decision: structured decision logging for overlay turn lifecycle
+- _record_removed_entry: bridge between entry removal and tombstoning +
+  diagnostics recording.  This is where _remember_tombstone is called.
+- _record_visible_window_selection: logs which entries are visible/evicted
+
+Called by PresenterEntryMgmtMixin (via _record_removed_entry) and
+presenter_refresh_burst.py.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -32,6 +46,10 @@ class PresenterLoggingMixin:
         *,
         level: int = logging.INFO,
     ) -> bool:
+        # Lazy emit: only call build_message() if logging is actually enabled.
+        # Uses reflection to find emit_detailed_lazy/log_detailed_lazy on the
+        # owner object (if the callback is a bound method).  Falls back to
+        # eager call if no lazy variant found.
         runtime_log_detailed = self.runtime_log_detailed
         if runtime_log_detailed is None:
             return False
@@ -146,6 +164,9 @@ class PresenterLoggingMixin:
         return result.changed
 
     def _record_removed_entry(self, record: OverlayEntryRemovalRecord) -> None:
+        # Bridge between entry removal and diagnostics/tombstoning.
+        # Records diagnostics, emits turn decisions for expired/evicted entries,
+        # and calls _remember_tombstone to prevent late-arrival re-creation.
         key = record.key
         entry = record.entry
         effective_deadline, visible_deadline, translation_deadline = (

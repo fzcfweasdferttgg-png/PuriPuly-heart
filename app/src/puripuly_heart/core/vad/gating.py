@@ -1,3 +1,25 @@
+"""VAD gating — speech segment detection with debouncing and pre-roll.
+
+State machine fed by audio chunks from audio.source/desktop_source:
+
+  IDLE → (prob >= threshold) → PENDING_START → (commit_chunks reached) → IN_SPEECH
+  IN_SPEECH → (prob < threshold for hangover_chunks) → IDLE (SpeechEnd)
+  IN_SPEECH → (max_segment_ms reached) → IDLE (SpeechEnd, reason=max_duration)
+
+Key design:
+- **Debouncing**: SpeechStart is not emitted on the first above-threshold chunk.
+  Chunks are buffered until `start_commit_chunks` consecutive above-threshold
+  chunks accumulate.  This prevents false triggers from transient noise.
+- **Pre-roll**: ring buffer captures audio BEFORE speech detection.  When
+  SpeechStart fires, the pre-roll is attached so the STT engine doesn't
+  miss the first syllable.
+- **Two end conditions**: silence (hangover_chunks of low probability) or
+  max_duration (hard limit, used for peer channel to prevent GPU OOM).
+
+Peer VAD uses stricter settings: higher threshold, more debounce chunks,
+7s max segment.  See create_peer_vad_gating() at bottom.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -150,6 +172,7 @@ class VadGating:
 
         events: list[VadEvent] = []
 
+        # State: IDLE or PENDING_START
         if not self._in_speech:
             if prob >= self.speech_threshold:
                 events.extend(self._handle_pending_start(chunk, prob))
@@ -158,7 +181,7 @@ class VadGating:
             self._ring.append(chunk)
             return events
 
-        # in speech
+        # State: IN_SPEECH
         events.append(SpeechChunk(self._utterance_id, chunk=chunk.copy()))  # type: ignore[arg-type]
         self._speech_chunk_count += 1
         self._speech_sample_count += int(chunk.size)
@@ -170,6 +193,8 @@ class VadGating:
             self._ring.append(chunk)
             return events
 
+        # Silence accumulation — end speech after hangover_chunks consecutive
+        # below-threshold chunks.
         self._silence_run += 1
         if self._silence_run >= self.hangover_chunks:
             trailing_silence_ms = int(
@@ -222,6 +247,10 @@ class VadGating:
         self._speech_sample_count = 0
 
     def _handle_pending_start(self, chunk: np.ndarray, prob: float) -> list[VadEvent]:
+        # Debounce logic: buffer chunks until start_commit_chunks accumulate.
+        # First above-threshold chunk creates pending start with pre-roll from ring.
+        # Subsequent chunks are buffered.  When commit threshold is reached,
+        # emit SpeechStart + all buffered SpeechChunks at once.
         if self._pending_start_id is None:
             self._pending_start_id = uuid.uuid4()
             self._pending_start_pre_roll = self._ring.get_last_samples(self._ring.capacity_samples)
@@ -374,10 +403,12 @@ class VadGating:
         return False
 
 
+# Peer VAD settings — stricter than self to avoid false triggers on
+# desktop audio loopback (system sounds, music, etc.).
 PEER_VAD_SPEECH_THRESHOLD = 0.5
 PEER_VAD_START_DEBOUNCE_CHUNKS = 3
 PEER_VAD_START_COMMIT_CHUNKS = 3
-PEER_MAX_SEGMENT_MS = 7000
+PEER_MAX_SEGMENT_MS = 7000  # 7s hard limit to prevent GPU OOM on long sessions
 
 
 def create_peer_vad_gating(

@@ -17,7 +17,25 @@ if TYPE_CHECKING:
 
 
 class PresenterEntryMgmtMixin:
-    """Entry lifecycle management: creation, expiration, tombstoning, visibility."""
+    """Entry lifecycle management: creation, expiration, tombstoning, visibility.
+
+    Entry lifecycle:
+      created → visible (ever_visible=True) → expired OR displaced → tombstoned
+
+    Key mechanisms:
+    - **Tombstoning**: removed entries are stored in _terminal_registry to
+      prevent re-creation from late-arriving STT transcripts.
+    - **Expiration**: async tasks sleep until TTL, then remove the entry.
+      _expiration_revision ensures stale tasks become no-ops when deadline changes.
+    - **Live turn tracking**: _live_self_turn_key / _live_peer_turn_key track
+      the currently active turn per channel (self/peer).
+    - **Displacement**: newer turns can evict older finalized entries that
+      are no longer visible.
+
+    TTL constants (from presenter_constants):
+    - VISIBLE_TTL_SECONDS, LATE_ARRIVAL_WINDOW_SECONDS,
+      SELF_TRANSLATION_MIN_VISIBLE_SECONDS
+    """
 
     def _entry_key(self, channel: str | None, utterance_id: UUID | None) -> tuple[str, UUID]:
         if channel not in ("self", "peer"):
@@ -136,6 +154,8 @@ class PresenterEntryMgmtMixin:
         return self._appearance_seq
 
     def _remember_tombstone(self, key: tuple[str, UUID], closed_seq: int) -> None:
+        # Store removed entry key to prevent late-arrival re-creation.
+        # LRU eviction: popitem(last=False) removes oldest entry when limit exceeded.
         self._terminal_registry.pop(key, None)
         self._terminal_registry[key] = closed_seq
         while len(self._terminal_registry) > _CLOSED_TOMBSTONE_LIMIT:
@@ -146,6 +166,9 @@ class PresenterEntryMgmtMixin:
         key: tuple[str, UUID],
         entry: OverlayLogicalTurnEntry,
     ) -> None:
+        # Cancel any existing expiration task, then create a new one.
+        # expiration_revision ensures the old async task (if still sleeping)
+        # becomes a no-op when it wakes up — it checks revision mismatch.
         self._cancel_expiration_task(key)
         if self._entry_expiration_deadline(entry) is None:
             return

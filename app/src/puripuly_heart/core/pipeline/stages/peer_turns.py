@@ -10,7 +10,20 @@ if TYPE_CHECKING:
 
 
 class PeerTurnsMixin:
-    """Peer logical-turn bookkeeping extracted from Pipeline."""
+    """Peer logical-turn bookkeeping extracted from Pipeline.
+
+    A parent VAD segment can produce multiple STT final transcripts
+    (e.g. long utterance split by STT engine).  Each final transcript
+    becomes a "logical turn" with its own peer_turn_id, linked back to
+    the parent_utterance_id.  The parent is cleaned up only when ALL
+    its logical turns are completed AND the parent's speech has ended.
+
+    State dicts:
+    - _peer_turn_parent_ids: child_turn_id → parent_utterance_id
+    - _peer_parent_turn_ids: parent_utterance_id → set of child_turn_ids
+    - _peer_completed_turn_ids: set of child_turn_ids that are done
+    - _peer_parent_speech_end_times: parent_utterance_id → speech end timestamp
+    """
 
     # ------------------------------------------------------------------
     # Peer logical turn state management
@@ -94,6 +107,8 @@ class PeerTurnsMixin:
         *,
         preserve_parent_speech_end_time: bool = False,
     ) -> None:
+        # Cleanup condition: all children completed AND parent speech ended.
+        # If no children exist yet, cleanup immediately (orphan parent).
         peer_turn_ids = self._peer_parent_turn_ids.get(parent_utterance_id)
         if not peer_turn_ids:
             self._clear_peer_parent_vad_bookkeeping(
@@ -125,6 +140,9 @@ class PeerTurnsMixin:
         )
 
     def _peer_logical_turn_transcript(self, transcript: Transcript) -> tuple[UUID, Transcript]:
+        # Entry point: creates a new logical turn from a peer STT final transcript.
+        # Returns (parent_utterance_id, new_transcript_with_peer_turn_id).
+        # The new Transcript has a fresh UUID but same text/timestamp as original.
         parent_utterance_id = transcript.utterance_id
         peer_turn_id = uuid4()
         self._register_peer_logical_turn(

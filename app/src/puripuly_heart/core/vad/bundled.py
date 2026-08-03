@@ -1,3 +1,13 @@
+"""Extract bundled Silero VAD ONNX model from package data to a target path.
+
+The model is shipped inside the frozen package (data/vad/silero_vad.onnx).
+ensure_silero_vad_onnx() copies it to target_path on first call; subsequent
+calls are no-ops (existence check).  Uses atomic write (tmp + replace) to
+avoid partial files on crash.
+
+Called by app/headless_mic.py and ui/controller.py.
+"""
+
 from __future__ import annotations
 
 import shutil

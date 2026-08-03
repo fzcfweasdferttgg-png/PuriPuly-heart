@@ -1,3 +1,10 @@
+"""Clock abstraction — monotonic time for latency tracking.
+
+SystemClock uses time.monotonic (not wall clock) to avoid NTP jumps.
+FakeClock is for testing — manual time control via advance().
+Re-exports Clock Protocol from ports.clock.
+"""
+
 from __future__ import annotations
 
 import time
@@ -8,13 +15,13 @@ from puripuly_heart.ports.clock import Clock
 __all__ = ["Clock", "SystemClock", "FakeClock"]
 
 
-class SystemClock:
+class SystemClock(Clock):
     def now(self) -> float:
         return time.monotonic()
 
 
 @dataclass(slots=True)
-class FakeClock:
+class FakeClock(Clock):
     _now: float = 0.0
 
     def now(self) -> float:

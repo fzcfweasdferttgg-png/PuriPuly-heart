@@ -1,3 +1,17 @@
+"""Translation context for LLM prompts.
+
+Gathers recent (source → translated) pairs from channel history and formats
+them into a string injected into the translation prompt.  Two modes:
+
+- "local"   — context from the requesting channel only (self).
+- "integrated" — merged self + peer context, sorted by timestamp, capped at
+  ``integrated_max_entries``.  Used when peer translation is enabled so the LLM
+  sees cross-speaker context.
+
+Called by ``TranslationService.prepare_request``; the formatted string becomes
+part of the system prompt sent to the LLM.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,8 +26,10 @@ ContextMode = Literal["local", "integrated"]
 @dataclass(slots=True)
 class ContextResolver:
     clock: Clock = SystemClock()
+    # Local: tighter limits (self-channel only, less context needed).
     local_time_window_s: float = 30.0
     local_max_entries: int = 3
+    # Integrated: wider window + more entries (cross-speaker context helps LLM).
     integrated_time_window_s: float = 40.0
     integrated_max_entries: int = 4
 
@@ -61,6 +77,8 @@ class ContextResolver:
         other_source_language: str | None = None,
         other_target_language: str | None = None,
     ) -> tuple[str, ContextMode]:
+        # Decision tree: integrated mode requires both requested AND enabled.
+        # Falls back to local when peer translation is off or mode is "local".
         if requested_mode != "integrated" or not peer_translation_enabled:
             return self.resolve_local(
                 runtime=runtime,
@@ -101,6 +119,11 @@ class ContextResolver:
         other_source_language: str | None = None,
         other_target_language: str | None = None,
     ) -> list[tuple[ChannelRuntime, ContextEntry]]:
+        # Cross-channel merge: collect entries from self + peer runtimes,
+        # sort by timestamp, keep most recent integrated_max_entries.
+        # Note: get_valid_context already slices to max_entries internally,
+        # so combined may have up to 2×max_entries before the final slice.
+        # other_source/target_language default to self languages if not provided.
         combined: list[tuple[ChannelRuntime, ContextEntry]] = []
         other_source_language = (
             source_language if other_source_language is None else other_source_language

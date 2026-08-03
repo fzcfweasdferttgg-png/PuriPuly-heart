@@ -1,3 +1,12 @@
+"""Soxr runtime validation — DLL availability for frozen Windows builds.
+
+Resolves and validates that the soxr resampling library's extension module
+and sibling DLL are present.  Only needed for frozen (PyInstaller) builds
+on Windows — returns None for normal Python environments.
+
+Called by app/soxr_runtime_check.py and main.py at startup.
+"""
+
 from __future__ import annotations
 
 import importlib.util

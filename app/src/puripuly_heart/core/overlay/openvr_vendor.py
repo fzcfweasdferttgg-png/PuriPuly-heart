@@ -1,3 +1,13 @@
+"""Vendored OpenVR DLL validation — SHA256 checksum and bundle integrity.
+
+Validates that the bundled openvr_api.dll (from ValveSoftware/openvr v2.15.6)
+is authentic by checking SHA256 against a hardcoded expected hash.
+
+Bundle structure: third_party/openvr/win64/openvr_api.dll + LICENSE + README.md.
+
+Called by overlay/process.py before loading the OpenVR runtime.
+"""
+
 from __future__ import annotations
 
 import hashlib

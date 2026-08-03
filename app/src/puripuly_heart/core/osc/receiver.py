@@ -1,3 +1,19 @@
+"""VRChat OSC receiver — mute/unmute state via OSC protocol.
+
+Listens on UDP port 9001 (default) for /avatar/parameters/MuteSelf from
+VRChat.  Updates VrcMicState which is consumed by audio/gate.py to
+zero out microphone audio when muted.
+
+Key behavior:
+- **Mute delay**: unmute (is_muted=False) is applied immediately, but mute
+  (is_muted=True) is delayed by mute_delay_s (0.4s).  This prevents audio
+  leaking during VRChat state transitions where mute toggles briefly.
+- **Cancel on new message**: if a new OSC message arrives before the delay
+  expires, the pending mute task is cancelled and replaced.
+
+Called by ui/controller.py and app/headless_mic.py.
+"""
+
 from __future__ import annotations
 
 import asyncio

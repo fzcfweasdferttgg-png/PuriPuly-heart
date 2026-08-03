@@ -1,3 +1,25 @@
+"""WebSocket bridge between PuriPuly-heart and SteamVR overlay.
+
+The overlay (C++/ImGui) connects to this WebSocket server, authenticates
+with a session token, then receives snapshot updates and runtime controls.
+
+Architecture:
+  PuriPuly-heart → OverlayBridge.replace_snapshot() → broadcast JSON
+                → all authenticated WebSocket clients (overlay)
+
+Key design:
+- **Single client**: session token is consumed after first auth (_token_consumed).
+  Only one overlay client can connect per bridge instance.
+- **Snapshot broadcasting**: replace_snapshot() pushes to all authenticated
+  connections.  Stale connections (failed sends) are removed automatically.
+- **Heartbeat**: periodic heartbeat keeps the WebSocket connection alive.
+- **Runtime controls**: logging mode and desktop runtime controls are sent
+  as separate message types to the overlay.
+
+Called by ui/overlay_lifecycle.py (instantiation) and ui/controller.py
+(owns the bridge instance).
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -129,6 +151,8 @@ class OverlayBridge:
         return self._snapshot
 
     async def _handle_connection(self, connection: ServerConnection) -> None:
+        # Connection lifecycle: auth → send snapshot + runtime controls →
+        # receive messages until disconnect.  Token consumed on first auth.
         authenticated = False
         connection_id = self._connection_id(connection)
         try:

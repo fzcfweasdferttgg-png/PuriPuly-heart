@@ -1,3 +1,23 @@
+"""Audio diagnostics — metrics, fault injection, and device snapshots.
+
+Three concerns:
+1. **Metrics**: compute_audio_frame_metrics() computes RMS, peak, zero_ratio
+   per frame (used by VAD diagnostics and capture logging).
+2. **Fault injection**: AudioFaultProfile enum + apply_audio_fault_profile()
+   simulate audio problems (silent channel, attenuation, noise, dropouts)
+   for testing the STT pipeline without real hardware issues.
+3. **Device snapshots**: format_sounddevice_snapshot_lines() and
+   format_pyaudiowpatch_snapshot_lines() enumerate audio devices for
+   diagnostic logging at startup.
+
+DiagnosticAudioSource wraps an AudioSource, adds fault injection +
+periodic metric logging.  All _safe_* methods suppress exceptions to
+never crash the audio pipeline.
+
+Called by ui/diagnostics_manager.py, ui/controller.py, vad/gating.py,
+app/headless_mic.py, ui/mic_test_manager.py.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -25,6 +45,15 @@ _VIRTUAL_AUDIO_KEYWORDS = (
 
 
 class AudioFaultProfile(StrEnum):
+    """Fault types injected into audio stream for pipeline testing.
+
+    NONE: pass-through (no fault).
+    CAPTURE_SILENT_FIRST_CHANNEL: mutes channel 0 (tests mono mixdown).
+    CAPTURE_ATTENUATE_40DB: reduces amplitude 100x (tests low-volume handling).
+    CAPTURE_NEAR_SILENCE_NOISE: injects very low sine noise (tests VAD idle).
+    CAPTURE_BUFFER_DROPOUTS: zeroes every other chunk (tests dropout resilience).
+    STT_INPUT_LOW_SNR_VAD_PASS: no-op at capture, injected at STT input.
+    """
     NONE = "none"
     CAPTURE_SILENT_FIRST_CHANNEL = "capture_silent_first_channel"
     CAPTURE_ATTENUATE_40DB = "capture_attenuate_40db"
@@ -117,6 +146,8 @@ def compute_audio_frame_metrics(frame: AudioFrameF32) -> AudioFrameMetrics:
 
 
 def _virtual_hint(name: str) -> bool:
+    """Detect virtual audio devices (SteamVR, Oculus, Voicemeeter, etc.)
+    by keyword matching on device name.  Used in diagnostic snapshots."""
     lowered = name.lower()
     return any(keyword in lowered for keyword in _VIRTUAL_AUDIO_KEYWORDS)
 

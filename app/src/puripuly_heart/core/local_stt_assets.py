@@ -1,3 +1,23 @@
+"""Local STT model asset management — manifests, validation, installation state.
+
+Two manifest types:
+- **Asset manifest** (LocalSTTAssetManifest): describes what files a model needs,
+  their checksums, and download sources (HuggingFace/ModelScope).  Bundled in
+  the package at data/models/*.manifest.json.
+- **Installed manifest** (InstalledLocalSTTManifest): records what's actually
+  installed on disk (model_id, engine, source, revision).  Written by the
+  installer after successful download.
+
+Validation chain:
+  validate_local_stt_install() → dir exists → installed manifest valid →
+  all files present → checksums match
+
+Model registry: LOCAL_STT_MANIFEST_REGISTRY maps model_id → manifest path.
+Provider mapping: _PROVIDER_BASE_MODEL maps provider name → model_id.
+
+Called by app/wiring.py, ui/controller.py, ui/provider_signatures.py.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -283,6 +303,7 @@ def default_local_stt_installed_manifest_path(model_dir: Path | None = None, *, 
 
 
 def default_local_stt_source_for_locale(locale: str | None) -> str:
+    # Chinese locales → ModelScope (faster in China), others → HuggingFace.
     normalized = (locale or "").strip().replace("_", "-").lower()
     if normalized in {"zh-cn", "zh-hk", "zh-hant-hk"}:
         return "modelscope"
@@ -411,6 +432,10 @@ def validate_local_stt_install(
     data_dir: Path | None = None,
     manifest: LocalSTTAssetManifest | None = None,
 ) -> InstalledLocalSTTManifest:
+    # Full validation chain: dir exists → installed manifest valid →
+    # all files present → checksums match.  Raises on any failure.
+    # Contrast with validate_local_stt_runtime_ready() which skips
+    # installed manifest and checksums (for launcher-level checks).
     resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     resolved_manifest = manifest or load_local_stt_asset_manifest()
 

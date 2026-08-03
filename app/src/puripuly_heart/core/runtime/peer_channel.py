@@ -1,3 +1,19 @@
+"""Peer STT channel lifecycle — start/stop/restart with generation guard.
+
+Manages the peer audio pipeline: STT provider + audio source + VAD engine.
+Uses a **generation counter** pattern to prevent stale async operations
+from corrupting current state:
+
+1. apply_policy() increments _generation on every state transition
+2. Every async step in _start_generation checks _is_superseded(generation)
+3. If superseded → close resources silently, don't update state
+
+This prevents race conditions when settings change rapidly (e.g. user
+toggles peer translation on/off quickly while STT is still initializing).
+
+Called by controller.py and peer_runtime_manager.py.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -21,6 +37,8 @@ __all__ = [
 
 @dataclass(slots=True)
 class _PeerHubVadSink:
+    """Adapter: routes peer VAD events to Pipeline.handle_peer_vad_event()
+    instead of handle_vad_event().  Passed to run_audio_loop as the sink."""
     hub: Pipeline
 
     async def handle_vad_event(self, event) -> None:  # noqa: ANN001
@@ -70,6 +88,10 @@ class PeerChannelRuntime:
         return self._signature
 
     async def apply_policy(self, *, config: PeerRuntimeConfig, desired_active: bool) -> None:
+        # Decision tree under lock:
+        # 1. No-op: already running with same config → just update config
+        # 2. Stop: desired_active=False → teardown
+        # 3. Restart: config changed or not running → start new generation
         async with self._lock:
             if (
                 desired_active
@@ -85,11 +107,6 @@ class PeerChannelRuntime:
             self._desired_active = desired_active
             if not desired_active:
                 self._state = PeerChannelRuntimeState.STOPPING
-            elif (
-                self._signature == config.runtime_signature
-                and self._state == PeerChannelRuntimeState.RUNNING
-            ):
-                return
             else:
                 self._state = PeerChannelRuntimeState.STARTING
 
@@ -118,6 +135,9 @@ class PeerChannelRuntime:
         await self._teardown_resources(target_state=PeerChannelRuntimeState.STOPPED)
 
     async def _start_generation(self, generation: int, config: PeerRuntimeConfig) -> None:
+        # Resource creation lifecycle: STT → source → VAD → loop.
+        # Each step checks _is_superseded to bail early if a newer
+        # generation was requested while we were creating resources.
         try:
             stt = self._stt_factory(
                 config,
@@ -302,4 +322,7 @@ class PeerChannelRuntime:
         await self._close_if_possible(stt)
 
     def _is_superseded(self, generation: int) -> bool:
+        # Generation guard: returns True if a newer config was applied
+        # or if peer was deactivated.  Used after every await point
+        # to detect stale operations that should be abandoned.
         return generation != self._generation or not self._desired_active

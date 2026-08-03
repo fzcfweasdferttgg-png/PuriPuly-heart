@@ -1,3 +1,26 @@
+"""STT inference via subprocess — isolates GPU-heavy models in a child process.
+
+Spawns worker.py in a separate Python process, communicates via stdin/stdout
+JSON lines.  This isolates GPU memory (GGUF/Vulkan) from the main process
+and allows clean restart if the model crashes.
+
+Architecture:
+  Main process → stdin JSON cmd → worker.py → stdout JSON response
+
+Lifecycle:
+  _ensure_worker() → _start_worker() → wait "ready" → send "init" → wait "ready"
+  send_audio_f32() → buffer → on_speech_end() → decode queue → "decode" cmd
+
+Key design:
+- **Job Object**: subprocess assigned to Windows Job Object for automatic
+  cleanup when parent process dies.
+- **IO lock**: _io_lock serializes stdin write → stdout read pairs.
+- **Decode queue**: maxsize=10, drops utterances when full (prevents OOM).
+- **Graceful shutdown**: stdin.close → wait(2s) → kill → taskkill /F.
+
+Called by app/wiring.py (creates backend instances for STT providers).
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -91,6 +114,9 @@ class SubprocessSTTBackend(STTBackend):
             await self._start_worker()
 
     async def _start_worker(self) -> None:
+        # Subprocess protocol: spawn → wait "ready" → send "init" → wait "ready".
+        # Two-phase init: first "ready" = process started, second = model loaded.
+        # Timeouts: 30s for start, 120s for model load (can be slow on first run).
         worker_script = str(
             Path(__file__).resolve().parent.parent.parent / "adapters" / "inference" / "worker.py"
         )
@@ -241,6 +267,8 @@ class SubprocessSTTBackend(STTBackend):
 
     @staticmethod
     def _terminate_process(proc: subprocess.Popen) -> None:
+        # Graceful shutdown chain: stdin.close → wait(2s) → kill → taskkill /F.
+        # Each step gives the process a chance to exit cleanly.
         try:
             proc.stdin.close()  # type: ignore[union-attr]
         except Exception:

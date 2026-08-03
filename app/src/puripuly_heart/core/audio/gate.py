@@ -1,3 +1,15 @@
+"""VRChat microphone audio gate — mute/unmute based on OSC receiver state.
+
+VrcMicAudioGate zeros out audio samples when VRChat reports the user is
+muted (via OSC).  Three mute states:
+- muted=True → zero audio
+- muted=False → pass through
+- muted=None (unknown) → zero audio for initial_sync_grace_s seconds,
+  then pass through (prevents unmuted audio leaking before first OSC status)
+
+Called by app/headless_mic.py and ui/controller.py.
+"""
+
 from __future__ import annotations
 
 import time

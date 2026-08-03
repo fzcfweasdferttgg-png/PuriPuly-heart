@@ -1,10 +1,18 @@
 from __future__ import annotations
 
-"""Text merge utility functions extracted from Pipeline.
+"""Text merge utilities for streaming STT/translation overlap resolution.
 
-These are pure (or near-pure) functions for merging overlapping text
-segments produced by streaming translation.  They were originally
-private methods on Pipeline; the logic is preserved verbatim.
+Called by buffer_manager and overlay_helpers via Pipeline delegate methods
+(self._merge_text, self._merge_with_overlap, self._soft_reuse_mode).
+Delegates exist in pipeline.py because callers access them through `self`.
+
+Key invariant: _merge_with_overlap tries exact suffix-prefix first,
+then falls back to _relaxed_overlap_merge (fuzzy, ≥3 char threshold).
+If both fail, concatenates with space heuristic (_needs_space).
+
+_soft_reuse_mode decides whether a speculative translation can be reused
+for the final output without re-translating: "exact" or "soft_boundary"
+(after stripping boundary punctuation/spaces).
 """
 
 from typing import TYPE_CHECKING
@@ -42,6 +50,13 @@ def _strip_leading_boundary(text: str) -> tuple[str, int]:
 # ── core merge functions ─────────────────────────────────────────────
 
 def _relaxed_overlap_merge(existing: str, addition: str) -> str | None:
+    """Fuzzy overlap merge — finds longest suffix-prefix match ≥3 chars.
+
+    Algorithm: strip boundary chars from both sides, find longest overlap,
+    then splice. Returns None if overlap < _RELAXED_OVERLAP_MIN_CHARS (3).
+    This handles streaming STT where segments may differ by punctuation
+    or partial word boundaries.
+    """
     if not existing or not addition:
         return None
 
@@ -72,6 +87,11 @@ def _relaxed_overlap_merge(existing: str, addition: str) -> str | None:
 
 
 def _merge_with_overlap(existing: str, addition: str) -> str:
+    """Merge two text segments, resolving overlap.
+
+    Strategy order: exact containment → exact suffix-prefix →
+    fuzzy _relaxed_overlap_merge (≥3 chars) → space heuristic.
+    """
     if not existing:
         return addition
     if not addition:
@@ -99,9 +119,10 @@ def _merge_with_overlap(existing: str, addition: str) -> str:
 def _merge_text(
     parts: list[str],
     *,
-    merge_buffer=None,
+    merge_buffer=None,  # unused — kept for API compatibility with callers
     low_latency_mode: bool = False,
 ) -> str:
+    """Merge a list of text parts into one string, resolving overlaps pairwise."""
     merged = ""
     for part in parts:
         part_clean = part.strip()
@@ -137,6 +158,12 @@ def _soft_reuse_mode(
     low_latency_mode: bool = False,
     low_latency_merge_gap_ms: int = 600,
 ) -> str | None:
+    """Check if speculative translation can be reused for final output.
+
+    Returns "exact" if texts match, "soft_boundary" if they match after
+    stripping boundary punctuation/spaces, None if re-translation needed.
+    Used by buffer_manager and overlay_helpers to avoid redundant LLM calls.
+    """
     if spec_text is None:
         return None
     if spec_text == final_text:
@@ -154,6 +181,8 @@ def _soft_reuse_mode(
 # ── token-level helpers ──────────────────────────────────────────────
 
 def _needs_space(left: str, right: str) -> bool:
+    """Heuristic: insert space between ASCII alphanumeric tokens, or when
+    either side already contains spaces (multi-word context)."""
     if not left or not right:
         return False
     left_ch = left[-1]

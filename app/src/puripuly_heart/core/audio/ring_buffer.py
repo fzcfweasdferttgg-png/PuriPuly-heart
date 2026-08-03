@@ -1,3 +1,12 @@
+"""Circular buffer for float32 audio samples — pre-roll capture for VAD.
+
+Fixed-capacity ring buffer.  append() overwrites oldest samples when full.
+get_last_samples() returns the most recent N samples, handling wrap-around.
+
+Used by vad/gating.py to capture audio BEFORE speech detection (pre-roll),
+so the STT engine doesn't miss the first syllable.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

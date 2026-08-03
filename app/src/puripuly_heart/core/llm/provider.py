@@ -1,3 +1,12 @@
+"""LLM provider with concurrency limiter.
+
+SemaphoreLLMProvider wraps any LLMProvider and gates translate() calls
+through an asyncio.Semaphore — limits concurrent LLM requests to avoid
+API rate limits or local GPU memory exhaustion.
+
+Re-exports LLMProvider Protocol from ports.llm.
+"""
+
 from __future__ import annotations
 
 import asyncio

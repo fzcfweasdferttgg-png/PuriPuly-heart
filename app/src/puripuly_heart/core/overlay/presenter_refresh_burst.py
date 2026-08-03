@@ -1,3 +1,21 @@
+"""Overlay presentation refresh bursts — periodic re-publishing after updates.
+
+When a new translation arrives, the overlay entry is re-published
+periodically for PEER_PRESENTATION_REFRESH_BURST_SECONDS to ensure the
+SteamVR overlay renders the updated content.  Two independent burst types:
+
+- **Peer burst**: triggered by peer translation events, refreshes the
+  peer overlay block until deadline or content changes.
+- **Self burst**: triggered by self transcript/translation events, refreshes
+  the self overlay block.  More complex — tracks cancel reasons and
+  cleanup publish counts for diagnostic logging.
+
+Both use async tasks with done callbacks for cleanup.  Content signature
+comparison prevents unnecessary bursts when content hasn't changed.
+
+Called by overlay/presenter.py (event handling).
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -162,6 +180,9 @@ class PresenterRefreshBurstMixin:
         )
 
     async def _run_peer_presentation_refresh_burst(self, key: tuple[str, UUID]) -> None:
+        # Burst loop: re-publish the overlay block at regular intervals
+        # until deadline, disabled, target changed, or content gone.
+        # Each tick calls _publish_if_changed to push to SteamVR overlay.
         deadline = self.clock.now() + PEER_PRESENTATION_REFRESH_BURST_SECONDS
         try:
             while self.peer_presentation_refresh_burst and self.clock.now() < deadline:

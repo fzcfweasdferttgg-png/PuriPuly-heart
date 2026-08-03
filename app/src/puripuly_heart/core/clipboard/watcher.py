@@ -1,3 +1,21 @@
+"""Windows clipboard watcher — event-driven Unicode text monitoring.
+
+Creates a hidden message-only window (HWND_MESSAGE) in a dedicated daemon
+thread, registers as a clipboard format listener via Win32 API, and calls
+on_text callback when new Unicode text appears.
+
+Architecture:
+  Main thread → start() → spawns daemon thread → creates hidden HWND
+  Daemon thread: Win32 message loop (GetMessageW) → WM_CLIPBOARDUPDATE
+                 → read clipboard text → call on_text callback
+  Main thread → stop() → PostMessageW(WM_CLIPBOARD_WATCHER_STOP) → thread exits
+
+All Win32 API calls use ctypes with explicit argtypes/restype declarations
+in _configure_win32_api() to avoid silent type mismatches.
+
+Called by clipboard_manager.py in the UI layer.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -78,6 +96,8 @@ class WindowsClipboardWatcher:
             daemon=True,
         )
         self._thread.start()
+        # Wait for daemon thread to finish Win32 initialization.
+        # If timeout → thread hung during CreateWindowExW/AddClipboardFormatListener.
         if not self._ready.wait(timeout=2.0):
             self._stop_requested.set()
             self._post_stop_message(self._thread)
@@ -200,6 +220,10 @@ class WindowsClipboardWatcher:
         user32.GetClipboardData.restype = wintypes.HANDLE
 
     def _run_message_loop(self) -> None:
+        # Runs in daemon thread. Creates a hidden message-only window,
+        # registers as clipboard listener, then enters Win32 message loop.
+        # _ready.set() signals main thread that initialization succeeded.
+        # On error before _ready.set(), stores exception in _start_error.
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         hwnd = None

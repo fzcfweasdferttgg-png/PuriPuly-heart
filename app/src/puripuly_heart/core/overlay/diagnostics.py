@@ -1,3 +1,18 @@
+"""Overlay diagnostics recorder — bounded event storage for debugging.
+
+Stores overlay events (process, presenter, bridge, hub) in bounded deques.
+Each category has a max size (e.g. _PROCESS_EVENT_LIMIT=50) — oldest events
+are evicted when the limit is reached.
+
+Most record_* methods are stubs (return {}) — event recording is disabled
+for performance.  Only record_child_line and the internal _append/_event
+methods actually store data.  dump_failure is also a stub.
+
+Called by ui/overlay_lifecycle.py (instantiation) and ui/controller.py
+(owns the recorder instance).  Methods called by overlay/bridge.py,
+overlay/presenter.py, overlay/presenter_logging.py via the instance.
+"""
+
 from __future__ import annotations
 
 import time

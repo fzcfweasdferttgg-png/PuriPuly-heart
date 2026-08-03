@@ -1,3 +1,19 @@
+"""Per-channel runtime state for the pipeline.
+
+Each ChannelRuntime (self / peer) holds mutable per-channel data:
+utterances, translation tasks, source tracking, translation history,
+and the low-latency merge buffer.
+
+**Alias mechanism**: when ``alias_target`` is set (to a Pipeline instance),
+writing any field listed in ``_RUNTIME_TO_PIPELINE_ALIAS_FIELDS`` on this
+runtime automatically writes the corresponding field on the Pipeline via
+``__setattr__``.  This keeps Pipeline's own fields and ChannelRuntime's
+fields in sync without explicit copy calls.
+
+Called by pipeline.py (creates two instances: ``self_runtime`` and
+``peer_runtime``), buffer_manager.py, overlay_helpers.py, context.py.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +22,9 @@ from uuid import UUID
 
 from puripuly_heart.domain.models import ChannelId, UtteranceBundle
 
+# Maps ChannelRuntime field names → Pipeline field names.
+# When a listed field is set on ChannelRuntime, __setattr__ mirrors it
+# to alias_target (the Pipeline) automatically.
 _RUNTIME_TO_PIPELINE_ALIAS_FIELDS = {
     "stt": "stt",
     "stt_task": "_stt_task",
@@ -38,6 +57,22 @@ class ContextEntry:
 
 @dataclass(slots=True)
 class _MergeBuffer:
+    """Low-latency merge buffer — state machine for speculative translation.
+
+    States tracked by this buffer:
+    1. **Speculative translation** (spec_task / spec_text / spec_translation):
+       runs LLM in parallel with STT streaming.  If final text matches
+       speculative text (via _soft_reuse_mode), the translation is reused.
+    2. **Resume** (resume_pending / resume_confirmed / resume_chunk_count):
+       detects when a speaker pauses and resumes within the same logical turn.
+       After 3 chunks, resume is confirmed and the buffer continues.
+    3. **Awaiting VAD** (awaiting_vad_end / awaiting_vad_timeout_task):
+       waiting for VAD SpeechEnd after STT final transcript.
+    4. **Finalize wait** (finalize_wait_task / finalize_wait_started_at):
+       post-end grace period before committing the merge.
+
+    All timeout tasks must be cancelled in clear_live_translation_state().
+    """
     merge_id: UUID
     parts: list[str] = field(default_factory=list)
     utterance_ids: list[UUID] = field(default_factory=list)
@@ -83,6 +118,9 @@ class ChannelRuntime:
         _validate_channel(self.channel)
 
     def __setattr__(self, name: str, value: object) -> None:
+        # Alias sync: mirror field writes to the Pipeline (alias_target).
+        # Guard: skip if setting alias_target itself (no target yet),
+        # or if name is not in the alias map, or if no alias_target set.
         object.__setattr__(self, name, value)
         if name == "alias_target":
             return
@@ -159,6 +197,13 @@ class ChannelRuntime:
         ]
 
     async def clear_live_translation_state(self) -> None:
+        """Cancel all in-flight translation and merge-buffer tasks, then clear.
+
+        Cleanup order: translation tasks → merge buffer (spec, finalize,
+        awaiting_vad, resume timeouts) → associated utterance bookkeeping.
+        All tasks are cancelled then awaited with return_exceptions=True
+        to prevent unhandled CancelledError propagation.
+        """
         translation_task_ids = set(self.translation_tasks)
         translation_tasks = list(self.translation_tasks.values())
         for task in translation_tasks:

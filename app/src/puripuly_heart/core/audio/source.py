@@ -1,3 +1,19 @@
+"""Microphone audio source — sounddevice/PortAudio capture + device resolution.
+
+Three concerns:
+1. **Capture**: SoundDeviceAudioSource wraps sounddevice.InputStream with
+   janus.Queue (sync→async bridge, same pattern as desktop_source.py).
+   Supports WASAPI exclusive mode and auto_convert.
+2. **Device resolution**: resolve_sounddevice_input_device() resolves
+   host_api + device name/index to a sounddevice device index.
+3. **Microphone testing**: observe_microphone_test_route() resolves the
+   manual test route without hidden fallback — used by mic_test_manager.py
+   for diagnostic logging.
+
+Called by ui/controller.py, ui/mic_test_manager.py, app/headless_mic.py,
+ui/diagnostics_manager.py.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -472,6 +488,11 @@ class SoundDeviceAudioSource(AudioSource):
         self._opened_channels = self.channels
         self._frame_channels = self.channels
 
+        # PortAudio callback — runs in a SEPARATE THREAD.
+        # Same pattern as desktop_source.py: janus sync_q bridge.
+        # Queue full → drop frame (never block the audio thread).
+        # _frame_channels tracks actual channels from callback data
+        # (may differ from requested if device reports stereo for mono mic).
         def _callback(indata, _frames, _time, status):  # called from PortAudio thread
             if self._closed:
                 return
@@ -487,7 +508,6 @@ class SoundDeviceAudioSource(AudioSource):
                     self._frame_channels = self._opened_channels
                 self._queue.sync_q.put_nowait(samples)
             except queue.Full:
-                # Drop if the asyncio consumer is too slow; better than blocking audio thread.
                 self._queue_drop_count += 1
                 return
 

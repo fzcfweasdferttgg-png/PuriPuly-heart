@@ -1,3 +1,17 @@
+"""Custom vocabulary processing — term normalization and deduplication.
+
+Two paths:
+- get_effective_custom_terms(): for cloud STT providers (OpenAI-compatible).
+  Returns up to MAX_CUSTOM_VOCAB_TERMS normalized terms.
+- get_effective_local_qwen_hotwords(): for local GGUF STT (qwen3-asr).
+  Returns up to LOCAL_QWEN_MAX_HOTWORDS terms with comma→space normalization.
+
+Both: filter by source_language (with base-language fallback), deduplicate,
+cap at respective limits.
+
+Called by app/wiring.py, ui/provider_signatures.py, ui/controller.py.
+"""
+
 from __future__ import annotations
 
 from puripuly_heart.domain.custom_vocab import MAX_CUSTOM_VOCAB_TERMS
