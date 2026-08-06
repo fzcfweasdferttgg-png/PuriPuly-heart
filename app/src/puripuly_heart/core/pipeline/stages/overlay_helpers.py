@@ -534,27 +534,6 @@ class OverlayHelpersMixin:
             reuse_mode=reuse_mode,
             signature=signature,
         )
-        if self.overlay_diagnostics is None:
-            return
-        if signature == self._last_overlay_secondary_diagnostics_signature:
-            return
-        self._last_overlay_secondary_diagnostics_signature = signature
-        spec_translation_len = 0
-        if isinstance(buffer.spec_translation, Translation):
-            spec_translation_len = len(buffer.spec_translation.text.strip())
-        self.overlay_diagnostics.record_hub(
-            "active_self_secondary",
-            merge_id=str(buffer.merge_id),
-            source=source,
-            active_text_len=len(active_text),
-            secondary_len=len(secondary_text),
-            spec_text_len=len((buffer.spec_text or "").strip()),
-            spec_translation_len=spec_translation_len,
-            cached_secondary_len=len(self._cached_active_self_secondary_text().strip()),
-            reuse_mode=reuse_mode,
-            resume_pending=buffer.resume_pending,
-            resume_confirmed=buffer.resume_confirmed,
-        )
 
     def _maybe_emit_active_self_secondary_runtime_log(
         self,
@@ -614,13 +593,4 @@ class OverlayHelpersMixin:
         channel: ChannelId,
         secondary_len: int,
     ) -> None:
-        if self.overlay_diagnostics is None:
-            return
-        self.overlay_diagnostics.record_hub(
-            "overlay_emit",
-            event_kind=event_kind,
-            utterance_id=str(utterance_id),
-            channel=channel,
-            secondary_len=secondary_len,
-            sink_type=type(self.overlay_sink).__name__ if self.overlay_sink is not None else None,
-        )
+        pass

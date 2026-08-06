@@ -1,12 +1,15 @@
 """Microphone audio source — sounddevice/PortAudio capture + device resolution.
 
-Three concerns:
+Four concerns:
 1. **Capture**: SoundDeviceAudioSource wraps sounddevice.InputStream with
    janus.Queue (sync→async bridge, same pattern as desktop_source.py).
    Supports WASAPI exclusive mode and auto_convert.
 2. **Device resolution**: resolve_sounddevice_input_device() resolves
    host_api + device name/index to a sounddevice device index.
-3. **Microphone testing**: observe_microphone_test_route() resolves the
+3. **Channel negotiation**: determine_self_mic_capture_channels() negotiates
+   the channel count between device capabilities (max_input_channels) and
+   the internal processing requirement, capping at 2.
+4. **Microphone testing**: observe_microphone_test_route() resolves the
    manual test route without hidden fallback — used by mic_test_manager.py
    for diagnostic logging.
 
@@ -506,6 +509,10 @@ class SoundDeviceAudioSource(AudioSource):
                     self._frame_channels = int(samples.shape[-1])
                 else:
                     self._frame_channels = self._opened_channels
+                # _frame_channels is WRITTEN FROM TWO THREADS: this callback thread
+                # AND the async consumer in frames(). Safe under CPython GIL
+                # (int assignment is atomic). Breaks on non-GIL runtimes or if
+                # changed to a non-atomic type (e.g. dict).
                 self._queue.sync_q.put_nowait(samples)
             except queue.Full:
                 self._queue_drop_count += 1
@@ -614,6 +621,14 @@ class SoundDeviceAudioSource(AudioSource):
     async def close(self) -> None:
         if self._closed:
             return
+        # ORDER MATTERS:
+        # (1) _closed=True stops callback from producing (callback checks _closed)
+        # (2) stop/close stream kills PortAudio — no more callbacks fire
+        # (3) THEN send sentinel to wake frames() consumer to exit
+        # (4) queue.close() tears down janus bridge
+        # Reversing (2) and (3): callback fires after sentinel → frames() exits
+        # early, dropping the last real frame.
+        # Closing queue before stream: callback crashes on closed sync_q.
         self._closed = True
 
         stream = self._stream
@@ -633,6 +648,16 @@ class SoundDeviceAudioSource(AudioSource):
 
 
 def resolve_sounddevice_input_device(*, host_api: str = "", device: str = "") -> int | None:
+    """Resolve host_api + device name/index to a sounddevice device index.
+
+    Resolution priority (early returns):
+    1. Numeric device index → validate input channels + hostapi constraint → return
+    2. host_api set, no device → use hostapi's default_input_device
+    3. Iterate all devices, filter by hostapi + name match → return first match
+    4. None if nothing matches
+
+    AI: do NOT flatten the early-return logic — priority order is load-bearing.
+    """
     host_api = (host_api or "").strip()
     device = (device or "").strip()
     if not host_api and not device:
@@ -651,6 +676,7 @@ def resolve_sounddevice_input_device(*, host_api: str = "", device: str = "") ->
                 hostapi_index = idx
                 break
 
+    # Priority 1: numeric device index
     if device:
         with contextlib.suppress(ValueError):
             idx = int(device)
@@ -661,11 +687,13 @@ def resolve_sounddevice_input_device(*, host_api: str = "", device: str = "") ->
                 if hostapi_index is None or int(hostapi_value) == hostapi_index:
                     return idx
 
+    # Priority 2: hostapi default (no explicit device)
     if hostapi_index is not None and not device:
         default_input = hostapis[hostapi_index].get("default_input_device")
         if isinstance(default_input, int) and default_input >= 0:
             return default_input
 
+    # Priority 3: iterate + filter by hostapi + name
     for idx, info in enumerate(devices):
         if int(info.get("max_input_channels", 0) or 0) <= 0:
             continue

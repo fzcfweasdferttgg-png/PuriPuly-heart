@@ -79,7 +79,6 @@ from puripuly_heart.core.osc.receiver import (
     VrcOscReceiver,
 )
 from puripuly_heart.core.overlay.bridge import OverlayBridge
-from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
 from puripuly_heart.core.overlay.presenter import OverlayPresenter
 from puripuly_heart.core.overlay.process import (
     DefaultOverlayProcessRunner,
@@ -93,7 +92,6 @@ from puripuly_heart.core.stt.controller import (
     FinalTranscriptSuppressedNotification,
     ManagedSTTProvider,
 )
-from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
 from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_vad_onnx
 from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
@@ -236,7 +234,6 @@ class GuiController(
     _overlay_bridge: OverlayBridge | None = None
     _overlay_presenter: OverlayPresenter | None = None
     _overlay_manager: OverlayProcessManager | None = None
-    _overlay_diagnostics: OverlayDiagnosticsRecorder | None = None
     _overlay_start_task: asyncio.Task[None] | None = None
     _overlay_monitor_task: asyncio.Task[None] | None = None
     _overlay_lock: asyncio.Lock | None = None
@@ -922,7 +919,6 @@ class GuiController(
             self.hub.peer_target_language = next_settings.languages.peer_target_language
             self.hub.system_prompt = next_settings.system_prompt
             self.hub.low_latency_mode = next_settings.stt.low_latency_mode
-            self.hub.low_latency_merge_gap_ms = next_settings.stt.low_latency_merge_gap_ms
             self.hub.low_latency_spec_retry_max = next_settings.stt.low_latency_spec_retry_max
             self.hub.hangover_s = (
                 next_settings.stt.low_latency_vad_hangover_ms / 1000.0
@@ -1166,7 +1162,6 @@ class GuiController(
             peer_translation_enabled=False,
             integrated_context_enabled=False,
             low_latency_mode=self.settings.stt.low_latency_mode,
-            low_latency_merge_gap_ms=self.settings.stt.low_latency_merge_gap_ms,
             low_latency_spec_retry_max=self.settings.stt.low_latency_spec_retry_max,
             hangover_s=(
                 self.settings.stt.low_latency_vad_hangover_ms / 1000.0

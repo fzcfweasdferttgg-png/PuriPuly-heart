@@ -17,7 +17,6 @@ class STTSettings:
     vad_speech_threshold: float = 0.5
     low_latency_mode: bool = True
     low_latency_vad_hangover_ms: int = DEFAULT_LOW_LATENCY_VAD_HANGOVER_MS
-    low_latency_merge_gap_ms: int = 600
     low_latency_spec_retry_max: int = 10
     custom_vocabulary_enabled: bool = True
     custom_terms: dict[str, list[str]] = field(default_factory=_default_custom_terms)
@@ -29,8 +28,6 @@ class STTSettings:
             raise ValueError("vad_speech_threshold must be in 0.0..1.0")
         if self.low_latency_vad_hangover_ms < 0:
             raise ValueError("low_latency_vad_hangover_ms must be >= 0")
-        if self.low_latency_merge_gap_ms < 0:
-            raise ValueError("low_latency_merge_gap_ms must be >= 0")
         if self.low_latency_spec_retry_max < 0:
             raise ValueError("low_latency_spec_retry_max must be >= 0")
         if not isinstance(self.custom_vocabulary_enabled, bool):

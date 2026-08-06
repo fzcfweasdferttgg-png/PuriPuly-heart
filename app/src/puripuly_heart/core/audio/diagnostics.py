@@ -255,6 +255,9 @@ def apply_audio_fault_profile(
 ) -> AudioFrameF32:
     resolved = normalize_audio_fault_profile(profile)
     if resolved in (AudioFaultProfile.NONE, AudioFaultProfile.STT_INPUT_LOW_SNR_VAD_PASS):
+        # STT_INPUT_LOW_SNR_VAD_PASS is intentionally a no-op here.
+        # It is applied later at STT-input level by ManagedSTTProvider
+        # (see controller.py stt_input_fault_profile_provider).
         return frame
 
     samples = np.asarray(frame.samples, dtype=np.float32).copy()
@@ -316,6 +319,8 @@ class DiagnosticAudioSource(AudioSource):
         return normalize_audio_fault_profile(self.fault_profile)
 
     async def frames(self) -> AsyncIterator[AudioFrameF32]:
+        # CONTRACT: yield exactly one frame per source frame.
+        # Dropping or duplicating frames breaks VAD timing and STT chunk counts.
         async for frame in self.source.frames():
             profile = self._safe_current_fault_profile()
             detailed_enabled = self._safe_detailed_enabled()
@@ -328,6 +333,9 @@ class DiagnosticAudioSource(AudioSource):
                 profile,
                 sequence_index=self._sequence_index,
             )
+            # INVARIANT: _sequence_index increments ONLY when a fault is active or
+            # diagnostics are enabled. CAPTURE_BUFFER_DROPOUTS depends on
+            # sequence_index % 2, so moving this increment changes which frames get zeroed.
             self._sequence_index += 1
             if not detailed_enabled:
                 yield output

@@ -473,7 +473,6 @@ class OverlayProcessManager:
     _last_exit_code: int | None = field(init=False, default=None)
     _executable_path: Path | None = field(init=False, default=None)
     _executable_mtime: float | None = field(init=False, default=None)
-    _failure_dumped: bool = field(init=False, default=False)
     _shutdown_requested: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
@@ -500,7 +499,6 @@ class OverlayProcessManager:
         self._current_phase = "startup"
         self._last_transition = "spawn"
         self._last_exit_code = None
-        self._failure_dumped = False
         self._shutdown_requested = False
         self.restart_scheduled = False
         self.failure_reason = None
@@ -512,19 +510,10 @@ class OverlayProcessManager:
             self._executable_mtime = (
                 executable_path.stat().st_mtime if executable_path.exists() else None
             )
-            self._record_process(
-                "spawn_requested",
-                pid=os.getpid(),
-                executable_path=executable_path,
-                executable_mtime=self._executable_mtime,
-                logging_mode=self.logging_mode,
-            )
             self._manifest_path = self._write_manifest(manifest)
-            self._record_process("manifest_written", manifest_path=self._manifest_path)
             self._process = await self.process_runner.spawn(executable_path, self._manifest_path)
             _assign_overlay_to_job(getattr(self._process, "pid", None), self.job_handle)
             self._attach_process_diagnostics(self._process)
-            self._record_process("process_spawned", manifest_path=self._manifest_path)
             await self._wait_for_startup()
         except OverlayPreparationError as error:
             await self._fail(error.failure_reason)
@@ -537,7 +526,6 @@ class OverlayProcessManager:
 
     def mark_shutdown_requested(self) -> None:
         self._shutdown_requested = True
-        self._record_process("shutdown_requested", phase=self._current_phase)
 
     async def stop(self) -> None:
         self.state = "stopping"
@@ -645,7 +633,6 @@ class OverlayProcessManager:
                 if exit_task in done:
                     exit_code = exit_task.result()
                     self._last_exit_code = exit_code
-                    self._record_process("process_exit", phase="startup", exit_code=exit_code)
                     await self._fail(self._map_exit_code_to_failure_reason(exit_code))
                     return
 
@@ -709,7 +696,6 @@ class OverlayProcessManager:
                 if exit_task in done:
                     exit_code = exit_task.result()
                     self._last_exit_code = exit_code
-                    self._record_process("process_exit", phase="connected", exit_code=exit_code)
                     if self._shutdown_requested and exit_code == 0:
                         self._current_phase = "expected_shutdown"
                         return
@@ -737,7 +723,6 @@ class OverlayProcessManager:
         allow_ready: bool,
     ) -> str:
         if not isinstance(event, dict):
-            self._record_process("renderer_message_ignored", reason="malformed_message")
             logger.warning(
                 "[OverlayProcess] Ignoring malformed renderer message with type: %s",
                 type(event).__name__,
@@ -745,12 +730,6 @@ class OverlayProcessManager:
             return "ignored"
 
         event_type = str(event.get("type", ""))
-        self._record_process(
-            "lifecycle_event",
-            phase=self._current_phase,
-            event_type=event_type,
-            failure_reason=event.get("failure_reason"),
-        )
         if allow_ready and event_type == "overlay_ready":
             self.state = "connected"
             self.failure_reason = None
@@ -771,22 +750,11 @@ class OverlayProcessManager:
     def _handle_renderer_event(self, event: dict[str, object]) -> None:
         payload = event.get("payload")
         if not isinstance(payload, dict):
-            self._record_process(
-                "renderer_message_ignored",
-                event_type="overlay_event",
-                reason="invalid_payload",
-            )
             logger.warning("[OverlayProcess] Ignoring overlay_event without object payload")
             return
 
         renderer_event_type = payload.get("event")
         if not self._is_valid_renderer_event_payload(payload):
-            self._record_process(
-                "renderer_message_ignored",
-                event_type="overlay_event",
-                renderer_event=renderer_event_type,
-                reason="invalid_payload",
-            )
             logger.warning(
                 "[OverlayProcess] Ignoring invalid renderer event: %r",
                 renderer_event_type,
@@ -794,10 +762,6 @@ class OverlayProcessManager:
             return
 
         if self.renderer_events is None:
-            self._record_process(
-                "renderer_event_diagnostic_only",
-                renderer_event=renderer_event_type,
-            )
             logger.info(
                 "[OverlayProcess] Renderer event ignored without controller queue: %s",
                 renderer_event_type,
@@ -812,7 +776,6 @@ class OverlayProcessManager:
         try:
             self.renderer_events.put_nowait(event)
         except asyncio.QueueFull:
-            self._record_process("renderer_event_dropped", renderer_event=renderer_event_type)
             logger.warning(
                 "[OverlayProcess] Dropping renderer event because controller queue is full: %s",
                 renderer_event_type,
@@ -910,18 +873,6 @@ class OverlayProcessManager:
         stderr_count = (
             len(self.diagnostics.child_stderr_lines) if self.diagnostics is not None else 0
         )
-        self._record_process(
-            "failure",
-            failure_reason=failure_reason,
-            phase=(
-                "connected"
-                if self._last_transition in {"overlay_ready", "bridge_ready"}
-                else "startup"
-            ),
-            exit_code=self._last_exit_code,
-            stdout_count=stdout_count,
-            stderr_count=stderr_count,
-        )
         logger.error(
             "[OverlayProcess] Failure: overlay_instance_id=%s phase=%s failure_reason=%s exit_code=%s last_transition=%s stdout_lines=%s stderr_lines=%s",
             self.overlay_instance_id,
@@ -936,25 +887,6 @@ class OverlayProcessManager:
             stdout_count,
             stderr_count,
         )
-
-        if self.diagnostics is not None and not self._failure_dumped:
-            self.diagnostics.dump_failure(
-                failure_reason=failure_reason,
-                phase=(
-                    "connected"
-                    if self._last_transition in {"overlay_ready", "bridge_ready"}
-                    else "startup"
-                ),
-                exit_code=self._last_exit_code,
-                manager_state=self.state,
-                last_transition=self._last_transition,
-                manifest_path=self._manifest_path,
-                executable_path=self._executable_path,
-                executable_mtime=self._executable_mtime,
-                stdout_count=stdout_count,
-                stderr_count=stderr_count,
-            )
-            self._failure_dumped = True
 
         process = self._process
         self._process = None
@@ -979,7 +911,3 @@ class OverlayProcessManager:
         set_logging_mode = getattr(process, "set_logging_mode", None)
         if callable(set_logging_mode):
             set_logging_mode(self.logging_mode)
-
-    def _record_process(self, event: str, **fields: object) -> None:
-        if self.diagnostics is not None:
-            self.diagnostics.record_process(event, **fields)

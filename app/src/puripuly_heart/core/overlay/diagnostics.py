@@ -1,16 +1,11 @@
-"""Overlay diagnostics recorder — bounded event storage for debugging.
+"""Overlay diagnostics recorder — bounded child-process line storage.
 
-Stores overlay events (process, presenter, bridge, hub) in bounded deques.
-Each category has a max size (e.g. _PROCESS_EVENT_LIMIT=50) — oldest events
-are evicted when the limit is reached.
+Stores overlay child-process stdout/stderr lines in bounded deques
+(max 100 per stream).  Used at failure time to report how many lines
+were captured before the overlay process crashed.
 
-Most record_* methods are stubs (return {}) — event recording is disabled
-for performance.  Only record_child_line and the internal _append/_event
-methods actually store data.  dump_failure is also a stub.
-
-Called by ui/overlay_lifecycle.py (instantiation) and ui/controller.py
-(owns the recorder instance).  Methods called by overlay/bridge.py,
-overlay/presenter.py, overlay/presenter_logging.py via the instance.
+Called by overlay/process.py (record_child_line + len reads) and
+ui/overlay_lifecycle.py (instantiation).
 """
 
 from __future__ import annotations
@@ -23,12 +18,7 @@ from typing import Any
 
 from puripuly_heart.config.paths import user_config_dir
 
-_PROCESS_EVENT_LIMIT = 50
 _CHILD_LINE_LIMIT = 100
-_PRESENTER_SNAPSHOT_LIMIT = 30
-_PRESENTER_REMOVAL_LIMIT = 50
-_BRIDGE_EVENT_LIMIT = 30
-_HUB_EVENT_LIMIT = 50
 
 
 def default_overlay_diagnostics_dir() -> Path:
@@ -50,61 +40,20 @@ class OverlayDiagnosticsRecorder:
     overlay_instance_id: str
     diagnostics_dir: Path
 
-    process_events: deque[dict[str, Any]] = field(
-        default_factory=lambda: deque(maxlen=_PROCESS_EVENT_LIMIT)
-    )
     child_stdout_lines: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=_CHILD_LINE_LIMIT)
     )
     child_stderr_lines: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=_CHILD_LINE_LIMIT)
     )
-    presenter_events: deque[dict[str, Any]] = field(
-        default_factory=lambda: deque(maxlen=_PRESENTER_SNAPSHOT_LIMIT)
-    )
-    presenter_removal_events: deque[dict[str, Any]] = field(
-        default_factory=lambda: deque(maxlen=_PRESENTER_REMOVAL_LIMIT)
-    )
-    bridge_events: deque[dict[str, Any]] = field(
-        default_factory=lambda: deque(maxlen=_BRIDGE_EVENT_LIMIT)
-    )
-    hub_events: deque[dict[str, Any]] = field(
-        default_factory=lambda: deque(maxlen=_HUB_EVENT_LIMIT)
-    )
-    last_dump_path: Path | None = None
 
     _sequence: int = field(init=False, default=0)
-
-    def record_process(self, event: str, **fields: Any) -> dict[str, Any]:
-        _ = (event, fields)
-        return {}
 
     def record_child_line(self, stream: str, line: str) -> dict[str, Any]:
         target = self.child_stderr_lines if stream == "stderr" else self.child_stdout_lines
         return self._append(
             target, category="child_line", event="child_line", stream=stream, line=line
         )
-
-    def record_presenter(self, event: str, **fields: Any) -> dict[str, Any]:
-        _ = (event, fields)
-        return {}
-
-    def record_presenter_removal(
-        self, event: str = "entry_removed", **fields: Any
-    ) -> dict[str, Any]:
-        _ = (event, fields)
-        return {}
-
-    def record_bridge(self, event: str, **fields: Any) -> dict[str, Any]:
-        _ = (event, fields)
-        return {}
-
-    def record_hub(self, event: str, **fields: Any) -> dict[str, Any]:
-        _ = (event, fields)
-        return {}
-
-    def dump_failure(self, **summary_fields: Any) -> Path | None:
-        return None
 
     def _append(
         self,

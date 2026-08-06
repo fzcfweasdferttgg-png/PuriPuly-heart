@@ -151,7 +151,6 @@ class OverlayLifecycleMixin:
                 presenter = OverlayPresenter(
                     calibration=self.overlay_calibration.copy(),
                     clock=self.clock,
-                    diagnostics=diagnostics,
                     runtime_log_detailed=self.log_detailed,
                     show_translation=self.settings.overlay.show_translation,
                     show_peer_original=self.settings.overlay.show_peer_original,
@@ -160,7 +159,6 @@ class OverlayLifecycleMixin:
                 )
                 self._overlay_presenter = presenter
             else:
-                presenter.diagnostics = diagnostics
                 presenter.runtime_log_detailed = self.log_detailed
                 await presenter.update_peer_presentation_refresh_burst(
                     peer_presentation_refresh_burst
@@ -172,7 +170,6 @@ class OverlayLifecycleMixin:
                 session_token=secrets.token_urlsafe(16),
                 initial_snapshot=presenter.snapshot(),
                 overlay_instance_id=overlay_instance_id,
-                diagnostics=diagnostics,
                 runtime_logging_mode=self.runtime_logging_mode,
                 desktop_runtime_controls_enabled=overlay_target == OVERLAY_TARGET_DESKTOP,
             )
@@ -191,9 +188,7 @@ class OverlayLifecycleMixin:
             if bridge.snapshot() != latest_snapshot:
                 await bridge.replace_snapshot(latest_snapshot)
             self._overlay_bridge = bridge
-            self._overlay_diagnostics = diagnostics
             self.hub.overlay_sink = presenter
-            self.hub.overlay_diagnostics = diagnostics
 
             renderer_events: asyncio.Queue[dict[str, object]] | None = None
             if overlay_target == OVERLAY_TARGET_DESKTOP:
@@ -371,7 +366,6 @@ class OverlayLifecycleMixin:
                 self.hub.overlay_sink = presenter
             else:
                 self.hub.overlay_sink = None
-                self.hub.overlay_diagnostics = None
                 with contextlib.suppress(Exception):
                     await self.hub.reset_overlay_preview()
         if not preserve_presenter_state and presenter is not None:
@@ -393,8 +387,6 @@ class OverlayLifecycleMixin:
         self._desktop_suppressed_bounds_signatures.clear()
         if not preserve_presenter_state:
             self._set_desktop_overlay_interaction_mode(DESKTOP_INTERACTION_MODE_EDIT)
-        if not preserve_presenter_state:
-            self._overlay_diagnostics = None
 
     def _mark_overlay_connected(self) -> None:
         previous_state = self.overlay_state

@@ -13,7 +13,6 @@ from puripuly_heart.core.clock import Clock
 from puripuly_heart.ports.overlay_transport import OverlayPresentationTransport, RuntimeDetailedLogger
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
-from .diagnostics import OverlayDiagnosticsRecorder
 from .protocol import (
     NativeFreshRenderGenerations,
     NativeFreshRenderTargets,
@@ -59,7 +58,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     calibration: OverlayCalibration
     clock: Clock
     bridge: OverlayPresentationTransport | None = None
-    diagnostics: OverlayDiagnosticsRecorder | None = None
     runtime_log_detailed: RuntimeDetailedLogger | None = None
     sleep: SleepFn = asyncio.sleep
     visible_window_target_blocks: int = VISIBLE_WINDOW_TARGET_BLOCKS
@@ -89,7 +87,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     _revision: int = field(init=False, default=0)
     _appearance_seq: int = field(init=False, default=0)
     _presentation_state: OverlayPresentationState = field(init=False)
-    _last_visible_window_signature: tuple[object, ...] | None = field(init=False, default=None)
     _peer_presentation_refresh_burst_task: asyncio.Task[None] | None = field(
         init=False,
         default=None,
@@ -256,7 +253,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
         self._native_quiet_tail_episodes = NativeQuietTailEpisodes()
         self._native_quiet_tail_self_target = None
         self._native_quiet_tail_peer_target = None
-        self._last_visible_window_signature = None
         peer_refresh_key = self._presentation_state.peer_presentation_refresh_target_key
         if peer_refresh_key is not None:
             self._presentation_state.end_peer_presentation_refresh(peer_refresh_key)
@@ -286,7 +282,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
         self._native_quiet_tail_episodes = NativeQuietTailEpisodes()
         self._native_quiet_tail_self_target = None
         self._native_quiet_tail_peer_target = None
-        self._last_visible_window_signature = None
         peer_refresh_key = self._presentation_state.peer_presentation_refresh_target_key
         if peer_refresh_key is not None:
             self._presentation_state.end_peer_presentation_refresh(peer_refresh_key)
@@ -714,14 +709,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
                 compact_scopes,
             )
         )
-        if self.diagnostics is not None:
-            self.diagnostics.record_presenter(
-                "snapshot_publish",
-                revision=snapshot.revision,
-                block_count=len(next_blocks),
-                bridge_attached=self.bridge is not None,
-                blocks=blocks_summary,
-            )
         if self.bridge is not None:
             await self.bridge.replace_snapshot(snapshot)
 

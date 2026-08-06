@@ -8,8 +8,8 @@ Mixin for OverlayPresenter.  Provides:
   diagnostics recording.  This is where _remember_tombstone is called.
 - _record_visible_window_selection: logs which entries are visible/evicted
 
-Called by PresenterEntryMgmtMixin (via _record_removed_entry) and
-presenter_refresh_burst.py.
+Called by OverlayPresenter, PresenterEntryMgmtMixin (via _record_removed_entry),
+and presenter_refresh_burst.py.
 """
 
 from __future__ import annotations
@@ -50,6 +50,10 @@ class PresenterLoggingMixin:
         # Uses reflection to find emit_detailed_lazy/log_detailed_lazy on the
         # owner object (if the callback is a bound method).  Falls back to
         # eager call if no lazy variant found.
+        #
+        # DO NOT simplify to runtime_log_detailed(build_message(), level=level) —
+        # that would call build_message() unconditionally, destroying the lazy
+        # evaluation that avoids expensive string formatting when logging is off.
         runtime_log_detailed = self.runtime_log_detailed
         if runtime_log_detailed is None:
             return False
@@ -124,6 +128,9 @@ class PresenterLoggingMixin:
         *,
         publish_kind: str,
     ) -> bool:
+        # STUB — called by presenter.py publish loop (first_visible, visible_update)
+        # but always returns False. Diagnostic logging was planned but not implemented.
+        # Return value is not checked by callers. No impact on functionality.
         _ = (key, entry, block, publish_kind)
         return False
 
@@ -136,6 +143,8 @@ class PresenterLoggingMixin:
         entry: OverlayLogicalTurnEntry | None = None,
         extras: dict[str, object] | None = None,
     ) -> bool:
+        # DEAD CODE — zero callers. Thin wrapper around _emit_turn_decision
+        # that was used during development but never wired in production.
         return self._emit_turn_decision(
             decision,
             disposition=disposition,
@@ -160,6 +169,9 @@ class PresenterLoggingMixin:
 
     def _finish_reduction_result(self, result: OverlayReductionResult) -> bool:
         self._emit_reduction_decisions(result.decisions)
+        # Intentionally no current_task — during reduction there's no specific
+        # async task to match against. Do NOT thread through current_task;
+        # that would incorrectly cancel expiration tasks during reduction.
         self._drain_presentation_state_removals()
         return result.changed
 
@@ -192,23 +204,6 @@ class PresenterLoggingMixin:
                 is not None,
                 "translation_observed_visible_since": entry.translation_observed_visible_since,
             }
-        if self.diagnostics is not None:
-            self.diagnostics.record_presenter_removal(
-                reason=record.reason,
-                entry_key=self._format_entry_key(key),
-                appearance_seq=entry.appearance_seq,
-                channel=entry.channel,
-                primary_len=len(entry.original_text.strip()),
-                secondary_len=len(entry.translation_text.strip()),
-                visible_since=entry.visible_since,
-                translation_visible_since=entry.translation_visible_since,
-                closed_at=entry.closed_at,
-                now=removal_time,
-                visible_deadline=visible_deadline,
-                translation_deadline=translation_deadline,
-                effective_deadline=effective_deadline,
-                **extra_fields,
-            )
         seq = record.tombstone_seq if record.tombstone_seq is not None else entry.closed_seq
         if record.reason == "expired" and entry.ever_visible:
             self._remember_scene_terminal_reason(key, reason=record.reason)
@@ -228,6 +223,9 @@ class PresenterLoggingMixin:
                 entry=entry,
             )
         if seq is not None:
+            # CRITICAL: this is the ONLY call site for _remember_tombstone.
+            # If you refactor _record_removed_entry, tombstone tracking breaks
+            # silently — late arrivals would re-create expired entries.
             self._remember_tombstone(key, seq)
 
     def _record_visible_window_selection(
@@ -240,53 +238,10 @@ class PresenterLoggingMixin:
         protected_selected: list[tuple[str, UUID]],
         retained_hidden: list[tuple[str, UUID]],
     ) -> None:
-        if self.diagnostics is None:
-            return
-        candidate_labels = [self._format_entry_key(key) for key in candidate_keys]
-        selected_labels = [self._format_entry_key(key) for key in selected_keys]
-        dropped_labels = [label for label in candidate_labels if label not in selected_labels]
-        protected_labels = [self._format_entry_key(key) for key in protected_selected]
-        retained_hidden_labels = [self._format_entry_key(key) for key in retained_hidden]
-        signature = (
-            active_self_present,
-            finalized_limit,
-            tuple(candidate_labels),
-            tuple(selected_labels),
-            tuple(dropped_labels),
-            tuple(protected_labels),
-            tuple(retained_hidden_labels),
-        )
-        if signature == self._last_visible_window_signature:
-            return
-        self._last_visible_window_signature = signature
-        self.diagnostics.record_presenter(
-            "visible_window",
-            active_self_present=active_self_present,
-            finalized_limit=finalized_limit,
-            candidate_keys=candidate_labels,
-            selected_keys=selected_labels,
-            dropped_keys=dropped_labels,
-            protected_selected=protected_labels,
-            retained_hidden=retained_hidden_labels,
-        )
+        pass
 
     def _record_deadline(self, entry: OverlayLogicalTurnEntry) -> None:
-        if self.diagnostics is None:
-            return
-        effective_deadline, visible_deadline, translation_deadline = (
-            self._entry_expiration_components(entry)
-        )
-        self.diagnostics.record_presenter(
-            "deadline_scheduled",
-            entry_key=self._format_entry_key((entry.channel, entry.utterance_id)),
-            channel=entry.channel,
-            visible_since=entry.visible_since,
-            translation_visible_since=entry.translation_visible_since,
-            closed_at=entry.closed_at,
-            visible_deadline=visible_deadline,
-            translation_deadline=translation_deadline,
-            effective_deadline=effective_deadline,
-        )
+        pass
 
     def _record_self_presentation_refresh_burst_start(
         self,
@@ -299,12 +254,6 @@ class PresenterLoggingMixin:
             lambda: "[OverlayPresenter][SelfPresentationRefresh] start reason=%s target_key=%s"
             % (reason, target_key)
         )
-        if self.diagnostics is not None:
-            self.diagnostics.record_presenter(
-                "self_presentation_refresh_burst_start",
-                reason=reason,
-                target_key=target_key,
-            )
 
     def _record_self_presentation_refresh_burst_end(
         self,
@@ -320,14 +269,8 @@ class PresenterLoggingMixin:
             "reason=%s target_key=%s tick_count=%s cleanup_publish_count=%s"
             % (reason, target_key, tick_count, cleanup_publish_count)
         )
-        if self.diagnostics is not None:
-            self.diagnostics.record_presenter(
-                "self_presentation_refresh_burst_end",
-                reason=reason,
-                target_key=target_key,
-                tick_count=tick_count,
-                cleanup_publish_count=cleanup_publish_count,
-            )
 
     def _format_entry_key(self, key: tuple[str, UUID]) -> str:
+        # Format must match state._format_entry_key — used in dedup signatures
+        # (_record_visible_window_selection) and diagnostics recording.
         return f"{key[0]}:{key[1]}"

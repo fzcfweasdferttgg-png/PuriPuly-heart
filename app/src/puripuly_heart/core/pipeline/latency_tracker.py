@@ -9,7 +9,8 @@ llm_request_start, llm_first_chunk, llm_done, output) and emits:
 Timelines are keyed by (channel, utterance_id).  A "hangover" is added
 to E2E to account for rendering/display delay not captured by the pipeline.
 
-Called by pipeline.py and buffer_manager.py.
+Called by pipeline.py, buffer_manager.py, peer_turns.py, and overlay_helpers.py
+(all access via mixin attribute self._latency, not direct import).
 """
 
 from __future__ import annotations
@@ -33,16 +34,21 @@ from puripuly_heart.domain.models import ChannelId
 
 __all__ = ["LatencyTracker", "latency_key", "elapsed_latency_ms"]
 
+# DEAD CODE — latency_key() and elapsed_latency_ms() are module-level
+# convenience functions with zero callers. The class uses private static
+# methods _latency_key and _elapsed_latency_ms instead.
+# Kept in __all__ for backward compatibility but can be removed.
+
 # Stage ordering for trace emission — each stage emits once per utterance.
 _LATENCY_TRACE_ORDER = (
     "speech_end",
     "stt_final",
     "llm_request_start",
-    "llm_first_chunk",
+    "llm_first_chunk",      # reserved — no caller records this stage yet
     "llm_done",
     "self_chatbox_enqueue",
     "peer_overlay_first_emit",
-    "peer_overlay_first_render",
+    "peer_overlay_first_render",  # reserved — no caller records this stage yet
 )
 # Output stages that trigger summary emission (one summary per utterance).
 _LATENCY_SUMMARY_OUTPUT_STAGES = {"self_chatbox_enqueue", "peer_overlay_first_emit"}
@@ -217,10 +223,13 @@ class LatencyTracker:
         channel: ChannelId,
         utterance_id: UUID,
     ) -> None:
-        # "Contract": called after every _record_latency_stage().
-        # Iterates all known stages and output stages, emitting trace/summary
-        # lines for any stage whose timestamp is now available and not yet emitted.
-        # This is a fire-and-forget sweep — missing stages are silently skipped.
+        # "Contract": sweeps all known stages and output stages, emitting
+        # trace/summary lines for any stage whose timestamp is now available
+        # and not yet emitted.  Missing stages silently skipped.
+        #
+        # Called after every _record_latency_stage() WHEN publish_now=True.
+        # buffer_manager.py calls _record_latency_stage(publish_now=False)
+        # to defer the sweep, then calls this method manually after promotion.
         for trace_stage in _LATENCY_TRACE_ORDER:
             self._emit_latency_trace_if_ready(
                 channel=channel,
@@ -246,6 +255,11 @@ class LatencyTracker:
         overwrite: bool = True,
         publish_now: bool = True,
     ) -> None:
+        # TWO-PHASE PATTERN: buffer_manager.py records into a staging dict
+        # (spec_latency_stage_times) first, then promotes to this tracker
+        # via _promote_spec_latency_to_output with publish_now=False.
+        # The sweep is triggered manually after promotion completes.
+        # If you change this method's behavior, check the promotion flow.
         timeline = self._get_latency_timeline(
             channel=channel, utterance_id=utterance_id, create=True
         )

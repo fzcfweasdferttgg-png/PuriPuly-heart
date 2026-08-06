@@ -63,7 +63,6 @@ class ProviderSignaturesMixin:
             settings.provider.stt,
             settings.stt.vad_speech_threshold,
             settings.stt.low_latency_mode,
-            settings.stt.low_latency_merge_gap_ms,
             settings.stt.low_latency_spec_retry_max,
             settings.stt.low_latency_vad_hangover_ms,
             settings.stt.drain_timeout_s,

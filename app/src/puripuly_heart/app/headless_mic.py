@@ -146,7 +146,6 @@ class HeadlessMicRunner:
             and peer_stt is not None,
             integrated_context_enabled=self.settings.ui.integrated_context_enabled,
             low_latency_mode=self.settings.stt.low_latency_mode,
-            low_latency_merge_gap_ms=self.settings.stt.low_latency_merge_gap_ms,
             low_latency_spec_retry_max=self.settings.stt.low_latency_spec_retry_max,
             hangover_s=(
                 self.settings.stt.low_latency_vad_hangover_ms / 1000.0

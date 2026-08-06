@@ -14,6 +14,8 @@ import hashlib
 from pathlib import Path
 from typing import NamedTuple
 
+# Provenance metadata — not referenced by code, kept so developers can locate
+# the original binary when updating the vendored copy.
 OPENVR_VENDOR_REPOSITORY_REF = "ValveSoftware/openvr@v2.15.6"
 OPENVR_VENDOR_DLL_URL = (
     "https://raw.githubusercontent.com/ValveSoftware/openvr/v2.15.6/bin/win64/openvr_api.dll"
@@ -26,7 +28,7 @@ OPENVR_VENDOR_DLL_RELATIVE_PATH = Path("win64/openvr_api.dll")
 OPENVR_VENDOR_SHA256_RELATIVE_PATH = Path("win64/openvr_api.dll.sha256")
 OPENVR_VENDOR_LICENSE_RELATIVE_PATH = Path("LICENSE")
 OPENVR_VENDOR_README_RELATIVE_PATH = Path("README.md")
-OPENVR_VENDOR_PACKAGED_RUNTIME_RELATIVE_DIR = "."
+OPENVR_VENDOR_PACKAGED_RUNTIME_RELATIVE_DIR = "."  # not referenced — packaged DLL path is resolved via executable_path.with_name() in process.py
 
 
 class VendoredOpenVrBundle(NamedTuple):
@@ -90,6 +92,10 @@ def validate_vendored_openvr_bundle(
 
 
 def _default_bundle_dir() -> Path:
+    # parents[4] assumes depth app/src/puripuly_heart/core/overlay/ — breaks if
+    # the package is installed into site-packages.  Only used as default when
+    # bundle_dir is not explicitly passed (process.py always passes explicit path
+    # for staged executables).
     return Path(__file__).resolve().parents[4] / OPENVR_VENDOR_BUNDLE_RELATIVE_DIR
 
 

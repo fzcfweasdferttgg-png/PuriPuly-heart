@@ -16,7 +16,8 @@ Architecture:
   PERSISTED (bypasses queue, writes directly to file handler).
 
 Called by controller.py, main.py, wiring.py, event_bridge.py,
-diagnostics_manager.py.
+diagnostics_manager.py, overlay_lifecycle.py, chatbox_paginator.py,
+peer_runtime_manager.py.
 Re-exports latency formatting functions from domain.logging_types.
 """
 
@@ -96,6 +97,9 @@ class RuntimeLoggingSinks:
         if self._closed and not force:
             return
         self._closed = True
+        # Two paths: (1) shared queue handler — decrement refcount, close only at 0.
+        # (2) standalone file handler — close directly.
+        # force=True bypasses refcount and unconditionally tears down the queue handler.
         if self.owner_logger is not None and self.file_queue_handler is not None:
             _release_main_file_queue_handler(
                 self.owner_logger,
@@ -189,6 +193,11 @@ def configure_main_logging(
 
 
 class SessionRuntimeLoggingService:
+    # Satisfies ports.logging.SessionLogger protocol implicitly.
+    # All adapters (openai_compatible, local_openai, chatbox_paginator)
+    # and wiring.py type-hint against SessionLogger, not this class.
+    # If SessionLogger changes, update this class to match.
+
     def __init__(
         self,
         *,
@@ -204,6 +213,8 @@ class SessionRuntimeLoggingService:
         self._session_logger = session_logger or logging.getLogger(_new_session_logger_name())
         self._root_logger.setLevel(logging.INFO)
         self._session_logger.setLevel(logging.INFO)
+        # MUST be False — session logger shares stream+file handlers with root.
+        # If True, every message duplicates on root (propagated + root's own handlers).
         self._session_logger.propagate = False
         self._ui_handler_factory = ui_handler_factory
         self._realtime_sink: RealtimeLogSink | None = None
@@ -281,6 +292,12 @@ class SessionRuntimeLoggingService:
         # Bypass queue — write directly to file handler.
         # Used for critical messages that must survive process crash.
         # Joins pending queue first to maintain chronological order.
+        #
+        # Record carries session logger name for output, but is written
+        # directly to the RotatingFileHandler (bypassing both queue and
+        # stream handler).  Do NOT route through session_logger.handle() —
+        # that would hit the queue + stream handler, defeating the bypass
+        # and causing duplicate console output.
         record = self._session_logger.makeRecord(
             self._session_logger.name,
             level,

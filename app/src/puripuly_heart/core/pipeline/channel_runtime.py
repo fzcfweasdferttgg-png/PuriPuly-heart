@@ -66,12 +66,14 @@ class _MergeBuffer:
     2. **Resume** (resume_pending / resume_confirmed / resume_chunk_count):
        detects when a speaker pauses and resumes within the same logical turn.
        After 3 chunks, resume is confirmed and the buffer continues.
+       resume_end_timeout_task is the 4th timeout task (must be cancelled in cleanup).
     3. **Awaiting VAD** (awaiting_vad_end / awaiting_vad_timeout_task):
        waiting for VAD SpeechEnd after STT final transcript.
     4. **Finalize wait** (finalize_wait_task / finalize_wait_started_at):
        post-end grace period before committing the merge.
 
-    All timeout tasks must be cancelled in clear_live_translation_state().
+    All 4 timeout tasks (spec_task, finalize_wait_task, awaiting_vad_timeout_task,
+    resume_end_timeout_task) must be cancelled in clear_live_translation_state().
     """
     merge_id: UUID
     parts: list[str] = field(default_factory=list)
@@ -118,9 +120,8 @@ class ChannelRuntime:
         _validate_channel(self.channel)
 
     def __setattr__(self, name: str, value: object) -> None:
-        # Alias sync: mirror field writes to the Pipeline (alias_target).
-        # Guard: skip if setting alias_target itself (no target yet),
-        # or if name is not in the alias map, or if no alias_target set.
+        # Guard: alias_target itself, unmapped fields, and None target
+        # must all skip the mirror — each early-return protects a different case.
         object.__setattr__(self, name, value)
         if name == "alias_target":
             return
@@ -191,6 +192,10 @@ class ChannelRuntime:
             entry
             for entry in history
             if (now - entry.timestamp) < time_window_s
+            # Empty language string = wildcard (matches any language).
+            # remember_context() defaults to "", so entries without explicit
+            # language pass through. Changing `not x` to `x != ""` would
+            # break the same-language filter for those entries.
             and (not entry.source_language or entry.source_language == source_language)
             and (not entry.target_language or entry.target_language == target_language)
             and len(entry.text) >= 2

@@ -433,7 +433,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "vad_speech_threshold": settings.stt.vad_speech_threshold,
             "low_latency_mode": settings.stt.low_latency_mode,
             "low_latency_vad_hangover_ms": settings.stt.low_latency_vad_hangover_ms,
-            "low_latency_merge_gap_ms": settings.stt.low_latency_merge_gap_ms,
             "low_latency_spec_retry_max": settings.stt.low_latency_spec_retry_max,
             "custom_vocabulary_enabled": settings.stt.custom_vocabulary_enabled,
             "custom_terms": _parse_custom_terms(settings.stt.custom_terms),
@@ -708,7 +707,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                     DEFAULT_LOW_LATENCY_VAD_HANGOVER_MS,
                 )
             ),
-            low_latency_merge_gap_ms=int(stt_data.get("low_latency_merge_gap_ms", 600)),
             low_latency_spec_retry_max=int(stt_data.get("low_latency_spec_retry_max", 10)),
             custom_vocabulary_enabled=custom_vocabulary_enabled,
             custom_terms=parsed_custom_terms,

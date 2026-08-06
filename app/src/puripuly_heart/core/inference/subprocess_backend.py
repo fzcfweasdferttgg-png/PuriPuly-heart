@@ -16,9 +16,10 @@ Key design:
   cleanup when parent process dies.
 - **IO lock**: _io_lock serializes stdin write → stdout read pairs.
 - **Decode queue**: maxsize=10, drops utterances when full (prevents OOM).
-- **Graceful shutdown**: stdin.close → wait(2s) → kill → taskkill /F.
+- **Graceful shutdown**: stdin.close → wait(2s) → kill → wait(5s) → taskkill /F.
 
 Called by app/wiring.py (creates backend instances for STT providers).
+SubprocessSTTError is caught by ui/controller.py (local STT warmup).
 """
 
 from __future__ import annotations
@@ -89,6 +90,8 @@ class SubprocessSTTBackend(STTBackend):
 
     _proc: subprocess.Popen | None = field(init=False, default=None, repr=False)
     _init_lock: asyncio.Lock = field(init=False, repr=False)
+    # Guards write+read pairs during decoding. Init uses _init_lock instead
+    # (runs before any decode task starts — see _ensure_worker).
     _io_lock: asyncio.Lock = field(init=False, repr=False)
     _stderr_drain_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
 
@@ -104,6 +107,8 @@ class SubprocessSTTBackend(STTBackend):
         await self._kill_worker()
 
     async def _ensure_worker(self) -> None:
+        # Double-check locking: outer check = fast path, inner check prevents
+        # duplicate workers when multiple coroutines call open_session() concurrently.
         if self._proc is not None and self._proc.poll() is None:
             return
 
@@ -267,7 +272,7 @@ class SubprocessSTTBackend(STTBackend):
 
     @staticmethod
     def _terminate_process(proc: subprocess.Popen) -> None:
-        # Graceful shutdown chain: stdin.close → wait(2s) → kill → taskkill /F.
+        # Graceful shutdown chain: stdin.close → wait(2s) → kill → wait(5s) → taskkill /F.
         # Each step gives the process a chance to exit cleanly.
         try:
             proc.stdin.close()  # type: ignore[union-attr]
@@ -320,6 +325,9 @@ class SubprocessSTTSession(STTBackendSession):
     _decode_queue: asyncio.Queue[np.ndarray | None] = field(init=False, repr=False)
     _decode_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
     _closed: bool = field(init=False, default=False)
+    # Guards against enqueuing the terminal None sentinel twice —
+    # events() breaks on the first None it receives, so a duplicate
+    # would silently truncate the event stream.
     _closed_event_enqueued: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:

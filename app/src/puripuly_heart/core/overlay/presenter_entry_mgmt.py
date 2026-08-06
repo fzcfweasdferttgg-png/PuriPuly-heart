@@ -45,6 +45,10 @@ class PresenterEntryMgmtMixin:
         return (channel, utterance_id)
 
     def _is_tombstoned(self, channel: str | None, utterance_id: UUID | None) -> bool:
+        # Two independent tombstone stores: _scene_terminal_keys (scene-level,
+        # cleared on scene reset) and _terminal_registry (mixin-level, LRU).
+        # Both must be checked — removing either check allows late arrivals
+        # through after scene reset or after LRU eviction respectively.
         key = self._entry_key(channel, utterance_id)
         return key in self._scene_terminal_keys or key in self._terminal_registry
 
@@ -173,6 +177,7 @@ class PresenterEntryMgmtMixin:
         if self._entry_expiration_deadline(entry) is None:
             return
         entry.expiration_revision += 1
+        # _record_deadline defined in PresenterLoggingMixin (presenter_logging.py)
         self._record_deadline(entry)
         self._expiration_tasks[key] = asyncio.create_task(
             self._expire_entry_after_ttl(key, entry.expiration_revision)
@@ -202,6 +207,7 @@ class PresenterEntryMgmtMixin:
                     current_task=self._current_task(),
                     tombstone_seq=entry.last_updated_seq if entry.closed_seq is None else None,
                 )
+                # _publish_if_changed defined in OverlayPresenter (presenter.py:601)
                 await self._publish_if_changed()
                 return
         except asyncio.CancelledError:
@@ -261,6 +267,10 @@ class PresenterEntryMgmtMixin:
         *,
         current_task: asyncio.Task[None] | None = None,
     ) -> None:
+        # current_task guard: skip cancel for the task that initiated the removal
+        # (it's us). Without this guard, _cancel_expiration_task would cancel
+        # the running async task itself, causing unhandled CancelledError.
+        # _record_removed_entry defined in PresenterLoggingMixin (presenter_logging.py:178)
         for record in self._presentation_state.drain_pending_removals():
             if self._expiration_tasks.get(record.key) is not current_task:
                 self._cancel_expiration_task(record.key)

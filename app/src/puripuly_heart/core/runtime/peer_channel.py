@@ -274,7 +274,9 @@ class PeerChannelRuntime:
         await self._teardown_resources(target_state=PeerChannelRuntimeState.FAULTED)
         if not detach_provider:
             return
-        if getattr(self.hub, "peer_stt", None) is None:
+        if getattr(self.hub, "peer_stt", None) is not None:
+            # Detach faulted STT from hub — triggers full lifecycle reset
+            # (stop event loop, reset runtime state, clear turns, close provider).
             await self.hub.replace_peer_stt_provider(None)
 
     async def _teardown_resources(self, *, target_state: PeerChannelRuntimeState) -> None:

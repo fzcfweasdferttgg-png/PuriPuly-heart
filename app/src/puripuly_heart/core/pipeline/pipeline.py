@@ -22,7 +22,6 @@ from puripuly_heart.core.pipeline.channel_runtime import (
 from puripuly_heart.core.pipeline.context import ContextMode, ContextResolver
 from puripuly_heart.domain.models import Transcript
 from puripuly_heart.ports.osc import OscSink
-from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
 from puripuly_heart.ports.overlay import OverlayEventFactory, OverlaySink
 from puripuly_heart.core.runtime_logging import (
     SessionLoggingMode,
@@ -69,7 +68,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     fallback_llm: LLMProvider | None = None
     peer_stt: STTProvider | None = None
     overlay_sink: OverlaySink | None = None
-    overlay_diagnostics: OverlayDiagnosticsRecorder | None = None
     translation_service: TranslationService | None = None
     output_dispatcher: OutputDispatcher | None = None
     clock: Clock = SystemClock()
@@ -96,7 +94,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     integrated_context_time_window_s: float = 40.0
     integrated_context_max_entries: int = 4
     low_latency_mode: bool = False
-    low_latency_merge_gap_ms: int = 600
     low_latency_spec_retry_max: int = 1
     low_latency_finalize_wait_ms: int = 400
     low_latency_awaiting_vad_timeout_s: float = 3.0  # Timeout for awaiting_vad_end state
@@ -129,10 +126,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     overlay_stream_coalesce_ms: int = 300
     last_error_source: str | None = None
     _last_overlay_secondary_runtime_signature: tuple[object, ...] | None = field(
-        init=False,
-        default=None,
-    )
-    _last_overlay_secondary_diagnostics_signature: tuple[object, ...] | None = field(
         init=False,
         default=None,
     )
@@ -727,7 +720,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
 
 
     def _merge_text(self, parts: list[str]) -> str:
-        return text_merge._merge_text(parts, low_latency_mode=self.low_latency_mode)
+        return text_merge._merge_text(parts)
 
     def _merge_with_overlap(self, existing: str, addition: str) -> str:
         return text_merge._merge_with_overlap(existing, addition)
@@ -745,7 +738,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         return text_merge._is_boundary_char(ch)
 
     def _soft_reuse_mode(self, spec_text: str | None, final_text: str) -> str | None:
-        return text_merge._soft_reuse_mode(spec_text, final_text, low_latency_mode=self.low_latency_mode, low_latency_merge_gap_ms=self.low_latency_merge_gap_ms)
+        return text_merge._soft_reuse_mode(spec_text, final_text)
 
     def _normalize_soft_reuse_text(self, text: str) -> str:
         return text_merge._normalize_soft_reuse_text(text)

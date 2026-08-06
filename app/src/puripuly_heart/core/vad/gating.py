@@ -6,15 +6,21 @@ State machine fed by audio chunks from audio.source/desktop_source:
   IN_SPEECH → (prob < threshold for hangover_chunks) → IDLE (SpeechEnd)
   IN_SPEECH → (max_segment_ms reached) → IDLE (SpeechEnd, reason=max_duration)
 
+Called by ui/controller.py, ui/peer_runtime_manager.py, app/headless_mic.py.
+
 Key design:
-- **Debouncing**: SpeechStart is not emitted on the first above-threshold chunk.
-  Chunks are buffered until `start_commit_chunks` consecutive above-threshold
-  chunks accumulate.  This prevents false triggers from transient noise.
+- **Debouncing**: When start_commit_chunks > 1 (peer VAD), SpeechStart is not
+  emitted on the first above-threshold chunk.  Chunks are buffered until
+  `start_commit_chunks` consecutive above-threshold chunks accumulate.
+  Default (self VAD): commit=1, no debouncing — fires immediately.
 - **Pre-roll**: ring buffer captures audio BEFORE speech detection.  When
   SpeechStart fires, the pre-roll is attached so the STT engine doesn't
   miss the first syllable.
 - **Two end conditions**: silence (hangover_chunks of low probability) or
   max_duration (hard limit, used for peer channel to prevent GPU OOM).
+- **engine.reset() asymmetry**: silence path resets the VAD engine (model state
+  is stale after silence).  max_duration path does NOT reset (model state is
+  still valid — speech was ongoing).  See _emit_max_duration_end().
 
 Peer VAD uses stricter settings: higher threshold, more debounce chunks,
 7s max segment.  See create_peer_vad_gating() at bottom.
@@ -209,8 +215,6 @@ class VadGating:
             with contextlib.suppress(Exception):
                 if self._diagnostics_enabled():
                     speech_audio_ms = self._speech_sample_count * 1000.0 / self.sample_rate_hz
-                    if self.diagnostic_event_callback is None:
-                        return
                     self.diagnostic_event_callback(
                         f"[AudioDiag][VAD][{self.diagnostic_label}] event=SpeechEnd "
                         f"utterance_id={str(self._utterance_id)[:8]} "
@@ -342,6 +346,9 @@ class VadGating:
                 )
 
         events.append(SpeechEnd(utterance_id, trailing_silence_ms=0, reason="max_duration"))
+        # engine.reset() intentionally OMITTED — after max_duration the VAD
+        # model's internal state is still valid (speech was ongoing).
+        # The silence path resets engine because silence means stale state.
         self._reset_active_segment()
 
     def _drop_pending_start(self) -> None:

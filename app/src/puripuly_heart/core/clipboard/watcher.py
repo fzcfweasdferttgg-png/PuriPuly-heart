@@ -13,7 +13,8 @@ Architecture:
 All Win32 API calls use ctypes with explicit argtypes/restype declarations
 in _configure_win32_api() to avoid silent type mismatches.
 
-Called by clipboard_manager.py in the UI layer.
+Called by clipboard_manager.py (direct) and settings_manager.py (via mixin)
+in the UI layer.
 """
 
 from __future__ import annotations
@@ -66,7 +67,13 @@ if sys.platform == "win32":
 
 
 class WindowsClipboardWatcher:
-    """Event-driven Windows clipboard watcher for short Unicode text updates."""
+    """Event-driven Windows clipboard watcher for short Unicode text updates.
+
+    THREADING MODEL: The daemon thread owns all Win32 resources (_hwnd,
+    _wndproc, _registered_class_hinstance). The main thread only reads
+    _hwnd (in _post_stop_message, with try/except for the race). Adding
+    main-thread access to other daemon-owned fields requires a lock.
+    """
 
     def __init__(self, on_text: Callable[[str], None]) -> None:
         self._on_text = on_text
@@ -138,6 +145,11 @@ class WindowsClipboardWatcher:
         self._registered_class_hinstance = None
 
     def _post_stop_message(self, thread: threading.Thread | None) -> None:
+        # INVARIANT: _hwnd can be destroyed by daemon thread at any moment.
+        # Snapshot once, use the snapshot, and never re-read. The try/except
+        # around PostMessageW is NOT defensive coding — it handles the real
+        # race where the window is destroyed between the snapshot and the call.
+        # Do NOT remove the try/except or add a second _hwnd check.
         hwnd = self._hwnd
         if not hwnd or thread is None or not thread.is_alive():
             return
@@ -276,11 +288,17 @@ class WindowsClipboardWatcher:
                 raise ClipboardWatcherError("failed to create clipboard watcher window")
 
             self._hwnd = hwnd
+            # DEADLOCK GUARD: if stop() was called during init, bail out before
+            # entering GetMessageW. Without this, the daemon blocks on GetMessageW
+            # while the main thread blocks on _ready.wait() — resolved only by the
+            # 2s timeout, which is a slow fallback, not the primary path.
             if self._stop_requested.is_set():
                 self._cleanup_window(hwnd)
                 return
             if not user32.AddClipboardFormatListener(hwnd):
                 raise ClipboardWatcherError("failed to register clipboard listener")
+            # DEADLOCK GUARD: same as above — after AddClipboardFormatListener
+            # but before entering the message loop.
             if self._stop_requested.is_set():
                 self._cleanup_window(hwnd)
                 return
@@ -304,6 +322,11 @@ class WindowsClipboardWatcher:
             self._stopped.set()
 
     def _cleanup_window(self, hwnd: int) -> None:
+        # DOUBLE-CALL SAFE: called from WM_CLIPBOARD_WATCHER_STOP handler AND
+        # from _run_message_loop's finally block. First call sets _hwnd=None,
+        # second call is caught by the finally-block's _hwnd check and
+        # redirects to _unregister_window_class instead. Do not merge these
+        # two call sites — the finally block must handle both paths.
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         with contextlib.suppress(Exception):

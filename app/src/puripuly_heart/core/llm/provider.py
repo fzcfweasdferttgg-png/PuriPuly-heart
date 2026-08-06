@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from uuid import UUID
 
+from puripuly_heart.domain.models import Translation
 from puripuly_heart.ports.llm import LLMProvider
 
 __all__ = ["LLMProvider", "SemaphoreLLMProvider"]

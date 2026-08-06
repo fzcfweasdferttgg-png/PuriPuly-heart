@@ -118,9 +118,6 @@ def _merge_with_overlap(existing: str, addition: str) -> str:
 
 def _merge_text(
     parts: list[str],
-    *,
-    merge_buffer=None,  # unused — kept for API compatibility with callers
-    low_latency_mode: bool = False,
 ) -> str:
     """Merge a list of text parts into one string, resolving overlaps pairwise."""
     merged = ""
@@ -154,9 +151,6 @@ def _normalize_soft_reuse_text(text: str) -> str:
 def _soft_reuse_mode(
     spec_text: str | None,
     final_text: str,
-    *,
-    low_latency_mode: bool = False,
-    low_latency_merge_gap_ms: int = 600,
 ) -> str | None:
     """Check if speculative translation can be reused for final output.
 

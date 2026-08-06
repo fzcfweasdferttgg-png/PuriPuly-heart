@@ -34,6 +34,11 @@ LOCAL_STT_INSTALLED_MANIFEST_FILENAME = "installed-manifest.json"
 LOCAL_STT_MANIFEST_RELATIVE_PATH = "data/models/qwen3-asr-0.6b/onnx/int8.manifest.json"
 
 
+# SYNC INVARIANT: When adding a new model, update ALL dicts that reference model_ids:
+# LOCAL_STT_MANIFEST_REGISTRY (→ manifest path), _MODEL_DIR_MAP (→ install dir),
+# and _PROVIDER_BASE_MODEL if the model has a provider name. resolve_model_id()
+# chains _PROVIDER_BASE_MODEL + _QUANT_SUFFIX_MAP to produce the model_id that
+# indexes the other two dicts.
 LOCAL_STT_MANIFEST_REGISTRY: dict[str, str] = {
     "qwen3-asr-0.6b-int8-sherpa": "data/models/qwen3-asr-0.6b/onnx/int8.manifest.json",
     "qwen3-asr-1.7b-int8-sherpa": "data/models/qwen3-asr-1.7b/onnx/int8.manifest.json",
@@ -83,6 +88,10 @@ _PROVIDER_BASE_MODEL: dict[str, str] = {
     "local_qwen_17b_gguf": "qwen3-asr-1.7b-gguf",
 }
 
+# Suffix appended to _PROVIDER_BASE_MODEL value by resolve_model_id().
+# "" means base model_id unchanged (ONNX/sherpa default quants).
+# Non-empty suffixes produce GGUF variant model_ids — must exist in
+# LOCAL_STT_MANIFEST_REGISTRY and _MODEL_DIR_MAP.
 _QUANT_SUFFIX_MAP: dict[str, str] = {
     "q8_0": "",
     "q6_k": "-q6k",
@@ -93,6 +102,9 @@ _QUANT_SUFFIX_MAP: dict[str, str] = {
 
 
 def resolve_model_id(provider_value: str, quant: str = "auto") -> str:
+    # If provider_value is not in _PROVIDER_BASE_MODEL, it's treated as a raw
+    # model_id and returned as-is (with quant suffix). Intentional — some callers
+    # pass model_ids directly (e.g. from settings UI).
     base = _PROVIDER_BASE_MODEL.get(provider_value, provider_value)
     suffix = _QUANT_SUFFIX_MAP.get(quant, "")
     return base + suffix
@@ -406,6 +418,12 @@ def validate_local_stt_runtime_ready(
     data_dir: Path | None = None,
     manifest: LocalSTTAssetManifest | None = None,
 ) -> InstalledLocalSTTManifest:
+    # Returns a SYNTHETIC InstalledLocalSTTManifest — does NOT read the installed
+    # manifest from disk. selected_source="launcher", selected_revision="" are
+    # placeholders, not real installation metadata. Used for UI status checks
+    # and STT warmup where checksums/installed-manifest are unnecessary overhead.
+    # Contrast with validate_local_stt_install() which does full validation
+    # including installed manifest and checksums.
     resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     resolved_manifest = manifest or load_local_stt_asset_manifest()
 
@@ -458,6 +476,9 @@ def inspect_local_stt_install_state(
     data_dir: Path | None = None,
     manifest: LocalSTTAssetManifest | None = None,
 ) -> LocalSTTInstallState:
+    # Uses validate_local_stt_runtime_ready (NOT validate_local_stt_install)
+    # because launcher-placed models have no installed manifest on disk.
+    # Upgrading to full validation would break UI status display for those models.
     resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     resolved_manifest = manifest or load_local_stt_asset_manifest()
     try:

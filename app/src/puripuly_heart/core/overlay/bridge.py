@@ -17,7 +17,8 @@ Key design:
   as separate message types to the overlay.
 
 Called by ui/overlay_lifecycle.py (instantiation) and ui/controller.py
-(owns the bridge instance).
+(owns the bridge instance).  Public methods called by ui/overlay_manager.py
+and ui/settings_manager.py via controller.
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ import websockets
 from websockets.asyncio.server import Server, ServerConnection
 from websockets.exceptions import ConnectionClosed
 
-from .diagnostics import OverlayDiagnosticsRecorder
 from .manifest import normalize_overlay_logging_mode
 from .protocol import OverlayPresentationSnapshot
 
@@ -50,7 +50,6 @@ class OverlayBridge:
     host: str = "127.0.0.1"
     port: int = 0
     overlay_instance_id: str | None = None
-    diagnostics: OverlayDiagnosticsRecorder | None = None
     runtime_logging_mode: str | None = None
     desktop_runtime_controls_enabled: bool = False
 
@@ -118,7 +117,7 @@ class OverlayBridge:
             server.close()
             await server.wait_closed()
         self._drain_messages()
-        self._token_consumed = False
+        self._token_consumed = False  # Allow fresh connection after restart
         self.url = ""
 
     async def replace_snapshot(self, snapshot: OverlayPresentationSnapshot) -> None:
@@ -144,6 +143,14 @@ class OverlayBridge:
         self,
         sequence: Iterable[Mapping[str, Any]],
     ) -> None:
+        """Store controls replayed to the NEXT connecting client during auth.
+
+        Unlike snapshots (which are stored and replayed on every auth),
+        desktop runtime controls sent via broadcast_desktop_runtime_control()
+        are fire-and-forget to currently-connected clients only.
+        Must be called BEFORE start() — controls set after a client connects
+        will not be replayed to future reconnections.
+        """
         self._ensure_desktop_runtime_controls_enabled()
         self._initial_desktop_runtime_controls = [dict(payload) for payload in sequence]
 
@@ -157,11 +164,15 @@ class OverlayBridge:
         connection_id = self._connection_id(connection)
         try:
             auth_payload = self._load_message(await connection.recv())
+            # Fast-path: reject without acquiring lock if token already consumed.
+            # The authoritative check is inside _snapshot_lock below (TOCTOU guard).
             if not self._is_valid_auth_payload(auth_payload):
                 logger.warning("[OverlayBridge] Rejected overlay auth request")
                 await connection.send(json.dumps({"type": "auth_error"}))
                 return
 
+            # NOTE: Lock held through all initial sends. replace_snapshot() is blocked
+            # until the handshake completes. Acceptable because auth is fast and rare.
             async with self._snapshot_lock:
                 if not self._is_valid_auth_payload(auth_payload):
                     logger.warning("[OverlayBridge] Rejected overlay auth request after lock")
@@ -191,13 +202,6 @@ class OverlayBridge:
                     self._snapshot.revision,
                     len(self._authenticated_connections),
                 )
-                if self.diagnostics is not None:
-                    self.diagnostics.record_bridge(
-                        "connection_authenticated",
-                        connection_id=connection_id,
-                        authenticated_connections=len(self._authenticated_connections),
-                        revision=self._snapshot.revision,
-                    )
 
             async for raw_message in connection:
                 message = self._load_message(raw_message)
@@ -215,27 +219,10 @@ class OverlayBridge:
                 len(self._authenticated_connections),
                 self._last_snapshot_revision,
             )
-            if self.diagnostics is not None:
-                self.diagnostics.record_bridge(
-                    "connection_closed",
-                    connection_id=connection_id,
-                    authenticated=authenticated,
-                    authenticated_connections=len(self._authenticated_connections),
-                    code=close_code,
-                    reason=close_reason,
-                    last_snapshot_revision=self._last_snapshot_revision,
-                )
             return
         finally:
             if authenticated:
                 self._authenticated_connections.discard(connection)
-                if self.diagnostics is not None:
-                    self.diagnostics.record_bridge(
-                        "connection_detached",
-                        connection_id=connection_id,
-                        authenticated_connections=len(self._authenticated_connections),
-                        last_snapshot_revision=self._last_snapshot_revision,
-                    )
             with contextlib.suppress(ConnectionClosed):
                 await connection.close()
 
@@ -274,6 +261,7 @@ class OverlayBridge:
             block_update_ids = self._snapshot_block_update_ids(payload)
         start_time = time.perf_counter()
         stale_connections: list[ServerConnection] = []
+        # Snapshot the set — connections may be added/removed during iteration
         for connection in tuple(self._authenticated_connections):
             try:
                 await connection.send(message)
@@ -286,14 +274,6 @@ class OverlayBridge:
                     revision,
                     type(exc).__name__,
                 )
-                if self.diagnostics is not None:
-                    self.diagnostics.record_bridge(
-                        "send_failure",
-                        connection_id=self._connection_id(connection),
-                        revision=revision,
-                        exception_type=type(exc).__name__,
-                        removed=True,
-                    )
 
         for connection in stale_connections:
             self._authenticated_connections.discard(connection)

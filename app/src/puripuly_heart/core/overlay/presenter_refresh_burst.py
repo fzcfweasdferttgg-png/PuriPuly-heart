@@ -5,13 +5,15 @@ periodically for PEER_PRESENTATION_REFRESH_BURST_SECONDS to ensure the
 SteamVR overlay renders the updated content.  Two independent burst types:
 
 - **Peer burst**: triggered by peer translation events, refreshes the
-  peer overlay block until deadline or content changes.
+  peer overlay block until deadline or content changes.  Uses
+  sequence-based dedup (entry.last_updated_seq == event.seq).
 - **Self burst**: triggered by self transcript/translation events, refreshes
   the self overlay block.  More complex — tracks cancel reasons and
-  cleanup publish counts for diagnostic logging.
+  cleanup publish counts for diagnostic logging.  Uses content signature
+  comparison to prevent unnecessary bursts.
 
-Both use async tasks with done callbacks for cleanup.  Content signature
-comparison prevents unnecessary bursts when content hasn't changed.
+The self burst uses a done callback for edge-case cleanup; the peer burst
+relies on its finally block.
 
 Called by overlay/presenter.py (event handling).
 """
@@ -180,9 +182,9 @@ class PresenterRefreshBurstMixin:
         )
 
     async def _run_peer_presentation_refresh_burst(self, key: tuple[str, UUID]) -> None:
-        # Burst loop: re-publish the overlay block at regular intervals
-        # until deadline, disabled, target changed, or content gone.
-        # Each tick calls _publish_if_changed to push to SteamVR overlay.
+        # Each tick MUST call _publish_if_changed — the nonce increment in
+        # state.tick_peer_presentation_refresh makes this tick revision-worthy,
+        # forcing the SteamVR overlay renderer to do fresh GPU work.
         deadline = self.clock.now() + PEER_PRESENTATION_REFRESH_BURST_SECONDS
         try:
             while self.peer_presentation_refresh_burst and self.clock.now() < deadline:
@@ -205,6 +207,8 @@ class PresenterRefreshBurstMixin:
                 and self._peer_presentation_refresh_burst_task is current_task
             ):
                 self._peer_presentation_refresh_burst_task = None
+                # end returns True when a refresh marker was in the snapshot —
+                # must publish to render the snapshot WITHOUT the marker.
                 if self._presentation_state.end_peer_presentation_refresh(key):
                     await self._publish_if_changed()
 
@@ -247,10 +251,14 @@ class PresenterRefreshBurstMixin:
             )
             if active_task:
                 self._self_presentation_refresh_burst_task = None
+                # end returns True when a refresh marker was in the snapshot —
+                # must publish to render the snapshot WITHOUT the marker.
                 if self._presentation_state.end_self_presentation_refresh(key):
                     await self._publish_if_changed()
                     cleanup_publish_count += 1
             if current_task is not None:
+                # Accumulate cleanup publishes from both the task's own end-cleanup
+                # (above) and the cancel caller's count (below) for diagnostic logging.
                 cleanup_publish_count += (
                     self._self_presentation_refresh_burst_cancel_cleanup_counts.pop(
                         current_task,
@@ -277,6 +285,9 @@ class PresenterRefreshBurstMixin:
                 key,
             )
 
+        # Safety-net done callback: clean up cancel metadata if the task's
+        # finally block never consumed it (e.g. cancelled before first await).
+        # Without this, Task objects would leak in the cancel-metadata dicts.
         task.add_done_callback(record_unstarted_cancel_end)
         return task
 
@@ -320,14 +331,22 @@ class PresenterRefreshBurstMixin:
         cleanup_publish_count: int = 0,
     ) -> None:
         task = self._self_presentation_refresh_burst_task
+        # Clear reference BEFORE cancel so the task's finally block sees
+        # active_task=False and skips its own end_self_presentation_refresh.
+        # The caller owns the cleanup: either start_self_* calls begin first,
+        # or reset_scene/detach explicitly calls end afterward.
         self._self_presentation_refresh_burst_task = None
         if task is None:
             return
+        # Store metadata BEFORE cancel — the task may run its finally block
+        # before we return, and it reads these dicts in except/finally.
         self._self_presentation_refresh_burst_cancel_reasons[task] = reason
         self._self_presentation_refresh_burst_cancel_cleanup_counts[task] = cleanup_publish_count
         if not task.done():
             task.cancel()
         else:
+            # Task already finished — its finally block already ran, so pop the
+            # metadata we just wrote to prevent dict leak.
             self._self_presentation_refresh_burst_cancel_reasons.pop(task, None)
             self._self_presentation_refresh_burst_cancel_cleanup_counts.pop(task, None)
 
@@ -345,6 +364,12 @@ class PresenterRefreshBurstMixin:
         allow_task_cleanup: bool = False,
         cleanup_publish_count: int = 0,
     ) -> None:
+        # allow_task_cleanup=False (default): clear reference before await so the
+        # task skips its own end_self_presentation_refresh; caller handles cleanup.
+        # allow_task_cleanup=True: keep reference during await so the task's finally
+        # block does end + publish naturally. Used only from the "disable burst"
+        # path (update_self_presentation_refresh_burst) where the task must publish
+        # the marker-removal snapshot itself.
         task = self._self_presentation_refresh_burst_task
         if task is None:
             return

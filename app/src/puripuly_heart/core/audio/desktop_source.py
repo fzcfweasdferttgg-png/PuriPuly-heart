@@ -9,7 +9,8 @@ bridge) → async frames() iterator consumed by audio loop.
 Windows-only: pyaudiowpatch is a Windows-specific fork of PyAudio that
 exposes WASAPI loopback endpoints.
 
-Called by peer_channel.py via run_audio_loop.
+Called by ui/peer_runtime_manager.py (constructs source for peer STT pipeline)
+and app/headless_mic.py.
 """
 
 from __future__ import annotations
@@ -134,6 +135,9 @@ class DesktopLoopbackAudioSource:
             # If queue is full → drop frame silently, increment counter.
             # frames() on the async side will see gaps via _queue_drop_count.
             def _callback(in_data, _frame_count, _time_info, status_flags):
+                # Input stream callback — return (None, flag) per PyAudio convention.
+                # _closed checked from callback thread, set from async close().
+                # Safe under CPython GIL (bool assignment is atomic).
                 if self._closed:
                     return (None, continue_flag)
                 if status_flags:
@@ -141,6 +145,7 @@ class DesktopLoopbackAudioSource:
                     self._last_callback_status = status_flags
                 if in_data:
                     try:
+                        # .copy() required — PyAudio reuses the buffer after callback returns
                         samples = np.frombuffer(in_data, dtype=np.float32).copy()
                         self._queue.sync_q.put_nowait(samples)
                     except queue.Full:
@@ -240,12 +245,22 @@ class DesktopLoopbackAudioSource:
     async def close(self) -> None:
         if self._closed:
             return
+        # ORDER MATTERS:
+        # (1) _closed=True stops callback from producing (callback checks _closed)
+        # (2) stop/close stream kills PyAudio — no more callbacks fire
+        # (3) manager.terminate() cleans up PortAudio globally
+        # (4) THEN send sentinel to wake frames() consumer to exit
+        # (5) queue.close() tears down janus bridge
+        # Reversing (2/3) and (4): callback fires after sentinel → frames() exits
+        # early, dropping the last real frame.
+        # Closing queue before stream: callback crashes on closed sync_q.
         self._closed = True
 
         with contextlib.suppress(Exception):
             self._stream.stop_stream()
         with contextlib.suppress(Exception):
             self._stream.close()
+        # manager.terminate() cleans up PortAudio globally — must come after stream close
         with contextlib.suppress(Exception):
             self._manager.terminate()
 

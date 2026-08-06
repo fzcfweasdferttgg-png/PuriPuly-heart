@@ -199,7 +199,6 @@ class SettingsManagerMixin:
             self.hub.peer_target_language = settings.languages.peer_target_language
             self.hub.system_prompt = settings.system_prompt
             self.hub.low_latency_mode = settings.stt.low_latency_mode
-            self.hub.low_latency_merge_gap_ms = settings.stt.low_latency_merge_gap_ms
             self.hub.low_latency_spec_retry_max = settings.stt.low_latency_spec_retry_max
             self.hub.hangover_s = (
                 settings.stt.low_latency_vad_hangover_ms / 1000.0
