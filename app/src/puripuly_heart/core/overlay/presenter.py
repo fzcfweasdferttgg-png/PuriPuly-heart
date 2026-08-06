@@ -1,29 +1,40 @@
+"""Overlay subtitle presenter — state machine for SteamVR subtitle display.
+
+OverlayPresenter is the central coordinator: receives transcript/translation
+events via OverlaySink.emit(), manages entry lifecycle (creation, TTL,
+expiration, tombstoning), and publishes snapshots to the SteamVR overlay
+via bridge (OverlayPresentationTransport).
+
+MRO composition: OverlaySink + 3 mixins (presenter_logging, presenter_entry_mgmt,
+presenter_refresh_burst). Each mixin is in its own file.
+
+Key types imported from:
+- domain.overlay_types: OverlayPresentationBlock, OverlayPresentationSnapshot, etc.
+- domain.overlay_events: OverlayEventUnion and individual event types
+- ports.overlay: OverlaySink protocol
+
+State machine lives in _presentation_state (OverlayPresentationState from state.py).
+"""
+
 from __future__ import annotations
 
 import asyncio
-import logging
-import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
 from uuid import UUID
 
 from puripuly_heart.core.clock import Clock
 from puripuly_heart.ports.overlay_transport import OverlayPresentationTransport, RuntimeDetailedLogger
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
-from .protocol import (
-    NativeFreshRenderGenerations,
-    NativeFreshRenderTargets,
-    NativeQuietTailEpisodes,
+from puripuly_heart.domain.overlay_types import (
     OverlayPresentationBlock,
     OverlayPresentationCalibration,
     OverlayPresentationSnapshot,
 )
-from .sink import (
+from puripuly_heart.domain.overlay_events import (
     OverlayEventUnion,
-    OverlaySink,
     PeerActiveUpdate,
     PeerTranscriptFinal,
     SelfActiveClear,
@@ -33,12 +44,11 @@ from .sink import (
     TranslationStreamUpdate,
     UtteranceClosed,
 )
+from puripuly_heart.ports.overlay import OverlaySink
 from .state import (
     ActiveSelfOverlayMetadata,
-    OverlayEntryRemovalRecord,
     OverlayPresentationState,
     OverlayReductionResult,
-    OverlayTurnDecisionRecord,
 )
 from .state import (
     OverlayLogicalTurnEntry as _LogicalTurnEntry,
@@ -46,7 +56,6 @@ from .state import (
 
 from puripuly_heart.core.overlay.presenter_logging import PresenterLoggingMixin
 from puripuly_heart.core.overlay.presenter_entry_mgmt import PresenterEntryMgmtMixin
-from puripuly_heart.core.overlay.presenter_retry import PresenterRetryMixin
 from puripuly_heart.core.overlay.presenter_refresh_burst import PresenterRefreshBurstMixin
 
 VISIBLE_WINDOW_TARGET_BLOCKS = 2
@@ -54,7 +63,7 @@ SleepFn = Callable[[float], Awaitable[None]]
 
 
 @dataclass(slots=True)
-class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMixin, PresenterRetryMixin, PresenterRefreshBurstMixin):
+class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMixin, PresenterRefreshBurstMixin):
     calibration: OverlayCalibration
     clock: Clock
     bridge: OverlayPresentationTransport | None = None
@@ -65,8 +74,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     show_peer_original: bool = True
     peer_presentation_refresh_burst: bool = True
     self_presentation_refresh_burst: bool = True
-    native_retry_trigger_emission: bool = False
-    task_factory: Any | None = None
 
     _terminal_registry: OrderedDict[tuple[str, UUID], int] = field(
         init=False,
@@ -101,25 +108,14 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     _self_presentation_refresh_burst_cancel_cleanup_counts: dict[asyncio.Task[None], int] = field(
         init=False, default_factory=dict
     )
-    _native_fresh_render_generations: NativeFreshRenderGenerations = field(
-        init=False, default_factory=NativeFreshRenderGenerations
-    )
-    _native_fresh_render_targets: NativeFreshRenderTargets = field(
-        init=False, default_factory=NativeFreshRenderTargets
-    )
-    _native_quiet_tail_episodes: NativeQuietTailEpisodes = field(
-        init=False, default_factory=NativeQuietTailEpisodes
-    )
-    _native_quiet_tail_self_target: str | None = field(init=False, default=None)
-    _native_quiet_tail_peer_target: str | None = field(init=False, default=None)
-    _native_quiet_tail_self_generation: int | None = field(init=False, default=None)
-    _native_quiet_tail_peer_generation: int | None = field(init=False, default=None)
+    # Serializes emit() only.
+    # _publish_if_changed runs WITHOUT the lock — safe in asyncio single-thread.
+    # Don't move _publish_if_changed inside lock — it would block event processing
+    # during bridge transport.
     _ownership_transition_lock: asyncio.Lock = field(
         init=False,
         default_factory=asyncio.Lock,
     )
-    _closing: bool = field(init=False, default=False)
-    _closed: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self._presentation_state = OverlayPresentationState()
@@ -156,62 +152,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     def active_self_overlay_metadata(self) -> ActiveSelfOverlayMetadata | None:
         return self._presentation_state.active_self_overlay_metadata()
 
-    def _elapsed_from_origin_wall_clock_ms(self, origin_wall_clock_ms: int | None) -> int | None:
-        if origin_wall_clock_ms is None:
-            return None
-        return max(0, int(time.time() * 1000) - origin_wall_clock_ms)
-
-    def _rendered_text_sources(
-        self,
-        entry: _LogicalTurnEntry,
-        block: OverlayPresentationBlock,
-    ) -> tuple[str, str]:
-        if entry.channel == "peer" and block.block_variant == "active_peer":
-            secondary_visible = block.secondary_enabled and bool(block.secondary_text.strip())
-            return "blank", "source" if secondary_visible else "blank"
-        if entry.channel == "peer" and block.block_variant == "finalized":
-            if entry.translation_text.strip():
-                secondary_visible = block.secondary_enabled and bool(block.secondary_text.strip())
-                return "translation", "source" if secondary_visible else "blank"
-            secondary_visible = block.secondary_enabled and bool(block.secondary_text.strip())
-            return "blank", "source" if secondary_visible else "blank"
-
-        secondary_source = "none"
-        if block.secondary_enabled and block.secondary_text:
-            if entry.channel == "peer":
-                secondary_source = "original_text"
-            elif block.block_variant == "active_self" and entry.live_secondary_text.strip():
-                secondary_source = "live_secondary_text"
-            else:
-                secondary_source = "translation_text"
-
-        if block.block_variant == "active_self":
-            return "live_text", secondary_source
-        if entry.channel == "peer":
-            return "translation_text", secondary_source
-        return "original_text", secondary_source
-
-    def _rendered_pair_state(self, primary_source: str, secondary_source: str) -> str:
-        if primary_source == "live_text":
-            if secondary_source == "live_secondary_text":
-                return "live_with_preview_translation"
-            if secondary_source == "translation_text":
-                return "live_with_translation"
-            return "live_only"
-        if primary_source == "translation_text":
-            if secondary_source == "original_text":
-                return "translation_with_original"
-            return "translation_only"
-        if primary_source == "translation":
-            if secondary_source == "source":
-                return "translation_with_original"
-            return "translation_only"
-        if primary_source == "blank" and secondary_source == "source":
-            return "source_only"
-        if secondary_source in {"translation_text", "live_secondary_text"}:
-            return "original_with_translation"
-        return "original_only"
-
     def _terminal_update_reason(
         self,
         channel: str | None,
@@ -235,6 +175,12 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     def snapshot(self) -> OverlayPresentationSnapshot:
         return self._presentation_state.snapshot()
 
+    # SYNC INVARIANT: reset_scene and clear_for_runtime_detach must reset
+    # the same fields. reset_scene is sync (revision=0), clear_for_runtime_detach
+    # is async (cancels tasks, increments revision). If you add a field to one,
+    # add it to the other.
+    # INTENTIONAL EXCEPTION: _appearance_seq is reset only in reset_scene.
+    # clear_for_runtime_detach preserves it for visual continuity on reconnect.
     def reset_scene(self) -> None:
         self._cancel_peer_presentation_refresh_burst_task()
         self._cancel_self_presentation_refresh_burst_task(reason="scene_reset")
@@ -248,11 +194,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
         self._live_peer_turn_key = None
         self._revision = 0
         self._appearance_seq = 0
-        self._native_fresh_render_generations = NativeFreshRenderGenerations()
-        self._native_fresh_render_targets = NativeFreshRenderTargets()
-        self._native_quiet_tail_episodes = NativeQuietTailEpisodes()
-        self._native_quiet_tail_self_target = None
-        self._native_quiet_tail_peer_target = None
         peer_refresh_key = self._presentation_state.peer_presentation_refresh_target_key
         if peer_refresh_key is not None:
             self._presentation_state.end_peer_presentation_refresh(peer_refresh_key)
@@ -277,11 +218,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
         self._live_self_turn_key = None
         self._live_peer_turn_key = None
         self._revision += 1
-        self._native_fresh_render_generations = NativeFreshRenderGenerations()
-        self._native_fresh_render_targets = NativeFreshRenderTargets()
-        self._native_quiet_tail_episodes = NativeQuietTailEpisodes()
-        self._native_quiet_tail_self_target = None
-        self._native_quiet_tail_peer_target = None
         peer_refresh_key = self._presentation_state.peer_presentation_refresh_target_key
         if peer_refresh_key is not None:
             self._presentation_state.end_peer_presentation_refresh(peer_refresh_key)
@@ -310,10 +246,7 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
             and self._snapshot_has_refreshable_peer_key(("peer", event.utterance_id))
         )
         if changed or peer_event_is_visible:
-            await self._publish_if_changed(
-                fresh_render_event=event,
-                event_changed=changed,
-            )
+            await self._publish_if_changed()
         if changed or peer_event_is_current:
             await self._start_peer_presentation_refresh_burst_for_event(event)
         if changed:
@@ -321,46 +254,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
                 event,
                 previous_snapshot=previous_snapshot,
             )
-
-    async def update_native_retry_ownership(self, confirmed: bool) -> None:
-        async with self._ownership_transition_lock:
-            await self._update_native_retry_ownership_serialized(confirmed)
-
-    async def _update_native_retry_ownership_serialized(self, confirmed: bool) -> None:
-        confirmed = bool(confirmed)
-        if self._closing or self._closed:
-            self.native_retry_trigger_emission = False
-            self._native_fresh_render_generations = NativeFreshRenderGenerations()
-            self._native_fresh_render_targets = NativeFreshRenderTargets()
-            return
-        if confirmed:
-            if (
-                self.native_retry_trigger_emission
-                and not self.peer_presentation_refresh_burst
-                and not self.self_presentation_refresh_burst
-            ):
-                return
-            active_targets = self._active_python_retry_targets()
-            if not active_targets:
-                active_targets = self._active_native_retry_targets()
-            await self.update_peer_presentation_refresh_burst(False)
-            await self.update_self_presentation_refresh_burst(False)
-            self.native_retry_trigger_emission = True
-            self._synchronize_native_retry_targets(active_targets)
-            return
-        if not confirmed:
-            if not self.native_retry_trigger_emission:
-                return
-            active_targets = self._active_native_retry_targets()
-            self.native_retry_trigger_emission = False
-            await self._restart_python_retry_targets(active_targets)
-
-    async def _restart_python_retry_targets(self, targets: dict[str, str]) -> None:
-        for channel, target in targets.items():
-            if channel == "peer":
-                await self.update_peer_presentation_refresh_burst(True)
-            elif channel == "self":
-                await self.update_self_presentation_refresh_burst(True)
 
     async def update_calibration(self, calibration: OverlayCalibration) -> None:
         if calibration == self.calibration:
@@ -432,6 +325,8 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
 
         return False
 
+    # Event dispatch: channel routes to self/peer, then isinstance chain.
+    # Adding a new event type requires updating BOTH _apply_self_event and _apply_peer_event.
     def _apply_self_event(self, event: OverlayEventUnion, *, now: float) -> bool:
         if isinstance(event, SelfActiveUpdate):
             return self._apply_self_active_update(event, now=now)
@@ -593,11 +488,7 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
                 self._schedule_expiration(key, entry)
         return changed
 
-    async def _publish_if_changed(
-        self,
-        fresh_render_event: object | None = None,
-        event_changed: bool = True,
-    ) -> None:
+    async def _publish_if_changed(self) -> None:
         now = self.clock.now()
         self._expire_closed_entries(now=now)
         previous_snapshot = self.snapshot()
@@ -685,18 +576,6 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
             calibration=next_calibration,
             rendered_entries=rendered_entries,
         )
-        blocks_summary = [
-            {
-                "id": block.id,
-                "variant": block.block_variant,
-                "update_id": block.update_id,
-                "origin_wall_clock_ms": block.origin_wall_clock_ms,
-                "session_scope": block.session_scope,
-                "primary_len": len(block.primary_text),
-                "secondary_len": len(block.secondary_text),
-            }
-            for block in next_blocks
-        ]
         compact_update_ids = [block.update_id for block in next_blocks if block.update_id]
         compact_scopes = [block.session_scope for block in next_blocks if block.session_scope]
         self._emit_detailed_lazy(

@@ -28,7 +28,7 @@ from .presenter_constants import (
     PEER_PRESENTATION_REFRESH_BURST_INTERVAL_SECONDS,
     PEER_PRESENTATION_REFRESH_BURST_SECONDS,
 )
-from .sink import (
+from puripuly_heart.domain.overlay_events import (
     PeerActiveUpdate,
     PeerTranscriptFinal,
     SelfTranscriptFinal,
@@ -37,11 +37,11 @@ from .sink import (
 )
 
 if TYPE_CHECKING:
-    from .protocol import (
+    from puripuly_heart.domain.overlay_types import (
         OverlayPresentationBlock,
         OverlayPresentationSnapshot,
     )
-    from .sink import OverlayEventUnion
+    from puripuly_heart.domain.overlay_events import OverlayEventUnion
 
 
 class PresenterRefreshBurstMixin:

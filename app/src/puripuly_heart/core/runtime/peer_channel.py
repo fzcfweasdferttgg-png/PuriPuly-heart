@@ -22,10 +22,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig
+from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig, PeerChannelRuntimeState, PeerRuntimeConfig
 from puripuly_heart.core.clock import Clock
 from puripuly_heart.core.pipeline.pipeline import Pipeline
-from puripuly_heart.ports.peer import PeerChannelRuntimeState, PeerRuntimeConfig, SpeechChannelRuntime
+from puripuly_heart.ports.peer import SpeechChannelRuntime
 
 __all__ = [
     "PeerChannelRuntimeState",

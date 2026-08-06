@@ -36,8 +36,10 @@ import websockets
 from websockets.asyncio.server import Server, ServerConnection
 from websockets.exceptions import ConnectionClosed
 
-from .manifest import normalize_overlay_logging_mode
-from .protocol import OverlayPresentationSnapshot
+from puripuly_heart.domain.overlay_types import (
+    OverlayPresentationSnapshot,
+    normalize_overlay_logging_mode,
+)
 
 logger = logging.getLogger(__name__)
 

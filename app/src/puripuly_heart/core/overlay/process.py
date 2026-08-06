@@ -21,7 +21,7 @@ from puripuly_heart.ports.overlay_process import OverlayManagedProcess, OverlayP
 
 from . import openvr_vendor
 from .diagnostics import OverlayDiagnosticsRecorder, default_overlay_diagnostics_dir
-from .manifest import (
+from puripuly_heart.domain.overlay_types import (
     OVERLAY_CONTRACT_VERSION,
     OverlayLaunchManifest,
     SessionLoggingMode,

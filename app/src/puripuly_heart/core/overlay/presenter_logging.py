@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from .protocol import OverlayPresentationBlock
+    from puripuly_heart.domain.overlay_types import OverlayPresentationBlock
     from .state import (
         OverlayEntryRemovalRecord,
         OverlayLogicalTurnEntry,
@@ -133,25 +133,6 @@ class PresenterLoggingMixin:
         # Return value is not checked by callers. No impact on functionality.
         _ = (key, entry, block, publish_kind)
         return False
-
-    def _emit_skip_disposition(
-        self,
-        *,
-        decision: str,
-        disposition: str,
-        key: tuple[str, UUID] | None = None,
-        entry: OverlayLogicalTurnEntry | None = None,
-        extras: dict[str, object] | None = None,
-    ) -> bool:
-        # DEAD CODE — zero callers. Thin wrapper around _emit_turn_decision
-        # that was used during development but never wired in production.
-        return self._emit_turn_decision(
-            decision,
-            disposition=disposition,
-            key=key,
-            entry=entry,
-            extras=extras,
-        )
 
     def _emit_reduction_decisions(
         self,

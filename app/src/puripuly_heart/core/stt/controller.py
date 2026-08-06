@@ -24,7 +24,7 @@ from puripuly_heart.core.audio.format import float32_to_pcm16le_bytes
 from puripuly_heart.core.audio.ring_buffer import RingBufferF32
 from puripuly_heart.core.clock import Clock, SystemClock
 from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
-from puripuly_heart.core.stt.backend import (
+from puripuly_heart.ports.stt import (
     STTBackend,
     STTBackendFloat32Session,
     STTBackendSession,

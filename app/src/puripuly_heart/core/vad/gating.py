@@ -41,7 +41,8 @@ import numpy as np
 from puripuly_heart.core.audio.diagnostics import compute_audio_frame_metrics
 from puripuly_heart.core.audio.format import AudioFrameF32
 from puripuly_heart.core.audio.ring_buffer import RingBufferF32
-from puripuly_heart.ports.vad import SpeechChunk, SpeechEnd, SpeechStart, VadEngine, VadEvent
+from puripuly_heart.domain.vad_events import SpeechChunk, SpeechEnd, SpeechStart, VadEvent
+from puripuly_heart.ports.vad import VadEngine
 
 __all__ = [
     "VadEngine",

@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from .presenter_constants import (
-    _CLOSED_TOMBSTONE_LIMIT,
+    CLOSED_TOMBSTONE_LIMIT,
     LATE_ARRIVAL_WINDOW_SECONDS,
     SELF_TRANSLATION_MIN_VISIBLE_SECONDS,
     VISIBLE_TTL_SECONDS,
 )
 
 if TYPE_CHECKING:
-    from .protocol import OverlayPresentationBlock
+    from puripuly_heart.domain.overlay_types import OverlayPresentationBlock
     from .state import OverlayLogicalTurnEntry
 
 
@@ -162,7 +162,7 @@ class PresenterEntryMgmtMixin:
         # LRU eviction: popitem(last=False) removes oldest entry when limit exceeded.
         self._terminal_registry.pop(key, None)
         self._terminal_registry[key] = closed_seq
-        while len(self._terminal_registry) > _CLOSED_TOMBSTONE_LIMIT:
+        while len(self._terminal_registry) > CLOSED_TOMBSTONE_LIMIT:
             self._terminal_registry.popitem(last=False)
 
     def _schedule_expiration(

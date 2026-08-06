@@ -162,7 +162,7 @@ class DesktopCaptionMappingRule:
 
 
 # Reviewable snapshot mapping table required before renderer coding.
-# Current contract inspected in core.overlay.protocol/state:
+# Current contract inspected in domain.overlay_types:
 # OverlayPresentationSnapshot(revision, calibration, blocks[]), where blocks[]
 # contains OverlayPresentationBlock(channel self|peer, block_variant
 # active_self|active_peer|finalized, primary_text, secondary_text,

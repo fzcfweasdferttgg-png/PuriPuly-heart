@@ -41,10 +41,10 @@ from typing import AsyncIterator
 import numpy as np
 
 from puripuly_heart.core.audio.format import pcm16le_bytes_to_float32
-from puripuly_heart.core.stt.backend import (
+from puripuly_heart.domain.stt_events import STTBackendTranscriptEvent
+from puripuly_heart.ports.stt import (
     STTBackend,
     STTBackendSession,
-    STTBackendTranscriptEvent,
 )
 
 logger = logging.getLogger(__name__)
