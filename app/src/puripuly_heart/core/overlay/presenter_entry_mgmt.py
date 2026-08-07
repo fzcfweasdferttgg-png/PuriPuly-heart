@@ -1,3 +1,14 @@
+"""Overlay presenter entry lifecycle management — creation, expiration, tombstoning.
+
+Mixin for OverlayPresenter. Manages entry lifecycle:
+- created → visible (ever_visible=True) → expired OR displaced → tombstoned
+
+Key invariants:
+- _remember_tombstone called ONLY from _record_removed_entry (presenter_logging.py)
+- CLOSED_TOMBSTONE_LIMIT caps _terminal_registry size (LRU eviction)
+- Tombstone dual-store: _scene_terminal_keys + _terminal_registry
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -207,7 +218,7 @@ class PresenterEntryMgmtMixin:
                     current_task=self._current_task(),
                     tombstone_seq=entry.last_updated_seq if entry.closed_seq is None else None,
                 )
-                # _publish_if_changed defined in OverlayPresenter (presenter.py:601)
+                # _publish_if_changed defined in OverlayPresenter (presenter.py:491)
                 await self._publish_if_changed()
                 return
         except asyncio.CancelledError:

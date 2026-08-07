@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from puripuly_heart.core.pipeline.channel_runtime import _MergeBuffer
 from puripuly_heart.domain.events import UIEvent, UIEventType
-from puripuly_heart.domain.models import Transcript, Translation
+from puripuly_heart.domain.models import Transcript
 
 if TYPE_CHECKING:
     from puripuly_heart.core.vad.gating import SpeechChunk, SpeechEnd, SpeechStart
@@ -16,7 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 class BufferManagerMixin:
-    """Low-latency merge buffer / speculative-translation management extracted from Pipeline."""
+    """Low-latency merge buffer / speculative-translation management extracted from Pipeline.
+
+    Manages _MergeBuffer lifecycle: creation, part upserting, spec translation,
+    finalize wait, and commit. All methods reference self.xxx attributes from Pipeline.
+
+    Key invariants:
+    - spec_translation field is typed as Translation | None (not object) — prevents
+      widening back to object which would hide .text, .created_at from type checkers
+    """
 
     # ------------------------------------------------------------------
     # Merge buffer part management
@@ -385,12 +393,11 @@ class BufferManagerMixin:
         now = self.clock.now()
         buffer = self._merge_buffer
         if buffer is None:
-            buffer = _MergeBuffer(merge_id=uuid4(), start_time=now, last_final_at=now)
+            buffer = _MergeBuffer(merge_id=uuid4(), start_time=now)
             self._merge_buffer = buffer
         if buffer.resume_pending or buffer.resume_confirmed:
             self._clear_resume_state(buffer)
         self._upsert_merge_part(buffer, transcript.utterance_id, text)
-        buffer.last_final_at = now
         await self._sync_overlay_active_self(buffer, created_at=transcript.created_at)
 
         end_time = self._utterance_start_times.get(transcript.utterance_id)
@@ -489,12 +496,6 @@ class BufferManagerMixin:
         ):
             source_language, target_language = self._self_overlay_languages_for_utterance(
                 buffer.merge_id
-            )
-            self._record_overlay_emit(
-                event_kind="active_self",
-                utterance_id=buffer.merge_id,
-                channel="self",
-                secondary_len=0,
             )
             await self._emit_self_active_overlay_event(
                 self.overlay_event_adapter.self_active_update(

@@ -80,12 +80,7 @@ from puripuly_heart.core.osc.receiver import (
 )
 from puripuly_heart.core.overlay.bridge import OverlayBridge
 from puripuly_heart.core.overlay.presenter import OverlayPresenter
-from puripuly_heart.core.overlay.process import (
-    DefaultOverlayProcessRunner,
-    DesktopFletOverlayRunner,
-    OverlayProcessManager,
-    OverlayProcessRunner,
-)
+from puripuly_heart.core.overlay.process import OverlayProcessManager
 from puripuly_heart.core.runtime.peer_channel import PeerChannelRuntime, PeerRuntimeConfig
 from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
 from puripuly_heart.core.stt.controller import (
@@ -798,20 +793,8 @@ class GuiController(
         if self.hub is not None and self.hub.stt is not None:
             stt = self.hub.stt
             self.log_basic(f"[STT] Idle release after {delay:.0f}s — closing backend")
-            # Clear pending state before closing
-            stt._pending_final_utterance_ids.clear()
-            stt._pending_final_utterance_times.clear()
-            if stt._audio_ring is not None:
-                stt._audio_ring.clear()
-            # Drain event queue
-            while True:
-                try:
-                    stt._events.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
             with contextlib.suppress(Exception):
-                await stt.close()
-            stt._closing = False
+                await stt.reset_for_idle()
 
 
     async def verify_api_key(self, provider: str, key: str, base_url: str | None = None) -> tuple[bool, str]:

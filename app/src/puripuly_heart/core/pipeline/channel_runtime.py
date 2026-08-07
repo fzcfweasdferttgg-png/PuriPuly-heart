@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from puripuly_heart.domain.models import ChannelId, UtteranceBundle
+
+if TYPE_CHECKING:
+    from puripuly_heart.domain.models import Translation
 
 # Maps ChannelRuntime field names → Pipeline field names.
 # When a listed field is set on ChannelRuntime, __setattr__ mirrors it
@@ -80,10 +84,11 @@ class _MergeBuffer:
     utterance_ids: list[UUID] = field(default_factory=list)
     start_time: float | None = None
     last_end_time: float | None = None
-    last_final_at: float = 0.0
     spec_task: asyncio.Task[None] | None = None
     spec_text: str | None = None
-    spec_translation: object | None = None
+    # Typed as Translation | None (was object | None) for type safety.
+    # Callers use isinstance guard or None check before accessing .text, .created_at.
+    spec_translation: Translation | None = None
     spec_attempts: int = 0
     spec_started_at: float | None = None
     spec_done_at: float | None = None

@@ -18,12 +18,16 @@ from puripuly_heart.domain.overlay_events import (
     TranslationStreamUpdate,
     UtteranceClosed,
 )
+from puripuly_heart.domain.overlay_types import ActiveSelfOverlayMetadata
 
 logger = logging.getLogger(__name__)
 
 
 class OverlaySink(Protocol):
     async def emit(self, event: OverlayEventUnion) -> None: ...
+    def active_self_overlay_metadata(self) -> ActiveSelfOverlayMetadata | None:
+        """Optional: return active self overlay metadata, or None if unsupported."""
+        ...
 
 
 class OverlayEventFactory(Protocol):

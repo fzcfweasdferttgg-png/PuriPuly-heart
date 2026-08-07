@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+"""Overlay presentation state machine for SteamVR subtitle display.
+
+OverlayPresentationState manages the overlay presentation lifecycle:
+- Entry creation, TTL expiration, tombstoning
+- Snapshot generation for bridge transport
+- State machine transitions via event dispatch
+
+Key imports from domain.overlay_types (not ports) for hexagonal architecture.
+"""
+
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -79,20 +89,7 @@ class OverlayLogicalTurnEntry:
         return f"{self.channel}:{self.utterance_id}"
 
 
-@dataclass(frozen=True, slots=True)
-class ActiveSelfOverlayMetadata:
-    text: str
-    secondary_text: str
-    utterance_id: UUID
-    occupant_key: str
-    update_id: str | None
-    origin_wall_clock_ms: int | None
-    session_scope: str | None
-    source_text_hash: str | None
-    source_text_len: int | None
-    logical_turn_key: str | None
-    primary_language: str | None = None
-    secondary_language: str | None = None
+from puripuly_heart.domain.overlay_types import ActiveSelfOverlayMetadata  # re-export
 
 
 @dataclass(frozen=True, slots=True)
@@ -1891,10 +1888,10 @@ class OverlayPresentationState:
             or self.peer_presentation_refresh_target_key != (entry.channel, entry.utterance_id)
         ):
             return session_scope
-        # LOAD-BEARING: this marker is not cosmetic metadata. The 2026-04-28
-        # submit-only resubmit regression showed stored-frame resubmits are not
-        # equivalent to fresh snapshot/render/GPU work, so each nonce value must
-        # produce revision-worthy session_scope metadata for native to render.
+        # LOAD-BEARING: this marker is not cosmetic metadata. A submit-only
+        # resubmit regression showed stored-frame resubmits are not equivalent
+        # to fresh snapshot/render/GPU work, so each nonce value must produce
+        # revision-worthy session_scope metadata for native to render.
         marker = f"peer_presentation_refresh={self.peer_presentation_refresh_nonce}"
         if session_scope:
             return f"{session_scope}|{marker}"

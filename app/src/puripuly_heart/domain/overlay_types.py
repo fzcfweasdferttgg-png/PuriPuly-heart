@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
+from uuid import UUID
 
 
 class SessionLoggingMode(str, Enum):
@@ -478,3 +479,19 @@ def _validate_optional_generation(value: int | None, key: str) -> None:
         raise ValueError(f"{key} must be an int")
     if value < 0 or value > U64_MAX:
         raise ValueError(f"{key} must be between 0 and {U64_MAX}")
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveSelfOverlayMetadata:
+    text: str
+    secondary_text: str
+    utterance_id: UUID
+    occupant_key: str
+    update_id: str | None
+    origin_wall_clock_ms: int | None
+    session_scope: str | None
+    source_text_hash: str | None
+    source_text_len: int | None
+    logical_turn_key: str | None
+    primary_language: str | None = None
+    secondary_language: str | None = None

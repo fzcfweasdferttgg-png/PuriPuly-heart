@@ -31,6 +31,7 @@ from puripuly_heart.core.runtime_logging import (
 from puripuly_heart.core.vad.gating import SpeechChunk, SpeechEnd, SpeechStart, VadEvent
 from puripuly_heart.domain.events import (
     STTErrorEvent,
+    STTEvent,
     STTFinalEvent,
     STTPartialEvent,
     STTSessionState,
@@ -49,7 +50,7 @@ from puripuly_heart.ports.hub import STTProvider
 from puripuly_heart.core.pipeline.latency_tracker import LatencyTracker, _LatencyTimeline
 from puripuly_heart.core.pipeline import text_merge
 from puripuly_heart.core.pipeline.stages.buffer_manager import BufferManagerMixin
-from puripuly_heart.core.pipeline.stages.overlay_helpers import OverlayHelpersMixin
+from puripuly_heart.core.pipeline.stages.overlay_helpers import OverlayHelpersHost, OverlayHelpersMixin
 from puripuly_heart.core.pipeline.stages.peer_turns import PeerTurnsMixin
 
 __all__ = ["STTProvider", "Pipeline"]
@@ -61,6 +62,11 @@ _SELF_SPEECH_TYPING_REASON = "self_speech_pending"
 
 @dataclass(slots=True)
 class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
+    """Pipeline satisfies OverlayHelpersHost Protocol.
+
+    All public attributes defined in OverlayHelpersHost are present as fields.
+    See overlay_helpers.py for Protocol definition and requirements.
+    """
     stt: STTProvider | None
     llm: LLMProvider | None
     osc: OscSink
@@ -123,7 +129,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
     _peer_parent_speech_end_times: dict[UUID, float] = field(default_factory=dict)
     context_resolver: ContextResolver = field(init=False)
     active_chatbox_channel: ChannelId = field(init=False, default="self")
-    overlay_stream_coalesce_ms: int = 300
     last_error_source: str | None = None
     _last_overlay_secondary_runtime_signature: tuple[object, ...] | None = field(
         init=False,
@@ -479,7 +484,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
         self._clear_peer_logical_turn_state()
         self._latency._clear_latency_state()
 
-    async def _handle_stt_event(self, event: object) -> None:
+    async def _handle_stt_event(self, event: STTEvent) -> None:
         if isinstance(event, STTSessionStateEvent):
             self._emit_basic(
                 "[Hub] STT state: channel=%s state=%s",
@@ -896,7 +901,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
             )
         except asyncio.CancelledError:
             if runtime.channel == "self":
-                await self._emit_overlay_utterance_closed(
+                await self._emit_overlay_utterance_closed_with_latency(
                     utterance_id=utterance_id,
                     channel=runtime.channel,
                     is_final=False,
@@ -934,7 +939,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                 )
             )
             if runtime.channel == "self":
-                await self._emit_overlay_utterance_closed(
+                await self._emit_overlay_utterance_closed_with_latency(
                     utterance_id=utterance_id,
                     channel=runtime.channel,
                     is_final=False,
@@ -960,8 +965,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                     transcript_text=text,
                     translation_text=None,
                 )
-            elif runtime.channel != "peer":
-                self._latency._finalize_latency_timeline(runtime=runtime, channel=runtime.channel, utterance_id=utterance_id)
             return
 
         publish_to_chatbox = self._should_publish_to_chatbox(runtime)
@@ -977,7 +980,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                 runtime=runtime,
                 applied_context_mode=applied_mode,
             )
-            await self._emit_overlay_utterance_closed(
+            await self._emit_overlay_utterance_closed_with_latency(
                 utterance_id=utterance_id,
                 channel=runtime.channel,
                 is_final=True,
@@ -996,7 +999,7 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                 translation=translation,
                 applied_context_mode=applied_mode,
             )
-            await self._emit_overlay_utterance_closed(
+            await self._emit_overlay_utterance_closed_with_latency(
                 utterance_id=utterance_id,
                 channel=runtime.channel,
                 is_final=True,
@@ -1008,8 +1011,6 @@ class Pipeline(OverlayHelpersMixin, PeerTurnsMixin, BufferManagerMixin):
                 transcript_text=text,
                 translation_text=translation.text,
             )
-        else:
-            self._latency._finalize_latency_timeline(runtime=runtime, channel=runtime.channel, utterance_id=utterance_id)
         if runtime.channel == "peer":
             self._complete_peer_logical_turn(utterance_id)
 

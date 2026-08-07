@@ -5,8 +5,7 @@ _should_suppress_final_transcript() to filter out false transcripts.
 The provider gate there must list all LOCAL_QWEN variants — adding a new
 local Qwen provider without updating the gate disables suppression.
 
-KNOWN_LOCAL_QWEN_HALLUCINATIONS is module-private (not consumed externally);
-listed in __all__ for backward compatibility only.
+KNOWN_LOCAL_QWEN_HALLUCINATIONS is module-private (not consumed externally).
 """
 
 from __future__ import annotations

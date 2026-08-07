@@ -1,3 +1,17 @@
+"""STT session manager — handles STT backend lifecycle, session management, audio routing.
+
+ManagedSTTProvider manages the STT session lifecycle:
+- DISCONNECTED → CONNECTING → STREAMING → DRAINING → CLOSED
+- Connection retries with exponential backoff
+- Reset timer with retry logic (reschedule on failure, terminal on max retries)
+- Idle release via clear_idle_state() + reset_for_idle() (public API for ui/)
+
+Key invariants:
+- _draining set: tasks auto-remove via done_callback (no leak)
+- _emit_detailed: logs at DEBUG when runtime_logging is None (not discarded)
+- _closing field removed: shutdown guard was never implemented
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -35,6 +49,7 @@ from puripuly_heart.core.stt.local_qwen_hallucination import (
 from puripuly_heart.core.vad.gating import SpeechChunk, SpeechEnd, SpeechStart, VadEvent
 from puripuly_heart.domain.events import (
     STTErrorEvent,
+    STTEvent,
     STTFinalEvent,
     STTPartialEvent,
     STTSessionState,
@@ -65,6 +80,9 @@ class ManagedSTTProvider:
     connect_retry_base_s: float = 0.8
     connect_retry_max_s: float = 6.0
     reconnect_window_s: float = 20.0
+    reset_max_retries: int = 3
+    reset_retry_base_s: float = 60.0
+    reset_retry_max_s: float = 300.0
     on_terminal_failure: Callable[[Exception], Awaitable[None] | None] | None = None
     on_final_transcript_suppressed: (
         Callable[[FinalTranscriptSuppressedNotification], Awaitable[None] | None] | None
@@ -92,7 +110,7 @@ class ManagedSTTProvider:
     _diagnostic_peak: float = 0.0
     _diagnostic_zero_count: int = 0
     _stt_fault_logged_for_utterance: bool = False
-    _closing: bool = field(init=False, default=False)
+    _reset_retry_count: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
         if self.channel not in ("self", "peer"):
@@ -147,26 +165,27 @@ class ManagedSTTProvider:
         message: str,
         *args: object,
         level: int = logging.INFO,
-        fallback_level: int | None = None,
     ) -> None:
+        # Detailed logging: uses runtime_logging if available, otherwise DEBUG fallback.
+        # Unlike _emit_basic which uses the caller's level, detailed always uses DEBUG
+        # to avoid flooding standard logs with diagnostic information.
         formatted = self._format_log_message(message, *args)
         if self.runtime_logging is not None:
             self.runtime_logging.emit_detailed(formatted, level=level)
-        _ = fallback_level
+            return
+        logger.log(logging.DEBUG, formatted)
 
     def _emit_audio_diag_detailed(
         self,
         message: str,
         *args: object,
         level: int = logging.INFO,
-        fallback_level: int | None = None,
     ) -> None:
         with contextlib.suppress(Exception):
             self._emit_detailed(
                 message,
                 *args,
                 level=level,
-                fallback_level=fallback_level,
             )
 
     def _log_session_connected(self, *, attempts: int) -> None:
@@ -178,7 +197,6 @@ class ManagedSTTProvider:
         self._emit_basic(f"[STT] Session connected after {retries} {suffix}")
 
     async def close(self) -> None:
-        self._closing = True
         async with self._session_open_lock:
             await self._close_locked()
 
@@ -228,7 +246,24 @@ class ManagedSTTProvider:
         else:
             raise TypeError(f"Unknown VadEvent: {type(event)}")
 
-    async def events(self) -> AsyncIterator[object]:
+    def clear_idle_state(self) -> None:
+        """Clear pending data and event queue for idle release."""
+        self._pending_final_utterance_ids.clear()
+        self._pending_final_utterance_times.clear()
+        if self._audio_ring is not None:
+            self._audio_ring.clear()
+        while True:
+            try:
+                self._events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+    async def reset_for_idle(self) -> None:
+        """Full idle release: clear state + close session."""
+        self.clear_idle_state()
+        await self.close()
+
+    async def events(self) -> AsyncIterator[STTEvent]:
         while True:
             item = await self._events.get()
             yield item
@@ -236,7 +271,7 @@ class ManagedSTTProvider:
     async def warmup(self) -> bool:
         """Pre-establish STT session for faster first response."""
         if await self._ensure_session():
-            self._emit_detailed("[STT] Session pre-warmed", fallback_level=logging.INFO)
+            self._emit_detailed("[STT] Session pre-warmed")
             return True
         return False
 
@@ -275,14 +310,12 @@ class ManagedSTTProvider:
                 self._emit_basic(
                     "[STT] Pending final queue size is unexpectedly high: %s",
                     len(self._pending_final_utterance_ids),
-                    level=logging.WARNING,
-                    fallback_level=logging.WARNING,
+                    level=logging.WARNING
                 )
             self._emit_detailed(
                 "[STT] Speech end handling for id=%s (trailing_silence_ms=%s)",
                 str(event.utterance_id)[:8],
-                event.trailing_silence_ms,
-                fallback_level=logging.INFO,
+                event.trailing_silence_ms
             )
             self._emit_stt_input_diagnostics(event.utterance_id, finalize=True)
             await self._active_session.on_speech_end(trailing_silence_ms=event.trailing_silence_ms)
@@ -405,8 +438,7 @@ class ManagedSTTProvider:
             self._emit_detailed(
                 "[STT] Opening new session (attempt %s/%s)...",
                 attempt,
-                self.connect_attempts,
-                fallback_level=logging.INFO,
+                self.connect_attempts
             )
             try:
                 session = await self.backend.open_session()
@@ -417,8 +449,7 @@ class ManagedSTTProvider:
                     attempt,
                     self.connect_attempts,
                     exc,
-                    level=logging.WARNING,
-                    fallback_level=logging.WARNING,
+                    level=logging.WARNING
                 )
                 if attempt < self.connect_attempts:
                     delay = min(
@@ -427,8 +458,7 @@ class ManagedSTTProvider:
                     )
                     self._emit_detailed(
                         "[STT] Retrying session in %.1fs",
-                        delay,
-                        fallback_level=logging.INFO,
+                        delay
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -442,8 +472,7 @@ class ManagedSTTProvider:
                 self._log_session_connected(attempts=attempt)
                 self._emit_detailed(
                     "[STT] Session ready (reset_deadline=%ss)",
-                    self.reset_deadline_s,
-                    fallback_level=logging.INFO,
+                    self.reset_deadline_s
                 )
                 return True
 
@@ -452,8 +481,7 @@ class ManagedSTTProvider:
             "[STT] Failed to open session after %s attempts: %s",
             self.connect_attempts,
             reason,
-            level=logging.ERROR,
-            fallback_level=logging.ERROR,
+            level=logging.ERROR
         )
         await self._set_state(STTSessionState.DISCONNECTED)
         await self._events.put(
@@ -478,8 +506,7 @@ class ManagedSTTProvider:
 
         self._emit_detailed(
             "[STT] Bridging buffered audio: %.0fms",
-            bridging_ms,
-            fallback_level=logging.INFO,
+            bridging_ms
         )
         new_session = await self.backend.open_session()
         self._active_session = new_session
@@ -498,14 +525,13 @@ class ManagedSTTProvider:
 
         if old_session and old_consumer:
             self._emit_detailed(
-                "[STT] Draining replaced session in background",
-                fallback_level=logging.INFO,
+                "[STT] Draining replaced session in background"
             )
-            self._draining.add(
-                asyncio.create_task(
-                    self._drain_and_close(old_session, old_consumer, allow_finalize=False)
-                )
+            task = asyncio.create_task(
+                self._drain_and_close(old_session, old_consumer, allow_finalize=False)
             )
+            task.add_done_callback(self._draining.discard)
+            self._draining.add(task)
 
     async def _reset_with_reconnect(self) -> None:
         """Close current session and immediately open a new one.
@@ -523,8 +549,7 @@ class ManagedSTTProvider:
         elapsed = self.clock.now() - (self._last_speech_end_time or 0)
         self._emit_detailed(
             f"[STT] RECONNECT: Session limit during silence, "
-            f"last speech {elapsed:.1f}s ago, reconnecting...",
-            fallback_level=logging.INFO,
+            f"last speech {elapsed:.1f}s ago, reconnecting..."
         )
 
         old_session = self._active_session
@@ -536,8 +561,7 @@ class ManagedSTTProvider:
         except Exception as e:
             self._emit_basic(
                 f"[STT] Reconnect failed; closing until next speech: {e}",
-                level=logging.ERROR,
-                fallback_level=logging.ERROR,
+                level=logging.ERROR
             )
             await self._reset_on_silence()
             return
@@ -555,11 +579,11 @@ class ManagedSTTProvider:
         self._emit_basic("[STT] Session reconnected after recent speech")
 
         # Drain old session with finalize (unlike bridging)
-        self._draining.add(
-            asyncio.create_task(
-                self._drain_and_close(old_session, old_consumer, allow_finalize=True)
-            )
+        task = asyncio.create_task(
+            self._drain_and_close(old_session, old_consumer, allow_finalize=True)
         )
+        task.add_done_callback(self._draining.discard)
+        self._draining.add(task)
 
     async def _reset_on_silence(self) -> None:
         if self._active_session is None or self._consumer_task is None:
@@ -584,8 +608,7 @@ class ManagedSTTProvider:
         allow_finalize: bool,
     ) -> None:
         self._emit_detailed(
-            f"[STT] DRAIN: Starting drain (timeout={self.drain_timeout_s}s)...",
-            fallback_level=logging.DEBUG,
+            f"[STT] DRAIN: Starting drain (timeout={self.drain_timeout_s}s)..."
         )
         if allow_finalize and self._should_finalize_before_stop():
             await self._finalize_before_stop(session)
@@ -595,14 +618,12 @@ class ManagedSTTProvider:
         try:
             await asyncio.wait_for(consumer_task, timeout=self.drain_timeout_s)
             self._emit_detailed(
-                "[STT] DRAIN: Consumer task completed normally",
-                fallback_level=logging.DEBUG,
+                "[STT] DRAIN: Consumer task completed normally"
             )
         except asyncio.TimeoutError:
             self._emit_detailed(
                 f"[STT] DRAIN: Timeout after {self.drain_timeout_s}s, cancelling consumer task",
-                level=logging.WARNING,
-                fallback_level=logging.WARNING,
+                level=logging.WARNING
             )
             consumer_task.cancel()
             with contextlib.suppress(Exception):
@@ -610,7 +631,7 @@ class ManagedSTTProvider:
 
         with contextlib.suppress(Exception):
             await session.close()
-        self._emit_detailed("[STT] DRAIN: Session closed", fallback_level=logging.DEBUG)
+        self._emit_detailed("[STT] DRAIN: Session closed")
 
     def _should_finalize_before_stop(self) -> bool:
         return self._active_utterance_id is not None or bool(self._pending_final_utterance_ids)
@@ -662,8 +683,7 @@ class ManagedSTTProvider:
                 "[STT] Dropped stale pending final id=%s age_s=%.1f",
                 str(utterance_id)[:8],
                 age_s,
-                level=logging.WARNING,
-                fallback_level=logging.WARNING,
+                level=logging.WARNING
             )
 
     def _should_suppress_final_transcript(self, text: str) -> bool:
@@ -708,8 +728,7 @@ class ManagedSTTProvider:
             pending_age_ms,
             pending_queue_size_before,
             active_utterance_id,
-            text_len,
-            fallback_level=logging.INFO,
+            text_len
         )
 
     async def _handle_suppressed_final_transcript(
@@ -739,8 +758,7 @@ class ManagedSTTProvider:
                     provider_name.value,
                     self.channel,
                     exc,
-                    level=logging.WARNING,
-                    fallback_level=logging.WARNING,
+                    level=logging.WARNING
                 )
             else:
                 notification_status = "emitted"
@@ -750,8 +768,7 @@ class ManagedSTTProvider:
             provider_name.value,
             self.channel,
             str(utterance_id)[:8],
-            notification_status,
-            fallback_level=logging.INFO,
+            notification_status
         )
 
     async def _consume_session_events(
@@ -842,8 +859,7 @@ class ManagedSTTProvider:
         self._emit_basic(
             "[STT] Session failed: %s",
             exc,
-            level=logging.ERROR,
-            fallback_level=logging.ERROR,
+            level=logging.ERROR
         )
         await self._events.put(
             STTErrorEvent(
@@ -859,8 +875,7 @@ class ManagedSTTProvider:
         old_state = self._state
         self._state = state
         self._emit_detailed(
-            f"[STT] State: {old_state.name} -> {state.name}",
-            fallback_level=logging.INFO,
+            f"[STT] State: {old_state.name} -> {state.name}"
         )
         await self._events.put(STTSessionStateEvent(state, channel=self.channel))
 
@@ -875,17 +890,22 @@ class ManagedSTTProvider:
         """Schedule a timer to reset the session after reset_deadline_s."""
         if self._reset_timer:
             self._reset_timer.cancel()
+        self._reset_retry_count = 0
         self._reset_timer = asyncio.create_task(self._reset_timer_task())
 
     async def _reset_timer_task(self) -> None:
-        """Background task that resets the session when the deadline expires."""
+        """Background task that resets the session when the deadline expires.
+
+        Retry logic: on failure, reschedule with exponential backoff.
+        After reset_max_retries failures, give up and trigger terminal failure.
+        _schedule_reset_timer() resets _reset_retry_count on each new session.
+        """
         try:
             await asyncio.sleep(self.reset_deadline_s)
             if self._active_session is None:
                 return
             self._emit_detailed(
-                f"[STT] Timer expired after {self.reset_deadline_s}s",
-                fallback_level=logging.INFO,
+                f"[STT] Timer expired after {self.reset_deadline_s}s"
             )
             if self._active_utterance_id is not None:
                 # Speaking: reset with bridging
@@ -898,3 +918,26 @@ class ManagedSTTProvider:
                 await self._reset_on_silence()
         except asyncio.CancelledError:
             pass
+        except Exception as exc:
+            self._reset_retry_count += 1
+            if self._reset_retry_count >= self.reset_max_retries:
+                logger.error(
+                    "[STT] Reset failed %d times, giving up: %s",
+                    self._reset_retry_count,
+                    exc,
+                )
+                await self._handle_terminal_session_failure(self._active_session, exc)
+                return
+            delay = min(
+                self.reset_retry_base_s * (2 ** (self._reset_retry_count - 1)),
+                self.reset_retry_max_s,
+            )
+            logger.warning(
+                "[STT] Reset failed: %s, retry %d/%d in %.1fs",
+                exc,
+                self._reset_retry_count,
+                self.reset_max_retries,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            self._schedule_reset_timer()

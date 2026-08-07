@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from puripuly_heart.core.runtime_logging import SessionLoggingMode
 from puripuly_heart.domain.models import Translation
@@ -18,18 +18,49 @@ if TYPE_CHECKING:
     )
     from puripuly_heart.core.pipeline.context import ContextMode
     from puripuly_heart.domain.models import ChannelId, Transcript
+    from puripuly_heart.domain.overlay_types import ActiveSelfOverlayMetadata
 
 
 logger = logging.getLogger(__name__)
 
 
+class OverlayHelpersHost(Protocol):
+    """Protocol defining public attributes required by OverlayHelpersMixin.
+
+    Host class (Pipeline) must define these attributes.
+    Private attributes (_latency, _last_overlay_secondary_runtime_signature)
+    and host methods (_source_language_for, _target_language_for, etc.) are
+    documented in OverlayHelpersMixin docstring.
+    """
+    overlay_sink: object  # OverlaySink | None
+    overlay_event_adapter: object  # OverlayEventFactory
+    runtime_logging: object  # SessionRuntimeLoggingService | None
+    last_error_source: str | None
+    self_runtime: object  # ChannelRuntime
+    peer_runtime: object  # ChannelRuntime
+    source_language: str
+    target_language: str
+    llm: object  # LLMProvider | None
+
+
 class OverlayHelpersMixin:
     """Mixin providing overlay-related helper methods for Pipeline.
 
-    All methods reference ``self.xxx`` attributes that live on the host
-    class (overlay_sink, overlay_event_adapter, clock, etc.).  The host
-    class must define those attributes — this mixin deliberately has no
-    ``__init__``.
+    Host class must define public attributes (see OverlayHelpersHost Protocol):
+    - overlay_sink, overlay_event_adapter, runtime_logging, last_error_source
+    - self_runtime, peer_runtime, source_language, target_language, llm
+
+    Private attributes (implementation details):
+    - _latency: LatencyTracker
+    - _last_overlay_secondary_runtime_signature: tuple[object, ...] | None
+
+    Host methods called by mixin:
+    - _source_language_for, _target_language_for, _translation_enabled_for_runtime
+    - _should_publish_to_chatbox, _emit_exception_summary, _emit_detailed
+    - _merge_text, _soft_reuse_mode, _runtime_for_channel
+
+    Cross-mixin methods:
+    - _complete_peer_logical_turn (from PeerTurnsMixin)
     """
 
     # ------------------------------------------------------------------
@@ -59,12 +90,6 @@ class OverlayHelpersMixin:
         preserve_parent_speech_end_time: bool = False,
     ) -> None:
         if self.overlay_sink is not None:
-            self._record_overlay_emit(
-                event_kind="peer_transcript_final",
-                utterance_id=transcript.utterance_id,
-                channel="peer",
-                secondary_len=len(transcript.text.strip()),
-            )
             self._latency._record_latency_stage(
                 channel="peer",
                 utterance_id=transcript.utterance_id,
@@ -78,7 +103,7 @@ class OverlayHelpersMixin:
                     target_language=self._target_language_for(self.peer_runtime),
                 )
             )
-        await self._emit_overlay_utterance_closed(
+        await self._emit_overlay_utterance_closed_with_latency(
             utterance_id=transcript.utterance_id,
             channel="peer",
             is_final=close_is_final,
@@ -95,13 +120,9 @@ class OverlayHelpersMixin:
         utterance_id: UUID,
         channel: ChannelId,
         is_final: bool,
-        finalize_latency: bool | None = None,
     ) -> None:
+        """Emit overlay event for utterance closed. No latency finalization."""
         if self.overlay_sink is None:
-            if finalize_latency is True or (finalize_latency is None and channel == "peer"):
-                self._latency._finalize_latency_timeline(
-                    runtime=self._runtime_for_channel(channel), channel=channel, utterance_id=utterance_id,
-                )
             return
         await self._emit_overlay_event(
             self.overlay_event_adapter.utterance_closed(
@@ -110,10 +131,35 @@ class OverlayHelpersMixin:
                 is_final=is_final,
             )
         )
+
+    def _finalize_latency_for_utterance(
+        self,
+        *,
+        utterance_id: UUID,
+        channel: ChannelId,
+        finalize_latency: bool | None = None,
+    ) -> None:
+        """Finalize latency timeline for utterance. No overlay event."""
         if finalize_latency is True or (finalize_latency is None and channel == "peer"):
             self._latency._finalize_latency_timeline(
                 runtime=self._runtime_for_channel(channel), channel=channel, utterance_id=utterance_id,
             )
+
+    async def _emit_overlay_utterance_closed_with_latency(
+        self,
+        *,
+        utterance_id: UUID,
+        channel: ChannelId,
+        is_final: bool,
+        finalize_latency: bool | None = None,
+    ) -> None:
+        """Convenience: emit overlay event + finalize latency. Use when both are needed."""
+        await self._emit_overlay_utterance_closed(
+            utterance_id=utterance_id, channel=channel, is_final=is_final,
+        )
+        self._finalize_latency_for_utterance(
+            utterance_id=utterance_id, channel=channel, finalize_latency=finalize_latency,
+        )
 
     async def _emit_translation_to_overlay(
         self,
@@ -124,12 +170,6 @@ class OverlayHelpersMixin:
         if self.overlay_sink is None:
             return
 
-        self._record_overlay_emit(
-            event_kind="translation_final",
-            utterance_id=translation.utterance_id,
-            channel=translation.channel,
-            secondary_len=len(translation.text.strip()),
-        )
         await self._emit_overlay_event(
             self.overlay_event_adapter.translation_final(
                 utterance_id=translation.utterance_id,
@@ -159,12 +199,6 @@ class OverlayHelpersMixin:
         if self.overlay_sink is None:
             return
 
-        self._record_overlay_emit(
-            event_kind="translation_final",
-            utterance_id=translation.utterance_id,
-            channel=translation.channel,
-            secondary_len=len(translation.text.strip()),
-        )
         self._latency._record_latency_stage(
             channel=runtime.channel,
             utterance_id=translation.utterance_id,
@@ -356,11 +390,13 @@ class OverlayHelpersMixin:
     # Active-self metadata
     # ------------------------------------------------------------------
 
-    def _current_active_self_metadata(self) -> object | None:
-        provider = getattr(self.overlay_sink, "active_self_overlay_metadata", None)
-        if not callable(provider):
+    def _current_active_self_metadata(self) -> ActiveSelfOverlayMetadata | None:
+        if self.overlay_sink is None:
             return None
-        return provider()
+        result = self.overlay_sink.active_self_overlay_metadata()
+        if isinstance(result, ActiveSelfOverlayMetadata):
+            return result
+        return None
 
     @staticmethod
     def _active_self_translation_metadata(metadata: object | None) -> dict[str, object]:
@@ -478,12 +514,6 @@ class OverlayHelpersMixin:
         ):
             return
 
-        self._record_overlay_emit(
-            event_kind="active_self",
-            utterance_id=buffer.merge_id,
-            channel="self",
-            secondary_len=len(secondary_text),
-        )
         await self._emit_self_active_overlay_event(
             self.overlay_event_adapter.self_active_update(
                 text=active_text,
@@ -499,8 +529,6 @@ class OverlayHelpersMixin:
 
     async def reset_overlay_preview(self) -> None:
         if self._current_active_self_metadata() is None:
-            return
-        if self.overlay_sink is None:
             return
         await self._emit_self_active_overlay_event(self.overlay_event_adapter.self_active_clear())
 
@@ -584,13 +612,3 @@ class OverlayHelpersMixin:
             and getattr(metadata, "text", None) == final_text
             and str(getattr(metadata, "secondary_text", "") or "").strip() != ""
         )
-
-    def _record_overlay_emit(
-        self,
-        *,
-        event_kind: str,
-        utterance_id: UUID,
-        channel: ChannelId,
-        secondary_len: int,
-    ) -> None:
-        pass

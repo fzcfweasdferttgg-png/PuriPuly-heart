@@ -13,7 +13,6 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
 from uuid import uuid4
 
 from puripuly_heart import __version__
@@ -30,7 +29,18 @@ from puripuly_heart.domain.overlay_types import (
 
 logger = logging.getLogger(__name__)
 
-QUIET_TAIL_PROFILE_ENV = "PURIPULY_OVERLAY_QUIET_TAIL_PROFILE"
+"""Overlay process manager — handles spawning and managing the SteamVR overlay subprocess.
+
+OverlayProcessManager manages the overlay process lifecycle:
+- off → startup → connected → failed
+- Manifest writing with tempfile cleanup on failure
+- Process diagnostics and logging
+
+Key invariants:
+- _write_manifest: uses try/finally to cleanup tempfile on failure
+- Dead fields removed: restart_scheduled, _executable_path, _executable_mtime
+- QUIET_TAIL_PROFILE_ENV removed: was unused scaffolding
+"""
 
 
 def _assign_overlay_to_job(pid: int, job_handle: int | None) -> None:
@@ -206,10 +216,6 @@ class _AsyncioOverlayProcess:
 @dataclass(slots=True)
 class DefaultOverlayProcessRunner:
     executable_path: Path | None = None
-    quiet_tail_profile: str = "p05"
-
-    def set_quiet_tail_profile(self, profile: str) -> None:
-        self.quiet_tail_profile = profile
 
     def prepare(self, manifest: OverlayLaunchManifest) -> Path:
         _ = manifest
@@ -241,7 +247,6 @@ class DefaultOverlayProcessRunner:
         else:
             command = (str(executable_path), "--config", str(manifest_path))
         child_env = dict(os.environ)
-        child_env[QUIET_TAIL_PROFILE_ENV] = self.quiet_tail_profile
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
@@ -464,15 +469,12 @@ class OverlayProcessManager:
 
     state: str = field(init=False, default="off")
     failure_reason: str | None = field(init=False, default=None)
-    restart_scheduled: bool = field(init=False, default=False)
     _manifest_path: Path | None = field(init=False, default=None)
     _process: OverlayManagedProcess | None = field(init=False, default=None)
     _monitor_task: asyncio.Task[None] | None = field(init=False, default=None)
     _current_phase: str = field(init=False, default="off")
     _last_transition: str | None = field(init=False, default=None)
     _last_exit_code: int | None = field(init=False, default=None)
-    _executable_path: Path | None = field(init=False, default=None)
-    _executable_mtime: float | None = field(init=False, default=None)
     _shutdown_requested: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
@@ -500,16 +502,11 @@ class OverlayProcessManager:
         self._last_transition = "spawn"
         self._last_exit_code = None
         self._shutdown_requested = False
-        self.restart_scheduled = False
         self.failure_reason = None
 
         manifest = self._build_manifest()
         try:
             executable_path = self.process_runner.prepare(manifest)
-            self._executable_path = executable_path
-            self._executable_mtime = (
-                executable_path.stat().st_mtime if executable_path.exists() else None
-            )
             self._manifest_path = self._write_manifest(manifest)
             self._process = await self.process_runner.spawn(executable_path, self._manifest_path)
             _assign_overlay_to_job(getattr(self._process, "pid", None), self.job_handle)
@@ -562,14 +559,21 @@ class OverlayProcessManager:
         )
 
     def _write_manifest(self, manifest: OverlayLaunchManifest) -> Path:
-        with tempfile.NamedTemporaryFile(
+        """Write manifest to tempfile. Cleans up on failure to avoid orphaned files."""
+        handle = tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
             suffix=".json",
             prefix="puripuly-overlay-",
             delete=False,
-        ) as handle:
+        )
+        try:
             json.dump(manifest.to_dict(), handle)
+        except BaseException:
+            handle.close()
+            Path(handle.name).unlink(missing_ok=True)
+            raise
+        handle.close()
         return Path(handle.name)
 
     async def _wait_for_startup(self) -> None:
@@ -865,7 +869,6 @@ class OverlayProcessManager:
     ) -> None:
         self.state = "failed"
         self.failure_reason = failure_reason
-        self.restart_scheduled = False
         self._current_phase = "failed"
         stdout_count = (
             len(self.diagnostics.child_stdout_lines) if self.diagnostics is not None else 0
