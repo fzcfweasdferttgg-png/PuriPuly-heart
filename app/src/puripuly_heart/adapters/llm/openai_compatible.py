@@ -171,7 +171,7 @@ class OpenAICompatibleLLMProvider:
             _log_basic_request_failure(
                 runtime_logging=self.runtime_logging,
                 operation="translate",
-                message=f"Authentication failed (401): {exc}",
+                message=f"model={self.model} base_url={self.base_url} Authentication failed (401): {exc}",
             )
             raise RuntimeError(f"API key invalid: {exc}") from exc
 
@@ -179,7 +179,7 @@ class OpenAICompatibleLLMProvider:
             _log_basic_request_failure(
                 runtime_logging=self.runtime_logging,
                 operation="translate",
-                message=f"Model not found (404): {exc}",
+                message=f"model={self.model} base_url={self.base_url} Model not found (404): {exc}",
             )
             raise RuntimeError(
                 f"Model '{self.model}' not found at {self.base_url}: {exc}"
@@ -189,7 +189,7 @@ class OpenAICompatibleLLMProvider:
             _log_basic_request_failure(
                 runtime_logging=self.runtime_logging,
                 operation="translate",
-                message=f"Rate limited (429): {exc}",
+                message=f"model={self.model} base_url={self.base_url} Rate limited (429): {exc}",
             )
             raise RuntimeError(f"Rate limited by provider: {exc}") from exc
 
@@ -197,17 +197,23 @@ class OpenAICompatibleLLMProvider:
             _log_basic_request_failure(
                 runtime_logging=self.runtime_logging,
                 operation="translate",
-                message=f"Connection failed: {exc}",
+                message=f"model={self.model} base_url={self.base_url} Connection failed: {exc}",
             )
             raise RuntimeError(
                 f"Cannot connect to {self.base_url}: {exc}"
             ) from exc
 
         except Exception as exc:
+            status_code = getattr(exc, "status_code", None)
+            exc_type = type(exc).__name__
+            if status_code is not None:
+                detail = f"HTTP {status_code} ({exc_type}): {exc}"
+            else:
+                detail = f"{exc_type}: {exc}"
             _log_basic_request_failure(
                 runtime_logging=self.runtime_logging,
                 operation="translate",
-                message=str(exc),
+                message=f"model={self.model} base_url={self.base_url} {detail}",
             )
             raise
 

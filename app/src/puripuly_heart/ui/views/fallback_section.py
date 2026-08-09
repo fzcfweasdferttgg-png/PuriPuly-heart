@@ -80,7 +80,7 @@ class FallbackSectionMixin:
             text=t("settings.local_llm.test_connection", default="Test connection"),
             on_click=self._test_fallback_openai_connection,
         )
-        async def _verify_with_base_url(provider: str, key: str):
+        async def _verify_with_base_url(provider: str, key: str, **kwargs: object):
             return await on_verify(provider, key, base_url=self._fallback_openai_base_url.value or None)
 
         self._fallback_api_key = ApiKeyField(
@@ -233,6 +233,7 @@ class FallbackSectionMixin:
                 self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _on_fallback_base_url_change_end(self, e) -> None:
+        import logging
         _ = e
         if not self._settings:
             return
@@ -242,6 +243,9 @@ class FallbackSectionMixin:
                 "settings.openai_compatible.base_url.required", default="Base URL is required"
             )
             _update_control_if_mounted(self._fallback_openai_base_url)
+            logging.getLogger(__name__).warning(
+                "[FallbackSection] Backup base_url is empty — validation error shown in UI"
+            )
             return
         self._fallback_openai_base_url.error_text = None
         self._fallback_openai_base_url.value = raw_value

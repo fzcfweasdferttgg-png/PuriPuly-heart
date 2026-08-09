@@ -96,9 +96,6 @@ class TranscriptMediator:
             )
         )
         if is_final:
-            if runtime.channel == "peer":
-                await self._handle_peer_final(transcript, runtime)
-                return
             await self._overlay.emit_final_transcript_to_overlay(transcript)
             if not self._overlay.overlay_translation_will_follow(runtime):
                 await self._overlay.emit_overlay_utterance_closed(
@@ -160,35 +157,3 @@ class TranscriptMediator:
                 )
             return
         await self._translation.ensure_translation(transcript)
-
-    # -- Internal: peer final decision in handle() --
-
-    async def _handle_peer_final(
-        self, transcript: Transcript, runtime: object
-    ) -> None:
-        peer_terminal_work_will_follow = self._overlay.peer_terminal_work_will_follow(
-            runtime  # type: ignore[arg-type]
-        )
-        if self._overlay.overlay_translation_will_follow(runtime):  # type: ignore[arg-type]
-            await self._translation.ensure_translation(transcript)
-        elif self._ctx.overlay_sink is not None:
-            await self._overlay.finalize_peer_source_only(
-                transcript,
-                close_is_final=True,
-                finalize_latency=not peer_terminal_work_will_follow,
-            )
-            if (
-                not self._overlay.overlay_translation_will_follow(runtime)  # type: ignore[arg-type]
-                and self._ctx._should_publish_to_chatbox(runtime)  # type: ignore[arg-type]
-            ):
-                await self._output.enqueue_osc(
-                    transcript.utterance_id,
-                    transcript_text=transcript.text,
-                    translation_text=None,
-                )
-        elif not peer_terminal_work_will_follow:
-            self._ctx._latency._finalize_latency_timeline(
-                runtime=self._ctx._runtime_for_channel(transcript.channel),
-                channel=transcript.channel,
-                utterance_id=transcript.utterance_id,
-            )

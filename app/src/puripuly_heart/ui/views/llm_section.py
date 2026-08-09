@@ -417,6 +417,8 @@ class LlmSectionMixin:
                 self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _on_openai_compatible_base_url_change_end(self, e) -> None:
+        import logging
+        logger = logging.getLogger(__name__)
         _ = e
         if not self._settings:
             return
@@ -426,6 +428,9 @@ class LlmSectionMixin:
                 "settings.openai_compatible.base_url.required", default="Base URL is required"
             )
             _update_control_if_mounted(self._openai_compatible_base_url)
+            logger.warning(
+                "[LLMSection] Main translation base_url is empty — validation error shown in UI"
+            )
             return
 
         self._openai_compatible_base_url.error_text = None

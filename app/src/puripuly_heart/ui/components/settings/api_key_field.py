@@ -31,6 +31,7 @@ class ApiKeyField(ft.Row):
         on_save: Callable[[str, str], None] | None = None,
         show_snackbar: Callable[[str, str], None] | None = None,
         show_status: bool = True,
+        base_url_getter: Callable[[], str | None] | None = None,
     ):
         self._label_key = label_key
         self._secret_key = secret_key
@@ -39,6 +40,7 @@ class ApiKeyField(ft.Row):
         self._on_save = on_save
         self._show_snackbar_cb = show_snackbar
         self._show_status = show_status
+        self._base_url_getter = base_url_getter
         self._dirty = False
         self._last_verified_hash = ""
         self._is_verifying = False
@@ -190,7 +192,8 @@ class ApiKeyField(ft.Row):
         self._set_status("verifying")
 
         try:
-            success, msg = await self._on_verify(self._provider, key)
+            base_url = self._base_url_getter() if self._base_url_getter else None
+            success, msg = await self._on_verify(self._provider, key, base_url=base_url)
             if self._get_key_hash(self.value) != key_hash:
                 return
 

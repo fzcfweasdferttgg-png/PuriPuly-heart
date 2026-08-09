@@ -276,6 +276,7 @@ class SettingsView(
             show_snackbar=lambda msg, bg: (
                 self.show_snackbar(msg, bg) if self.show_snackbar else None
             ),
+            base_url_getter=lambda: self._openai_compatible_base_url.value,
         )
 
         # === General Tab Row 1: UI / Include Original / Integrated Context ===

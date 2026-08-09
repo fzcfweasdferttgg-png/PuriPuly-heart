@@ -256,10 +256,18 @@ class TranslationService:
                 )
             except Exception as exc:
                 last_error = exc
+                provider_model = getattr(provider, "model", "?")
+                provider_base_url = getattr(provider, "base_url", "?")
                 if provider is not self.fallback_llm:
-                    logger.warning("[LLM] Primary provider failed: %s, trying fallback", exc)
+                    logger.warning(
+                        "[LLM] Primary provider failed (model=%s base_url=%s): %s — trying fallback",
+                        provider_model, provider_base_url, exc,
+                    )
                 else:
-                    logger.error("[LLM] Fallback provider also failed: %s", exc)
+                    logger.error(
+                        "[LLM] Fallback provider also failed (model=%s base_url=%s): %s",
+                        provider_model, provider_base_url, exc,
+                    )
 
         if last_error is not None:
             raise last_error

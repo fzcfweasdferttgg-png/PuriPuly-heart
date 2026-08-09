@@ -47,13 +47,27 @@ class OverlayEmitter:
     ) -> None:
         self._ctx = ctx
         self._peer_turn_tracker = peer_turn_tracker
+        self._overlay_sink_none_warned: bool = False
+
+    def _overlay_sink_available(self) -> bool:
+        if self._ctx.overlay_sink is not None:
+            return True
+        if not self._overlay_sink_none_warned:
+            self._overlay_sink_none_warned = True
+            logger.warning(
+                "[OverlayEmitter] overlay_sink is None — overlay events will be dropped. "
+                "Overlay process may not have started."
+            )
+        else:
+            logger.debug("[OverlayEmitter] overlay_sink is None, event dropped")
+        return False
 
     # ------------------------------------------------------------------
     # Overlay event emission
     # ------------------------------------------------------------------
 
     async def emit_final_transcript_to_overlay(self, transcript: Transcript) -> None:
-        if self._ctx.overlay_sink is None:
+        if not self._overlay_sink_available():
             return
         source_language, target_language = self._self_overlay_languages_for_utterance(
             transcript.utterance_id
@@ -107,7 +121,7 @@ class OverlayEmitter:
         is_final: bool,
     ) -> None:
         """Emit overlay event for utterance closed. No latency finalization."""
-        if self._ctx.overlay_sink is None:
+        if not self._overlay_sink_available():
             return
         await self._emit_overlay_event(
             self._ctx.overlay_event_adapter.utterance_closed(
@@ -154,7 +168,7 @@ class OverlayEmitter:
         translation: Translation,
         applied_context_mode: ContextMode | None,
     ) -> None:
-        if self._ctx.overlay_sink is None:
+        if not self._overlay_sink_available():
             return
         await self._emit_overlay_event(
             self._ctx.overlay_event_adapter.translation_final(
@@ -182,7 +196,7 @@ class OverlayEmitter:
         runtime: ChannelRuntime,
         applied_context_mode: ContextMode | None,
     ) -> None:
-        if self._ctx.overlay_sink is None:
+        if not self._overlay_sink_available():
             return
         self._ctx._latency._record_latency_stage(
             channel=runtime.channel,
@@ -211,7 +225,7 @@ class OverlayEmitter:
         )
 
     async def _emit_overlay_event(self, event: object) -> None:
-        if self._ctx.overlay_sink is None:
+        if not self._overlay_sink_available():
             return
         detailed_mode = (
             self._ctx.runtime_logging is not None
@@ -379,7 +393,7 @@ class OverlayEmitter:
     # ------------------------------------------------------------------
 
     def _current_active_self_metadata(self) -> ActiveSelfOverlayMetadata | None:
-        if self._ctx.overlay_sink is None:
+        if not self._overlay_sink_available():
             return None
         result = self._ctx.overlay_sink.active_self_overlay_metadata()
         if isinstance(result, ActiveSelfOverlayMetadata):
@@ -462,7 +476,9 @@ class OverlayEmitter:
     async def sync_overlay_active_self(
         self, buffer: _MergeBuffer | None, *, created_at: float | None = None
     ) -> None:
-        if self._ctx.overlay_sink is None or buffer is None:
+        if not self._overlay_sink_available():
+            return
+        if buffer is None:
             return
 
         active_text = self._ctx._merge_text(buffer.parts)

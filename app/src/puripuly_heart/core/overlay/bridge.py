@@ -70,6 +70,7 @@ class OverlayBridge:
     _snapshot_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)
     _token_consumed: bool = field(init=False, default=False)
     _last_snapshot_revision: int = field(init=False, default=0)
+    _last_no_connections_warn_at: float = field(init=False, default=0.0)
     _initial_desktop_runtime_controls: list[dict[str, Any]] = field(
         init=False,
         default_factory=list,
@@ -253,6 +254,15 @@ class OverlayBridge:
 
     async def _broadcast_json(self, payload: dict[str, Any]) -> None:
         if not self._authenticated_connections:
+            now = time.perf_counter()
+            if now - self._last_no_connections_warn_at >= 30.0:
+                self._last_no_connections_warn_at = now
+                msg_type = payload.get("type", "unknown")
+                logger.warning(
+                    "[OverlayBridge] No connected overlay clients — %s dropped "
+                    "(overlay process may not be running)",
+                    msg_type,
+                )
             return
 
         message = json.dumps(payload)
