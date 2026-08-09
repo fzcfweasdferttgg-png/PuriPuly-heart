@@ -154,6 +154,7 @@ class OverlayLifecycleMixin:
                 )
                 self._overlay_presenter = presenter
             else:
+                # Reuse existing presenter — update callback (may change between sessions)
                 presenter.runtime_log_detailed = self.log_detailed
                 await presenter.update_peer_presentation_refresh_burst(
                     peer_presentation_refresh_burst

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Literal
 from uuid import UUID
 
-from puripuly_heart.domain.models import ChannelId, Transcript
+from puripuly_heart.domain.overlay_types import ChannelId
 
 AppliedContextMode = Literal["local", "integrated"]
 

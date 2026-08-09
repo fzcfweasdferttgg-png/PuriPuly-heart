@@ -29,6 +29,7 @@ from puripuly_heart.ports.overlay_transport import OverlayPresentationTransport,
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
 from puripuly_heart.domain.overlay_types import (
+    ActiveSelfOverlayMetadata,
     OverlayPresentationBlock,
     OverlayPresentationCalibration,
     OverlayPresentationSnapshot,
@@ -46,12 +47,11 @@ from puripuly_heart.domain.overlay_events import (
 )
 from puripuly_heart.ports.overlay import OverlaySink
 from .state import (
-    ActiveSelfOverlayMetadata,
     OverlayPresentationState,
-    OverlayReductionResult,
 )
-from .state import (
+from puripuly_heart.domain.overlay_types import (
     OverlayLogicalTurnEntry as _LogicalTurnEntry,
+    OverlayReductionResult,
 )
 
 from puripuly_heart.core.overlay.presenter_logging import PresenterLoggingMixin

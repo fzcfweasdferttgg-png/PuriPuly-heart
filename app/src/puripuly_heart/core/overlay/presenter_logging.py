@@ -19,9 +19,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from puripuly_heart.core.overlay.types_common import format_entry_key
+
 if TYPE_CHECKING:
     from puripuly_heart.domain.overlay_types import OverlayPresentationBlock
-    from .state import (
+    from puripuly_heart.domain.overlay_types import (
         OverlayEntryRemovalRecord,
         OverlayLogicalTurnEntry,
         OverlayReductionResult,
@@ -89,7 +91,7 @@ class PresenterLoggingMixin:
             if disposition is not None:
                 parts.append(f"disposition={disposition}")
             if resolved_key is not None:
-                parts.append(f"entry={self._format_entry_key(resolved_key)}")
+                parts.append(f"entry={format_entry_key(resolved_key)}")
             if entry is not None:
                 publishable = self._presentation_state.entry_is_publishable(
                     entry,
@@ -230,7 +232,7 @@ class PresenterLoggingMixin:
         *,
         reason: str,
     ) -> None:
-        target_key = self._format_entry_key(key)
+        target_key = format_entry_key(key)
         self._emit_detailed_lazy(
             lambda: "[OverlayPresenter][SelfPresentationRefresh] start reason=%s target_key=%s"
             % (reason, target_key)
@@ -244,14 +246,9 @@ class PresenterLoggingMixin:
         tick_count: int,
         cleanup_publish_count: int,
     ) -> None:
-        target_key = self._format_entry_key(key)
+        target_key = format_entry_key(key)
         self._emit_detailed_lazy(
             lambda: "[OverlayPresenter][SelfPresentationRefresh] end "
             "reason=%s target_key=%s tick_count=%s cleanup_publish_count=%s"
             % (reason, target_key, tick_count, cleanup_publish_count)
         )
-
-    def _format_entry_key(self, key: tuple[str, UUID]) -> str:
-        # Format must match state._format_entry_key — used in dedup signatures
-        # (_record_visible_window_selection) and diagnostics recording.
-        return f"{key[0]}:{key[1]}"

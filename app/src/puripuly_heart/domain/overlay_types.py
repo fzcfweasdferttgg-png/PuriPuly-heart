@@ -495,3 +495,114 @@ class ActiveSelfOverlayMetadata:
     logical_turn_key: str | None
     primary_language: str | None = None
     secondary_language: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Overlay entry lifecycle types (moved from core/overlay/state.py)
+# ---------------------------------------------------------------------------
+
+OverlayEntryKey = tuple[str, UUID]
+
+
+# ENTRY LIFECYCLE: active (live_text populated) → finalized (original_text set,
+# live_text cleared) → closed (closed_seq set) → expired (removed by expire_entries).
+#
+# last_updated_seq is the universal superseding guard: any event with
+# seq < last_updated_seq is discarded as stale. This prevents out-of-order
+# events from corrupting a newer turn state.
+#
+# Occupant key identity invariant: the occupant key (= block identity key) is
+# frozen at first-seen for each (channel, utterance_id) and NEVER changes on
+# update.  Only close/expire removes the entry; the next utterance gets a new
+# occupant key.  This ensures the overlay block identity stays stable across
+# live updates.
+
+@dataclass(slots=True)
+class OverlayLogicalTurnEntry:
+    channel: str
+    utterance_id: UUID
+    first_input_seq: int | None = None
+    live_text: str = ""
+    live_secondary_text: str = ""
+    live_primary_language: str | None = None
+    live_secondary_language: str | None = None
+    live_update_id: str | None = None
+    live_origin_wall_clock_ms: int | None = None
+    live_session_scope: str | None = None
+    live_source_text_hash: str | None = None
+    live_source_text_len: int | None = None
+    live_logical_turn_key: str | None = None
+    live_seq: int | None = None
+    original_text: str = ""
+    original_language: str | None = None
+    original_seq: int | None = None
+    translation_text: str = ""
+    translation_language: str | None = None
+    translation_update_id: str | None = None
+    translation_origin_wall_clock_ms: int | None = None
+    translation_session_scope: str | None = None
+    translation_source_text_hash: str | None = None
+    translation_source_text_len: int | None = None
+    translation_logical_turn_key: str | None = None
+    translation_seq: int | None = None
+    occupant_key: str = ""
+    appearance_seq: int | None = None
+    publishable_seq: int | None = None
+    ever_publishable: bool = False
+    ever_visible: bool = False
+    visible_since: float | None = None
+    last_meaningful_visible_at: float | None = None
+    translation_visible_since: float | None = None
+    translation_observed_visible_since: float | None = None
+    last_updated_seq: int = 0
+    closed_seq: int | None = None
+    closed_at: float | None = None
+    retained_hidden: bool = False
+    window_evicted_at: float | None = None
+    # DEAD FIELD in portable-core: not read or written anywhere in this subtree.
+    # Active in fork/portable (presenter_entry_mgmt.py uses it for async
+    # expiration revision guard). Preserved for cross-fork alignment.
+    expiration_revision: int = 0
+
+    @property
+    def block_id(self) -> str:
+        return f"{self.channel}:{self.utterance_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayEntryRemovalRecord:
+    key: OverlayEntryKey
+    entry: OverlayLogicalTurnEntry
+    reason: str
+    now: float | None
+    tombstone_seq: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayTurnDecisionRecord:
+    decision: str
+    disposition: str | None = None
+    key: OverlayEntryKey | None = None
+    entry: OverlayLogicalTurnEntry | None = None
+    block: OverlayPresentationBlock | None = None
+    extras: dict[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayReductionResult:
+    changed: bool
+    decisions: tuple[OverlayTurnDecisionRecord, ...] = ()
+
+    def __bool__(self) -> bool:
+        return self.changed
+
+
+@dataclass(frozen=True)
+class OverlayVisibleBlockSelection:
+    rendered_entries: list[tuple[OverlayEntryKey, OverlayPresentationBlock]]
+    active_self_present: bool
+    finalized_limit: int
+    candidate_keys: list[OverlayEntryKey]
+    selected_keys: list[OverlayEntryKey]
+    protected_keys: list[OverlayEntryKey]
+    retained_hidden: list[OverlayEntryKey] = field(default_factory=list)

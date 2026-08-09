@@ -24,7 +24,7 @@ from .presenter_constants import (
 
 if TYPE_CHECKING:
     from puripuly_heart.domain.overlay_types import OverlayPresentationBlock
-    from .state import OverlayLogicalTurnEntry
+    from puripuly_heart.domain.overlay_types import OverlayLogicalTurnEntry
 
 
 class PresenterEntryMgmtMixin:

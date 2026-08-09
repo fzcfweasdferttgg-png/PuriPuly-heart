@@ -1,13 +1,18 @@
-"""Overlay helper methods extracted from Pipeline into a mixin."""
+"""Overlay event emission extracted from OverlayHelpersMixin.
+
+All overlay_sink interactions, active-self sync, translation emission,
+and overlay diagnostics. Dependencies: PipelineContext + PeerTurnTracker.
+"""
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any
 
 from puripuly_heart.core.runtime_logging import SessionLoggingMode
 from puripuly_heart.domain.models import Translation
+from puripuly_heart.domain.overlay_types import ActiveSelfOverlayMetadata
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -17,71 +22,51 @@ if TYPE_CHECKING:
         _MergeBuffer,
     )
     from puripuly_heart.core.pipeline.context import ContextMode
+    from puripuly_heart.core.pipeline.peer_turn_tracker import PeerTurnTracker
+    from puripuly_heart.core.pipeline.pipeline_context import PipelineContext
     from puripuly_heart.domain.models import ChannelId, Transcript
-    from puripuly_heart.domain.overlay_types import ActiveSelfOverlayMetadata
 
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["OverlayEmitter"]
 
-class OverlayHelpersHost(Protocol):
-    """Protocol defining public attributes required by OverlayHelpersMixin.
 
-    Host class (Pipeline) must define these attributes.
-    Private attributes (_latency, _last_overlay_secondary_runtime_signature)
-    and host methods (_source_language_for, _target_language_for, etc.) are
-    documented in OverlayHelpersMixin docstring.
+class OverlayEmitter:
+    """Overlay event emission extracted from Pipeline.
+
+    Dependencies injected via constructor:
+    - ctx: PipelineContext (config, runtime, logging, text merge, predicates)
+    - peer_turn_tracker: PeerTurnTracker (peer logical turn completion)
     """
-    overlay_sink: object  # OverlaySink | None
-    overlay_event_adapter: object  # OverlayEventFactory
-    runtime_logging: object  # SessionRuntimeLoggingService | None
-    last_error_source: str | None
-    self_runtime: object  # ChannelRuntime
-    peer_runtime: object  # ChannelRuntime
-    source_language: str
-    target_language: str
-    llm: object  # LLMProvider | None
 
-
-class OverlayHelpersMixin:
-    """Mixin providing overlay-related helper methods for Pipeline.
-
-    Host class must define public attributes (see OverlayHelpersHost Protocol):
-    - overlay_sink, overlay_event_adapter, runtime_logging, last_error_source
-    - self_runtime, peer_runtime, source_language, target_language, llm
-
-    Private attributes (implementation details):
-    - _latency: LatencyTracker
-    - _last_overlay_secondary_runtime_signature: tuple[object, ...] | None
-
-    Host methods called by mixin:
-    - _source_language_for, _target_language_for, _translation_enabled_for_runtime
-    - _should_publish_to_chatbox, _emit_exception_summary, _emit_detailed
-    - _merge_text, _soft_reuse_mode, _runtime_for_channel
-
-    Cross-mixin methods:
-    - _complete_peer_logical_turn (from PeerTurnsMixin)
-    """
+    def __init__(
+        self,
+        ctx: PipelineContext,
+        peer_turn_tracker: PeerTurnTracker,
+    ) -> None:
+        self._ctx = ctx
+        self._peer_turn_tracker = peer_turn_tracker
 
     # ------------------------------------------------------------------
     # Overlay event emission
     # ------------------------------------------------------------------
 
-    async def _emit_final_transcript_to_overlay(self, transcript: Transcript) -> None:
-        if self.overlay_sink is None:
+    async def emit_final_transcript_to_overlay(self, transcript: Transcript) -> None:
+        if self._ctx.overlay_sink is None:
             return
         source_language, target_language = self._self_overlay_languages_for_utterance(
             transcript.utterance_id
         )
         await self._emit_overlay_event(
-            self.overlay_event_adapter.transcript_final(
+            self._ctx.overlay_event_adapter.transcript_final(
                 transcript,
                 source_language=source_language,
                 target_language=target_language,
             )
         )
 
-    async def _finalize_peer_source_only(
+    async def finalize_peer_source_only(
         self,
         transcript: Transcript,
         *,
@@ -89,18 +74,18 @@ class OverlayHelpersMixin:
         finalize_latency: bool,
         preserve_parent_speech_end_time: bool = False,
     ) -> None:
-        if self.overlay_sink is not None:
-            self._latency._record_latency_stage(
+        if self._ctx.overlay_sink is not None:
+            self._ctx._latency._record_latency_stage(
                 channel="peer",
                 utterance_id=transcript.utterance_id,
                 stage="peer_overlay_first_emit",
                 overwrite=False,
             )
             await self._emit_overlay_event(
-                self.overlay_event_adapter.transcript_final(
+                self._ctx.overlay_event_adapter.transcript_final(
                     transcript,
-                    source_language=self._source_language_for(self.peer_runtime),
-                    target_language=self._target_language_for(self.peer_runtime),
+                    source_language=self._ctx._source_language_for(self._ctx.peer_runtime),
+                    target_language=self._ctx._target_language_for(self._ctx.peer_runtime),
                 )
             )
         await self._emit_overlay_utterance_closed_with_latency(
@@ -109,12 +94,12 @@ class OverlayHelpersMixin:
             is_final=close_is_final,
             finalize_latency=finalize_latency,
         )
-        self._complete_peer_logical_turn(
+        self._peer_turn_tracker.complete_peer_logical_turn(
             transcript.utterance_id,
             preserve_parent_speech_end_time=preserve_parent_speech_end_time,
         )
 
-    async def _emit_overlay_utterance_closed(
+    async def emit_overlay_utterance_closed(
         self,
         *,
         utterance_id: UUID,
@@ -122,17 +107,17 @@ class OverlayHelpersMixin:
         is_final: bool,
     ) -> None:
         """Emit overlay event for utterance closed. No latency finalization."""
-        if self.overlay_sink is None:
+        if self._ctx.overlay_sink is None:
             return
         await self._emit_overlay_event(
-            self.overlay_event_adapter.utterance_closed(
+            self._ctx.overlay_event_adapter.utterance_closed(
                 utterance_id=utterance_id,
                 channel=channel,
                 is_final=is_final,
             )
         )
 
-    def _finalize_latency_for_utterance(
+    def finalize_latency_for_utterance(
         self,
         *,
         utterance_id: UUID,
@@ -141,11 +126,13 @@ class OverlayHelpersMixin:
     ) -> None:
         """Finalize latency timeline for utterance. No overlay event."""
         if finalize_latency is True or (finalize_latency is None and channel == "peer"):
-            self._latency._finalize_latency_timeline(
-                runtime=self._runtime_for_channel(channel), channel=channel, utterance_id=utterance_id,
+            self._ctx._latency._finalize_latency_timeline(
+                runtime=self._ctx._runtime_for_channel(channel),
+                channel=channel,
+                utterance_id=utterance_id,
             )
 
-    async def _emit_overlay_utterance_closed_with_latency(
+    async def emit_overlay_utterance_closed_with_latency(
         self,
         *,
         utterance_id: UUID,
@@ -153,91 +140,89 @@ class OverlayHelpersMixin:
         is_final: bool,
         finalize_latency: bool | None = None,
     ) -> None:
-        """Convenience: emit overlay event + finalize latency. Use when both are needed."""
-        await self._emit_overlay_utterance_closed(
+        """Convenience: emit overlay event + finalize latency."""
+        await self.emit_overlay_utterance_closed(
             utterance_id=utterance_id, channel=channel, is_final=is_final,
         )
-        self._finalize_latency_for_utterance(
+        self.finalize_latency_for_utterance(
             utterance_id=utterance_id, channel=channel, finalize_latency=finalize_latency,
         )
 
-    async def _emit_translation_to_overlay(
+    async def emit_translation_to_overlay(
         self,
         *,
         translation: Translation,
         applied_context_mode: ContextMode | None,
     ) -> None:
-        if self.overlay_sink is None:
+        if self._ctx.overlay_sink is None:
             return
-
         await self._emit_overlay_event(
-            self.overlay_event_adapter.translation_final(
+            self._ctx.overlay_event_adapter.translation_final(
                 utterance_id=translation.utterance_id,
                 channel=translation.channel,
                 text=translation.text,
                 source_language=self._language_or_fallback(
                     translation.source_language,
-                    self.source_language,
+                    self._ctx.source_language,
                 ),
                 target_language=self._language_or_fallback(
                     translation.target_language,
-                    self.target_language,
+                    self._ctx.target_language,
                 ),
                 applied_context_mode=applied_context_mode,
                 created_at=translation.created_at,
-                **self._translation_overlay_metadata(translation),
+                **self.translation_overlay_metadata(translation),
             )
         )
 
-    async def _emit_peer_translation_to_overlay(
+    async def emit_peer_translation_to_overlay(
         self,
         *,
         translation: Translation,
         runtime: ChannelRuntime,
         applied_context_mode: ContextMode | None,
     ) -> None:
-        if self.overlay_sink is None:
+        if self._ctx.overlay_sink is None:
             return
-
-        self._latency._record_latency_stage(
+        self._ctx._latency._record_latency_stage(
             channel=runtime.channel,
             utterance_id=translation.utterance_id,
             stage="peer_overlay_first_emit",
             overwrite=False,
         )
         await self._emit_overlay_event(
-            self.overlay_event_adapter.translation_final(
+            self._ctx.overlay_event_adapter.translation_final(
                 utterance_id=translation.utterance_id,
                 channel=translation.channel,
                 text=translation.text,
                 source_text=translation.source_text,
                 source_language=self._language_or_fallback(
                     translation.source_language,
-                    self._source_language_for(runtime),
+                    self._ctx._source_language_for(runtime),
                 ),
                 target_language=self._language_or_fallback(
                     translation.target_language,
-                    self._target_language_for(runtime),
+                    self._ctx._target_language_for(runtime),
                 ),
                 applied_context_mode=applied_context_mode,
                 created_at=translation.created_at,
-                **self._translation_overlay_metadata(translation),
+                **self.translation_overlay_metadata(translation),
             )
         )
 
     async def _emit_overlay_event(self, event: object) -> None:
-        if self.overlay_sink is None:
+        if self._ctx.overlay_sink is None:
             return
         detailed_mode = (
-            self.runtime_logging is not None
-            and self.runtime_logging.mode is SessionLoggingMode.DETAILED
+            self._ctx.runtime_logging is not None
+            and self._ctx.runtime_logging.mode is SessionLoggingMode.DETAILED
         )
         start = time.perf_counter() if detailed_mode else 0.0
         try:
-            await self.overlay_sink.emit(event)  # type: ignore[arg-type]
+            await self._ctx.overlay_sink.emit(event)  # type: ignore[arg-type]
         except Exception as exc:
-            self.last_error_source = "overlay_sink"
-            self._emit_exception_summary(
+            self._ctx.last_error_source = "overlay_sink"
+            self._ctx._emit_exception_summary(
                 "[Hub] Overlay sink emit failed: %s",
                 exc,
                 level=logging.ERROR,
@@ -249,7 +234,7 @@ class OverlayHelpersMixin:
             channel = getattr(event, "channel", None)
             utterance_id = getattr(event, "utterance_id", None)
             update_id = getattr(event, "update_id", None)
-            self.runtime_logging.emit_detailed_lazy(
+            self._ctx.runtime_logging.emit_detailed_lazy(
                 lambda: (
                     "[Detailed][Hub] overlay_sink_emit_duration "
                     f"event_type={event_type} "
@@ -260,33 +245,34 @@ class OverlayHelpersMixin:
                 )
             )
 
-    async def _emit_self_active_overlay_event(self, event: object) -> None:
+    async def emit_self_active_overlay_event(self, event: object) -> None:
         await self._emit_overlay_event(event)
 
     # ------------------------------------------------------------------
     # Predicates
     # ------------------------------------------------------------------
 
-    def _overlay_translation_will_follow(self, runtime: ChannelRuntime) -> bool:
+    def overlay_translation_will_follow(self, runtime: ChannelRuntime) -> bool:
         return (
-            self.overlay_sink is not None
-            and self.llm is not None
-            and self._translation_enabled_for_runtime(runtime)
+            self._ctx.overlay_sink is not None
+            and self._ctx.llm is not None
+            and self._ctx._translation_enabled_for_runtime(runtime)
         )
 
-    def _peer_terminal_work_will_follow(self, runtime: ChannelRuntime) -> bool:
+    def peer_terminal_work_will_follow(self, runtime: ChannelRuntime) -> bool:
         if runtime.channel != "peer":
             return False
-        return (self.llm is not None and self._translation_enabled_for_runtime(runtime)) or (
-            self._should_publish_to_chatbox(runtime)
-        )
+        return (
+            self._ctx.llm is not None
+            and self._ctx._translation_enabled_for_runtime(runtime)
+        ) or self._ctx._should_publish_to_chatbox(runtime)
 
     # ------------------------------------------------------------------
     # Static / pure helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _translation_overlay_metadata(translation: Translation) -> dict[str, object]:
+    def translation_overlay_metadata(translation: Translation) -> dict[str, object]:
         return {
             "update_id": translation.update_id,
             "origin_wall_clock_ms": translation.origin_wall_clock_ms,
@@ -329,13 +315,15 @@ class OverlayHelpersMixin:
             self._metadata_language(metadata, "secondary_language"),
         )
 
-    def _self_overlay_languages_for_utterance(self, utterance_id: UUID) -> tuple[str, str]:
-        primary_language, secondary_language = self._active_self_display_languages_for_utterance(
-            utterance_id
+    def _self_overlay_languages_for_utterance(
+        self, utterance_id: UUID
+    ) -> tuple[str, str]:
+        primary_language, secondary_language = (
+            self._active_self_display_languages_for_utterance(utterance_id)
         )
         return (
-            self._language_or_fallback(primary_language, self.source_language),
-            self._language_or_fallback(secondary_language, self.target_language),
+            self._language_or_fallback(primary_language, self._ctx.source_language),
+            self._language_or_fallback(secondary_language, self._ctx.target_language),
         )
 
     def _active_self_overlay_languages(
@@ -346,8 +334,8 @@ class OverlayHelpersMixin:
         secondary_text: str,
         current_metadata: object | None,
     ) -> tuple[str, str]:
-        source_language = self._source_language_for(self.self_runtime)
-        target_language = self._target_language_for(self.self_runtime)
+        source_language = self._ctx._source_language_for(self._ctx.self_runtime)
+        target_language = self._ctx._target_language_for(self._ctx.self_runtime)
         if source == "spec" and isinstance(buffer.spec_translation, Translation):
             return (
                 self._language_or_fallback(
@@ -391,15 +379,17 @@ class OverlayHelpersMixin:
     # ------------------------------------------------------------------
 
     def _current_active_self_metadata(self) -> ActiveSelfOverlayMetadata | None:
-        if self.overlay_sink is None:
+        if self._ctx.overlay_sink is None:
             return None
-        result = self.overlay_sink.active_self_overlay_metadata()
+        result = self._ctx.overlay_sink.active_self_overlay_metadata()
         if isinstance(result, ActiveSelfOverlayMetadata):
             return result
         return None
 
     @staticmethod
-    def _active_self_translation_metadata(metadata: object | None) -> dict[str, object]:
+    def _active_self_translation_metadata(
+        metadata: object | None,
+    ) -> dict[str, object]:
         if metadata is None:
             return {
                 "update_id": None,
@@ -434,7 +424,7 @@ class OverlayHelpersMixin:
         if not secondary_text:
             return self._active_self_translation_metadata(None)
         if source == "spec" and isinstance(buffer.spec_translation, Translation):
-            return self._translation_overlay_metadata(buffer.spec_translation)
+            return self.translation_overlay_metadata(buffer.spec_translation)
         metadata = self._current_active_self_metadata()
         if (
             source == "sticky_cache"
@@ -453,12 +443,12 @@ class OverlayHelpersMixin:
         buffer: _MergeBuffer,
     ) -> tuple[str, str, str | None]:
         translation = buffer.spec_translation
-        active_text = self._merge_text(buffer.parts)
+        active_text = self._ctx._merge_text(buffer.parts)
         if not active_text:
             return "", "blank", None
         reuse_mode = None
         if isinstance(translation, Translation):
-            reuse_mode = self._soft_reuse_mode(buffer.spec_text, active_text)
+            reuse_mode = self._ctx._soft_reuse_mode(buffer.spec_text, active_text)
             if reuse_mode is not None:
                 return translation.text.strip(), "spec", reuse_mode
         sticky_secondary = self._cached_active_self_secondary_text().strip()
@@ -469,13 +459,13 @@ class OverlayHelpersMixin:
     def _active_self_occupant_key(self, buffer: _MergeBuffer) -> str:
         return f"self:{buffer.merge_id}"
 
-    async def _sync_overlay_active_self(
+    async def sync_overlay_active_self(
         self, buffer: _MergeBuffer | None, *, created_at: float | None = None
     ) -> None:
-        if self.overlay_sink is None or buffer is None:
+        if self._ctx.overlay_sink is None or buffer is None:
             return
 
-        active_text = self._merge_text(buffer.parts)
+        active_text = self._ctx._merge_text(buffer.parts)
         if not active_text:
             return
         secondary_text, source, reuse_mode = self._active_self_secondary_decision(buffer)
@@ -492,7 +482,9 @@ class OverlayHelpersMixin:
             source=source,
             secondary_text=secondary_text,
         )
-        current_translation_metadata = self._active_self_translation_metadata(current_metadata)
+        current_translation_metadata = self._active_self_translation_metadata(
+            current_metadata
+        )
         occupant_key = self._active_self_occupant_key(buffer)
         source_language, target_language = self._active_self_overlay_languages(
             buffer=buffer,
@@ -501,7 +493,9 @@ class OverlayHelpersMixin:
             current_metadata=current_metadata,
         )
         primary_language = source_language.strip() or None
-        secondary_language = (target_language.strip() or None) if secondary_text.strip() else None
+        secondary_language = (
+            (target_language.strip() or None) if secondary_text.strip() else None
+        )
         if (
             current_metadata is not None
             and buffer.merge_id == getattr(current_metadata, "utterance_id", None)
@@ -509,13 +503,15 @@ class OverlayHelpersMixin:
             and active_text == getattr(current_metadata, "text", None)
             and secondary_text == getattr(current_metadata, "secondary_text", "")
             and primary_language == getattr(current_metadata, "primary_language", None)
-            and secondary_language == getattr(current_metadata, "secondary_language", None)
+            and secondary_language == getattr(
+                current_metadata, "secondary_language", None
+            )
             and translation_metadata == current_translation_metadata
         ):
             return
 
-        await self._emit_self_active_overlay_event(
-            self.overlay_event_adapter.self_active_update(
+        await self.emit_self_active_overlay_event(
+            self._ctx.overlay_event_adapter.self_active_update(
                 text=active_text,
                 utterance_id=buffer.merge_id,
                 secondary_text=secondary_text,
@@ -530,7 +526,9 @@ class OverlayHelpersMixin:
     async def reset_overlay_preview(self) -> None:
         if self._current_active_self_metadata() is None:
             return
-        await self._emit_self_active_overlay_event(self.overlay_event_adapter.self_active_clear())
+        await self.emit_self_active_overlay_event(
+            self._ctx.overlay_event_adapter.self_active_clear()
+        )
 
     # ------------------------------------------------------------------
     # Diagnostics & runtime logging
@@ -573,13 +571,16 @@ class OverlayHelpersMixin:
         reuse_mode: str | None,
         signature: tuple[object, ...],
     ) -> None:
-        if signature == self._last_overlay_secondary_runtime_signature:
+        if signature == self._ctx._last_overlay_secondary_runtime_signature:
             return
         spec_translation_len = 0
         if isinstance(buffer.spec_translation, Translation):
             spec_translation_len = len(buffer.spec_translation.text.strip())
-        emitted = self._emit_detailed(
-            "[Hub] active_self_secondary merge_id=%s source=%s active_len=%s secondary_len=%s spec_text_len=%s spec_translation_len=%s cached_secondary_len=%s reuse_mode=%s resume_pending=%s resume_confirmed=%s",
+        emitted = self._ctx._emit_detailed(
+            "[Hub] active_self_secondary merge_id=%s source=%s active_len=%s "
+            "secondary_len=%s spec_text_len=%s spec_translation_len=%s "
+            "cached_secondary_len=%s reuse_mode=%s resume_pending=%s "
+            "resume_confirmed=%s",
             str(buffer.merge_id)[:8],
             source,
             len(active_text),
@@ -593,21 +594,18 @@ class OverlayHelpersMixin:
             fallback_level=logging.INFO,
         )
         if emitted:
-            self._last_overlay_secondary_runtime_signature = signature
+            self._ctx._last_overlay_secondary_runtime_signature = signature
 
-    def _should_blank_stale_active_secondary_before_finalizing(
+    def should_blank_stale_active_secondary_before_finalizing(
         self,
         *,
         final_text: str,
         reuse_mode: str | None,
     ) -> bool:
-        # Presenter promotion preserves active secondary text for the same occupant.
-        # Blank the active row first when speculative reuse is unsafe so stale
-        # secondary text cannot be promoted into the finalized row.
         metadata = self._current_active_self_metadata()
         return (
             reuse_mode is None
-            and self.overlay_sink is not None
+            and self._ctx.overlay_sink is not None
             and metadata is not None
             and getattr(metadata, "text", None) == final_text
             and str(getattr(metadata, "secondary_text", "") or "").strip() != ""
