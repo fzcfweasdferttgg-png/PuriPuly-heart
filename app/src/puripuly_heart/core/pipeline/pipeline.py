@@ -338,19 +338,6 @@ class Pipeline:
             utterance_id=utterance_id, channel=channel, finalize_latency=finalize_latency,
         )
 
-    async def _emit_overlay_utterance_closed_with_latency(
-        self,
-        *,
-        utterance_id: UUID,
-        channel: ChannelId,
-        is_final: bool,
-        finalize_latency: bool | None = None,
-    ) -> None:
-        await self.overlay_emitter.emit_overlay_utterance_closed_with_latency(
-            utterance_id=utterance_id, channel=channel, is_final=is_final,
-            finalize_latency=finalize_latency,
-        )
-
     async def _emit_translation_to_overlay(
         self,
         *,

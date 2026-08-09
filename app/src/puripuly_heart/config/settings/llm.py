@@ -9,11 +9,9 @@ from .constants import LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS, LOCAL_LLM_SENSITIVE_E
 from .enums import (
     LLMProviderName,
     LocalLLMBackend,
-    QwenRegion,
     STTProviderName,
     _parse_local_llm_backend,
     _parse_llm_provider,
-    _parse_qwen_region,
     _parse_stt_provider,
     _parse_peer_stt_provider,
 )
@@ -109,8 +107,8 @@ class ProviderSettings:
     peer_stt_compute: str = "gpu"
     stt_backend: str = "onnx"
     peer_stt_backend: str = "onnx"
-    stt_quant: str = "auto"
-    peer_stt_quant: str = "auto"
+    stt_quant: str = ""
+    peer_stt_quant: str = ""
     llm: LLMProviderName = LLMProviderName.OPENAI_COMPATIBLE
     openai_compatible: OpenAICompatibleSettings = field(default_factory=OpenAICompatibleSettings)
 
@@ -127,25 +125,16 @@ class ProviderSettings:
             raise ValueError("stt_backend must be 'onnx' or 'gguf'")
         if self.peer_stt_backend not in ("onnx", "gguf"):
             raise ValueError("peer_stt_backend must be 'onnx' or 'gguf'")
-        if not isinstance(self.stt_quant, str) or not self.stt_quant:
-            raise ValueError("stt_quant must be a non-empty string")
-        if not isinstance(self.peer_stt_quant, str) or not self.peer_stt_quant:
-            raise ValueError("peer_stt_quant must be a non-empty string")
+        if not isinstance(self.stt_quant, str):
+            raise ValueError("stt_quant must be a string")
+        if not isinstance(self.peer_stt_quant, str):
+            raise ValueError("peer_stt_quant must be a string")
         if not isinstance(self.llm, LLMProviderName):
             raise ValueError("invalid llm provider")
         if not isinstance(self.openai_compatible, OpenAICompatibleSettings):
             raise ValueError("invalid openai_compatible settings")
         if self.llm == LLMProviderName.OPENAI_COMPATIBLE:
             self.openai_compatible.validate()
-
-
-@dataclass(slots=True)
-class QwenSettings:
-    region: QwenRegion = QwenRegion.BEIJING
-
-    def validate(self) -> None:
-        if not isinstance(self.region, QwenRegion):
-            raise ValueError("invalid qwen region")
 
 
 @dataclass(slots=True)

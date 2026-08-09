@@ -52,7 +52,6 @@ from puripuly_heart.config.settings.constants import (
 from puripuly_heart.config.settings.enums import (
     LLMProviderName,
     LocalLLMBackend,
-    QwenRegion,
     STTProviderName,
     TranslationConnection,
     TranslationModel,
@@ -64,7 +63,6 @@ from puripuly_heart.config.settings.llm import (
     LocalLLMSettings,
     OpenAICompatibleSettings,
     ProviderSettings,
-    QwenSettings,
     BackupTranslationSettings,
     _normalize_local_llm_base_url,
 )

@@ -88,7 +88,7 @@ class OverlayEmitter:
                     target_language=self._ctx._target_language_for(self._ctx.peer_runtime),
                 )
             )
-        await self._emit_overlay_utterance_closed_with_latency(
+        await self.emit_overlay_utterance_closed_with_latency(
             utterance_id=transcript.utterance_id,
             channel="peer",
             is_final=close_is_final,

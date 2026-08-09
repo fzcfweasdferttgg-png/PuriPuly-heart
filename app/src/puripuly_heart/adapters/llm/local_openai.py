@@ -574,33 +574,3 @@ class LocalOpenAICompatibleLLMProvider:
         if self.client is not None and not self._external_client_closed:
             self._external_client_closed = True
             await self.client.close()
-
-    @staticmethod
-    async def verify_connection(
-        *,
-        base_url: str = _DEFAULT_BASE_URL,
-        model: str = "",
-        api_key: str = "",
-        extra_body: Mapping[str, object] | None = None,
-    ) -> bool:
-        client: HttpxLocalOpenAIClient | None = None
-        try:
-            client = HttpxLocalOpenAIClient(
-                base_url=base_url,
-                model=model,
-                api_key=api_key,
-                extra_body=extra_body if extra_body is not None else {"reasoning_effort": "none"},
-                max_tokens=1,
-                timeout=httpx.Timeout(connect=3.0, read=10.0, write=5.0, pool=3.0),
-            )
-            await client.translate(
-                text="ping", system_prompt="", source_language="", target_language=""
-            )
-            return True
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            return False
-        finally:
-            if client is not None:
-                await client.close()

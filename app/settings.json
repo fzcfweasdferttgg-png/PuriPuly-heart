@@ -103,10 +103,6 @@
     "selection_alias": "gemma4_byok",
     "fallback_selection_alias": "none"
   },
-  "qwen": {
-    "region": "beijing",
-    "llm_model": "qwen3.5-plus"
-  },
   "deepseek": {
     "llm_model": "deepseek-v4-flash"
   },

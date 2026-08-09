@@ -97,14 +97,16 @@ _QUANT_SUFFIX_MAP: dict[str, str] = {
     "q6_k": "-q6k",
     "f16": "-f16",
     "int8": "",
-    "auto": "",
 }
 
 
-def resolve_model_id(provider_value: str, quant: str = "auto") -> str:
+def resolve_model_id(provider_value: str, quant: str = "") -> str | None:
+    # Returns None when quant is empty (not selected).
     # If provider_value is not in _PROVIDER_BASE_MODEL, it's treated as a raw
     # model_id and returned as-is (with quant suffix). Intentional — some callers
     # pass model_ids directly (e.g. from settings UI).
+    if not quant:
+        return None
     base = _PROVIDER_BASE_MODEL.get(provider_value, provider_value)
     suffix = _QUANT_SUFFIX_MAP.get(quant, "")
     return base + suffix

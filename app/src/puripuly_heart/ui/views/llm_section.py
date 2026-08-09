@@ -445,9 +445,6 @@ class LlmSectionMixin:
             return
         self._on_openai_compatible_base_url_change_end(None)
 
-    def _on_qwen_region_click(self, e) -> None:
-        pass
-
     def _on_llm_click(self, e) -> None:
         """Open LLM provider selection modal."""
         if not self.page:
@@ -562,7 +559,6 @@ class LlmSectionMixin:
         self._sync_prompt_tab_copy()
 
         if self.page:
-            _update_control_if_mounted(self._qwen_region_btn)
             _update_control_if_mounted(self._llm_text)
             _update_control_if_mounted(self._translation_connection_row)
             _update_control_if_mounted(self._local_llm_connection_card)

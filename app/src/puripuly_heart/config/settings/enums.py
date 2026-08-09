@@ -5,11 +5,6 @@ from enum import Enum
 from puripuly_heart.domain.providers import LLMProviderName, STTProviderName
 
 
-class QwenRegion(str, Enum):
-    BEIJING = "beijing"
-    SINGAPORE = "singapore"
-
-
 class LocalLLMBackend(str, Enum):
     GENERIC = "generic"
 
@@ -52,16 +47,6 @@ def _parse_local_llm_backend(value: object) -> LocalLLMBackend:
         except ValueError:
             pass
     return LocalLLMBackend.GENERIC
-
-
-def _parse_qwen_region(value: object) -> QwenRegion:
-    if isinstance(value, str):
-        normalized = value.strip()
-        try:
-            return QwenRegion(normalized)
-        except ValueError:
-            pass
-    return QwenRegion.BEIJING
 
 
 def _parse_translation_model(value: object) -> TranslationModel | None:

@@ -20,13 +20,12 @@ from puripuly_heart.domain.overlay_events import (
     UtteranceClosed,
 )
 from puripuly_heart.domain.overlay_types import OverlayLogicalTurnEntry
+from puripuly_heart.domain.overlay_types import (
+    OverlayReductionResult,
+    OverlayTurnDecisionRecord,
+)
 
 if TYPE_CHECKING:
-    from puripuly_heart.domain.overlay_types import (
-        OverlayEntryKey,
-        OverlayReductionResult,
-        OverlayTurnDecisionRecord,
-    )
     from puripuly_heart.core.overlay.types_common import (
         NextAppearanceSeq,
         OverlayTerminalUpdatePredicate,

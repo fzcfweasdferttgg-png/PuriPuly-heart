@@ -345,9 +345,13 @@ def _create_subprocess_stt_backend(
         provider_str = "local_transcribecpp"
         provider_type, device = _resolve_compute_transcribecpp(compute)
 
+    resolved_model_id = resolve_model_id(provider.value, quant)
+    if resolved_model_id is None:
+        raise ValueError(f"STT quant not selected for provider {provider.value}")
+    model_dir = default_local_stt_model_dir(resolved_model_id, data_dir=data_dir)
     kwargs: dict[str, object] = {
         "provider": provider_str,
-        "model_dir": default_local_stt_model_dir(resolve_model_id(provider.value, quant), data_dir=data_dir),
+        "model_dir": model_dir,
         "provider_type": provider_type,
         "device": device,
         "job_handle": get_or_create_job_handle(),

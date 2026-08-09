@@ -584,12 +584,22 @@ class GuiController(
             )
             from puripuly_heart.config.paths import default_models_dir
             model_id = resolve_model_id(self.settings.provider.stt.value, self.settings.provider.stt_quant)
-            if model_id is not None:
-                model_dir = default_local_stt_model_dir(model_id, data_dir=default_models_dir())
-                manifest = load_local_stt_asset_manifest(model_id)
-                install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
-                if install_state.status != "ready":
-                    raise LocalSTTModelMissingError(f"model status: {install_state.status}")
+            if model_id is None:
+                self._log_error("Local STT: quant not selected")
+                self._stt_desired = False
+                self._local_stt_install_state = LocalSTTInstallState(status="missing")
+                self._local_stt_runtime_status = "missing"
+                self._sync_local_stt_notice()
+                dash = getattr(self.app, "view_dashboard", None)
+                if dash is not None:
+                    dash.set_stt_enabled(False)
+                self._show_short_stt_message("local_stt.not_installed")
+                return False
+            model_dir = default_local_stt_model_dir(model_id, data_dir=default_models_dir())
+            manifest = load_local_stt_asset_manifest(model_id)
+            install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
+            if install_state.status != "ready":
+                raise LocalSTTModelMissingError(f"model status: {install_state.status}")
         except (LocalSTTModelMissingError, LocalSTTManifestInvalidError) as exc:
             self._log_error(f"Local STT model not available: {exc}")
             self._stt_desired = False
@@ -628,14 +638,17 @@ class GuiController(
             )
             from puripuly_heart.config.paths import default_models_dir
             model_id = resolve_model_id(self.settings.provider.peer_stt.value, self.settings.provider.peer_stt_quant)
-            if model_id is not None:
-                model_dir = default_local_stt_model_dir(model_id, data_dir=default_models_dir())
-                manifest = load_local_stt_asset_manifest(model_id)
-                install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
-                if install_state.status != "ready":
-                    self._log_error(f"Peer local STT model not available: {install_state.status}")
-                    self._show_short_stt_message("local_stt.not_installed")
-                    return False
+            if model_id is None:
+                self._log_error("Peer local STT: quant not selected")
+                self._show_short_stt_message("local_stt.not_installed")
+                return False
+            model_dir = default_local_stt_model_dir(model_id, data_dir=default_models_dir())
+            manifest = load_local_stt_asset_manifest(model_id)
+            install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
+            if install_state.status != "ready":
+                self._log_error(f"Peer local STT model not available: {install_state.status}")
+                self._show_short_stt_message("local_stt.not_installed")
+                return False
         except (LocalSTTModelMissingError, LocalSTTManifestInvalidError) as exc:
             self._log_error(f"Peer local STT model check failed: {exc}")
             self._show_short_stt_message("local_stt.not_installed")

@@ -28,7 +28,6 @@ from .enums import (
     TranslationModel,
     _parse_llm_provider,
     _parse_peer_stt_provider,
-    _parse_qwen_region,
     _parse_stt_provider,
     _parse_translation_connection,
     _parse_translation_connection_history,
@@ -41,7 +40,6 @@ from .llm import (
     LocalLLMSettings,
     OpenAICompatibleSettings,
     ProviderSettings,
-    QwenSettings,
     BackupTranslationSettings,
     _parse_local_llm_backend,
     _parse_local_llm_base_url,
@@ -80,7 +78,6 @@ class AppSettings:
     desktop_audio: DesktopAudioSettings = field(default_factory=DesktopAudioSettings)
     overlay: OverlaySettings = field(default_factory=OverlaySettings)
     stt: STTSettings = field(default_factory=STTSettings)
-    qwen: QwenSettings = field(default_factory=QwenSettings)
     local_llm: LocalLLMSettings = field(default_factory=LocalLLMSettings)
     llm: LLMSettings = field(default_factory=LLMSettings)
     osc: OSCSettings = field(default_factory=OSCSettings)
@@ -108,7 +105,6 @@ class AppSettings:
         self.desktop_audio.validate()
         self.overlay.validate()
         self.stt.validate()
-        self.qwen.validate()
         self.local_llm.validate()
         self.backup_translation.validate()
         self.llm.validate()
@@ -137,6 +133,15 @@ def _coerce_int(value: object, fallback: int) -> int:
         return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return fallback
+
+
+def _normalize_quant(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower()
+    if normalized in ("", "auto", "none"):
+        return ""
+    return normalized
 
 
 def _parse_bool(value: object, fallback: bool = False) -> bool:
@@ -437,9 +442,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "custom_vocabulary_enabled": settings.stt.custom_vocabulary_enabled,
             "custom_terms": _parse_custom_terms(settings.stt.custom_terms),
         },
-        "qwen": {
-            "region": settings.qwen.region.value,
-        },
         "local_llm": {
             "backend": settings.local_llm.backend.value,
             "base_url": _parse_local_llm_base_url(settings.local_llm.base_url),
@@ -583,13 +585,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     else:
         custom_vocabulary_enabled = any(bool(terms) for terms in parsed_custom_terms.values())
 
-    qwen_raw = data.get("qwen") if isinstance(data.get("qwen"), dict) else {}
     local_llm_raw = data.get("local_llm") if isinstance(data.get("local_llm"), dict) else {}
-    qwen_settings = QwenSettings(
-        region=_parse_qwen_region(
-            qwen_raw.get("region"),
-        ),
-    )
 
     settings = AppSettings(
         settings_version=settings_version,
@@ -600,8 +596,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             peer_stt_compute=str(provider_data.get("peer_stt_compute", "gpu")),
             stt_backend=str(provider_data.get("stt_backend", "onnx")),
             peer_stt_backend=str(provider_data.get("peer_stt_backend", "onnx")),
-            stt_quant=str(provider_data.get("stt_quant", "auto")),
-            peer_stt_quant=str(provider_data.get("peer_stt_quant", "auto")),
+            stt_quant=_normalize_quant(provider_data.get("stt_quant")),
+            peer_stt_quant=_normalize_quant(provider_data.get("peer_stt_quant")),
             llm=_parse_llm_provider(provider_data.get("llm", LLMProviderName.OPENAI_COMPATIBLE.value)),
             openai_compatible=_parse_openai_compatible_settings(
                 data.get("openai_compatible") if isinstance(data.get("openai_compatible"), dict) else {}
@@ -711,7 +707,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             custom_vocabulary_enabled=custom_vocabulary_enabled,
             custom_terms=parsed_custom_terms,
         ),
-        qwen=qwen_settings,
         local_llm=LocalLLMSettings(
             backend=_parse_local_llm_backend(local_llm_raw.get("backend")),
             base_url=_parse_local_llm_base_url(local_llm_raw.get("base_url")),

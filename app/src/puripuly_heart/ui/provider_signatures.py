@@ -86,7 +86,8 @@ class ProviderSignaturesMixin:
             from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
             from puripuly_heart.config.paths import default_models_dir
             model_id = resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)
-            local_qwen_identity = str(default_local_stt_model_dir(model_id, data_dir=default_models_dir()))
+            if model_id is not None:
+                local_qwen_identity = str(default_local_stt_model_dir(model_id, data_dir=default_models_dir()))
 
         return (
             settings.provider.stt,
@@ -150,6 +151,12 @@ class ProviderSignaturesMixin:
         target.provider.stt = source.provider.stt
         target.provider.peer_stt = source.provider.peer_stt
         target.provider.llm = source.provider.llm
+        target.provider.stt_compute = source.provider.stt_compute
+        target.provider.peer_stt_compute = source.provider.peer_stt_compute
+        target.provider.stt_backend = source.provider.stt_backend
+        target.provider.peer_stt_backend = source.provider.peer_stt_backend
+        target.provider.stt_quant = source.provider.stt_quant
+        target.provider.peer_stt_quant = source.provider.peer_stt_quant
         target.provider.openai_compatible = copy.deepcopy(source.provider.openai_compatible)
         target.translation = copy.deepcopy(source.translation)
         target.local_llm = copy.deepcopy(source.local_llm)

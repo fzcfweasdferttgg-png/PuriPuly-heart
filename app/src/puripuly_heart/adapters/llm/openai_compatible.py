@@ -84,14 +84,6 @@ def _build_user_message(*, text: str, context: str) -> str:
     return build_translation_user_message(text=text, context=context)
 
 
-@dataclass
-class ProviderVerificationResult:
-    endpoint_reachable: bool = False
-    api_key_valid: bool = False
-    model_exists: bool = False
-    error_message: str = ""
-
-
 @dataclass(slots=True)
 class OpenAICompatibleLLMProvider:
     api_key: str
@@ -226,61 +218,3 @@ class OpenAICompatibleLLMProvider:
         if client is not None:
             await client.close()
             logger.debug("[Basic][LLM] OpenAI-compatible client closed")
-
-    async def verify_connection(self) -> ProviderVerificationResult:
-        if not self.api_key:
-            return ProviderVerificationResult(error_message="API key is empty")
-
-        try:
-            client = await self._get_client()
-            models = await client.models.list()
-
-            available_models = [m.id for m in models.data]
-            if self.model not in available_models:
-                return ProviderVerificationResult(
-                    endpoint_reachable=True,
-                    api_key_valid=True,
-                    error_message=f"Model '{self.model}' not found. Available: {available_models[:5]}..."
-                )
-
-            return ProviderVerificationResult(
-                endpoint_reachable=True,
-                api_key_valid=True,
-                model_exists=True,
-            )
-
-        except openai.AuthenticationError as exc:
-            return ProviderVerificationResult(
-                endpoint_reachable=True,
-                error_message=f"API key invalid: {exc}",
-            )
-
-        except openai.APIConnectionError as exc:
-            return ProviderVerificationResult(
-                error_message=f"Cannot reach endpoint {self.base_url}: {exc}",
-            )
-
-        except openai.NotFoundError:
-            # Some providers don't support /models endpoint.
-            # Endpoint is reachable, but we can't verify the model.
-            logger.info(
-                "[Basic][LLM] Provider does not support /models endpoint, "
-                "skipping model verification"
-            )
-            return ProviderVerificationResult(
-                endpoint_reachable=True,
-                api_key_valid=True,
-                model_exists=False,
-                error_message="Provider does not support /models listing; model not verified",
-            )
-
-        except openai.PermissionDeniedError as exc:
-            return ProviderVerificationResult(
-                endpoint_reachable=True,
-                error_message=f"Permission denied (403): {exc}",
-            )
-
-        except Exception as exc:
-            return ProviderVerificationResult(
-                error_message=f"Verification failed: {exc}",
-            )

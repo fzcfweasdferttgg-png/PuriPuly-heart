@@ -196,9 +196,9 @@ class SettingsView(
         self._stt_quant_int8_btn = self._make_quant_button("int8", lambda e: self._apply_stt_quant("int8"))
         # Set initial quant button state based on loaded settings
         _init_stt = self._initial_settings.provider.stt if self._initial_settings else STTProviderName.LOCAL_QWEN
-        _init_quant = self._initial_settings.provider.stt_quant if self._initial_settings else "auto"
+        _init_quant = self._initial_settings.provider.stt_quant if self._initial_settings else ""
         _init_available = self._INITIAL_QUANTS_FOR_PROVIDER.get(_init_stt, ["int8"])
-        _init_active = _init_quant if _init_quant in _init_available else (_init_available[0] if _init_available else "auto")
+        _init_active = _init_quant if _init_quant in _init_available else ""
         for _q, _btn in [("q8_0", self._stt_quant_q8_btn), ("q6_k", self._stt_quant_q6k_btn), ("f16", self._stt_quant_f16_btn), ("int8", self._stt_quant_int8_btn)]:
             _btn.visible = _q in _init_available
             if _q == _init_active:
@@ -276,25 +276,6 @@ class SettingsView(
             show_snackbar=lambda msg, bg: (
                 self.show_snackbar(msg, bg) if self.show_snackbar else None
             ),
-        )
-
-        # Qwen region button (hidden by default)
-        self._qwen_region_btn = _make_text_button(
-            f"{t('settings.qwen_region')} {t('region.beijing')}",
-            style=ft.ButtonStyle(
-                color={
-                    ft.ControlState.HOVERED: COLOR_PRIMARY,
-                    ft.ControlState.DEFAULT: COLOR_NEUTRAL,
-                },
-                text_style=ft.TextStyle(
-                    size=20,
-                    font_family=font_for_language(get_locale()),
-                ),
-                overlay_color=ft.Colors.TRANSPARENT,
-                animation_duration=0,
-            ),
-            on_click=self._on_qwen_region_click,
-            visible=False,
         )
 
         # === General Tab Row 1: UI / Include Original / Integrated Context ===
@@ -581,9 +562,9 @@ class SettingsView(
         self._peer_quant_int8_btn = self._make_quant_button("int8", lambda e: self._apply_peer_quant("int8"))
         # Set initial PEER quant button state based on loaded settings
         _init_peer = self._initial_settings.provider.peer_stt if self._initial_settings else STTProviderName.LOCAL_QWEN
-        _init_peer_quant = self._initial_settings.provider.peer_stt_quant if self._initial_settings else "auto"
+        _init_peer_quant = self._initial_settings.provider.peer_stt_quant if self._initial_settings else ""
         _init_peer_available = self._INITIAL_QUANTS_FOR_PROVIDER.get(_init_peer, ["int8"])
-        _init_peer_active = _init_peer_quant if _init_peer_quant in _init_peer_available else (_init_peer_available[0] if _init_peer_available else "auto")
+        _init_peer_active = _init_peer_quant if _init_peer_quant in _init_peer_available else ""
         for _q, _btn in [("q8_0", self._peer_quant_q8_btn), ("q6_k", self._peer_quant_q6k_btn), ("f16", self._peer_quant_f16_btn), ("int8", self._peer_quant_int8_btn)]:
             _btn.visible = _q in _init_peer_available
             if _q == _init_peer_active:
@@ -1517,7 +1498,6 @@ class SettingsView(
         target.provider.peer_stt_quant = source.provider.peer_stt_quant
         target.provider.openai_compatible = copy.deepcopy(source.provider.openai_compatible)
         target.translation = copy.deepcopy(source.translation)
-        target.qwen.region = source.qwen.region
         target.local_llm = copy.deepcopy(source.local_llm)
         target.backup_translation = copy.deepcopy(source.backup_translation)
         target.system_prompt = source.system_prompt
@@ -1711,10 +1691,6 @@ class SettingsView(
             self._set_unit_card_value_text(self._fallback_status_text, _fb_label)
         else:
             self._set_unit_card_value_text(self._fallback_status_text, t("option.disabled"))
-
-        # Qwen Region
-        region_label = t(f"region.{settings.qwen.region.value}")
-        _set_text_button_label(self._qwen_region_btn, f"{t('settings.qwen_region')} {region_label}")
 
         # Audio Settings
         self._audio_settings.host_api = settings.audio.input_host_api
@@ -2013,8 +1989,6 @@ class SettingsView(
         if self._reset_prompt_btn:
             self._reset_prompt_btn.style = self._get_button_style(ui_font)
 
-        if self._qwen_region_btn:
-            self._qwen_region_btn.style = self._get_button_style(ui_font)
         self._sync_clickable_text_control_fonts(ui_font)
         for glyph_text in (
             getattr(self, "_overlay_distance_decrease_glyph", None),
@@ -2068,14 +2042,6 @@ class SettingsView(
             )
             self._sync_overlay_controls()
             self._sync_overlay_calibration_controls()
-
-        # Qwen Region label
-        if display_settings:
-            region_val = display_settings.qwen.region.value
-            _set_text_button_label(
-                self._qwen_region_btn,
-                f"{t('settings.qwen_region')} {t(f'region.{region_val}')}",
-            )
 
         # Components
         self._audio_settings.apply_locale()

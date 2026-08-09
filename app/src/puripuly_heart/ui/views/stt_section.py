@@ -160,7 +160,6 @@ class SttSectionMixin:
                 )
 
         if self.page:
-            self._qwen_region_btn.update()
             self._stt_text.update()
 
     def _on_peer_stt_click(self, e) -> None:
@@ -229,7 +228,6 @@ class SttSectionMixin:
         self._update_api_visibility(merged)
         if self.page:
             self._peer_stt_text.update()
-            self._qwen_region_btn.update()
         self.has_provider_changes = True
 
     def _is_local_stt(self, provider: STTProviderName) -> bool:
@@ -280,7 +278,7 @@ class SttSectionMixin:
 
     def _sync_stt_quant_buttons(self, provider: STTProviderName, quant: str) -> None:
         available = self._get_quant_options(provider)
-        resolved = quant if quant in available else (available[0] if available else quant)
+        resolved = quant if quant in available else ""
         self._stt_quant_row.visible = bool(available)
         self._sync_quant_buttons(
             resolved, available,
@@ -291,7 +289,7 @@ class SttSectionMixin:
 
     def _sync_peer_quant_buttons(self, provider: STTProviderName, quant: str) -> None:
         available = self._get_quant_options(provider)
-        resolved = quant if quant in available else (available[0] if available else quant)
+        resolved = quant if quant in available else ""
         self._peer_quant_row.visible = bool(available)
         self._sync_quant_buttons(
             resolved, available,
