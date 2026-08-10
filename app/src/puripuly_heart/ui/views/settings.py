@@ -6,7 +6,6 @@ import contextlib
 import copy
 import json
 import logging
-import math
 import re
 from pathlib import Path
 from typing import Callable
@@ -29,7 +28,6 @@ from puripuly_heart.config.settings import (
     STTProviderName,
     _normalize_local_llm_base_url,
 )
-from puripuly_heart.domain.language import get_stt_compatibility_warning
 from puripuly_heart.ui.components.settings import (
     ApiKeyField,
     AudioSettings,

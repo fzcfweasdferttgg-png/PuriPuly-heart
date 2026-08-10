@@ -8,10 +8,6 @@ Two manifest types:
   installed on disk (model_id, engine, source, revision).  Written by the
   installer after successful download.
 
-Validation chain:
-  validate_local_stt_install() → dir exists → installed manifest valid →
-  all files present → checksums match
-
 Model registry: LOCAL_STT_MANIFEST_REGISTRY maps model_id → manifest path.
 Provider mapping: _PROVIDER_BASE_MODEL maps provider name → model_id.
 
@@ -316,14 +312,6 @@ def default_local_stt_installed_manifest_path(model_dir: Path | None = None, *, 
     return resolved_model_dir / LOCAL_STT_INSTALLED_MANIFEST_FILENAME
 
 
-def default_local_stt_source_for_locale(locale: str | None) -> str:
-    # Chinese locales → ModelScope (faster in China), others → HuggingFace.
-    normalized = (locale or "").strip().replace("_", "-").lower()
-    if normalized in {"zh-cn", "zh-hk", "zh-hant-hk"}:
-        return "modelscope"
-    return "huggingface"
-
-
 def load_local_stt_asset_manifest(model_id: str | None = None) -> LocalSTTAssetManifest:
     resolved_id = model_id or LOCAL_STT_MODEL_ID
     relative_path = LOCAL_STT_MANIFEST_REGISTRY.get(resolved_id)
@@ -424,8 +412,6 @@ def validate_local_stt_runtime_ready(
     # manifest from disk. selected_source="launcher", selected_revision="" are
     # placeholders, not real installation metadata. Used for UI status checks
     # and STT warmup where checksums/installed-manifest are unnecessary overhead.
-    # Contrast with validate_local_stt_install() which does full validation
-    # including installed manifest and checksums.
     resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     resolved_manifest = manifest or load_local_stt_asset_manifest()
 
@@ -446,40 +432,13 @@ def validate_local_stt_runtime_ready(
     )
 
 
-def validate_local_stt_install(
-    model_dir: Path | None = None,
-    *,
-    data_dir: Path | None = None,
-    manifest: LocalSTTAssetManifest | None = None,
-) -> InstalledLocalSTTManifest:
-    # Full validation chain: dir exists → installed manifest valid →
-    # all files present → checksums match.  Raises on any failure.
-    # Contrast with validate_local_stt_runtime_ready() which skips
-    # installed manifest and checksums (for launcher-level checks).
-    resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
-    resolved_manifest = manifest or load_local_stt_asset_manifest()
-
-    _validate_local_stt_model_dir(resolved_model_dir)
-    installed = _load_installed_local_stt_manifest(
-        resolved_model_dir,
-        manifest=resolved_manifest,
-    )
-    _validate_required_model_files(
-        resolved_model_dir,
-        manifest=resolved_manifest,
-        verify_checksums=True,
-    )
-    return installed
-
-
 def inspect_local_stt_install_state(
     model_dir: Path | None = None,
     *,
     data_dir: Path | None = None,
     manifest: LocalSTTAssetManifest | None = None,
 ) -> LocalSTTInstallState:
-    # Uses validate_local_stt_runtime_ready (NOT validate_local_stt_install)
-    # because launcher-placed models have no installed manifest on disk.
+    # Skips installed-manifest validation because launcher-placed models have no manifest on disk.
     # Upgrading to full validation would break UI status display for those models.
     resolved_model_dir = model_dir or default_local_stt_model_dir(data_dir=data_dir)
     resolved_manifest = manifest or load_local_stt_asset_manifest()

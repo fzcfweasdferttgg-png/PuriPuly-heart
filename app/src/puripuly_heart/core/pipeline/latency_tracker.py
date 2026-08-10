@@ -32,12 +32,7 @@ from puripuly_heart.core.runtime_logging import (
 )
 from puripuly_heart.domain.models import ChannelId
 
-__all__ = ["LatencyTracker", "latency_key", "elapsed_latency_ms"]
-
-# DEAD CODE — latency_key() and elapsed_latency_ms() are module-level
-# convenience functions with zero callers. The class uses private static
-# methods _latency_key and _elapsed_latency_ms instead.
-# Kept in __all__ for backward compatibility but can be removed.
+__all__ = ["LatencyTracker"]
 
 # Stage ordering for trace emission — each stage emits once per utterance.
 _LATENCY_TRACE_ORDER = (
@@ -66,16 +61,6 @@ class _LatencyTimeline:
     stage_times: dict[str, float] = field(default_factory=dict)
     emitted_trace_points: set[str] = field(default_factory=set)
     basic_summary_emitted: bool = False
-
-
-def latency_key(channel: ChannelId, utterance_id: UUID) -> tuple[ChannelId, UUID]:
-    return channel, utterance_id
-
-
-def elapsed_latency_ms(start_at: float | None, end_at: float | None) -> int | None:
-    if start_at is None or end_at is None:
-        return None
-    return max(0, int(round((end_at - start_at) * 1000)))
 
 
 class LatencyTracker:

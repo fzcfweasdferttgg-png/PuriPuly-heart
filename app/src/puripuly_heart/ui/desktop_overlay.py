@@ -753,20 +753,6 @@ def preview_fixture_secret_findings(
     return tuple(findings)
 
 
-def desktop_overlay_preview_fixture_data_sources() -> tuple[
-    DesktopOverlayPreviewFixtureDataSource,
-    ...,
-]:
-    """Describe preview fixture data sources for packaging readiness checks."""
-
-    return (
-        DesktopOverlayPreviewFixtureDataSource(
-            source_kind="embedded_python_module",
-            module=__name__,
-        ),
-    )
-
-
 def _preview_fixture_guard_payload(fixture: DesktopOverlayPreviewFixture) -> dict[str, object]:
     return {
         "id": fixture.id,

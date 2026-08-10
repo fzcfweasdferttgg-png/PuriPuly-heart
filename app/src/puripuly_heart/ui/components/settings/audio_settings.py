@@ -36,9 +36,6 @@ class AudioSettings(ft.Column):
         self._current_host_api = ""
         self._current_microphone = ""
         self._current_desktop_output_device = ""
-        self._current_desktop_vad_threshold = 0.6
-        self._current_desktop_hangover_ms = 700
-        self._current_desktop_pre_roll_ms = 500
 
         self._host_api_label = self._build_section_label(t("settings.audio_host_api"))
         self._microphone_label = self._build_section_label(t("settings.microphone"))
@@ -99,17 +96,6 @@ class AudioSettings(ft.Column):
             expand=True,
             on_click=on_click,
             on_hover=self._on_text_hover,
-        )
-
-    def _build_numeric_field(self, *, label: str, value: str, on_change_end) -> ft.TextField:
-        return ft.TextField(
-            label=label,
-            value=value,
-            dense=True,
-            expand=True,
-            text_align=ft.TextAlign.CENTER,
-            on_blur=on_change_end,
-            on_submit=on_change_end,
         )
 
     def _host_api_label_for(self, value: str) -> str:
@@ -182,45 +168,6 @@ class AudioSettings(ft.Column):
         self._desktop_output_text.content.value = display
         if self._desktop_output_text.page:
             self._desktop_output_text.update()
-
-    @property
-    def desktop_vad_threshold(self) -> float:
-        return self._current_desktop_vad_threshold
-
-    @desktop_vad_threshold.setter
-    def desktop_vad_threshold(self, val: float) -> None:
-        self._current_desktop_vad_threshold = float(val)
-        field = getattr(self, "_desktop_vad_field", None)
-        if field is not None:
-            field.value = f"{self._current_desktop_vad_threshold:.2f}"
-            if field.page:
-                field.update()
-
-    @property
-    def desktop_hangover_ms(self) -> int:
-        return self._current_desktop_hangover_ms
-
-    @desktop_hangover_ms.setter
-    def desktop_hangover_ms(self, val: int) -> None:
-        self._current_desktop_hangover_ms = int(val)
-        field = getattr(self, "_desktop_hangover_field", None)
-        if field is not None:
-            field.value = str(self._current_desktop_hangover_ms)
-            if field.page:
-                field.update()
-
-    @property
-    def desktop_pre_roll_ms(self) -> int:
-        return self._current_desktop_pre_roll_ms
-
-    @desktop_pre_roll_ms.setter
-    def desktop_pre_roll_ms(self, val: int) -> None:
-        self._current_desktop_pre_roll_ms = int(val)
-        field = getattr(self, "_desktop_pre_roll_field", None)
-        if field is not None:
-            field.value = str(self._current_desktop_pre_roll_ms)
-            if field.page:
-                field.update()
 
     def _get_host_api_options(self) -> list[OptionItem]:
         """Get available host API options."""
@@ -384,62 +331,6 @@ class AudioSettings(ft.Column):
     def _on_desktop_output_selected(self, value: str) -> None:
         self.desktop_output_device = value
         self._emit_change()
-
-    def _on_desktop_vad_threshold_change(self, e) -> None:
-        self.desktop_vad_threshold = self._parse_float(
-            e.control.value,
-            fallback=self._current_desktop_vad_threshold,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self._emit_change()
-
-    def _on_desktop_hangover_change(self, e) -> None:
-        self.desktop_hangover_ms = self._parse_int(
-            e.control.value,
-            fallback=self._current_desktop_hangover_ms,
-            minimum=0,
-        )
-        self._emit_change()
-
-    def _on_desktop_pre_roll_change(self, e) -> None:
-        self.desktop_pre_roll_ms = self._parse_int(
-            e.control.value,
-            fallback=self._current_desktop_pre_roll_ms,
-            minimum=0,
-        )
-        self._emit_change()
-
-    def _parse_float(
-        self,
-        raw_value: str,
-        *,
-        fallback: float,
-        minimum: float,
-        maximum: float | None = None,
-    ) -> float:
-        try:
-            parsed = float(raw_value)
-        except (TypeError, ValueError):
-            parsed = fallback
-        if parsed < minimum:
-            parsed = minimum
-        if maximum is not None and parsed > maximum:
-            parsed = maximum
-        return parsed
-
-    def _parse_int(
-        self,
-        raw_value: str,
-        *,
-        fallback: int,
-        minimum: int,
-    ) -> int:
-        try:
-            parsed = int(raw_value)
-        except (TypeError, ValueError):
-            parsed = fallback
-        return max(minimum, parsed)
 
     def _emit_change(self) -> None:
         if self._on_change:

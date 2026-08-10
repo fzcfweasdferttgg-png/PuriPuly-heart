@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
-import ctypes.wintypes
 import logging
 import os
 import sys
@@ -28,7 +27,6 @@ from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.ports.secrets import SecretStore
 from puripuly_heart.ports.stt import STTBackend
 from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
-from puripuly_heart.domain.models import Translation
 from puripuly_heart.adapters.llm.local_openai import LocalOpenAICompatibleLLMProvider
 from puripuly_heart.adapters.llm.openai_compatible import OpenAICompatibleLLMProvider
 
@@ -109,26 +107,6 @@ def get_or_create_job_handle() -> int | None:
     except Exception as exc:
         logger.warning("[JobObject] Failed to create: %s", exc)
         return None
-
-
-def assign_to_job(pid: int, job_handle: int | None) -> None:
-    """Assign a process to a Job Object by PID."""
-    if job_handle is None:
-        return
-    try:
-        kernel32 = ctypes.windll.kernel32
-        proc_handle = kernel32.OpenProcess(0x1F0FFF, False, pid)  # PROCESS_ALL_ACCESS
-        if not proc_handle:
-            logger.warning("[JobObject] OpenProcess failed for pid=%d", pid)
-            return
-        result = kernel32.AssignProcessToJobObject(job_handle, proc_handle)
-        kernel32.CloseHandle(proc_handle)
-        if result:
-            logger.info("[JobObject] Assigned pid=%d to job", pid)
-        else:
-            logger.warning("[JobObject] AssignProcessToJobObject failed for pid=%d", pid)
-    except Exception as exc:
-        logger.warning("[JobObject] Failed to assign pid=%d: %s", pid, exc)
 
 
 def _auto_passphrase(key_dir: Path) -> str:

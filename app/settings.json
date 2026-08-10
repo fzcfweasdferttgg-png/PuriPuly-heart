@@ -103,12 +103,6 @@
     "selection_alias": "gemma4_byok",
     "fallback_selection_alias": "none"
   },
-  "deepseek": {
-    "llm_model": "deepseek-v4-flash"
-  },
-  "cerebras": {
-    "llm_model": "gemma-4-31b"
-  },
   "local_llm": {
     "backend": "ollama",
     "base_url": "http://127.0.0.1:11434/v1",

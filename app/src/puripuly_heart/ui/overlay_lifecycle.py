@@ -7,7 +7,7 @@ import secrets
 from typing import TYPE_CHECKING
 
 from puripuly_heart.config.settings import OVERLAY_TARGET_DESKTOP
-from puripuly_heart.core.overlay.bridge import OverlayBridge
+from puripuly_heart.adapters.overlay.bridge import OverlayBridge
 from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
 from puripuly_heart.core.overlay.presenter import OverlayPresenter
 from puripuly_heart.core.overlay.process import OverlayProcessManager

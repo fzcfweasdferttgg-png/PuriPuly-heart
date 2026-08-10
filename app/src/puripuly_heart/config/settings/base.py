@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import json
 import locale
-import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -144,20 +143,6 @@ def _normalize_quant(value: object) -> str:
     return normalized
 
 
-def _parse_bool(value: object, fallback: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    return fallback
-
-
-def _parse_non_negative_int(value: object, fallback: int = 0) -> int:
-    if type(value) is not int:
-        return fallback
-    if value < 0:
-        return fallback
-    return value
-
-
 def _normalize_internal_sample_rate_hz(value: object) -> int:
     normalized = _coerce_int(value, STT_INTERNAL_SAMPLE_RATE_HZ)
     if normalized == 8000:
@@ -193,24 +178,6 @@ def _parse_custom_terms(value: object) -> dict[str, list[str]]:
 
         out[language] = normalized_terms
     return out
-
-
-def _parse_utc_iso8601_timestamp(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    if not normalized:
-        return None
-    parse_value = f"{normalized[:-1]}+00:00" if normalized.endswith("Z") else normalized
-    try:
-        parsed = datetime.fromisoformat(parse_value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
-        return None
-    return normalized
 
 
 def _shared_default_prompt() -> str:

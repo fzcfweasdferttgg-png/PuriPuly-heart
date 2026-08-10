@@ -6,8 +6,6 @@ import copy
 import inspect
 import json
 import logging
-import math
-import secrets
 import sys
 import threading
 import traceback
@@ -78,7 +76,7 @@ from puripuly_heart.core.osc.receiver import (
     VrcMicState,
     VrcOscReceiver,
 )
-from puripuly_heart.core.overlay.bridge import OverlayBridge
+from puripuly_heart.adapters.overlay.bridge import OverlayBridge
 from puripuly_heart.core.overlay.presenter import OverlayPresenter
 from puripuly_heart.core.overlay.process import OverlayProcessManager
 from puripuly_heart.core.runtime.peer_channel import PeerChannelRuntime, PeerRuntimeConfig

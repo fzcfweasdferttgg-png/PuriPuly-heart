@@ -453,17 +453,6 @@ class Pipeline:
     ) -> None:
         await self.transcript_mediator.handle(transcript, is_final=is_final, source=source)
 
-    async def _handle_peer_final_transcript(
-        self,
-        transcript: Transcript,
-        *,
-        parent_utterance_id: UUID,
-        source: str,
-    ) -> None:
-        await self.transcript_mediator.handle_peer_final(
-            transcript, parent_utterance_id, source=source,
-        )
-
     async def handle_vad_event(self, event: VadEvent) -> None:
         resume_overlay_resync_buffer: _MergeBuffer | None = None
 
