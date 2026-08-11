@@ -94,6 +94,7 @@ class OverlayPresentationState:
         self._store._pending_removals = self._pending_removals
         self._expiration = ExpirationEngine(self._store)
         self._refresh = RefreshManager(on_snapshot=lambda: self._snapshot)
+        # Composition order is deliberate: BlockRenderer before SelectionEngine (circular dependency resolved via callback)
         # BlockRenderer created before SelectionEngine so its build_presentation_block
         # can be passed as callback. selection is wired after SelectionEngine creation.
         self._renderer = BlockRenderer(self._refresh)
@@ -302,6 +303,7 @@ class OverlayPresentationState:
     #   populate internal state for translation context. Visible text arrives only with
     #   translation (apply_peer_translation_update) or source-only finalization.
     # Product decision: peer overlay text is emitted with translation arrival. Peer source-only/active updates must not become visible normal-flow rows.
+    # Product decision: peer live_text is hidden — only translation becomes primary-visible (see block_renderer._build_peer_block)
     def apply_peer_active_update(
         self,
         event: PeerActiveUpdate,

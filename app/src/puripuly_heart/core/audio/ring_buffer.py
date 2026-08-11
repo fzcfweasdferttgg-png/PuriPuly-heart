@@ -39,6 +39,8 @@ class RingBufferF32:
         if samples.size == 0:
             return
 
+        # Fast path: large append replaces entire buffer + resets write position.
+        # This is NOT an error — ring buffer always keeps only the newest data.
         if samples.size >= self.capacity_samples:
             self._buffer[:] = samples[-self.capacity_samples :]
             self._write_pos = 0
@@ -69,6 +71,8 @@ class RingBufferF32:
         if count == 0:
             return np.zeros((0,), dtype=np.float32)
 
+        # No-wrap case: data is contiguous in buffer (no circular boundary crossed).
+        # _filled is False means we haven't wrapped yet (first fill phase).
         if start < self._write_pos or self._filled is False:
             return self._buffer[start : start + count].copy()
 

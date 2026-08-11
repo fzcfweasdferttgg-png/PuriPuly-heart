@@ -311,6 +311,9 @@ class PipelineContext:
         self._emit_basic("[Hub] Context history cleared")
 
     async def clear_language_runtime_state(self, *, channel: ChannelId) -> None:
+        # clear_language_runtime_state is called when languages change or context resets.
+        # The order matters: runtime.clear_live_translation_state → peer_turn_clear →
+        # latency_clear → overlay_preview_reset. Changing this order causes orphaned state.
         runtime = self._runtime_for_channel(channel)
         await runtime.clear_live_translation_state()
         if channel == "peer" and self._on_peer_turn_state_clear is not None:

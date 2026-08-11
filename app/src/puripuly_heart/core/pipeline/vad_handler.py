@@ -36,6 +36,11 @@ class VADHandler:
         self._buffer = buffer
         self._peer_turns = peer_turns
 
+    # All methods in VADHandler delegate to buffer_manager or peer_turn_tracker.
+    # The handler is purely a facade — don't add logic here. All VAD state
+    # lives in buffer_manager.py (low_latency_mode) and peer_turn_tracker.py
+    # (peer channel). This keeps VAD handling testable independently.
+
     def mark_resume_pending(self, event: VadEvent) -> None:
         self._buffer._mark_resume_pending(event)
 

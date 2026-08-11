@@ -197,6 +197,7 @@ class PresenterEntryMgmtMixin:
     async def _expire_entry_after_ttl(
         self, key: tuple[str, UUID], expiration_revision: int
     ) -> None:
+        # _expire_entry_after_ttl is long-running: sleeps in a loop, checks revision mismatch to detect deadline changes
         try:
             while True:
                 entry = self._entries.get(key)
@@ -278,6 +279,7 @@ class PresenterEntryMgmtMixin:
         *,
         current_task: asyncio.Task[None] | None = None,
     ) -> None:
+        # _drain_presentation_state_removals: must be called AFTER _presentation_state.remove_entry — it processes the queue
         # current_task guard: skip cancel for the task that initiated the removal
         # (it's us). Without this guard, _cancel_expiration_task would cancel
         # the running async task itself, causing unhandled CancelledError.

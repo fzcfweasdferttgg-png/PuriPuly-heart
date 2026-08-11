@@ -7,4 +7,5 @@ data/
 *.log
 core/*.md
 core/old/
+docs/*.md
 clean-cache.bat

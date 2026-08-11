@@ -62,6 +62,8 @@ class EventHelpers:
     # Terminal update decisions
     # ------------------------------------------------------------------
 
+    # terminal_reason is set by expiration_engine when entry is evicted — not cleared on new event arrival.
+    # Late events check this via predicate callback.
     def append_terminal_update_decision(
         self,
         terminal_reason: str | None,
@@ -107,6 +109,8 @@ class EventHelpers:
         decisions: list[OverlayTurnDecisionRecord],
     ) -> tuple[OverlayEntryKey, object] | None:
         key = self._store.entry_key(channel, utterance_id)
+        # Returns None on terminal_reason match OR when event_seq < live_entry.last_updated_seq.
+        # Two independent early-exit paths.
         if self.append_terminal_update_decision(
             terminal_update_reason(channel, utterance_id),
             key=key,
@@ -200,6 +204,8 @@ class EventHelpers:
         now: float,
         show_translation: bool,
     ) -> None:
+        # Clears live self + updates translation visibility + potentially retires preview-only entry.
+        # Three side effects must happen in this order.
         live_self = self._store.live_entry_for_channel("self")
         if live_self is None:
             return

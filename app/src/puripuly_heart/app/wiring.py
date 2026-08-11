@@ -305,6 +305,7 @@ def _create_subprocess_stt_backend(
     quant: str,
     language: str,
     *,
+    hotwords: tuple[str, ...] = (),
     data_dir: Path,
 ) -> STTBackend:
     from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
@@ -336,6 +337,8 @@ def _create_subprocess_stt_backend(
     }
     if language_hint is not None:
         kwargs["language_hint"] = language_hint
+    if hotwords:
+        kwargs["hotwords"] = hotwords
     return SubprocessSTTBackend(**kwargs)
 
 
@@ -354,6 +357,7 @@ def create_stt_backend(
         settings.provider.stt_compute,
         settings.provider.stt_quant,
         settings.languages.source_language,
+        hotwords=tuple(effective_terms),
         data_dir=data_dir,
     )
 

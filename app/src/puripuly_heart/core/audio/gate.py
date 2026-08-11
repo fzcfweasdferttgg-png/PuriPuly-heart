@@ -44,6 +44,9 @@ class VrcMicAudioGate:
         self._reset_sync_deadline()
 
     def process_chunk(self, chunk: np.ndarray) -> np.ndarray:
+        # CHECK ORDER IS LOAD-BEARING: enabled → receiver_active → muted.
+        # If receiver_active check comes before enabled, gate won't work
+        # when disabled but receiver is active (VRChat connected but gate off).
         if not self.enabled:
             return chunk
 
@@ -68,6 +71,9 @@ class VrcMicAudioGate:
         if (
             self.enabled
             and self.receiver_active
+            # Grace period only applies when muted is None (unknown state).
+            # Once OSC reports True or False, grace period is irrelevant.
+            # Don't move the `muted is None` check — it guards the deadline logic.
             and muted is None
             and self.initial_sync_grace_s > 0
         ):

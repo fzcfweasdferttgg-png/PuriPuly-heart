@@ -116,6 +116,8 @@ class PeerEventDispatcher:
         self._helpers.remember_entry_input_seq(entry, event_seq=event.seq)
         if not entry.occupant_key:
             entry.occupant_key = event.occupant_key
+        # Peer active updates set entry.live_text but it's never rendered (product decision).
+        # Visible peer text comes from translation/finalized events only.
         entry.live_text = event.text
         entry.original_text = event.text
         entry.original_language = line_language(event.source_language, event.text)
@@ -186,6 +188,8 @@ class PeerEventDispatcher:
         entry.original_text = event.text
         entry.original_language = event_source_language
         entry.original_seq = event.seq
+        # Sets entry.live_text = '' after writing original_text.
+        # Live pointer cleared because peer finalized text goes through original_text, not live_text path.
         entry.live_text = ""
         entry.live_seq = None
         entry.last_updated_seq = event.seq
@@ -256,6 +260,8 @@ class PeerEventDispatcher:
         elif event_source_language is not None:
             entry.original_language = event_source_language
         if not entry.retained_hidden:
+            # Directly calls self._helpers._next_translation_visible_since() — private method access
+            # because no public wrapper exists. Do not extract without adding public method in EventHelpers.
             entry.translation_visible_since = self._helpers._next_translation_visible_since(
                 previous_text=entry.translation_text,
                 next_text=event.text,

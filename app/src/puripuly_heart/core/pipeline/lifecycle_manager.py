@@ -68,6 +68,9 @@ class LifecycleManager:
         if not pipeline._running:
             self._output.clear_typing_reasons()
             return
+        # Stop order: cancel OSC flush → stop STT tasks → close STT providers → close LLM.
+        # Closing STT before stopping tasks may leave dangling tasks.
+        # Closing LLM last allows pending translation tasks to drain.
         pipeline._running = False
         self._output.clear_typing_reasons()
 
@@ -91,6 +94,8 @@ class LifecycleManager:
     async def replace_stt_provider(
         self, pipeline: Pipeline, stt: STTProvider | None
     ) -> None:
+        # STT replacement: stop old → reset runtime state → close old → set new → start new.
+        # reset_runtime_state() must happen BEFORE closing old STT to cancel pending tasks.
         old_stt = pipeline.stt
         await self._audio.stop_stt_task("_stt_task", pipeline)
         await self._overlay.reset_overlay_preview()

@@ -88,6 +88,10 @@ class Pipeline:
     context_max_entries: int = 3  # Maximum number of context entries to include
     integrated_context_time_window_s: float = 40.0
     integrated_context_max_entries: int = 4
+    # Settings below control two distinct pipeline modes. low_latency_mode enables
+    # buffer-based speculative translation (buffer_manager.py). Other modes use
+    # direct STT→Translation→OSC flow. Don't change these defaults without
+    # understanding the different code paths through buffer_manager.py vs transcript_mediator.py.
     low_latency_mode: bool = False
     low_latency_spec_retry_max: int = 1  # wired from settings; not yet read by pipeline (planned feature)
     low_latency_finalize_wait_ms: int = 400
@@ -102,6 +106,9 @@ class Pipeline:
         default_factory=dict
     )  # For E2E latency tracking
     _translation_history: list[ContextEntry] = field(default_factory=list)  # Context memory
+    # _speech_ended_ids tracks utterance IDs that have received SpeechEnd.
+    # Used by latency_tracker to finalize E2E timing. Cleared after OSC enqueue
+    # in output_mediator.py. If you clear this elsewhere, latency summary won't emit.
     _speech_ended_ids: set[UUID] = field(default_factory=set)  # Track SpeechEnd arrivals
     _stt_task: asyncio.Task[None] | None = None
     _peer_stt_task: asyncio.Task[None] | None = None
@@ -131,6 +138,9 @@ class Pipeline:
     lifecycle_manager: LifecycleManager = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Dependency injection order matters: ctx must be created before other mediators
+        # because they access ctx properties. peer_turn_tracker needs _latency which
+        # is created before it. Don't reorder these lines.
         self.self_runtime = ChannelRuntime(
             channel="self",
             stt=self.stt,
@@ -454,6 +464,9 @@ class Pipeline:
         await self.transcript_mediator.handle(transcript, is_final=is_final, source=source)
 
     async def handle_vad_event(self, event: VadEvent) -> None:
+        # VAD event handler branches by event type. low_latency_mode adds extra
+        # bookkeeping (mark_resume_pending, maybe_confirm_resume) that interacts with
+        # buffer_manager. If you add a new VAD event type, check both code paths.
         resume_overlay_resync_buffer: _MergeBuffer | None = None
 
         if isinstance(event, SpeechStart):

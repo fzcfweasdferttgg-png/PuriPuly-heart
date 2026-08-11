@@ -52,6 +52,7 @@ class BlockRenderer:
         peer_presentation_refresh_burst: bool,
         self_presentation_refresh_burst: bool = True,
     ) -> OverlayPresentationBlock | None:
+        # build_presentation_block: dispatches to 3 sub-methods based on channel+live state — NOT based on block_variant field
         if prefer_live_self and entry.channel == "self":
             return self._build_active_self_block(
                 entry, show_translation=show_translation,
@@ -132,6 +133,7 @@ class BlockRenderer:
         show_peer_original: bool,
         peer_presentation_refresh_burst: bool,
     ) -> OverlayPresentationBlock | None:
+        # _build_peer_block: priority order — translated_text > active_text > original_text — each branch has different block_variant
         translated_text = entry.translation_text.strip()
         original_text = entry.original_text.strip() or entry.live_text.strip()
         if translated_text:
@@ -291,6 +293,7 @@ class BlockRenderer:
     ) -> tuple[object, ...]:
         secondary_text = block.secondary_text if block.secondary_enabled else ""
         include_translation_metadata = block.channel == "peer" or bool(secondary_text)
+        # rendered_block_signature: includes session_scope ONLY for self+finalized+refresh — this forces re-render during burst
         include_self_refresh_metadata = (
             block.channel == "self"
             and block.block_variant == "finalized"
@@ -332,6 +335,7 @@ class BlockRenderer:
         self,
         block: OverlayPresentationBlock,
     ) -> tuple[str, str, str, bool]:
+        # visible_block_content_signature: lighter-weight than rendered_block_signature — used for self-burst dedup and TTL refresh
         secondary_text = block.secondary_text if block.secondary_enabled else ""
         return (
             block.block_variant,

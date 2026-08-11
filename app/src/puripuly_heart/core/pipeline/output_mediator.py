@@ -70,6 +70,9 @@ class OutputMediator:
                 runtime=runtime,
             )
         else:
+            # enqueue_osc pops utterance_id from runtime.utterance_start_times and
+            # speech_ended_ids. These are needed by latency_tracker for E2E calculation.
+            # If you remove these pop/discard calls, latency summary will include stale data.
             runtime.utterance_start_times.pop(utterance_id, None)
             runtime.speech_ended_ids.discard(utterance_id)
 
@@ -115,5 +118,8 @@ class OutputMediator:
         self._osc.send_typing(False)
 
     async def run_flush_loop(self) -> None:
+        # run_flush_loop delegates to output_dispatcher.run_osc_flush if configured.
+        # If output_dispatcher is None, this is a no-op. This allows OSC to be optional
+        # in development/test environments. Don't make this a hard dependency.
         if self._ctx.output_dispatcher is not None:
             await self._ctx.output_dispatcher.run_osc_flush()

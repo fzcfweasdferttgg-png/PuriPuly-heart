@@ -29,7 +29,9 @@ from puripuly_heart.domain.providers import STTProviderName
 
 logger = logging.getLogger(__name__)
 MANAGED_STT_SAMPLE_RATE_HZ = 16000
+# PENDING_FINAL_QUEUE_WARN_SIZE=8: threshold for warning — indicates finalization is falling behind.
 PENDING_FINAL_QUEUE_WARN_SIZE = 8
+# STT_FINALIZATION_LAG_AGE_MS=1500: age threshold for logging finalization lag warnings.
 STT_FINALIZATION_LAG_AGE_MS = 1500
 STT_FINALIZATION_LAG_QUEUE_SIZE = 2
 
@@ -98,6 +100,8 @@ class ManagedSTTProvider:
     _events: asyncio.Queue = field(default_factory=asyncio.Queue)
 
     _active_utterance_id: UUID | None = None
+    # _pending_final_utterance_ids: ordered queue of utterance IDs waiting for final transcript.
+    # Used to track pending finalizations and warn when queue grows too large.
     _pending_final_utterance_ids: deque[UUID] = field(default_factory=deque)
     _pending_final_utterance_times: dict[UUID, float] = field(default_factory=dict)
     _audio_ring: RingBufferF32 | None = None

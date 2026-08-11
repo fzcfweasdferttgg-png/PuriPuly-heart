@@ -160,6 +160,7 @@ class PresenterRefreshBurstMixin:
         *,
         previous_snapshot: OverlayPresentationSnapshot,
     ) -> None:
+        # Self burst uses content signature comparison; peer burst uses sequence-based dedup — different strategies
         key = self._self_presentation_refresh_request_key_for_event(
             event,
             previous_snapshot=previous_snapshot,
@@ -338,6 +339,7 @@ class PresenterRefreshBurstMixin:
         self._self_presentation_refresh_burst_task = None
         if task is None:
             return
+        # Race condition: task may run finally block before we return — store metadata BEFORE cancel
         # Store metadata BEFORE cancel — the task may run its finally block
         # before we return, and it reads these dicts in except/finally.
         self._self_presentation_refresh_burst_cancel_reasons[task] = reason

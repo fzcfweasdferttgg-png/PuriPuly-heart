@@ -22,6 +22,9 @@ import numpy as np
 
 from puripuly_heart.core.audio.format import mixdown_to_mono_f32, reshape_audio_samples_f32
 
+# NOOP threshold: if input == output == 16kHz, skip soxr entirely.
+# 16kHz is STT standard; changing this breaks the optimization.
+# Not configurable: this is a compile-time optimization constant.
 NOOP_SAMPLE_RATE_HZ = 16000
 
 
@@ -60,6 +63,9 @@ class MonoFirstStreamingResampler:
         )
 
     def resample_chunk(self, samples: np.ndarray, *, last: bool = False) -> np.ndarray:
+        # last=True signals end-of-stream to soxr — triggers internal buffer flush.
+        # After last=True, calling resample_chunk() again raises RuntimeError.
+        # Normal usage: last=False for all frames, then flush() calls with last=True.
         if self._flushed:
             raise RuntimeError("stream has already been flushed")
 
@@ -76,6 +82,9 @@ class MonoFirstStreamingResampler:
         return output
 
     def flush(self) -> np.ndarray:
+        # Calls resample_chunk(empty, last=True) to drain soxr internal buffer.
+        # MUST be called after all frames are consumed, otherwise last samples are lost.
+        # After flush(), resample_chunk() raises RuntimeError (guarded by _flushed).
         return self.resample_chunk(np.empty((0,), dtype=np.float32), last=True)
 
     def _prepare_mono_chunk(self, samples: np.ndarray) -> np.ndarray:

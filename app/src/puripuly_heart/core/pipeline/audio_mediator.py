@@ -158,6 +158,9 @@ class AudioMediator:
         )
 
     async def _handle_partial(self, event: STTPartialEvent) -> None:
+        # Peer partials are always ignored — no mechanism to forward them.
+        # Self partials: processed in normal mode (forwarded to transcript_mediator),
+        # ignored in low_latency_mode (buffer_manager handles full segments only).
         if event.channel == "peer":
             return
         self._send_stt_connected_notification(self._ctx.osc)
@@ -173,6 +176,10 @@ class AudioMediator:
         )
 
     async def _handle_final(self, event: STTFinalEvent) -> None:
+        # Final event handler has different paths for peer vs self channels.
+        # Self-channel goes through buffer_manager in low_latency_mode.
+        # Peer-channel uses peer_turn_tracker for logical turn management.
+        # These paths must not be merged — they handle different state machines.
         runtime = self._ctx._runtime_for_channel(event.channel)
         source = "Peer" if runtime.channel == "peer" else "Mic"
         logger.info(

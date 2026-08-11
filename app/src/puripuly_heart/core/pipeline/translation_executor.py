@@ -135,6 +135,9 @@ class TranslationExecutor:
         if self._ctx.llm is None:
             return
         runtime = runtime or self._ctx.self_runtime
+        # Peer overlay active check: peer translations must finalize latency
+        # differently than self translations. Peer uses finalize_peer_source_only
+        # which also completes peer logical turn tracking.
         peer_overlay_active = (
             runtime.channel == "peer" and self._ctx.overlay_sink is not None
         )
@@ -284,6 +287,8 @@ class TranslationExecutor:
         applied_mode: ContextMode | None,
         peer_overlay_active: bool,
     ) -> None:
+        # Success flow order: bundle → log → overlay → UI event → OSC enqueue.
+        # Peer channel: also complete_peer_logical_turn() after all overlay work.
         publish_to_chatbox = self._ctx._should_publish_to_chatbox(runtime)
         bundle = self._ctx.get_or_create_bundle(utterance_id, channel=runtime.channel)
         bundle.with_translation(translation)

@@ -10,6 +10,7 @@ KNOWN_LOCAL_QWEN_HALLUCINATIONS is module-private (not consumed externally).
 
 from __future__ import annotations
 
+# Empirically observed hallucinated tokens from qwen3-asr-0.6b GGUF model.
 KNOWN_LOCAL_QWEN_HALLUCINATIONS = frozenset({"leşme", "acia"})
 
 

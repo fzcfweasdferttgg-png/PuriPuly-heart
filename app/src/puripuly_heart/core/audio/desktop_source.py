@@ -84,6 +84,8 @@ class DesktopLoopbackAudioSource:
     _queue: janus.Queue[np.ndarray | None] = field(init=False, repr=False)
     _stream: object = field(init=False, repr=False)
     _manager: object = field(init=False, repr=False)
+    # Read from callback thread, written from async close().
+    # Atomic under CPython GIL (bool assignment). Breaks on Jython/IronPython.
     _closed: bool = field(init=False, default=False)
     _actual_sample_rate_hz: int = field(init=False, repr=False)
     _resolved_device: DesktopLoopbackDevice = field(init=False, repr=False)
@@ -134,6 +136,9 @@ class DesktopLoopbackAudioSource:
             # Puts samples into janus sync_q (thread-safe).
             # If queue is full → drop frame silently, increment counter.
             # frames() on the async side will see gaps via _queue_drop_count.
+            # RETURN CONVENTION: (None, continue_flag) means "keep streaming".
+            # Returning (data, complete_flag) would stop the stream.
+            # See PyAudio callback documentation — this is not standard Python convention.
             def _callback(in_data, _frame_count, _time_info, status_flags):
                 # Input stream callback — return (None, flag) per PyAudio convention.
                 # _closed checked from callback thread, set from async close().
@@ -320,6 +325,8 @@ def _coerce_device_info(info: Any) -> DesktopLoopbackDevice:
         )
         or 0
     )
+    # ENFORCE channels >= 1: sounddevice fails to open with 0 channels.
+    # Some loopback device info dicts report 0 for maxInputChannels.
     channels = max(channels, 1)
     sample_rate_raw = info.get("defaultSampleRate", info.get("default_sample_rate", 48000.0))
     sample_rate_hz = int(round(float(sample_rate_raw or 48000.0)))

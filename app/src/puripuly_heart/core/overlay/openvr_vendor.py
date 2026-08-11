@@ -28,6 +28,7 @@ OPENVR_VENDOR_DLL_RELATIVE_PATH = Path("win64/openvr_api.dll")
 OPENVR_VENDOR_SHA256_RELATIVE_PATH = Path("win64/openvr_api.dll.sha256")
 OPENVR_VENDOR_LICENSE_RELATIVE_PATH = Path("LICENSE")
 OPENVR_VENDOR_README_RELATIVE_PATH = Path("README.md")
+# Not referenced by code. Kept so bundle validation can list all expected paths without hardcoding in process.py.
 OPENVR_VENDOR_PACKAGED_RUNTIME_RELATIVE_DIR = "."  # not referenced — packaged DLL path is resolved via executable_path.with_name() in process.py
 
 

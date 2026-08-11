@@ -40,6 +40,8 @@ class OverlayDiagnosticsRecorder:
     overlay_instance_id: str
     diagnostics_dir: Path
 
+    # child_stdout_lines/child_stderr_lines only ever read via len() — never iterated.
+    # Bounded deque exists for failure diagnostics, not replay.
     child_stdout_lines: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=_CHILD_LINE_LIMIT)
     )
@@ -50,6 +52,8 @@ class OverlayDiagnosticsRecorder:
     _sequence: int = field(init=False, default=0)
 
     def record_child_line(self, stream: str, line: str) -> dict[str, Any]:
+        # stream parameter must be exactly 'stderr' or 'stdout' — drives deque selection.
+        # No validation; caller responsibility (process.py).
         target = self.child_stderr_lines if stream == "stderr" else self.child_stdout_lines
         return self._append(
             target, category="child_line", event="child_line", stream=stream, line=line

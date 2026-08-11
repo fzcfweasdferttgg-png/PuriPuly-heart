@@ -23,6 +23,10 @@ def bundled_silero_vad_onnx_path() -> resources.abc.Traversable:
 
 
 def ensure_silero_vad_onnx(*, target_path: Path) -> Path:
+    """Extract bundled Silero VAD ONNX to target_path (atomic write).
+
+    Called by ui/controller.py, app/headless_mic.py — don't remove without updating both callers.
+    """
     try:
         if target_path.exists() and target_path.stat().st_size > 0:
             return target_path
@@ -36,6 +40,7 @@ def ensure_silero_vad_onnx(*, target_path: Path) -> Path:
         )
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic write (tmp + replace): prevents partial .onnx if process crashes mid-copy.
     tmp = target_path.with_suffix(target_path.suffix + ".tmp")
     with bundled.open("rb") as src, tmp.open("wb") as dst:
         shutil.copyfileobj(src, dst)

@@ -160,7 +160,7 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
         key = self._entry_key(channel, utterance_id)
         if key not in self._scene_terminal_keys and key not in self._terminal_registry:
             return None
-        return self._scene_terminal_reasons.get(key, "")
+        return self._scene_terminal_reasons.get(key, "expired")
 
     def _remember_scene_terminal_reason(self, key: tuple[str, UUID], *, reason: str) -> None:
         self._scene_terminal_keys.add(key)
@@ -233,6 +233,8 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
             await self.bridge.replace_snapshot(snapshot)
 
     async def emit(self, event: OverlayEventUnion) -> None:
+        # emit() is the SINGLE entry point for overlay events — all state mutations flow through here.
+        # Don't call _apply_event() directly from other modules.
         async with self._ownership_transition_lock:
             await self._emit_serialized(event)
 
@@ -323,6 +325,7 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
         if event.channel == "peer":
             return self._apply_peer_event(event, now=now)
 
+        # _apply_event() returns bool (changed) — used to gate _publish_if_changed to avoid unnecessary GPU work
         return False
 
     # Event dispatch: channel routes to self/peer, then isinstance chain.

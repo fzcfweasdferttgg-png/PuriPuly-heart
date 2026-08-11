@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from puripuly_heart.domain.custom_vocab import MAX_CUSTOM_VOCAB_TERMS
 
+# LOCAL_QWEN_MAX_HOTWORDS=12: model-specific limit — exceeding may cause issues on model reload.
 LOCAL_QWEN_MAX_HOTWORDS = 12
 
 
@@ -45,6 +46,8 @@ def get_effective_custom_terms(custom_terms: dict[str, list[str]], custom_vocabu
 
 
 def _normalize_local_qwen_hotword(term: str) -> str:
+    # Normalization affects runtime signature (provider_signatures.py) —
+    # signature change triggers STT backend restart on config reload.
     return " ".join(term.replace(",", " ").split())
 
 

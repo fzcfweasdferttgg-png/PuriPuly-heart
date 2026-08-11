@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 _RELAXED_OVERLAP_MIN_CHARS: int = 3
 _BOUNDARY_PUNCT = {".", ",", ";", ":", "!", "?"}
+# _SOFT_REUSE_PUNCT includes CJK punctuation (。，、) for text normalization.
+# Don't change this set without understanding it handles multi-language text.
 _SOFT_REUSE_PUNCT = {".", ",", "…", "。", "，", "、"}
 
 

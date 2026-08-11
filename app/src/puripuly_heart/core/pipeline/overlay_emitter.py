@@ -47,6 +47,8 @@ class OverlayEmitter:
     ) -> None:
         self._ctx = ctx
         self._peer_turn_tracker = peer_turn_tracker
+        # _overlay_sink_none_warned: one-time warning suppression.
+        # Without this, every dropped event would log a warning, flooding logs.
         self._overlay_sink_none_warned: bool = False
 
     def _overlay_sink_available(self) -> bool:
@@ -456,6 +458,8 @@ class OverlayEmitter:
         self,
         buffer: _MergeBuffer,
     ) -> tuple[str, str, str | None]:
+        # Secondary text priority: spec_translation > sticky_cache > blank.
+        # Spec translation wins if soft_reuse_mode matches (same meaning, different wording).
         translation = buffer.spec_translation
         active_text = self._ctx._merge_text(buffer.parts)
         if not active_text:
@@ -481,6 +485,10 @@ class OverlayEmitter:
         if buffer is None:
             return
 
+        # Early return conditions (all must pass):
+        # - buffer not None
+        # - active_text not empty
+        # - metadata not identical to current (avoid unnecessary emit)
         active_text = self._ctx._merge_text(buffer.parts)
         if not active_text:
             return

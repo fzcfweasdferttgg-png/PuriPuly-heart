@@ -22,6 +22,8 @@ class TranslationLogger:
     Dependencies injected via constructor:
     - ctx: PipelineContext (logging, runtime_logging, latency)
     """
+    # Thin delegation layer — all logic lives in PipelineContext.
+    # This class exists for DI and testability, not for new logic.
 
     def __init__(self, ctx: PipelineContext) -> None:
         self._ctx = ctx

@@ -5,6 +5,11 @@ creation, part upserting, spec translation, finalize wait, and commit.
 
 Dependencies: PipelineContext, OverlayEmitter, callbacks for Pipeline methods.
 """
+# State machine: pre_end → awaiting_vad_end → post_end_grace → commit
+# Invariant: _commit_merge() may only succeed when:
+# - NOT resume_pending/resume_confirmed (hold until resume resolved)
+# - NOT awaiting_vad_end (hold until SpeechEnd arrives)
+# - finalize_wait_task is None (hold until post_end_grace expires)
 
 from __future__ import annotations
 
@@ -120,6 +125,8 @@ class BufferManager:
             timestamp = buffer.spec_latency_stage_times.get(stage)
             if timestamp is None:
                 continue
+            # publish_now=False: accumulates spec latency stages before publishing.
+            # Changing to True would emit latency summary prematurely.
             self._ctx._latency._record_latency_stage(
                 channel="self",
                 utterance_id=buffer.merge_id,
@@ -149,6 +156,8 @@ class BufferManager:
         ) or bool(buffer.spec_latency_stage_times)
         if not had_spec_state:
             return False
+        # Must cancel spec_task BEFORE clearing spec_translation,
+        # otherwise the cancelled task may still write to buffer.
         if buffer.spec_task is not None and not buffer.spec_task.done():
             buffer.spec_task.cancel()
             self._ctx._emit_metric(
@@ -365,6 +374,8 @@ class BufferManager:
         if buffer.resume_confirmed:
             return None
         buffer.resume_chunk_count += 1
+        # Resume confirmed after 3 consecutive SpeechChunk events with same utterance_id.
+        # This threshold filters out VAD false-positives from brief audio gaps.
         if buffer.resume_chunk_count < 3:
             return None
         buffer.resume_confirmed = True
@@ -509,6 +520,8 @@ class BufferManager:
                 hold_ms,
             )
             return
+        # Cleanup order matters: cancel finalize → clear awaiting_vad →
+        # pop utterance_start_times → clear merge_buffer reference
         self._cancel_finalize_wait(buffer)
         buffer.awaiting_vad_end = False
         buffer.awaiting_vad_utterance_id = None
@@ -553,6 +566,8 @@ class BufferManager:
             self._ctx._utterance_start_times[buffer.merge_id] = buffer.last_end_time
         elif buffer.start_time is not None:
             self._ctx._utterance_start_times[buffer.merge_id] = buffer.start_time
+        # Latency timeline inheritance: output utterance_id inherits from source ids.
+        # Must happen BEFORE source timelines are cleared.
         self._ctx._latency._inherit_latency_for_output(
             channel="self",
             output_utterance_id=buffer.merge_id,

@@ -97,6 +97,9 @@ _QUANT_SUFFIX_MAP: dict[str, str] = {
 
 
 def resolve_model_id(provider_value: str, quant: str = "") -> str | None:
+    # DUAL-INPUT: accepts both provider names AND raw model_ids.
+    # When provider_value is not in _PROVIDER_BASE_MODEL, it's treated as a
+    # raw model_id — this is intentional to allow direct model_id from settings.
     # Returns None when quant is empty (not selected).
     # If provider_value is not in _PROVIDER_BASE_MODEL, it's treated as a raw
     # model_id and returned as-is (with quant suffix). Intentional — some callers

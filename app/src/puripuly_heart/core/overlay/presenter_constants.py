@@ -6,7 +6,9 @@ Used by presenter_entry_mgmt.py and presenter_refresh_burst.py
 
 from __future__ import annotations
 
+# CLOSED_TOMBSTONE_LIMIT: LRU-evicted tombstones are lost — late arrivals after eviction may re-create entries
 CLOSED_TOMBSTONE_LIMIT = 64
+# LATE_ARRIVAL_WINDOW_SECONDS: closed entries accept updates within this window — prevents late-arrival race conditions
 LATE_ARRIVAL_WINDOW_SECONDS = 5.0
 VISIBLE_TTL_SECONDS = 8.0
 # Must be ≤ VISIBLE_TTL_SECONDS — self-translation entries must not outlive

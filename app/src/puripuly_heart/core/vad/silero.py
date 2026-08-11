@@ -1,5 +1,21 @@
 from __future__ import annotations
 
+"""Silero VAD ONNX inference wrapper.
+
+Wraps the Silero VAD ONNX model (CPUExecutionProvider only) with streaming
+state management (context window + h/c hidden states). Used as the VadEngine
+implementation for both self and peer VAD gating.
+
+Key design:
+- **CPU-only**: VAD is CPU-bound (small model) — no GPU needed.
+- **Context window**: 64 samples (16kHz) carried over between chunks for
+  boundary detection.
+- **Streaming state**: h/c hidden states preserved between chunks; reset()
+  clears them (called on SpeechEnd via gating).
+
+Called by gating.VadGating (via VadEngine port).
+"""
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +36,7 @@ class SileroVadOnnx:
     _output_names: tuple[str, ...] = field(init=False, default=())
     _state: dict[str, np.ndarray] = field(init=False, default_factory=dict)
     _initial_state: dict[str, np.ndarray] = field(init=False, default_factory=dict)
+    # _context: sliding window of last 64 samples (16kHz) for boundary detection between chunks.
     _context: np.ndarray = field(init=False, repr=False)
     _last_sr: int = field(init=False, default=0)
     _last_batch_size: int = field(init=False, default=0)
@@ -31,6 +48,7 @@ class SileroVadOnnx:
         import onnxruntime as ort  # type: ignore
 
         sess_options = ort.SessionOptions()
+        # num_threads=1: VAD runs in main thread — avoid GIL contention with other CPU tasks.
         sess_options.intra_op_num_threads = 1
         sess_options.inter_op_num_threads = 1
         sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -75,6 +93,7 @@ class SileroVadOnnx:
 
         context_samples = self._context_samples_for(sample_rate_hz)
         if self._last_sr and self._last_sr != sample_rate_hz:
+            # Sample rate switch detected — reset internal state (context + hidden states are rate-dependent).
             self.reset()
         if self._last_batch_size and self._last_batch_size != batch_size:
             self.reset()

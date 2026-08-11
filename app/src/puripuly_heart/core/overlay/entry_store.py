@@ -36,6 +36,7 @@ class EntryStore:
         self,
         channel: str | None,
         utterance_id: UUID | None,
+        # entry_factory is passed in (not hardcoded) — OverlayPresentationState passes OverlayLogicalTurnEntry class
         entry_factory: type,
     ) -> object:
         key = self.entry_key(channel, utterance_id)
@@ -116,6 +117,7 @@ class EntryStore:
         now: float | None = None,
         tombstone_seq: int | None = None,
     ) -> OverlayEntryRemovalRecord | None:
+        # remove_entry: MUST clear live_self_turn_key/live_peer_turn_key before popping — prevents dangling references
         if self.live_self_turn_key == key:
             self.live_self_turn_key = None
         if self.live_peer_turn_key == key:
@@ -134,6 +136,7 @@ class EntryStore:
         return record
 
     def drain_pending_removals(self) -> list[OverlayEntryRemovalRecord]:
+        # drain_pending_removals: returns OWNED list — caller must process all records
         removals = self._pending_removals
         self._pending_removals.clear()
         return removals

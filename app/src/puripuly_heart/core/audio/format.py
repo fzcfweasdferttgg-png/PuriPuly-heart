@@ -58,6 +58,8 @@ def mixdown_to_mono_f32(samples: np.ndarray) -> np.ndarray:
 
 def float32_to_pcm16le_bytes(samples: np.ndarray) -> bytes:
     samples = np.asarray(samples, dtype=np.float32)
+    # CLIP to [-1.0, 1.0] before int16 conversion — prevents overflow/wrap.
+    # Values outside this range are clamped to ±32767, losing dynamic range.
     clipped = np.clip(samples, -1.0, 1.0)
     int16 = np.round(clipped * 32767.0).astype("<i2")
     return int16.tobytes()
@@ -65,4 +67,7 @@ def float32_to_pcm16le_bytes(samples: np.ndarray) -> bytes:
 
 def pcm16le_bytes_to_float32(data: bytes) -> np.ndarray:
     arr = np.frombuffer(data, dtype="<i2").astype(np.float32)
+    # Divide by 32768.0 (not 32767.0) — symmetric with int16 range [-32768, 32767].
+    # Result: max positive = 0.99997, max negative = -1.0.
+    # Not perfectly symmetric, but matches standard audio convention.
     return arr / 32768.0

@@ -15,6 +15,8 @@ from puripuly_heart.domain.overlay_types import OverlayEntryKey
 
 NextAppearanceSeq = Callable[[], int]
 OverlayTerminalUpdatePredicate = Callable[[str | None, UUID | None], bool]
+# Returns 'evicted_by_newer_turn' or 'expired' or None. Called by dispatcher before applying events.
+# If non-None, event is a late arrival and should be dropped.
 OverlayTerminalUpdateReason = Callable[[str | None, UUID | None], str | None]
 
 
@@ -58,6 +60,8 @@ class OverlayPresentationEntry(Protocol):
 # ── Utility functions ─────────────────────────────────────────────────
 
 def content_language_or_none(language: str | None) -> str | None:
+    # Strips whitespace and returns None if empty — not just if input was None.
+    # Language fields can arrive as '' from upstream, not just None.
     if language is None:
         return None
     normalized = language.strip()
@@ -67,6 +71,8 @@ def content_language_or_none(language: str | None) -> str | None:
 def line_language(
     language: str | None,
     text: str,
+    # enabled parameter defaults True — disabled when translation_visibility is off
+    # and caller wants to skip language detection.
     *,
     enabled: bool = True,
 ) -> str | None:

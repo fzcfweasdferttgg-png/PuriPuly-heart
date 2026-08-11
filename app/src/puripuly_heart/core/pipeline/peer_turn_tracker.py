@@ -145,6 +145,9 @@ class PeerTurnTracker:
         parent_utterance_id: UUID,
         peer_turn_id: UUID,
     ) -> None:
+        # VAD bookkeeping inheritance: child turn inherits parent's speech_end
+        # timestamp and speech_ended flag. This ensures latency tracking works
+        # correctly even when parent's SpeechEnd arrived before child's STT final.
         runtime = self.peer_runtime
         parent_end_time = self._peer_parent_speech_end_time(parent_utterance_id)
         if parent_end_time is not None:

@@ -125,6 +125,10 @@ class ChannelRuntime:
         _validate_channel(self.channel)
 
     def __setattr__(self, name: str, value: object) -> None:
+        # Alias mechanism: when alias_target is set (to Pipeline instance),
+        # setting any field in _RUNTIME_TO_PIPELINE_ALIAS_FIELDS on this
+        # runtime automatically mirrors the value to Pipeline.
+        # Order: set on self FIRST, then mirror to alias_target.
         # Guard: alias_target itself, unmapped fields, and None target
         # must all skip the mirror — each early-return protects a different case.
         object.__setattr__(self, name, value)
@@ -214,6 +218,10 @@ class ChannelRuntime:
         All tasks are cancelled then awaited with return_exceptions=True
         to prevent unhandled CancelledError propagation.
         """
+        # Cleanup order: translation tasks → merge buffer (spec, finalize,
+        # awaiting_vad, resume timeouts) → associated utterance bookkeeping.
+        # All tasks are cancelled then awaited with return_exceptions=True
+        # to prevent unhandled CancelledError propagation.
         translation_task_ids = set(self.translation_tasks)
         translation_tasks = list(self.translation_tasks.values())
         for task in translation_tasks:

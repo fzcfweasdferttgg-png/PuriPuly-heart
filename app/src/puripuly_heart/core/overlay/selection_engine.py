@@ -144,6 +144,7 @@ class SelectionEngine:
         show_peer_original: bool,
         next_appearance_seq: NextAppearanceSeq,
     ) -> tuple[list[OverlayEntryKey], list[OverlayEntryKey]]:
+        # _logical_visible_entry_keys: returns (selected, all_candidates) — caller uses selected for rendering, all_candidates for displacement tracking
         if finalized_limit == 0:
             return [], []
 
@@ -171,6 +172,7 @@ class SelectionEngine:
             )
 
         display_order = sorted(publishable, key=lambda item: (item[1], item[2], item[3]))
+        # Sorting order: (publishable_seq, appearance_seq, occupant_key, formatted_key) — most recently finalized wins limited slots
         selected_candidates = sorted(
             publishable,
             key=lambda item: (item[0], item[1], item[2], item[3]),
@@ -192,6 +194,7 @@ class SelectionEngine:
             )
         return bool(entry.original_text.strip())
 
+    # entry_is_publishable vs entry_is_selectable: selectable = publishable AND NOT retained_hidden
     def entry_is_selectable(
         self,
         entry: OverlayPresentationEntry,
@@ -226,6 +229,7 @@ class SelectionEngine:
         next_appearance_seq: NextAppearanceSeq,
         publishable_seq: int | None = None,
     ) -> None:
+        # _ensure_entry_visibility_metadata: lazy initialization — appearance_seq and publishable_seq set on first selection pass
         if not entry.occupant_key:
             entry.occupant_key = occupant_key
         if entry.appearance_seq is None:

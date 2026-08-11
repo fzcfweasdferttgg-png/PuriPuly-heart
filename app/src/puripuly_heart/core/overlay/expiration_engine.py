@@ -30,6 +30,8 @@ class ExpirationEngine:
         visible_ttl_seconds: float,
         self_translation_min_visible_seconds: float,
     ) -> bool:
+        # Returns True if any entry expired — caller (state.py) uses this to trigger overlay publish.
+        # Returning True forces a fresh render.
         expired_keys = [
             key
             for key, entry in self._store.entries.items()
@@ -66,6 +68,8 @@ class ExpirationEngine:
         visible_ttl_seconds: float,
         self_translation_min_visible_seconds: float,
     ) -> float | None:
+        # Calls entry_expiration_components then returns only [0] (effective).
+        # Components [1], [2] are debug-only, used by observability logging.
         return self.entry_expiration_components(
             entry,
             show_translation=show_translation,

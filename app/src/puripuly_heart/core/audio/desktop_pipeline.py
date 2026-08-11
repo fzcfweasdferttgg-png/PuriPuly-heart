@@ -53,6 +53,8 @@ class DesktopPeerPipeline:
                     self.target_sample_rate_hz,
                 )
 
+            # Resampler created LAZILY on first frame — not in __post_init__.
+            # This allows caller to detect actual device format before committing.
             frame_format = (frame.sample_rate_hz, frame.channels)
             if source_format is None:
                 source_format = frame_format
@@ -86,6 +88,8 @@ class DesktopPeerPipeline:
             yield self._build_output_frame(tail.reshape(-1))
 
     async def close(self) -> None:
+        # Delegates to source.close() — no local resources to release.
+        # Resampler has no cleanup; Python GC handles it.
         await self.source.close()
 
     def _maybe_log_peer_diagnostics(
@@ -110,6 +114,8 @@ class DesktopPeerPipeline:
                 channels=1,
             )
             metrics = compute_audio_frame_metrics(frame)
+            # Diagnostics log at ~1-second intervals (accumulated_audio_ms >= 1000).
+            # Not real-time: log frequency depends on audio data arrival rate.
             self._diag_accumulated_audio_ms += metrics.audio_ms
             if self._diag_accumulated_audio_ms < 1000.0:
                 return

@@ -254,6 +254,9 @@ class LatencyTracker:
         timeline.stage_times[stage] = self.clock.now() if timestamp is None else timestamp
 
         if not publish_now:
+            # publish_now=False is used by buffer_manager during spec_latency_stage_times
+            # accumulation. When you see this pattern, don't change it to True — the
+            # latency summary will emit prematurely before the actual output is ready.
             return
 
         self._emit_latency_contract_if_ready(
@@ -268,6 +271,10 @@ class LatencyTracker:
         output_utterance_id: UUID,
         source_utterance_ids: list[UUID],
     ) -> None:
+        # _inherit_latency_for_output is called when merge buffer commits.
+        # It copies speech_end/stt_final timestamps from source utterances
+        # to the merged output utterance. Takes max when multiple sources exist
+        # to ensure E2E latency reflects the slowest input.
         # Used when merge buffer commits: the merged output utterance inherits
         # speech_end/stt_final timestamps from the source utterances that were
         # combined.  Takes the latest timestamp when multiple sources exist.

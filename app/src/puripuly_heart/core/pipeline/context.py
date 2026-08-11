@@ -77,6 +77,10 @@ class ContextResolver:
         other_source_language: str | None = None,
         other_target_language: str | None = None,
     ) -> tuple[str, ContextMode]:
+        # Decision tree: integrated mode requires BOTH requested AND peer_translation_enabled.
+        # If peer_translation_enabled=False, integrated mode falls back to local even if
+        # requested_mode="integrated". This prevents cross-channel context when peer translation
+        # is off (avoids leaking peer context into self-channel prompts).
         # Decision tree: integrated mode requires both requested AND enabled.
         # Falls back to local when peer translation is off or mode is "local".
         if requested_mode != "integrated" or not peer_translation_enabled:

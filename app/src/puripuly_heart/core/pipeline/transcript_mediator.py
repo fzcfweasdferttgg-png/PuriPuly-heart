@@ -117,6 +117,10 @@ class TranscriptMediator:
         *,
         source: str,
     ) -> None:
+        # handle_peer_final is called ONLY for peer-channel transcripts.
+        # It uses peer_runtime, not the channel from transcript. Don't use
+        # _runtime_for_channel(transcript.channel) here — peer transcripts
+        # may have different channel metadata.
         _ = parent_utterance_id
         runtime = self._ctx.peer_runtime
         bundle = runtime.get_or_create_bundle(transcript.utterance_id)
@@ -143,6 +147,10 @@ class TranscriptMediator:
                 runtime=runtime,
                 publish_chatbox=self._ctx._should_publish_to_chatbox(runtime),
             )
+            # finalize_peer_source_only is called when translation is skipped for peer.
+            # The preserve_parent_speech_end_time=True ensures latency calculation uses
+            # the parent utterance's speech end time, not the child's. This is critical
+            # for E2E latency accuracy in peer-to-peer mode.
             await self._overlay.finalize_peer_source_only(
                 transcript,
                 close_is_final=True,

@@ -506,6 +506,9 @@ class SoundDeviceAudioSource(AudioSource):
             try:
                 samples = np.asarray(indata, dtype=np.float32).copy()
                 if samples.ndim == 2 and samples.shape[-1] > 0:
+                    # _frame_channels WRITTEN FROM TWO THREADS: callback thread AND this async consumer.
+                    # Safe under CPython GIL (int assignment is atomic).
+                    # If changed to a non-atomic type (dict, list) — add a lock.
                     self._frame_channels = int(samples.shape[-1])
                 else:
                     self._frame_channels = self._opened_channels
@@ -582,6 +585,8 @@ class SoundDeviceAudioSource(AudioSource):
                 return
             self._report_callback_warnings_from_consumer()
             frame_channels = self._opened_channels
+            # Device may report stereo even for mono mic (Windows WASAPI quirk).
+            # Detect actual channel count from callback data, not from config.
             if item.ndim == 2 and item.shape[-1] > 0:
                 frame_channels = int(item.shape[-1])
             self._frame_channels = frame_channels

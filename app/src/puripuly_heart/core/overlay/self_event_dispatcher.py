@@ -68,6 +68,8 @@ class SelfEventDispatcher:
         show_translation: bool,
         terminal_update_reason: OverlayTerminalUpdateReason,
     ) -> OverlayReductionResult:
+        # retired_preview_self_seqs: OrderedDict shared with EventHelpers (same reference, passed from state).
+        # Both read/write — no locking needed (single-threaded event loop).
         decisions: list[OverlayTurnDecisionRecord] = []
         key = self._store.entry_key(event.channel, event.utterance_id)
         retired_preview_seq = self.retired_preview_self_seqs.get(key)
@@ -289,6 +291,8 @@ class SelfEventDispatcher:
         entry.original_seq = event.seq
         entry.last_updated_seq = event.seq
         if self._store.live_turn_key_for_channel("self") == key:
+            # Translation promotion: live_secondary_text → translation_text when finalized event arrives
+            # while live translation is active. Only happens if live_turn_key_for_channel == key (still live).
             promoted_secondary_text = entry.live_secondary_text.strip()
             if promoted_secondary_text:
                 entry.translation_text = promoted_secondary_text
@@ -379,6 +383,8 @@ class SelfEventDispatcher:
         self._helpers.remember_entry_input_seq(entry, event_seq=event.seq)
         # RETAINED HIDDEN: entries hidden from overlay (window_evicted_at set) but kept
         # alive for late-arriving translations. When translation arrives, unhide and resume.
+        # RETAINED HIDDEN unhide: setting retained_hidden=False + window_evicted_at=None
+        # restores entry to visible pool. Late translation can resurrect previously evicted entry.
         if entry.retained_hidden and event.text.strip():
             entry.retained_hidden = False
             entry.window_evicted_at = None

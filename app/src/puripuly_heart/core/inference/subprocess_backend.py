@@ -49,6 +49,7 @@ from puripuly_heart.ports.stt import (
 
 logger = logging.getLogger(__name__)
 
+# _CREATE_NO_WINDOW=0x08000000: Windows flag to suppress console window for child Python process.
 _CREATE_NO_WINDOW = 0x08000000
 
 
@@ -122,6 +123,7 @@ class SubprocessSTTBackend(STTBackend):
         # Subprocess protocol: spawn → wait "ready" → send "init" → wait "ready".
         # Two-phase init: first "ready" = process started, second = model loaded.
         # Timeouts: 30s for start, 120s for model load (can be slow on first run).
+        # worker.py path: adapters/inference/worker.py relative to core/inference (goes up 3 levels).
         worker_script = str(
             Path(__file__).resolve().parent.parent.parent / "adapters" / "inference" / "worker.py"
         )
@@ -333,6 +335,7 @@ class SubprocessSTTSession(STTBackendSession):
     def __post_init__(self) -> None:
         self._buffer = []
         self._events = asyncio.Queue()
+        # maxsize=10: prevents OOM when decode is slower than speech rate; dropping is preferred over queueing.
         self._decode_queue = asyncio.Queue(maxsize=10)
         self._decode_task = asyncio.create_task(self._decode_worker())
 
@@ -357,6 +360,7 @@ class SubprocessSTTSession(STTBackendSession):
         samples = np.concatenate(self._buffer)
         self._buffer.clear()
 
+        # Decode queue drops on full — utterance is lost but system stays responsive (better than OOM).
         try:
             self._decode_queue.put_nowait(samples)
         except asyncio.QueueFull:

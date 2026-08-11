@@ -159,6 +159,8 @@ class RefreshManager:
             or self.self_presentation_refresh_target_key
             != (entry_channel, entry_utterance_id)
             or entry_channel != "self"
+            # block_variant == 'finalized' guard: self refresh only applies to finalized rows, not active rows.
+            # Active self rows use different refresh path (live_text updates).
             or block_variant != "finalized"
             or not primary_text.strip()
         ):
