@@ -8,4 +8,5 @@ data/
 core/*.md
 core/old/
 docs/*.md
+app/settings.json
 clean-cache.bat
