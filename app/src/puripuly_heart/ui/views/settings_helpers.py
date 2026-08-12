@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Constants duplicated from settings.py (used only by helpers) ──────────
+# ── Module constants (used only by helpers) ──────────────────────────────
 
 _CJK_START = 0x3000
 _CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
@@ -118,7 +118,7 @@ def _setting_action_text_size(text: str) -> int:
 
 # ── Mixin class ───────────────────────────────────────────────────────────
 
-# AI: SHARED INFRASTRUCTURE — provides UI primitives used by ALL other mixins:
+# SHARED INFRASTRUCTURE — provides UI primitives used by ALL other mixins:
 #   _wrap_card, _wrap_unit_card, _wrap_empty_unit_card (card wrappers)
 #   _build_clickable_text, _set_unit_card_value_text (text controls)
 #   _build_overlay_step_split_layout (overlay calibration step controls)
@@ -134,7 +134,7 @@ def _setting_action_text_size(text: str) -> int:
 # resolves to the first class in the MRO that defines a method.
 
 class SettingsHelpersMixin:
-    """UI builder and helper methods extracted from SettingsView."""
+    """UI builder and helper methods."""
 
     # --- Card Wrapper (About page pattern) ---
     def _wrap_card(
@@ -200,7 +200,6 @@ class SettingsHelpersMixin:
         height: float | int | None = None,
         expand: bool | int | None = True,
     ) -> ft.Container:
-        """Build a clickable centered text with hover effect."""
         text_control = ft.Text(
             text,
             size=size,
@@ -294,7 +293,6 @@ class SettingsHelpersMixin:
         )
 
     def _on_text_hover(self, e: ft.ControlEvent) -> None:
-        """Handle hover effect on clickable text."""
         container = e.control
         text_control = container.content
         next_color = COLOR_PRIMARY if e.data == "true" else COLOR_ON_BACKGROUND
@@ -418,7 +416,6 @@ class SettingsHelpersMixin:
         default_color: str = COLOR_NEUTRAL,
         disabled_color: str | None = None,
     ) -> ft.ButtonStyle:
-        """Create a complete ButtonStyle with the specified font."""
         color = {
             ft.ControlState.HOVERED: COLOR_PRIMARY,
             ft.ControlState.DEFAULT: default_color,

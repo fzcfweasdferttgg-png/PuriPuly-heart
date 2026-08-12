@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsManagerMixin:
-    """Settings load/save and UI sync extracted from GuiController."""
 
     async def on_dashboard_language_change(
         self,
@@ -353,7 +352,6 @@ class SettingsManagerMixin:
         self._refresh_overlay_peer_consumers()
 
     def _on_recent_languages_change(self, source: list[str], target: list[str]) -> None:
-        """Callback when recent languages change in dashboard."""
         if self.settings is None:
             return
         self.settings.languages.recent_source_languages = list(source)

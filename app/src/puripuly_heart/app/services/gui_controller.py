@@ -1,3 +1,21 @@
+"""GuiController — application orchestrator for the PuriPuly GUI.
+
+Owns the pipeline, overlay, STT, peer, diagnostics, and clipboard lifecycles.
+Does NOT own UI layout — that stays in ui/views/.  Every public method is
+either a lifecycle operation (start/stop) or a settings mutation (dispatched
+via SettingsCommandExecutor).
+
+Threading: asyncio event loop runs in a background thread (daemon).  All flet
+UI mutations must run on the main thread via self.page.update().  Audio
+callbacks (vad_cb, vad_peer_cb) run on the audio thread — they only set
+events or call asyncio.run_coroutine_threadsafe() to hand off to the event
+loop thread.
+
+Hex violations in core/ (provider_manager, pipeline_lifecycle) are resolved
+by passing callables from app.wiring at construction time, not by importing
+app.wiring from core/.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,6 +40,7 @@ from puripuly_heart.app.wiring import (
     create_stt_backend,
     resolve_peer_stt_config,
 )
+from puripuly_heart.app.headless_mic import run_audio_vad_loop
 from puripuly_heart.config.audio_host_api import normalize_input_host_api
 from puripuly_heart.config.settings import (
     DESKTOP_FLET_MIN_HEIGHT,
@@ -82,25 +101,25 @@ from puripuly_heart.core.stt.controller import (
 from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_vad_onnx
 from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
-from puripuly_heart.ui.event_bridge import UIEventBridge
+from puripuly_heart.app.services.ui_bridge import UIEventBridge
 from puripuly_heart.ui.i18n import get_locale, set_locale, t
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration
-from puripuly_heart.ui.overlay_peer_contract import (
+from puripuly_heart.domain.overlay_contract import (
     OverlayPeerConsumerContract,
     build_overlay_peer_consumer_contract,
 )
 from puripuly_heart.ui.views.logs import FletLogHandler
 
-from puripuly_heart.ui.overlay_manager import DESKTOP_INTERACTION_MODE_EDIT, OverlayManagerMixin
-from puripuly_heart.ui.clipboard_manager import ClipboardManagerMixin
-from puripuly_heart.ui.mic_test_manager import MicTestManagerMixin
-from puripuly_heart.ui.peer_flags import PeerFlagsMixin
-from puripuly_heart.ui.overlay_lifecycle import OverlayLifecycleMixin
-from puripuly_heart.ui.calibration_manager import CalibrationManagerMixin
-from puripuly_heart.ui.provider_signatures import ProviderSignaturesMixin
-from puripuly_heart.ui.diagnostics_manager import DiagnosticsManagerMixin
-from puripuly_heart.ui.peer_runtime_manager import PeerRuntimeManagerMixin
-from puripuly_heart.ui.settings_manager import SettingsManagerMixin
+from puripuly_heart.app.services.overlay_manager import DESKTOP_INTERACTION_MODE_EDIT, OverlayManagerMixin
+from puripuly_heart.app.services.clipboard_manager import ClipboardManagerMixin
+from puripuly_heart.app.services.mic_test_manager import MicTestManagerMixin
+from puripuly_heart.app.services.peer_flags import PeerFlagsMixin
+from puripuly_heart.app.services.overlay_lifecycle import OverlayLifecycleMixin
+from puripuly_heart.app.services.calibration_manager import CalibrationManagerMixin
+from puripuly_heart.app.services.provider_signatures import ProviderSignaturesMixin
+from puripuly_heart.app.services.diagnostics_manager import DiagnosticsManagerMixin
+from puripuly_heart.app.services.peer_runtime_manager import PeerRuntimeManagerMixin
+from puripuly_heart.app.services.settings_manager import SettingsManagerMixin
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +342,7 @@ class GuiController(
                 on_error=self._log_error,
                 diagnostic_wrapper=self._wrap_diagnostic_audio_source,
                 is_detailed_diag_enabled=lambda: self._detailed_audio_diag_enabled,
+                run_audio_vad_loop=run_audio_vad_loop,
             )
 
         await self._init_pipeline()
@@ -581,7 +601,6 @@ class GuiController(
         return result.success, result.error_message
 
     def _on_provider_manager_llm_rebuilt(self, llm: object | None) -> None:
-        """Handle LLM rebuild completion from ProviderManager."""
         if self.settings is None:
             return
         dash = getattr(self.app, "view_dashboard", None)
@@ -597,13 +616,13 @@ class GuiController(
             )
 
     def _on_provider_manager_stt_rebuilt(self, stt: object | None) -> None:
-        """Handle STT rebuild completion from ProviderManager."""
         self._sync_effective_hub_flags(self.settings)
         dash = getattr(self.app, "view_dashboard", None)
         if dash is not None:
             dash.set_stt_needs_key(False)
             if stt is None:
                 dash.set_stt_enabled(False)
+                self._stt_desired = False
 
     async def apply_providers(
         self,
@@ -659,6 +678,11 @@ class GuiController(
         if self._provider_manager is not None:
             self._provider_manager.settings = next_settings
         self.save_settings()
+
+        # Update command executor's settings reference after apply
+        _se_view = getattr(self.app, "view_settings", None)
+        if _se_view is not None and getattr(_se_view, "_command_executor", None) is not None:
+            _se_view._command_executor.update_settings(self.settings)
         self._clear_local_stt_pending_enable_if_provider_switched_away()
         self._sync_local_stt_notice()
 
@@ -724,6 +748,16 @@ class GuiController(
         settings_view = getattr(self.app, "view_settings", None)
         if settings_view is not None:
             settings_view.model_discovery = self.model_discovery
+
+        # Create command executor for settings sections
+        from puripuly_heart.core.services.settings_command_executor import SettingsCommandExecutor
+        if settings_view is not None:
+            if settings_view._command_executor is None:
+                draft_svc = settings_view._draft_service
+                settings_view._command_executor = SettingsCommandExecutor(
+                    settings=self.settings,
+                    draft_service=draft_svc,
+                )
 
         # Create providers in controller (wiring layer)
         llm = None
@@ -801,6 +835,10 @@ class GuiController(
             detailed_audio_diag_enabled_provider=lambda: self._detailed_audio_diag_enabled,
             on_terminal_failure=self._on_self_terminal_failure,
             on_final_transcript_suppressed=self._on_final_transcript_suppressed,
+            create_secret_store=create_secret_store,
+            create_llm_provider=create_llm_provider,
+            create_fallback_llm_provider=create_fallback_llm_provider,
+            create_stt_backend=create_stt_backend,
         )
 
         # LocalSTTManager — core service for local STT lifecycle
@@ -870,7 +908,6 @@ class GuiController(
             )
 
     def _stop_vrc_mic_receiver(self) -> None:
-        """Stop VRC receiver — delegates to PipelineLifecycleManager."""
         if self._pipeline_manager is not None:
             self._pipeline_manager._stop_vrc_receiver()
 
@@ -979,6 +1016,319 @@ class GuiController(
         except Exception:
             logger.log(level, build_message(), exc_info=exc_info)
             return True
+
+    # Sequential FIFO queue for settings changes.
+    # Prevents race conditions when user rapidly toggles settings.
+    # Mirrors _AppUtilitiesMixin._queue_settings_mutation_task but self-contained.
+    def _queue_mutation(self, task_factory) -> None:
+        queue = getattr(self, "_mutation_queue", None)
+        if queue is None:
+            queue = []
+            self._mutation_queue = queue
+        queue.append(task_factory)
+        if getattr(self, "_mutation_worker_active", False):
+            return
+        self._mutation_worker_active = True
+
+        async def _worker():
+            try:
+                while self._mutation_queue:
+                    next_task = self._mutation_queue.pop(0)
+                    try:
+                        await next_task()
+                    except Exception:
+                        logger.exception("[GuiController] Mutation task failed")
+            finally:
+                self._mutation_worker_active = False
+
+        self.page.run_task(_worker)
+
+    def apply_settings_with_sync(self, settings) -> None:
+        """Apply settings and sync mic test dialog."""
+        async def _task():
+            await self.apply_settings(settings)
+            sync = getattr(self.app, "_sync_microphone_test_dialog_if_inactive", None)
+            if callable(sync):
+                sync()
+        self._queue_mutation(_task)
+
+    def apply_prompt_settings(self, settings) -> None:
+        """Apply prompt settings with language merge."""
+        async def _task():
+            merged = self.merge_settings_tab_apply_with_current_languages(settings)
+            await self.apply_settings(merged)
+        self._queue_mutation(_task)
+
+    def apply_pending_providers(self) -> None:
+        """Apply pending provider settings from Settings view."""
+        pending_settings = None
+        view_settings = getattr(self.app, "view_settings", None)
+        consume = getattr(view_settings, "consume_provider_apply_settings", None)
+        if callable(consume) and getattr(view_settings, "has_provider_changes", False):
+            pending_settings = consume()
+            view_settings.has_provider_changes = False
+
+        async def _task():
+            if pending_settings is None:
+                await self.apply_providers()
+            else:
+                await self.apply_providers(pending_settings)
+        self._queue_mutation(_task)
+
+    def rebuild_local_llm_if_needed(self) -> None:
+        async def _task():
+            settings = self.settings
+            if settings is None or settings.provider.llm != LLMProviderName.LOCAL_LLM:
+                return
+            await self.apply_providers(force_rebuild_llm=True)
+        self._queue_mutation(_task)
+
+    def _api_key_field_matches_current(self, provider: str, key: str) -> bool:
+        """Check if API key field still has the same value as when verification was initiated."""
+        field_name_map = {
+            "openai_compatible": "_openai_compatible_key",
+            "backup_openai_compatible": "_fallback_api_key",
+        }
+        field_name = field_name_map.get(provider)
+        if field_name is None:
+            return True
+        view_settings = getattr(self.app, "view_settings", None)
+        field = getattr(view_settings, field_name, None) if view_settings else None
+        if field is None:
+            return True
+        current_key = getattr(field, "value", None)
+        if current_key is None:
+            return True
+        return current_key == key
+
+    async def verify_and_persist_api_key(
+        self, provider: str, key: str, *, base_url: str | None = None
+    ) -> tuple[bool, str]:
+        logger.info("[VerifyKey] provider=%s key_len=%d base_url=%s", provider, len(key), base_url or "(from settings)")
+        success, msg = await self.verify_api_key(provider, key, base_url=base_url)
+        logger.info("[VerifyKey] provider=%s success=%s msg=%s", provider, success, msg)
+
+        if not self._api_key_field_matches_current(provider, key):
+            logger.info("[VerifyKey] field changed since request, discarding result")
+            return success, msg
+
+        self.settings.api_key_verified.set_verified(provider, success)
+        save_settings(self.config_path, self.settings)
+        logger.info("[VerifyKey] saved api_key_verified.%s=%s", provider, success)
+
+        view_dashboard = getattr(self.app, "view_dashboard", None)
+        if view_dashboard:
+            if provider in ("openai_compatible", "local_llm"):
+                view_dashboard.set_translation_needs_key(not success, update_ui=False)
+
+        return success, msg
+
+    def clear_secret_verification(self, key: str) -> None:
+        logger.info("[VerifyKey] secret_cleared key=%s", key)
+        field_map = {
+            "openai_compatible_api_key": "openai_compatible",
+            "local_llm_api_key": "local_llm",
+            "backup_api_key": "backup_openai_compatible",
+            "fallback_local_llm_api_key": "fallback_local_llm",
+        }
+        verified_key = field_map.get(key)
+        if verified_key is not None:
+            self.settings.api_key_verified.set_verified(verified_key, False)
+            save_settings(self.config_path, self.settings)
+            view_dashboard = getattr(self.app, "view_dashboard", None)
+            if view_dashboard and key in ("openai_compatible_api_key", "local_llm_api_key"):
+                view_dashboard.set_translation_needs_key(True, update_ui=False)
+
+    def auto_apply_pending_on_leave(self) -> None:
+        view_settings = getattr(self.app, "view_settings", None)
+        if view_settings is None:
+            return
+        if view_settings.has_provider_changes:
+            pending = view_settings.consume_provider_apply_settings()
+            if pending is not None:
+                view_settings.has_provider_changes = False
+                merged = self.merge_settings_tab_apply_with_current_languages(pending)
+                self.settings = merged
+                self.save_settings()
+
+                async def _task():
+                    await self.apply_providers(merged)
+                self._queue_mutation(_task)
+        elif getattr(view_settings, "has_pending_prompt_changes", False):
+            pending = view_settings.consume_prompt_apply_settings()
+            if pending is not None:
+                async def _task():
+                    merged = self.merge_settings_tab_apply_with_current_languages(pending)
+                    await self.apply_settings(merged)
+                self._queue_mutation(_task)
+
+    def on_overlay_state_changed(self, *, state: str, failure_reason: str | None = None) -> None:
+        previous_state = getattr(self, "_overlay_state", "unknown")
+        self.log_basic(f"[Overlay] State changed: {previous_state} -> {state}")
+        self._overlay_state = state
+        self._overlay_failure_reason = failure_reason
+        self._sync_settings_overlay_runtime_state()
+        self.refresh_overlay_peer_contract()
+
+    def on_desktop_overlay_state_changed(self, *, interaction_mode: str | None = None, captions_locked: bool | None = None) -> None:
+        _ = (interaction_mode, captions_locked)
+        self._sync_settings_overlay_runtime_state()
+
+    def refresh_overlay_peer_contract(self) -> None:
+        """Rebuild overlay/peer contract and propagate to views."""
+        contract = self.build_overlay_peer_consumer_contract()
+        self.app.overlay_peer_contract = contract
+        if contract is None:
+            return
+        view_settings = getattr(self.app, "view_settings", None)
+        set_contract = getattr(view_settings, "set_overlay_peer_contract", None)
+        if callable(set_contract):
+            set_contract(contract)
+        view_dashboard = getattr(self.app, "view_dashboard", None)
+        set_dashboard_contract = getattr(view_dashboard, "set_overlay_peer_contract", None)
+        if callable(set_dashboard_contract):
+            set_dashboard_contract(contract)
+
+    def _sync_settings_overlay_runtime_state(self) -> None:
+        """Sync overlay runtime state to settings view."""
+        view_settings = getattr(self.app, "view_settings", None)
+        set_state = getattr(view_settings, "set_overlay_runtime_state", None)
+        if not callable(set_state):
+            return
+        overlay_target = None
+        if self.settings is not None:
+            overlay_target = getattr(self.settings.overlay, "target", None)
+        desktop_locked = bool(getattr(self, "desktop_overlay_captions_locked", False))
+        set_state(
+            getattr(self, "_overlay_state", "off"),
+            failure_reason=getattr(self, "_overlay_failure_reason", None),
+            overlay_target=overlay_target,
+            desktop_captions_locked=desktop_locked,
+        )
+
+    def _on_desktop_overlay_lock_change_async(self, locked: bool) -> None:
+        async def _task():
+            await self.set_desktop_overlay_captions_locked(bool(locked))
+            self._refresh_desktop_overlay_state()
+        self.page.run_task(_task)
+
+    def _on_desktop_overlay_size_change_async(self, size_preset: str) -> None:
+        async def _task():
+            await self.set_desktop_overlay_size_preset(size_preset)
+            self._refresh_desktop_overlay_state()
+        self.page.run_task(_task)
+
+    def _on_desktop_overlay_recovery_action(self, action: str) -> None:
+        if action not in {"retry", "reopen"}:
+            return
+        async def _task():
+            await self.set_overlay_enabled(True)
+        self.page.run_task(_task)
+
+    def _on_desktop_overlay_position_reset_async(self) -> None:
+        async def _task():
+            await self.reset_desktop_overlay_position()
+            self._refresh_desktop_overlay_state()
+        self.page.run_task(_task)
+
+    def _refresh_desktop_overlay_state(self) -> None:
+        view_settings = getattr(self.app, "view_settings", None)
+        sync_settings = getattr(view_settings, "sync_desktop_overlay_settings", None)
+        if self.settings is not None and callable(sync_settings):
+            sync_settings(self.settings)
+        self._sync_settings_overlay_runtime_state()
+
+    def _on_translation_toggle_async(self, enabled: bool) -> None:
+        async def _task():
+            await self.set_translation_enabled(enabled)
+            view_dashboard = getattr(self.app, "view_dashboard", None)
+            if view_dashboard:
+                view_dashboard.set_translation_enabled(enabled)
+        self.page.run_task(_task)
+
+    def _on_stt_toggle_async(self, enabled: bool) -> None:
+        self._consume_pending_provider_settings_if_needed()
+        async def _task():
+            await self.set_stt_enabled(enabled)
+        self.page.run_task(_task)
+
+    def _on_overlay_toggle_async(self, enabled: bool) -> None:
+        async def _task():
+            await self.set_overlay_enabled(enabled)
+        self.page.run_task(_task)
+
+    def _on_peer_translation_toggle_async(self, enabled: bool) -> None:
+        """Toggle peer translation with EULA gate."""
+        if enabled and not getattr(self.settings.ui, "peer_translation_eula_accepted", False):
+            view_dashboard = getattr(self.app, "view_dashboard", None)
+            if view_dashboard:
+                view_dashboard.show_peer_eula_dialog(
+                    on_accept=self._accept_peer_translation_eula_and_enable_async
+                )
+            return
+        async def _task():
+            self._consume_pending_provider_settings_if_needed()
+            await self.set_peer_translation_enabled(enabled)
+        self.page.run_task(_task)
+
+    def _accept_peer_translation_eula_and_enable_async(self) -> None:
+        self.settings.ui.peer_translation_eula_accepted = True
+        save_settings(self.config_path, self.settings)
+        async def _task():
+            await self.set_peer_translation_enabled(True)
+        self.page.run_task(_task)
+
+    def _on_language_change_async(
+        self,
+        source_code: str,
+        target_code: str,
+        peer_source_code: str = "",
+        peer_target_code: str = "",
+        second_target_code: str = "",
+    ) -> None:
+        """Handle language change with STT compatibility check."""
+        from puripuly_heart.domain.language import get_stt_compatibility_warning
+        warning = get_stt_compatibility_warning(
+            source_code, self.settings.provider.stt.value if self.settings else ""
+        )
+        if warning:
+            view_dashboard = getattr(self.app, "view_dashboard", None)
+            if view_dashboard:
+                show_snackbar = getattr(view_dashboard, "show_snackbar", None)
+                if callable(show_snackbar):
+                    show_snackbar(warning)
+        self.on_dashboard_language_change(
+            source_code, target_code,
+            peer_source_code=peer_source_code,
+            peer_target_code=peer_target_code,
+            second_target_code=second_target_code,
+        )
+
+    def _on_manual_submit_async(self, _source, text: str) -> None:
+        async def _task():
+            await self.submit_text(text)
+        self.page.run_task(_task)
+
+    def _on_manual_input_activity_async(self, has_text: bool) -> None:
+        self.note_manual_input_activity(has_text)
+
+    def _consume_pending_provider_settings_if_needed(self) -> None:
+        """Consume pending provider settings before toggle."""
+        view_settings = getattr(self.app, "view_settings", None)
+        if view_settings is None or not getattr(view_settings, "has_provider_changes", False):
+            return
+        pending = view_settings.consume_provider_apply_settings()
+        if pending is not None:
+            view_settings.has_provider_changes = False
+            merged = self.merge_settings_tab_apply_with_current_languages(pending)
+            self.settings = merged
+            self.save_settings()
+
+    def _on_start_microphone_test_async(self) -> None:
+        self.start_microphone_test()
+
+    def _on_stop_microphone_test_async(self) -> None:
+        self.stop_microphone_test()
 
     def _log_error(self, message: str) -> None:
         self.log_basic(message, level=logging.ERROR)

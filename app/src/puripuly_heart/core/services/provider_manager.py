@@ -1,7 +1,6 @@
 """Provider management service — handles LLM/STT provider lifecycle.
 
-Extracted from GuiController to decouple provider construction
-from UI layer. Manages provider rebuild and signature comparison.
+Manages provider rebuild and signature comparison.
 """
 
 from __future__ import annotations
@@ -12,12 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from puripuly_heart.app.wiring import (
-    create_fallback_llm_provider,
-    create_llm_provider,
-    create_secret_store,
-    create_stt_backend,
-)
 from puripuly_heart.config.settings import AppSettings
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.core.stt.controller import ManagedSTTProvider
@@ -61,11 +54,14 @@ class ProviderManager:
     on_terminal_failure: Callable[[Exception], None] | None = None
     on_final_transcript_suppressed: Callable[..., None] | None = None
 
-    async def rebuild_llm_provider(self) -> None:
-        """Rebuild LLM provider without tearing down the pipeline.
+    # Dependency-injected factories (to avoid core/ → app/ import)
+    create_secret_store: Callable[..., object] = None  # type: ignore[assignment]
+    create_llm_provider: Callable[..., object] = None  # type: ignore[assignment]
+    create_fallback_llm_provider: Callable[..., object] = None  # type: ignore[assignment]
+    create_stt_backend: Callable[..., object] = None  # type: ignore[assignment]
 
-        Mirrors GuiController._rebuild_llm_provider() lines 945-1026.
-        """
+    async def rebuild_llm_provider(self) -> None:
+        """Rebuild LLM provider without tearing down the pipeline."""
         if self.hub is None or self.settings is None:
             return
 
@@ -75,8 +71,8 @@ class ProviderManager:
         llm_error: Exception | None = None
         secrets = None
         try:
-            secrets = create_secret_store(config_path=self.config_path)
-            llm = create_llm_provider(
+            secrets = self.create_secret_store(config_path=self.config_path)
+            llm = self.create_llm_provider(
                 self.settings,
                 secrets=secrets,
                 runtime_logging=self.runtime_logging,
@@ -92,7 +88,7 @@ class ProviderManager:
         fallback_llm = None
         if secrets is not None:
             try:
-                fallback_llm = create_fallback_llm_provider(
+                fallback_llm = self.create_fallback_llm_provider(
                     self.settings,
                     secrets=secrets,
                     runtime_logging=self.runtime_logging,
@@ -122,23 +118,20 @@ class ProviderManager:
         logger.info("[Settings] LLM provider rebuilt successfully")
 
     async def rebuild_stt_provider(self) -> None:
-        """Rebuild STT provider for later enable.
-
-        Mirrors GuiController._rebuild_stt_provider() lines 1027-1076.
-        """
+        """Rebuild STT provider for later enable."""
         if self.hub is None or self.settings is None:
             return
 
         stt = None
         stt_error: Exception | None = None
         try:
-            secrets = create_secret_store(config_path=self.config_path)
+            secrets = self.create_secret_store(config_path=self.config_path)
             diag_enabled = (
                 self.detailed_audio_diag_enabled_provider()
                 if self.detailed_audio_diag_enabled_provider is not None
                 else False
             )
-            backend = create_stt_backend(
+            backend = self.create_stt_backend(
                 self.settings,
                 secrets=secrets,
                 diagnostics_enabled=diag_enabled,

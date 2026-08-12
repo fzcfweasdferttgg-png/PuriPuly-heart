@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
+from puripuly_heart.domain.settings_commands import ChangeVRCMic, ChangeChatboxSource
 from puripuly_heart.ui.components.settings import (
     OptionItem,
     SettingsModal,
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class OscSectionMixin:
-    """OSC-related event handlers extracted from SettingsView."""
+    """OSC-related event handlers."""
 
     # ------------------------------------------------------------------
     # Load from settings
@@ -132,15 +133,12 @@ class OscSectionMixin:
             self.on_start_microphone_test()
 
     def _on_vrc_mic_selected(self, value: str) -> None:
-        """处理选项卡的选择结果
-
-        Handle VRC mic intercept selection result.
-        """
+        """Handle VRC mic intercept selection result."""
         if not self._settings:
             return
         new_value = value == "on"
         self._emit_runtime_basic(f"[Settings] VRC mic intercept toggled: {new_value}")
-        self._settings.osc.vrc_mic_intercept = new_value
+        self._command_executor.execute(ChangeVRCMic(enabled=new_value))
 
         self._vrc_mic_text.content.value = t(
             "settings.vrc_mic.on" if new_value else "settings.vrc_mic.off"
@@ -173,7 +171,7 @@ class OscSectionMixin:
             return
         new_value = value == "on"
         self._emit_runtime_basic(f"[Settings] Chatbox include source toggled: {new_value}")
-        self._settings.osc.chatbox_include_source = new_value
+        self._command_executor.execute(ChangeChatboxSource(include_source=new_value))
 
         self._chatbox_source_text.content.value = t(
             "settings.chatbox_source.on" if new_value else "settings.chatbox_source.off"

@@ -4,7 +4,7 @@ import contextlib
 from typing import TYPE_CHECKING
 
 from puripuly_heart.config.settings import STTProviderName
-from puripuly_heart.ui.overlay_peer_contract import (
+from puripuly_heart.domain.overlay_contract import (
     OverlayPeerConsumerContract,
     build_overlay_peer_consumer_contract,
 )
@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 
 class PeerFlagsMixin:
-    """Peer translation flag logic extracted from GuiController."""
 
     @property
     def effective_peer_translation_enabled(self) -> bool:
@@ -72,7 +71,7 @@ class PeerFlagsMixin:
         )
 
     def _refresh_overlay_peer_consumers(self) -> None:
-        refresh_contract = getattr(self.app, "refresh_overlay_peer_contract", None)
+        refresh_contract = getattr(self, "refresh_overlay_peer_contract", None)
         if callable(refresh_contract):
             with contextlib.suppress(Exception):
                 refresh_contract()

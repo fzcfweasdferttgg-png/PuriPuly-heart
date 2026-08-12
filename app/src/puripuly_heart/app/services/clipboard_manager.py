@@ -9,10 +9,6 @@ import sys
 
 from puripuly_heart.core.clipboard.watcher import create_clipboard_watcher
 
-# ---------------------------------------------------------------------------
-# Constants (originally in controller.py)
-# ---------------------------------------------------------------------------
-
 MANUAL_TYPING_IDLE_TIMEOUT_S = 3.0
 MANUAL_TYPING_IDLE_POLL_S = 0.25
 MANUAL_INPUT_TYPING_REASON = "manual_input"
@@ -24,10 +20,6 @@ class ClipboardManagerMixin:
 
     Mixed into :class:`GuiController`; all attributes are inherited from it.
     """
-
-    # ------------------------------------------------------------------
-    # Clipboard watcher helpers
-    # ------------------------------------------------------------------
 
     def _get_clipboard_watcher_lock(self) -> asyncio.Lock:
         if self._clipboard_watcher_lock is None:
@@ -69,6 +61,9 @@ class ClipboardManagerMixin:
             except Exception as exc:
                 self._log_error(f"Clipboard watcher failed to stop: {exc}")
 
+    # Windows clipboard-thread → asyncio bridge.
+    # Called from a background thread; uses loop.call_soon_threadsafe to
+    # schedule work back on the event loop without blocking the watcher.
     def _on_clipboard_text_from_thread(self, text: str) -> None:
         trimmed = text.strip()
         if not trimmed or len(trimmed) > 300:
@@ -92,10 +87,7 @@ class ClipboardManagerMixin:
         except Exception as exc:
             self._log_error(f"Clipboard submit failed: {exc}")
 
-    # ------------------------------------------------------------------
-    # Manual typing / idle detection
-    # ------------------------------------------------------------------
-
+    # State machine: inactive → active(typing) → active(submit pending) → inactive
     def note_manual_input_activity(self, has_text: bool) -> None:
         if not has_text:
             self._clear_manual_input_typing()
@@ -183,10 +175,6 @@ class ClipboardManagerMixin:
             set_reason(reason, active)
             return
         osc.send_typing(active)
-
-    # ------------------------------------------------------------------
-    # Submit text
-    # ------------------------------------------------------------------
 
     async def submit_text(self, text: str) -> None:
         self._manual_submit_typing_generation += 1

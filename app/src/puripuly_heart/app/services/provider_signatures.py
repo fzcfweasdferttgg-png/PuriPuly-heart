@@ -18,7 +18,6 @@ def _canonical_json_signature(value: object) -> str:
 
 
 class ProviderSignaturesMixin:
-    """Provider signature and settings merge logic extracted from GuiController."""
 
     def _stt_provider_applies_custom_vocabulary(self, settings: AppSettings) -> bool:
         return settings.provider.stt in (

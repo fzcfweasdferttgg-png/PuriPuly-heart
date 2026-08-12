@@ -47,7 +47,7 @@ _OVERLAY_FAILURE_REASONS = frozenset(
 
 
 class OverlayLifecycleMixin:
-    """Overlay startup, monitoring, and shutdown lifecycle extracted from GuiController."""
+    # State machine: off → starting → connected/failed → stopping → off
 
     async def _refresh_overlay_runtime_dependencies(self) -> None:
         if self.settings is None or self.hub is None:

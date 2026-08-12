@@ -1,11 +1,10 @@
 """Shared UI utilities mixin for TranslatorApp.
 
-Extracted from app.py during mixin-decomposition (Phase 1).
 Contains logging, snackbar, settings mutation queue, Flet 0.28 workarounds,
 and module-level constants/helpers needed by other mixins.
 """
 
-# AI: BASE MIXIN — _AppUtilitiesMixin is FIRST in TranslatorApp MRO.
+# BASE MIXIN — _AppUtilitiesMixin is FIRST in TranslatorApp MRO.
 # Every mixin in the app calls _log_basic(), _show_snackbar(), _queue_settings_mutation_task().
 # These methods exist ONLY here. Moving this mixin later in MRO = all mixins break.
 
@@ -49,15 +48,14 @@ FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE = {
 }
 FOUNDER_README_DEFAULT_API_KEYS_ANCHOR = "using-your-own-api-keys"
 
-# AI: CONSTANTS — imported by app.py (window sizes, padding) and app_navigation.py (padding).
+# CONSTANTS — imported by app.py (window sizes, padding) and app_navigation.py (padding).
 # FOUNDER_README_* used only by founder_readme_url_for_locale() → consumed by app_debug.py.
 
-# AI: INTROSPECTION GUARD — used by app_mic_test.py to check if controller.start_microphone_test
+# INTROSPECTION GUARD — used by app_mic_test.py to check if controller.start_microphone_test
 # accepts meter_callback keyword. Falls back to True (assume accepted) on introspection failure.
 # If you change start_microphone_test signature, this guard prevents silent callback omission.
 
 def _callable_accepts_keyword(callable_obj: object, keyword: str) -> bool:
-    """Check if callable accepts a specific keyword argument."""
     try:
         parameters = inspect.signature(callable_obj).parameters
     except (TypeError, ValueError):
@@ -66,12 +64,11 @@ def _callable_accepts_keyword(callable_obj: object, keyword: str) -> bool:
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
     )
 
-# AI: URL BUILDER — maps locale → README path + anchor. Used by app_debug.py
+# URL BUILDER — maps locale → README path + anchor. Used by app_debug.py
 # for founder letter dialog and hallucination dialog "read guide" buttons.
 # Falls back to English README if locale not in mapping.
 
 def founder_readme_url_for_locale(locale: str | None) -> str:
-    """Build founder readme URL for the given locale."""
     readme_path = FOUNDER_README_PATH_BY_LOCALE.get(locale or "", "README.md")
     anchor = FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE.get(
         locale or "", FOUNDER_README_DEFAULT_API_KEYS_ANCHOR
@@ -85,14 +82,14 @@ class _AppUtilitiesMixin:
     Must be first in MRO so all other mixins can use these methods.
     """
 
-    # AI: METHODS BELOW are called by ALL other mixins via self.* — they form the shared
+    # METHODS BELOW are called by ALL other mixins via self.* — they form the shared
     # infrastructure layer. _log_basic/_log_detailed use getattr(self, "controller", None)
     # because they may be called during controller.start() when log_basic/log_detailed
     # don't exist yet. Other mixins access self.controller directly (safe post-init).
 
     # --- Logging ---
 
-    # AI: DEFENSIVE ACCESS — controller may not have log_basic yet (early startup).
+    # DEFENSIVE ACCESS — controller may not have log_basic yet (early startup).
     # Falls back to stdlib logger. _log_detailed follows the same pattern.
     # Other mixins access self.controller directly because they only run post-init.
 
@@ -114,13 +111,12 @@ class _AppUtilitiesMixin:
 
     # --- Snackbar ---
 
-    # AI: SNACKBAR LIFECYCLE — calls _mark_launch_high_priority_feedback_shown which sets
+    # SNACKBAR LIFECYCLE — calls _mark_launch_high_priority_feedback_shown which sets
     # 3 attributes on self (defined in TranslatorApp.__init__). If you rename those attrs,
     # _mark_launch_high_priority_feedback_shown breaks.
     # page.open(snackbar) is the Flet 0.28 API; older Flet uses page.snackbar = ...
 
     def _show_snackbar(self, message: str, bgcolor, duration: int = 4000) -> None:
-        """Show a snackbar above the bottom nav."""
         snackbar = ft.SnackBar(
             ft.Text(message, size=18, color=ft.Colors.WHITE),
             bgcolor=bgcolor,
@@ -188,7 +184,7 @@ class _AppUtilitiesMixin:
                 self.page.update()
         self._displace_current_snackbar_for_flet_028()
 
-    # AI: FLET 0.28 SHIM — page.close(snackbar) updates Python state but Flutter-side
+    # FLET 0.28 SHIM — page.close(snackbar) updates Python state but Flutter-side
     # snackbar remains visible until duration expires. Opening a transparent 1ms snackbar
     # forces the old one off-screen. This is a WORKAROUND for Flet bug, not our logic.
     # If Flet fixes this in a future version, this method becomes dead code.
@@ -217,7 +213,7 @@ class _AppUtilitiesMixin:
 
     # --- Settings mutation queue ---
 
-    # AI: MUTATION QUEUE — sequential FIFO queue for settings changes.
+    # MUTATION QUEUE — sequential FIFO queue for settings changes.
     # Prevents race conditions when user rapidly toggles settings.
     # _settings_mutation_queue and _settings_mutation_worker_active are LAZILY created here
     # (not in __init__). Safe because all calls happen post-init.
@@ -248,7 +244,7 @@ class _AppUtilitiesMixin:
 
         self.page.run_task(_worker)
 
-    # AI: PRE-TOGGLE SYNC — called by _on_stt_toggle and _on_peer_translation_toggle
+    # PRE-TOGGLE SYNC — called by _on_stt_toggle and _on_peer_translation_toggle
     # (in AppDashboardMixin) BEFORE queuing their async tasks. Ensures provider settings
     # changes from the Settings tab are applied before toggling features that depend on them.
     #
@@ -257,7 +253,6 @@ class _AppUtilitiesMixin:
     # If you change one, check the other.
 
     def _consume_pending_provider_settings(self) -> None:
-        """Apply pending provider settings from the Settings view before a toggle."""
         view_settings = getattr(self, "view_settings", None)
         if view_settings is None or not getattr(view_settings, "has_provider_changes", False):
             return

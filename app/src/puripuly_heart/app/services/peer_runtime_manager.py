@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 class PeerRuntimeManagerMixin:
-    """Peer runtime configuration and lifecycle extracted from GuiController."""
-
     def _build_peer_runtime_config(self, settings: AppSettings) -> PeerRuntimeConfig:
         from puripuly_heart.app.wiring import resolve_peer_stt_config
 

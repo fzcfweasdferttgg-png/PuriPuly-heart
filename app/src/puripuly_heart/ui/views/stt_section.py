@@ -1,5 +1,3 @@
-"""SttSectionMixin — STT provider, quant, compute, and backend controls."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -19,12 +17,19 @@ from puripuly_heart.ui.theme import (
 )
 
 from puripuly_heart.ui.views.settings_helpers import _update_control_if_mounted
+from puripuly_heart.domain.settings_commands import (
+    ChangeSTTProvider,
+    ChangePeerSTTProvider,
+    ChangeSTTQuant,
+    ChangeSTTBackend,
+    ChangeSTTCompute,
+)
 
 if TYPE_CHECKING:
     from puripuly_heart.ui.views.settings import SettingsView
 
 
-# AI: ATTRIBUTE OWNERSHIP — _build_stt_widgets and _build_peer_stt_widgets create:
+# ATTRIBUTE OWNERSHIP — _build_stt_widgets and _build_peer_stt_widgets create:
 #   _stt_text, _stt_compute_label/gpu_btn/cpu_btn/row,
 #   _stt_quant_label/q8_btn/q6k_btn/f16_btn/int8_btn/row,
 #   _stt_backend_label/onnx_btn/gguf_btn/row, _stt_title, _stt_provider_label
@@ -37,7 +42,6 @@ if TYPE_CHECKING:
 # compute/backend/quant row visibility based on selected provider.
 
 class SttSectionMixin:
-    """Mixin providing STT section methods for SettingsView."""
 
     _ONNX_QUANTS = ["int8"]  # extend here when fp16/fp32 are available
     _GGUF_QUANTS = ["q8_0", "q6_k", "f16"]
@@ -53,7 +57,6 @@ class SttSectionMixin:
     }
 
     def _load_stt_from_settings(self, settings: "AppSettings") -> None:
-        """Load STT provider labels from settings into UI."""
         if not hasattr(self, '_stt_text'):
             return
         self._set_unit_card_value_text(
@@ -78,7 +81,6 @@ class SttSectionMixin:
         )
 
     def _on_stt_click(self, e) -> None:
-        """Open STT provider selection modal."""
         if not self.page:
             return
         _VULKAN_PROVIDERS = {
@@ -122,7 +124,6 @@ class SttSectionMixin:
         modal.open(current)
 
     def _on_stt_selected(self, value: str) -> None:
-        """Handle STT provider selection from modal."""
         if not self._settings:
             return
         current_settings = self._build_settings_with_provider_draft()
@@ -134,22 +135,24 @@ class SttSectionMixin:
         self._emit_runtime_basic(
             f"[Settings] STT provider changed: {old_provider} -> {provider.value}"
         )
-        draft = self._ensure_provider_settings_draft()
-        draft.provider.stt = provider
+        # Determine auto-set backend and quant
         _GGUF_PROVIDERS = {
             STTProviderName.LOCAL_GIGAAM_RNNT_GGUF,
             STTProviderName.LOCAL_PARAKEET_TDT_GGUF,
             STTProviderName.LOCAL_QWEN3_ASR_GGUF,
             STTProviderName.LOCAL_QWEN_17B_GGUF,
         }
-        if provider in _GGUF_PROVIDERS:
-            draft.provider.stt_backend = "gguf"
-        else:
-            draft.provider.stt_backend = "onnx"
-        # Reset quant to first available when provider changes
+        auto_backend = "gguf" if provider in _GGUF_PROVIDERS else "onnx"
         available_quants = self._get_quant_options(provider)
-        if available_quants and draft.provider.stt_quant not in available_quants:
-            draft.provider.stt_quant = available_quants[0]
+        current_settings = self._build_settings_with_provider_draft()
+        auto_quant = None
+        if available_quants and (current_settings is None or current_settings.provider.stt_quant not in available_quants):
+            auto_quant = available_quants[0]
+        result = self._command_executor.execute(ChangeSTTProvider(
+            provider=provider.value,
+            backend=auto_backend,
+            quant=auto_quant,
+        ))
         # Build merged settings once and pass to _update_api_visibility to avoid redundant deepcopy
         merged = self._build_settings_with_provider_draft()
         self._update_api_visibility(merged)
@@ -228,22 +231,24 @@ class SttSectionMixin:
         provider = STTProviderName(value)
         if current_settings.provider.peer_stt == provider:
             return
-        draft = self._ensure_provider_settings_draft()
-        draft.provider.peer_stt = provider
+        # Determine auto-set backend and quant
         _GGUF_PROVIDERS = {
             STTProviderName.LOCAL_GIGAAM_RNNT_GGUF,
             STTProviderName.LOCAL_PARAKEET_TDT_GGUF,
             STTProviderName.LOCAL_QWEN3_ASR_GGUF,
             STTProviderName.LOCAL_QWEN_17B_GGUF,
         }
-        if provider in _GGUF_PROVIDERS:
-            draft.provider.peer_stt_backend = "gguf"
-        else:
-            draft.provider.peer_stt_backend = "onnx"
-        # Reset quant to first available when provider changes
+        auto_backend = "gguf" if provider in _GGUF_PROVIDERS else "onnx"
         available_quants = self._get_quant_options(provider)
-        if available_quants and draft.provider.peer_stt_quant not in available_quants:
-            draft.provider.peer_stt_quant = available_quants[0]
+        current_settings = self._build_settings_with_provider_draft()
+        auto_quant = None
+        if available_quants and (current_settings is None or current_settings.provider.peer_stt_quant not in available_quants):
+            auto_quant = available_quants[0]
+        result = self._command_executor.execute(ChangePeerSTTProvider(
+            provider=provider.value,
+            backend=auto_backend,
+            quant=auto_quant,
+        ))
         self._set_unit_card_value_text(self._peer_stt_text, provider_label(value))
         # Build merged settings once and pass to _update_api_visibility to avoid redundant deepcopy
         merged = self._build_settings_with_provider_draft()
@@ -255,7 +260,7 @@ class SttSectionMixin:
     def _is_local_stt(self, provider: STTProviderName) -> bool:
         return provider in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B, STTProviderName.LOCAL_GIGAAM_RNNT, STTProviderName.LOCAL_PARAKEET_TDT, STTProviderName.LOCAL_GIGAAM_RNNT_GGUF, STTProviderName.LOCAL_PARAKEET_TDT_GGUF, STTProviderName.LOCAL_QWEN3_ASR_GGUF, STTProviderName.LOCAL_QWEN_17B_GGUF)
 
-    # AI: SHARED QUANT SYNC — used by both self-stt and peer-stt quant buttons.
+    # SHARED QUANT SYNC — used by both self-stt and peer-stt quant buttons.
     # Buttons are pre-created in _build_stt_widgets / _build_peer_stt_widgets.
     # Visibility + style are set atomically. _update_control_if_mounted is safe
     # to call before widgets are mounted to a page (no-op if page is None).
@@ -318,17 +323,17 @@ class SttSectionMixin:
     def _apply_stt_quant(self, quant: str) -> None:
         if not self._settings:
             return
-        draft = self._ensure_provider_settings_draft()
-        draft.provider.stt_quant = quant
-        self._sync_stt_quant_buttons(draft.provider.stt, quant)
+        self._command_executor.execute(ChangeSTTQuant(quant=quant, channel="self"))
+        merged = self._build_settings_with_provider_draft()
+        self._sync_stt_quant_buttons(merged.provider.stt, quant)
         self.has_provider_changes = True
 
     def _apply_peer_quant(self, quant: str) -> None:
         if not self._settings:
             return
-        draft = self._ensure_provider_settings_draft()
-        draft.provider.peer_stt_quant = quant
-        self._sync_peer_quant_buttons(draft.provider.peer_stt, quant)
+        self._command_executor.execute(ChangeSTTQuant(quant=quant, channel="peer"))
+        merged = self._build_settings_with_provider_draft()
+        self._sync_peer_quant_buttons(merged.provider.peer_stt, quant)
         self.has_provider_changes = True
 
     def _sync_stt_compute_buttons(self, compute: str) -> None:
@@ -374,7 +379,7 @@ class SttSectionMixin:
             return
         if self._settings.provider.stt_compute == value:
             return
-        self._settings.provider.stt_compute = value
+        self._command_executor.execute(ChangeSTTCompute(compute=value, channel="self"))
         self._sync_stt_compute_buttons(value)
         self.has_provider_changes = True
         self._emit_runtime_basic(f"[Settings] STT compute changed: {value}")
@@ -384,7 +389,7 @@ class SttSectionMixin:
             return
         if self._settings.provider.peer_stt_compute == value:
             return
-        self._settings.provider.peer_stt_compute = value
+        self._command_executor.execute(ChangeSTTCompute(compute=value, channel="peer"))
         self._sync_peer_stt_compute_buttons(value)
         self.has_provider_changes = True
         self._emit_runtime_basic(f"[Settings] Peer STT compute changed: {value}")
@@ -427,7 +432,7 @@ class SttSectionMixin:
     def _on_peer_stt_backend_gguf_click(self, e) -> None:
         self._apply_peer_stt_backend("gguf")
 
-    # AI: BACKEND SWITCH — when switching ONNX↔GGUF, also changes the STT PROVIDER
+    # BACKEND SWITCH — when switching ONNX↔GGUF, also changes the STT PROVIDER
     # (e.g. LOCAL_QWEN → LOCAL_QWEN3_ASR_GGUF). The provider enum carries the backend
     # implicitly. After switching, resets quant to first available for new provider.
     # Calls _update_api_visibility to show/hide compute/backend rows for new provider.
@@ -438,31 +443,15 @@ class SttSectionMixin:
         draft = self._ensure_provider_settings_draft()
         if draft.provider.stt_backend == value:
             return
-        draft.provider.stt_backend = value
-        _ONNX_TO_GGUF = {
-            STTProviderName.LOCAL_GIGAAM_RNNT: STTProviderName.LOCAL_GIGAAM_RNNT_GGUF,
-            STTProviderName.LOCAL_PARAKEET_TDT: STTProviderName.LOCAL_PARAKEET_TDT_GGUF,
-            STTProviderName.LOCAL_QWEN: STTProviderName.LOCAL_QWEN3_ASR_GGUF,
-            STTProviderName.LOCAL_QWEN_17B: STTProviderName.LOCAL_QWEN_17B_GGUF,
-        }
-        _GGUF_TO_ONNX = {
-            STTProviderName.LOCAL_GIGAAM_RNNT_GGUF: STTProviderName.LOCAL_GIGAAM_RNNT,
-            STTProviderName.LOCAL_PARAKEET_TDT_GGUF: STTProviderName.LOCAL_PARAKEET_TDT,
-            STTProviderName.LOCAL_QWEN3_ASR_GGUF: STTProviderName.LOCAL_QWEN,
-            STTProviderName.LOCAL_QWEN_17B_GGUF: STTProviderName.LOCAL_QWEN_17B,
-        }
-        current = draft.provider.stt
-        if value == "gguf" and current in _ONNX_TO_GGUF:
-            draft.provider.stt = _ONNX_TO_GGUF[current]
-            self._set_unit_card_value_text(self._stt_text, provider_label(draft.provider.stt.value))
-        elif value == "onnx" and current in _GGUF_TO_ONNX:
-            draft.provider.stt = _GGUF_TO_ONNX[current]
-            self._set_unit_card_value_text(self._stt_text, provider_label(draft.provider.stt.value))
-        # Reset quant when backend changes (ONNX→GGUF or GGUF→ONNX)
-        available_quants = self._get_quant_options(draft.provider.stt)
-        if available_quants and draft.provider.stt_quant not in available_quants:
-            draft.provider.stt_quant = available_quants[0]
-        # Build merged settings once and pass to _update_api_visibility to avoid redundant deepcopy
+        # Executor handles backend field + ONNX↔GGUF provider switching
+        result = self._command_executor.execute(ChangeSTTBackend(backend=value, channel="self"))
+        # Auto-adjust quant if incompatible with new provider
+        merged = self._build_settings_with_provider_draft()
+        if merged:
+            available_quants = self._get_quant_options(merged.provider.stt)
+            if available_quants and merged.provider.stt_quant not in available_quants:
+                self._command_executor.execute(ChangeSTTQuant(quant=available_quants[0], channel="self"))
+            self._set_unit_card_value_text(self._stt_text, provider_label(merged.provider.stt.value))
         merged = self._build_settings_with_provider_draft()
         self._update_api_visibility(merged)
         self.has_provider_changes = True
@@ -473,44 +462,28 @@ class SttSectionMixin:
         draft = self._ensure_provider_settings_draft()
         if draft.provider.peer_stt_backend == value:
             return
-        draft.provider.peer_stt_backend = value
-        _ONNX_TO_GGUF = {
-            STTProviderName.LOCAL_GIGAAM_RNNT: STTProviderName.LOCAL_GIGAAM_RNNT_GGUF,
-            STTProviderName.LOCAL_PARAKEET_TDT: STTProviderName.LOCAL_PARAKEET_TDT_GGUF,
-            STTProviderName.LOCAL_QWEN: STTProviderName.LOCAL_QWEN3_ASR_GGUF,
-            STTProviderName.LOCAL_QWEN_17B: STTProviderName.LOCAL_QWEN_17B_GGUF,
-        }
-        _GGUF_TO_ONNX = {
-            STTProviderName.LOCAL_GIGAAM_RNNT_GGUF: STTProviderName.LOCAL_GIGAAM_RNNT,
-            STTProviderName.LOCAL_PARAKEET_TDT_GGUF: STTProviderName.LOCAL_PARAKEET_TDT,
-            STTProviderName.LOCAL_QWEN3_ASR_GGUF: STTProviderName.LOCAL_QWEN,
-            STTProviderName.LOCAL_QWEN_17B_GGUF: STTProviderName.LOCAL_QWEN_17B,
-        }
-        current = draft.provider.peer_stt
-        if value == "gguf" and current in _ONNX_TO_GGUF:
-            draft.provider.peer_stt = _ONNX_TO_GGUF[current]
-            self._set_unit_card_value_text(self._peer_stt_text, provider_label(draft.provider.peer_stt.value))
-        elif value == "onnx" and current in _GGUF_TO_ONNX:
-            draft.provider.peer_stt = _GGUF_TO_ONNX[current]
-            self._set_unit_card_value_text(self._peer_stt_text, provider_label(draft.provider.peer_stt.value))
-        available_quants = self._get_quant_options(draft.provider.peer_stt)
-        if available_quants and draft.provider.peer_stt_quant not in available_quants:
-            draft.provider.peer_stt_quant = available_quants[0]
-        # Build merged settings once and pass to _update_api_visibility to avoid redundant deepcopy
+        # Executor handles backend field + ONNX↔GGUF provider switching
+        result = self._command_executor.execute(ChangeSTTBackend(backend=value, channel="peer"))
+        # Auto-adjust quant if incompatible with new provider
+        merged = self._build_settings_with_provider_draft()
+        if merged:
+            available_quants = self._get_quant_options(merged.provider.peer_stt)
+            if available_quants and merged.provider.peer_stt_quant not in available_quants:
+                self._command_executor.execute(ChangeSTTQuant(quant=available_quants[0], channel="peer"))
+            self._set_unit_card_value_text(self._peer_stt_text, provider_label(merged.provider.peer_stt.value))
         merged = self._build_settings_with_provider_draft()
         self._update_api_visibility(merged)
         self.has_provider_changes = True
 
     # --- Widget builders (called from _build_api_tab) ---
 
-    # AI: WIDGET BUILD ORDER — called from _build_api_tab (settings.py).
+    # WIDGET BUILD ORDER — called from _build_api_tab (settings.py).
     # Creates all self-stt UI controls AND reads self._initial_settings for
     # initial quant/backend button state. Uses _make_quant_button from SettingsHelpersMixin.
     # Returns _wrap_unit_card (the stt_card) but also creates ~20 self._* attributes
     # as side effect — the card is just the visible container.
 
     def _build_stt_widgets(self) -> ft.Control:
-        """Build Self STT widgets (Section A). Returns stt_card."""
         self._stt_text = self._build_clickable_text(
             provider_label(STTProviderName.LOCAL_QWEN.value),
             self._on_stt_click,
@@ -600,12 +573,11 @@ class SttSectionMixin:
             value=self._stt_text,
         )
 
-    # AI: PEER STT BUILD — mirrors _build_stt_widgets for peer side.
+    # PEER STT BUILD — mirrors _build_stt_widgets for peer side.
     # Reads self._initial_settings for initial peer quant/backend state.
     # Returns peer_stt_card, but creates ~15 self._* peer_stt_* attributes.
 
     def _build_peer_stt_widgets(self) -> ft.Control:
-        """Build Peer STT widgets (Section G). Returns peer_stt_card."""
         self._peer_provider_title = ft.Text(
             t("settings.section.peer_stt"),
             size=24,
@@ -708,7 +680,6 @@ class SttSectionMixin:
     # --- Locale ---
 
     def _apply_locale_stt(self) -> None:
-        """Update STT / peer section labels when locale changes."""
         if not hasattr(self, '_stt_backend_label'):
             return
         self._stt_backend_label.value = t("settings.backend.label", default="Engine:")

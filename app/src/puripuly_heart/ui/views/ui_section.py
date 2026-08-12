@@ -1,5 +1,3 @@
-"""UI section mixin — language, VAD, clipboard, and low-latency handlers."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -22,25 +20,31 @@ from puripuly_heart.ui.theme import (
     COLOR_PRIMARY,
 )
 from puripuly_heart.ui.views.settings_helpers import _CENTER_ALIGNMENT, _update_control_if_mounted
+from puripuly_heart.domain.settings_commands import (
+    ChangeLocale,
+    ChangeVADThreshold,
+    ChangeHangover,
+    ChangePreRoll,
+    ChangeClipboardAutoTranslate,
+    ChangeLowLatency,
+)
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
 
 
-# AI: CROSS-TAB CRITICAL — _build_low_latency_widgets creates self._low_latency_card
+# CROSS-TAB CRITICAL — _build_low_latency_widgets creates self._low_latency_card
 # which is embedded in _translation_connection_row inside _build_api_tab (settings.py).
 # This is the ONLY cross-tab attribute dependency in the entire SettingsView.
 # _build_general_tab must call _build_low_latency_widgets BEFORE _build_api_tab runs.
 
 class UiSectionMixin:
-    """Mixin providing UI section event handlers for SettingsView."""
 
     # ------------------------------------------------------------------
     # Widget builders
     # ------------------------------------------------------------------
 
     def _build_ui_language_widgets(self) -> ft.Control:
-        """Create UI language card. Returns the card control."""
         self._ui_text = self._build_clickable_text(
             locale_label(get_locale()),
             self._on_ui_click,
@@ -73,10 +77,6 @@ class UiSectionMixin:
         return self._low_latency_card
 
     def _build_vad_widgets(self) -> tuple[ft.Control, ft.Control]:
-        """Create self-VAD and peer-VAD cards.
-
-        Returns ``(self_vad_card, peer_vad_card)``.
-        """
         # -- Self VAD --
         self._self_vad_title = ft.Text(
             t("settings.section.self_vad_sensitivity"),
@@ -146,13 +146,11 @@ class UiSectionMixin:
     # ------------------------------------------------------------------
 
     def _load_ui_from_settings(self, settings: "AppSettings") -> None:
-        """Load UI language from settings into controls."""
         if not hasattr(self, '_ui_text'):
             return
         self._ui_text.content.value = locale_label(settings.ui.locale)
 
     def _load_vad_and_latency_from_settings(self, settings: "AppSettings") -> None:
-        """Load VAD and low-latency settings into controls."""
         if not hasattr(self, '_vad_slider'):
             return
         self._vad_slider.value = settings.stt.vad_speech_threshold
@@ -171,7 +169,6 @@ class UiSectionMixin:
     # ------------------------------------------------------------------
 
     def _on_ui_click(self, e) -> None:
-        """Open UI language selection modal."""
         if not self.page:
             return
         options = [OptionItem(value=code, label=native_locale_label(code)) for code in available_locales()]
@@ -186,12 +183,11 @@ class UiSectionMixin:
         modal.open(current)
 
     def _on_ui_selected(self, value: str) -> None:
-        """Handle UI language selection from modal."""
         if not self._settings:
             return
         old_locale = self._settings.ui.locale
         self._emit_runtime_basic(f"[Settings] Language changed: {old_locale} -> {value}")
-        self._settings.ui.locale = value
+        self._command_executor.execute(ChangeLocale(locale=value))
 
         # Update text
         self._ui_text.content.value = locale_label(value)
@@ -219,7 +215,7 @@ class UiSectionMixin:
                 f"[Settings] VAD sensitivity changed: {old_vad:.2f} -> {new_vad:.2f}"
             )
 
-        self._settings.stt.vad_speech_threshold = new_vad
+        self._command_executor.execute(ChangeVADThreshold(threshold=new_vad, channel="self"))
         self._emit_settings_changed()
 
     # ------------------------------------------------------------------
@@ -242,7 +238,7 @@ class UiSectionMixin:
                 f"[Settings] Peer VAD threshold changed: {old_vad:.2f} -> {new_vad:.2f}"
             )
 
-        self._settings.desktop_audio.vad_speech_threshold = new_vad
+        self._command_executor.execute(ChangeVADThreshold(threshold=new_vad, channel="peer"))
         self._peer_vad_field.value = f"{new_vad:.2f}"
         self._peer_vad_slider.label = f"{new_vad:.2f}"
         _update_control_if_mounted(self._peer_vad_field)
@@ -265,7 +261,7 @@ class UiSectionMixin:
                 f"[Settings] Peer VAD threshold changed: {old_value:.2f} -> {new_value:.2f}"
             )
 
-        self._settings.desktop_audio.vad_speech_threshold = new_value
+        self._command_executor.execute(ChangeVADThreshold(threshold=new_value, channel="peer"))
         self._peer_vad_field.value = f"{new_value:.2f}"
         _update_control_if_mounted(self._peer_vad_field)
         self._emit_settings_changed()
@@ -285,7 +281,7 @@ class UiSectionMixin:
                 f"[Settings] Peer hangover changed: {old_value} -> {new_value}"
             )
 
-        self._settings.desktop_audio.vad_hangover_ms = new_value
+        self._command_executor.execute(ChangeHangover(hangover_ms=new_value, channel="peer"))
         self._peer_hangover_field.value = str(new_value)
         _update_control_if_mounted(self._peer_hangover_field)
         self._emit_settings_changed()
@@ -305,7 +301,7 @@ class UiSectionMixin:
                 f"[Settings] Peer pre-roll changed: {old_value} -> {new_value}"
             )
 
-        self._settings.desktop_audio.vad_pre_roll_ms = new_value
+        self._command_executor.execute(ChangePreRoll(pre_roll_ms=new_value, channel="peer"))
         self._peer_pre_roll_field.value = str(new_value)
         _update_control_if_mounted(self._peer_pre_roll_field)
         self._emit_settings_changed()
@@ -315,19 +311,18 @@ class UiSectionMixin:
     # ------------------------------------------------------------------
 
     def _on_clipboard_auto_translate_click(self, e) -> None:
-        """Toggle clipboard auto-translate immediately from the unit card."""
         if not self._settings:
             return
         next_value = "off" if self._settings.ui.clipboard_auto_translate_enabled else "on"
         self._on_clipboard_auto_translate_selected(next_value)
 
     def _on_clipboard_auto_translate_selected(self, value: str) -> None:
-        """Handle clipboard auto-translate selection result."""
         if not self._settings:
             return
         new_value = value == "on"
         self._emit_runtime_basic(f"[Settings] Clipboard auto translate toggled: {new_value}")
-        self._settings.ui.clipboard_auto_translate_enabled = new_value
+        self._command_executor.execute(ChangeClipboardAutoTranslate(enabled=new_value))
+        # CROSS-MIXIN: _clipboard_auto_translate_text is created by OscSectionMixin._build_osc_widgets
         self._clipboard_auto_translate_text.content.value = t(
             "settings.clipboard_auto_translate.on"
             if new_value
@@ -342,7 +337,6 @@ class UiSectionMixin:
     # ------------------------------------------------------------------
 
     def _on_low_latency_click(self, e) -> None:
-        """Open low latency mode selection modal."""
         if not self.page:
             return
         options = [
@@ -368,7 +362,6 @@ class UiSectionMixin:
         modal.open(current)
 
     def _on_low_latency_selected(self, value: str) -> None:
-        """Handle low latency mode selection from modal."""
         if not self._settings:
             return
         new_value = value == "on"
@@ -377,7 +370,7 @@ class UiSectionMixin:
             self._emit_runtime_detailed(
                 f"[Settings] Low latency mode changed: {old_value} -> {new_value}"
             )
-        self._settings.stt.low_latency_mode = new_value
+        self._command_executor.execute(ChangeLowLatency(enabled=new_value))
 
         # Update text
         self._low_latency_text.content.value = t("toggle.on" if new_value else "toggle.off")
@@ -388,12 +381,12 @@ class UiSectionMixin:
     # --- Locale ---
 
     def _apply_locale_ui(self) -> None:
-        """Update UI / VAD / low-latency section labels when locale changes."""
         if not hasattr(self, '_ui_title'):
             return
         self._ui_title.value = t("settings.section.ui")
         self._self_vad_title.value = t("settings.section.self_vad_sensitivity")
         self._peer_vad_title.value = t("settings.section.peer_vad_sensitivity")
+        # CROSS-MIXIN: _microphone_test_title is created by OscSectionMixin._build_osc_widgets
         self._microphone_test_title.value = t("settings.microphone_test")
         self._peer_vad_field.label = t("settings.vad.peer")
         self._peer_hangover_field.label = t("settings.vad.peer_hangover_ms")

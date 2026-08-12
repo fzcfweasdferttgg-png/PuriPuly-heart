@@ -1,6 +1,5 @@
 """Debug preview panel and dialog handlers mixin for TranslatorApp.
 
-Extracted from app.py during mixin-decomposition (Phase 5).
 Handles debug preview panel, peer EULA dialog, hallucination dialog.
 """
 
@@ -27,7 +26,7 @@ if TYPE_CHECKING:
 class AppDebugPreviewMixin:
     """Debug preview panel, peer EULA dialog, hallucination dialog."""
 
-    # AI: DIALOG REFERENCES — self._founder_letter_dialog, self._peer_translation_eula_dialog,
+    # DIALOG REFERENCES — self._founder_letter_dialog, self._peer_translation_eula_dialog,
     # self._local_qwen_hallucination_dialog are stored but NEVER read back.
     # They exist only to prevent garbage collection while dialog is open (Flet overlay
     # holds a reference too, but the dialog's close callbacks reference self).
@@ -37,7 +36,7 @@ class AppDebugPreviewMixin:
     # dialogs. They use page.open() (warm_document_dialog pattern) which has no is_open
     # property. Navigating tabs with an open dialog leaves it visible on wrong tab.
 
-    # AI: DEBUG-ONLY — this entire file exists for the debug preview panel (Ctrl+D overlay).
+    # DEBUG-ONLY — this entire file exists for the debug preview panel (Ctrl+D overlay).
     # It's never used in production builds. All preview methods are safe no-ops that
     # demonstrate UI components without side effects on real state.
 
@@ -52,7 +51,7 @@ class AppDebugPreviewMixin:
             on_github_star_snackbar=self._preview_github_star_snackbar,
         )
 
-    # AI: CLOSURE CAPTURE — snackbar is a local variable, assigned AFTER _open_repository
+    # CLOSURE CAPTURE — snackbar is a local variable, assigned AFTER _open_repository
     # is defined. This is safe because Python closures capture VARIABLE BINDINGS (not values),
     # and _open_repository won't be called until user clicks the snackbar button (after
     # snackbar is assigned). Don't "fix" by moving assignment before function def —
@@ -99,7 +98,7 @@ class AppDebugPreviewMixin:
         self.controller.clear_debug_audio_fault_profiles()
         self._show_snackbar(t("debug_preview.audio_fault_clear"), ft.Colors.GREEN_700)
 
-    # AI: DUAL USE — called both from preview (on_accept=_debug_preview_noop)
+    # DUAL USE — called both from preview (on_accept=_debug_preview_noop)
     # and from AppDashboardMixin._on_peer_translation_toggle (on_accept=enable callback).
     # on_cancel is always noop in both cases (cancel = just close, no action).
     # The preview path deliberately skips EULA acceptance and peer translation enable.
@@ -113,7 +112,7 @@ class AppDebugPreviewMixin:
         self._peer_translation_eula_dialog = dialog
         dialog.open()
 
-    # AI: PUBLIC NAME (no underscore) — intentionally public. Called from
+    # PUBLIC NAME (no underscore) — intentionally public. Called from
     # diagnostics_manager.py via getattr(self.app, "show_local_qwen_hallucination_dialog", None).
     # This is the ONLY public method on TranslatorApp that lives in a mixin instead of app.py.
     # If you rename it, update diagnostics_manager.py caller.
@@ -126,7 +125,7 @@ class AppDebugPreviewMixin:
         self._local_qwen_hallucination_dialog = dialog
         dialog.open()
 
-    # AI: DUPLICATE URL OPENERS — both open the same founder readme URL.
+    # DUPLICATE URL OPENERS — both open the same founder readme URL.
     # _open_local_qwen_guide is for hallucination dialog's "read guide" button.
     # _on_founder_letter_readme is for founder letter dialog's "read more" button.
     # They exist as separate methods for semantic clarity (different UI contexts).

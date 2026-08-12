@@ -1,9 +1,20 @@
+"""Overlay peer consumer contract — frozen data transfer objects for overlay UI state.
+
+OverlayPeerConsumerContract is a frozen snapshot of the overlay and peer
+toggle states.  Built by GuiController.refresh_overlay_peer_contract() and
+consumed by OverlaySectionMixin._render_overlay_peer_card().  The contract is
+immutable — the overlay section rebuilds its UI from a fresh contract on
+every call.
+
+Frozen because the overlay section reads contract fields without copying.
+If the contract were mutable, a mid-render change would corrupt UI state.
+Frozen dataclasses prevent accidental mutation and make the data flow explicit.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
-
-from puripuly_heart.ui.i18n import t
 
 OverlayPeerSurfaceState = Literal["off", "on", "warning"]
 
@@ -14,8 +25,8 @@ class OverlayPeerToggleContract:
     effective_enabled: bool
     action_enabled: bool
     state: OverlayPeerSurfaceState
-    status_text: str
-    helper_text: str = ""
+    status_text: str  # i18n key — consumers call t() to translate
+    helper_text: str = ""  # i18n key — consumers call t() to translate
     warning_reason: str | None = None
     failure_reason: str | None = None
 
@@ -56,7 +67,7 @@ def build_overlay_peer_consumer_contract(
         effective_enabled=peer_effective_enabled,
         action_enabled=overlay_state == "connected" or peer_intent_enabled,
         state=peer_state,
-        status_text=t(f"settings.peer_translation.status.{peer_state}"),
+        status_text=f"settings.peer_translation.status.{peer_state}",
         helper_text=_peer_helper_text(
             peer_state=peer_state,
             overlay_state=overlay_state,
@@ -99,22 +110,15 @@ def _overlay_status_text(
     overlay_state: str,
     overlay_failure_reason: str | None,
 ) -> str:
-    state_label = t(f"settings.overlay.status.{overlay_state}", default=overlay_state)
+    """Return i18n key for overlay status display."""
     if overlay_state == "failed" and overlay_failure_reason:
-        return t(
-            "settings.overlay.status.failed_with_reason",
-            status=state_label,
-            reason=_overlay_failure_text(overlay_failure_reason),
-            default=f"{state_label}: {_overlay_failure_text(overlay_failure_reason)}",
-        )
-    return state_label
+        return "settings.overlay.status.failed_with_reason"
+    return f"settings.overlay.status.{overlay_state}"
 
 
 def _overlay_failure_text(overlay_failure_reason: str | None) -> str:
-    return t(
-        f"settings.overlay.failure.{overlay_failure_reason or 'unknown'}",
-        default=overlay_failure_reason or "unknown",
-    )
+    """Return i18n key for overlay failure reason."""
+    return f"settings.overlay.failure.{overlay_failure_reason or 'unknown'}"
 
 
 def _peer_surface_state(
@@ -157,21 +161,19 @@ def _peer_helper_text(
     overlay_failure_reason: str | None,
     peer_warning_reason: str | None,
 ) -> str:
+    """Return i18n key for peer helper text display."""
     if peer_state == "off":
         if overlay_state == "connected":
             return ""
-        return t("settings.peer_translation.disabled.overlay_required")
+        return "settings.peer_translation.disabled.overlay_required"
     if peer_state == "on":
         return ""
     if peer_warning_reason == "overlay_starting":
-        return t("settings.peer_translation.warning.overlay_starting")
+        return "settings.peer_translation.warning.overlay_starting"
     if peer_warning_reason == "overlay_stopping":
-        return t("settings.peer_translation.warning.overlay_stopping")
+        return "settings.peer_translation.warning.overlay_stopping"
     if peer_warning_reason == "overlay_failed":
-        return t(
-            "settings.peer_translation.warning.overlay_failed",
-            reason=_overlay_failure_text(overlay_failure_reason),
-        )
+        return "settings.peer_translation.warning.overlay_failed"
     if peer_warning_reason == "runtime_unavailable":
-        return t("settings.peer_translation.warning.runtime_unavailable")
-    return t("settings.peer_translation.disabled.overlay_required")
+        return "settings.peer_translation.warning.runtime_unavailable"
+    return "settings.peer_translation.disabled.overlay_required"

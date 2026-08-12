@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 class CalibrationManagerMixin:
-    """Overlay calibration management extracted from GuiController."""
 
     def begin_overlay_calibration(self) -> OverlayCalibration:
         if self._overlay_calibration_draft is None:

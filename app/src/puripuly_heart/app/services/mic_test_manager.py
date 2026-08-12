@@ -27,10 +27,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants & helpers (originally in controller.py)
-# ---------------------------------------------------------------------------
-
 _MICROPHONE_TEST_LEVEL_INTERVAL_S = 1.0
 
 
@@ -104,10 +100,6 @@ class MicTestManagerMixin:
     Mixed into :class:`GuiController`; all attributes are inherited from it.
     """
 
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
-
     @property
     def microphone_test_meter_level(self) -> float:
         return self._microphone_test_meter_level
@@ -116,10 +108,6 @@ class MicTestManagerMixin:
     def microphone_test_active(self) -> bool:
         task = self._microphone_test_task
         return task is not None and not task.done()
-
-    # ------------------------------------------------------------------
-    # Lifecycle helpers
-    # ------------------------------------------------------------------
 
     def _get_microphone_test_lifecycle_lock(self) -> asyncio.Lock:
         if self._microphone_test_lifecycle_lock is None:
@@ -284,10 +272,6 @@ class MicTestManagerMixin:
         except Exception:
             logger.debug("Microphone-test meter callback raised", exc_info=True)
 
-    # ------------------------------------------------------------------
-    # Static helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _microphone_test_meter_level_from_frame(frame) -> float:  # noqa: ANN001
         samples = np.asarray(frame.samples, dtype=np.float32)
@@ -340,10 +324,6 @@ class MicTestManagerMixin:
             return int(value)
         except Exception:
             return fallback
-
-    # ------------------------------------------------------------------
-    # Logging helpers
-    # ------------------------------------------------------------------
 
     def _log_microphone_test_open(
         self,
@@ -421,10 +401,6 @@ class MicTestManagerMixin:
             "exception_message="
             f"{_mic_test_log_value(str(exception) if exception else None)}"
         )
-
-    # ------------------------------------------------------------------
-    # Main capture loop
-    # ------------------------------------------------------------------
 
     async def run_microphone_test_capture(
         self,

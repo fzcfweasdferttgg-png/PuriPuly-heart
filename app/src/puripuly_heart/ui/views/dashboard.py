@@ -10,7 +10,7 @@ from puripuly_heart.ui.components.language_modal import LanguageModal
 from puripuly_heart.ui.components.power_button import PowerButton
 from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
-from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
+from puripuly_heart.domain.overlay_contract import OverlayPeerConsumerContract
 
 DASHBOARD_LAYOUT_GAP = 12
 DASHBOARD_CONTROL_REGION_EXPAND = 45
@@ -236,6 +236,13 @@ class DashboardView(ft.Column):
         )
         self._sync_notice()
 
+    # TOGGLE STATE MACHINE — STT and Translation buttons follow the same cycle:
+    #   off  →  warning_shown  (click when needs_key=True, displays key-missing message)
+    #   warning_shown  →  off  (click dismisses warning)
+    #   off  →  on             (click when needs_key=False, activates feature)
+    #   on   →  off            (click deactivates feature)
+    # Fields: is_*_on, *_showing_warning, *_needs_key
+
     def _toggle_stt(self):
         if self.is_stt_on:
             self.is_stt_on = False
@@ -332,7 +339,6 @@ class DashboardView(ft.Column):
         )
 
     def _on_source_select(self, lang_code: str):
-        """Handle source language selection."""
         self._source_lang_code = lang_code
         self._add_to_recent(lang_code, is_source=True)
         self._update_input_font()
@@ -340,7 +346,6 @@ class DashboardView(ft.Column):
         self._notify_language_change()
 
     def _on_target_select(self, lang_code: str):
-        """Handle target language selection."""
         self._target_lang_code = lang_code
         self._add_to_recent(lang_code, is_source=False)
         self._refresh_language_card()
@@ -359,7 +364,6 @@ class DashboardView(ft.Column):
         self._notify_language_change()
 
     def _swap_languages(self):
-        """Swap source and target languages."""
         self._source_lang_code, self._target_lang_code = (
             self._target_lang_code,
             self._source_lang_code,
@@ -399,7 +403,6 @@ class DashboardView(ft.Column):
         self._notify_language_change()
 
     def _add_to_recent(self, lang_code: str, is_source: bool) -> None:
-        """Add language to recent list, maintaining max 6 unique entries."""
         recent = self._recent_source_langs if is_source else self._recent_target_langs
         if lang_code in recent:
             recent.remove(lang_code)
@@ -503,7 +506,6 @@ class DashboardView(ft.Column):
         should_log: bool = False,
         debug_prefix: str | None = None,
     ) -> None:
-        """Update the display card primary line with new text."""
         font_family = font_for_language(language_code) if language_code else self._ui_font()
         self.display_card.set_display(
             text,
@@ -535,7 +537,6 @@ class DashboardView(ft.Column):
         logical_turn_key: str | None = None,
         debug_prefix: str | None = None,
     ) -> None:
-        """Update the display card translation line."""
         font_family = font_for_language(language_code) if language_code else self._ui_font()
         self.display_card.set_display_translation(
             text,
@@ -648,7 +649,6 @@ class DashboardView(ft.Column):
             self.set_display_text(t("dashboard.warn_llm_key"))
 
     def set_recent_languages(self, source: list[str], target: list[str]) -> None:
-        """Set recent languages from settings (for persistence)."""
         self._recent_source_langs = list(source)
         self._recent_target_langs = list(target)
         self._recent_source_langs = self._recent_source_langs[:6]

@@ -1,6 +1,5 @@
 """Navigation and tab management mixin for TranslatorApp.
 
-Extracted from app.py during mixin-decomposition (Phase 6).
 Handles tab navigation, settings auto-apply, dialog cleanup.
 """
 
@@ -20,29 +19,27 @@ if TYPE_CHECKING:
 class AppNavigationMixin:
     """Tab navigation, logs tab, bottom nav state."""
 
-    # AI: STATE MACHINE — _on_nav_change is the single entry point for ALL tab navigation.
+    # STATE MACHINE — _on_nav_change is the single entry point for ALL tab navigation.
     # Tracks _current_tab (getattr default: 0 = Dashboard). State transitions trigger:
     # 1. Dialog cleanup (if tab changed)
     # 2. Settings auto-apply (if leaving Settings tab 1)
     # 3. Content area swap (view assignment + padding)
     # 4. Tab-specific post-actions (Settings: refresh prompt, Logs: scroll to bottom)
 
-    # AI: PADDING EXCEPTION — Settings tab (index 1) has 0 padding because SettingsView
+    # PADDING EXCEPTION — Settings tab (index 1) has 0 padding because SettingsView
     # manages its own internal padding for the scrollable form layout.
     # All other views use APP_CONTENT_PADDING (16px).
 
     def _content_padding_for_index(self, index: int) -> int:
         return 0 if index == 1 else APP_CONTENT_PADDING
 
-    # AI: CROSS-MIXIN CALLS — this method calls:
+    # CROSS-BOUNDARY CALLS — this method calls:
     # - _close_open_dialog_for_navigation (defined HERE, in AppNavigationMixin)
-    # - _auto_apply_pending_settings_on_leave (defined in AppSettingsMixin)
-    # Both resolve via Python MRO. If you reorder mixin inheritance, these still work
-    # because both mixins are in TranslatorApp's MRO chain.
+    # - controller.auto_apply_pending_on_leave (defined in GuiController)
     #
     # AUTO-APPLY TRIGGER — leaving Settings tab (1→other) triggers settings apply.
     # This handles the case where user changed settings but didn't click Apply.
-    # The auto-apply logic is in AppSettingsMixin, not here — this mixin only triggers it.
+    # The auto-apply logic is in GuiController, not here — this mixin only triggers it.
 
     def _on_nav_change(self, index: int):
         # Track previous tab for Settings auto-apply
@@ -53,7 +50,7 @@ class AppNavigationMixin:
 
         # Auto-apply Settings changes when leaving Settings (tab 1)
         if previous_tab == 1 and index != 1:
-            self._auto_apply_pending_settings_on_leave()
+            self.controller.auto_apply_pending_on_leave()
 
         if index == 0:
             self.content_area.content = self.view_dashboard
@@ -69,7 +66,7 @@ class AppNavigationMixin:
         if index == 1:
             self.view_settings.refresh_prompt_if_empty()
         elif index == 2:
-            # AI: TIMING HACK — asyncio.sleep(0.05) waits for Flet to render the Logs view
+            # TIMING HACK — asyncio.sleep(0.05) waits for Flet to render the Logs view
             # before scrolling. 50ms is a heuristic; on slow systems it may not be enough.
             # If scroll fails, worst case is logs don't auto-scroll — no crash, no corruption.
             # The coroutine is fire-and-forget via page.run_task.
@@ -81,7 +78,7 @@ class AppNavigationMixin:
 
             self.page.run_task(_scroll)
 
-    # AI: PROGRAMMATIC NAVIGATION — called from SettingsView (via on_view_logs callback).
+    # PROGRAMMATIC NAVIGATION — called from SettingsView (via on_view_logs callback).
     # Must update BOTH content area (_on_nav_change) AND bottom nav highlight
     # (_set_bottom_nav_selected). When user clicks a tab directly, BottomNavBar handles
     # its own highlight before calling _on_change. But programmatic navigation bypasses
@@ -91,7 +88,7 @@ class AppNavigationMixin:
         self._on_nav_change(2)
         self._set_bottom_nav_selected(2)
 
-    # AI: PRIVATE API ACCESS — accesses bottom_nav._selected and bottom_nav._update_visuals().
+    # PRIVATE API ACCESS — accesses bottom_nav._selected and bottom_nav._update_visuals().
     # These are private members of BottomNavBar. Necessary because BottomNavBar has no
     # public select(index, fire_callback=False) method. _on_tab_click would trigger
     # _on_nav_change again (infinite recursion). If BottomNavBar adds a public API,
@@ -106,7 +103,7 @@ class AppNavigationMixin:
             with contextlib.suppress(Exception):
                 update_visuals()
 
-    # AI: INCOMPLETE DIALOG CLEANUP — only closes:
+    # INCOMPLETE DIALOG CLEANUP — only closes:
     # 1. _microphone_test_dialog (has is_open property, close with notify=True)
     # 2. page.dialog (legacy Flet API, effectively always None)
     #

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import logging
 from pathlib import Path
 from typing import Callable
@@ -25,7 +24,7 @@ from puripuly_heart.ui.i18n import (
     t,
 )
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration
-from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
+from puripuly_heart.domain.overlay_contract import OverlayPeerConsumerContract
 from puripuly_heart.ui.theme import (
     COLOR_NEUTRAL,
 )
@@ -46,10 +45,11 @@ from puripuly_heart.ui.views.ui_section import UiSectionMixin
 from puripuly_heart.ui.views.osc_section import OscSectionMixin
 from puripuly_heart.ui.views.context_section import ContextSectionMixin
 from puripuly_heart.ui.views.secrets_section import SecretsSectionMixin
+from puripuly_heart.core.services.settings_draft_service import SettingsDraftService
 
 logger = logging.getLogger(__name__)
 
-# AI: MIXIN OWNERSHIP MAP — who creates which self._* attributes.
+# MIXIN OWNERSHIP MAP — who creates which self._* attributes.
 #
 # __init__ (settings.py):
 #   _settings, _provider_settings_draft, _config_path, has_provider_changes,
@@ -141,11 +141,12 @@ class SettingsView(
     ContextSectionMixin,
     SecretsSectionMixin,
 ):
-    """Settings view with Bento grid layout."""
 
-    def __init__(self, initial_settings: AppSettings | None = None):
+    def __init__(self, initial_settings: AppSettings | None = None, draft_service: SettingsDraftService | None = None, command_executor=None):
         super().__init__(expand=True, spacing=16)
         self._initial_settings = initial_settings
+        self._draft_service = draft_service or SettingsDraftService()
+        self._command_executor = command_executor
 
         # Callbacks (assigned by App)
         self.on_settings_changed: Callable[[AppSettings], None] | None = None
@@ -173,10 +174,7 @@ class SettingsView(
 
         # State
         self._settings: AppSettings | None = None
-        self._provider_settings_draft: AppSettings | None = None
         self._config_path: Path | None = None
-        self.has_provider_changes: bool = False
-        self.has_pending_prompt_changes: bool = False
         self._overlay_state: str = "off"
         self._overlay_failure_reason: str | None = None
         self._overlay_runtime_target: str = OVERLAY_TARGET_STEAMVR
@@ -193,15 +191,38 @@ class SettingsView(
         # Build UI components
         self._build_ui()
 
+    # --- Draft state delegates (backed by _draft_service) ---
+    @property
+    def has_provider_changes(self) -> bool:
+        return self._draft_service.has_provider_changes
+
+    @has_provider_changes.setter
+    def has_provider_changes(self, value: bool) -> None:
+        self._draft_service.has_provider_changes = value
+
+    @property
+    def has_pending_prompt_changes(self) -> bool:
+        return self._draft_service.has_pending_prompt_changes
+
+    @has_pending_prompt_changes.setter
+    def has_pending_prompt_changes(self, value: bool) -> None:
+        self._draft_service.has_pending_prompt_changes = value
+
+    @property
+    def _provider_settings_draft(self) -> AppSettings | None:
+        return self._draft_service._provider_settings_draft
+
+    @_provider_settings_draft.setter
+    def _provider_settings_draft(self, value: AppSettings | None) -> None:
+        self._draft_service._provider_settings_draft = value
+
     # --- Card Wrapper (About page pattern) ---
     def _build_prompt_tab(self) -> list[ft.Control]:
-        """Build the Prompt tab controls."""
         persona_card = self._build_prompt_widgets()
         row7 = self._build_vocabulary_widgets()
         return [row7, persona_card]
 
     def _build_overlay_tab(self) -> list[ft.Control]:
-        """Build the Overlay tab controls."""
         # === Section H: Overlay Cards ===
         target_card, translation_card, peer_original_card = self._build_overlay_toggle_widgets()
 
@@ -285,7 +306,7 @@ class SettingsView(
             overlay_row6,
         ]
 
-    # AI: CROSS-TAB DEPENDENCY — this method creates widgets used by _build_api_tab.
+    # CROSS-TAB DEPENDENCY — this method creates widgets used by _build_api_tab.
     # Specifically: _low_latency_card (from UiSectionMixin._build_low_latency_widgets)
     # is embedded in _translation_connection_row inside _build_api_tab.
     # General tab also creates _stt_backend_row, _peer_stt_backend_row,
@@ -293,7 +314,6 @@ class SettingsView(
     # which _update_api_visibility controls.
 
     def _build_general_tab(self) -> list[ft.Control]:
-        """Build the General tab controls."""
         # Delegated widget creation (each builder stores attrs on self for handlers)
         ui_card = self._build_ui_language_widgets()
         self._build_low_latency_widgets()  # stores _low_latency_card on self
@@ -344,7 +364,7 @@ class SettingsView(
             general_clipboard_row,
         ]
 
-    # AI: ORDER CONSTRAINT — assert at line ~315 guards the _low_latency_card dependency.
+    # ORDER CONSTRAINT — assert at line ~315 guards the _low_latency_card dependency.
     # Section L (translation connection) assembles cards from THREE sources:
     #   - _low_latency_card: from UiSectionMixin (created in _build_general_tab)
     #   - _translation_connection_card / _fallback_status_card: created HERE in settings.py
@@ -510,7 +530,7 @@ class SettingsView(
             self._fallback_local_llm_card,
         ]
 
-    # AI: BUILD ORDER CONSTRAINT — this is the single most fragile invariant.
+    # BUILD ORDER CONSTRAINT — this is the single most fragile invariant.
     # _build_general_tab() MUST run before _build_api_tab() because
     # _build_low_latency_widgets() (called from _build_general_tab via UiSectionMixin)
     # creates self._low_latency_card, which _build_api_tab() asserts exists and embeds
@@ -520,7 +540,6 @@ class SettingsView(
     # created by _build_prompt_widgets via ContextSectionMixin).
 
     def _build_ui(self) -> None:
-        """Build the settings UI with Bento grid layout."""
         general_rows = self._build_general_tab()
         api_rows = self._build_api_tab()
 
@@ -539,72 +558,36 @@ class SettingsView(
         self.controls = [self._settings_subtab_shell]
 
     def _build_locale_options(self) -> list[ft.dropdown.Option]:
-        """Build locale dropdown options."""
         return [
             ft.dropdown.Option(key=code, text=native_locale_label(code)) for code in available_locales()
         ]
     def _copy_provider_draft_fields(self, source: AppSettings, target: AppSettings) -> None:
-        target.provider.stt = source.provider.stt
-        target.provider.peer_stt = source.provider.peer_stt
-        target.provider.llm = source.provider.llm
-        target.provider.stt_compute = source.provider.stt_compute
-        target.provider.peer_stt_compute = source.provider.peer_stt_compute
-        target.provider.stt_backend = source.provider.stt_backend
-        target.provider.peer_stt_backend = source.provider.peer_stt_backend
-        target.provider.stt_quant = source.provider.stt_quant
-        target.provider.peer_stt_quant = source.provider.peer_stt_quant
-        target.provider.openai_compatible = copy.deepcopy(source.provider.openai_compatible)
-        target.translation = copy.deepcopy(source.translation)
-        target.local_llm = copy.deepcopy(source.local_llm)
-        target.backup_translation = copy.deepcopy(source.backup_translation)
-        target.system_prompt = source.system_prompt
-        target.system_prompts = {}
+        self._draft_service.copy_provider_draft_fields(source, target)
 
-    # AI: DRAFT MERGE — returns _settings with provider fields overlaid from draft.
+    # DRAFT MERGE — returns _settings with provider fields overlaid from draft.
     # Used by: _update_api_visibility, apply_locale, _on_*_click (display), build_provider_apply_settings.
     # Cost: one copy.deepcopy per call. Mixin callers often build merged once and pass
     # to _update_api_visibility(merged) to avoid double-deepcopy.
 
     def _build_settings_with_provider_draft(self) -> AppSettings | None:
-        if self._settings is None:
-            return None
-        if self._provider_settings_draft is None:
-            return self._settings
-        merged = copy.deepcopy(self._settings)
-        self._copy_provider_draft_fields(self._provider_settings_draft, merged)
-        return merged
+        return self._draft_service.build_settings_with_provider_draft()
 
-    # AI: DRAFT GATE — lazily creates _provider_settings_draft on first mutation.
+    # DRAFT GATE — lazily creates _provider_settings_draft on first mutation.
     # All mixin event handlers use this to stage changes before apply/consume.
     # The draft persists until consume_provider_apply_settings() resets it.
 
     def _ensure_provider_settings_draft(self) -> AppSettings:
-        assert self._settings is not None
-        if self._provider_settings_draft is None:
-            self._provider_settings_draft = copy.deepcopy(self._settings)
-        return self._provider_settings_draft
+        return self._draft_service._ensure_provider_settings_draft()
     def _sanitize_provider_apply_settings(self, settings: AppSettings | None) -> AppSettings | None:
-        if settings is not None:
-            settings.system_prompts = {}
-        return settings
+        return self._draft_service.sanitize_provider_apply_settings(settings)
 
     def _stage_prompt_draft(self, value: str) -> None:
-        if not self._settings:
-            return
-        committed_prompt = self._committed_prompt_value()
-        draft = self._ensure_provider_settings_draft()
-        draft.system_prompt = value
-        draft.system_prompts = {}
-        self.has_pending_prompt_changes = value != committed_prompt
-        if not self.has_pending_prompt_changes and not self.has_provider_changes:
-            self._provider_settings_draft = None
+        self._draft_service.stage_prompt_draft(value)
 
     def _committed_prompt_value(self) -> str:
-        if not self._settings:
-            return ""
-        return self._settings.system_prompt
+        return self._draft_service.committed_prompt_value()
 
-    # AI: COMMIT CHAIN — before building final settings, must flush dirty text fields:
+    # COMMIT CHAIN — before building final settings, must flush dirty text fields:
     # _commit_local_llm_fields_from_controls (LlmSectionMixin)
     # _commit_openai_compatible_fields_from_controls (LlmSectionMixin)
     # _commit_fallback_fields_from_controls (FallbackSectionMixin)
@@ -616,52 +599,25 @@ class SettingsView(
         self._commit_openai_compatible_fields_from_controls()
         self._commit_fallback_fields_from_controls()
         self._commit_fallback_local_llm_fields_from_controls()
-        return self._sanitize_provider_apply_settings(
-            self._settings_with_desktop_overlay_runtime_state(
-                self._build_settings_with_provider_draft()
-            )
+        return self._draft_service.build_provider_apply_settings(
+            overlay_state_fn=self._settings_with_desktop_overlay_runtime_state
         )
 
     def consume_provider_apply_settings(self) -> AppSettings | None:
-        import logging
-        logger = logging.getLogger(__name__)
-        settings = self.build_provider_apply_settings()
-        if settings is None:
-            logger.warning("[Settings] consume: build returned None")
-            return None
-        logger.info(
-            "[Settings] consume: backup.enabled=%s backup.mode=%s backup.oc.base_url=%s backup.oc.model=%s backup.llm.base_url=%s backup.llm.model=%s has_changes=%s",
-            settings.backup_translation.enabled,
-            settings.backup_translation.mode.value,
-            settings.backup_translation.openai_compatible.base_url,
-            settings.backup_translation.openai_compatible.model,
-            settings.backup_translation.local_llm.base_url,
-            settings.backup_translation.local_llm.model,
-            self.has_provider_changes,
+        self._commit_local_llm_fields_from_controls()
+        self._commit_openai_compatible_fields_from_controls()
+        self._commit_fallback_fields_from_controls()
+        self._commit_fallback_local_llm_fields_from_controls()
+        return self._draft_service.consume_provider_apply_settings(
+            overlay_state_fn=self._settings_with_desktop_overlay_runtime_state
         )
-        self._settings = settings
-        self._provider_settings_draft = None
-        self.has_provider_changes = False
-        self.has_pending_prompt_changes = False
-        return settings
 
     def consume_prompt_apply_settings(self) -> AppSettings | None:
-        if not self.has_pending_prompt_changes:
-            return None
-        settings = self._sanitize_provider_apply_settings(
-            self._settings_with_desktop_overlay_runtime_state(
-                self._build_settings_with_provider_draft()
-            )
+        return self._draft_service.consume_prompt_apply_settings(
+            overlay_state_fn=self._settings_with_desktop_overlay_runtime_state
         )
-        if settings is None:
-            return None
-        self._settings = settings
-        self.has_pending_prompt_changes = False
-        if not self.has_provider_changes:
-            self._provider_settings_draft = None
-        return settings
 
-    # AI: LOAD ORDER — the sequence matters:
+    # LOAD ORDER — the sequence matters:
     # 1. Reset state flags (_provider_settings_draft=None, has_provider_changes=False, etc.)
     # 2. _load_*_from_settings for each section (populates widget values)
     # 3. _update_api_visibility AFTER all sections loaded (needs provider values to decide visibility)
@@ -683,13 +639,10 @@ class SettingsView(
         config_path: Path,
         preserve_custom_vocab_draft: bool = False,
     ) -> None:
-        """Load current settings into the UI."""
         _ = preserve_custom_vocab_draft  # kept for backward compatibility; no longer used
         self._settings = settings
-        self._provider_settings_draft = None
+        self._draft_service.set_settings(settings)
         self._config_path = config_path
-        self.has_provider_changes = False
-        self.has_pending_prompt_changes = False
         self._desktop_overlay_pending_size_preset = None
         self._desktop_overlay_pending_position_reset = False
         self._desktop_overlay_pending_locked = None
@@ -728,7 +681,7 @@ class SettingsView(
 
         if self.page:
             self.update()
-    # AI: CROSS-CUTTING VISIBILITY COORDINATOR — called from 7+ call sites across
+    # CROSS-CUTTING VISIBILITY COORDINATOR — called from 7+ call sites across
     # stt_section.py, llm_section.py, settings_helpers.py, overlay_section.py.
     # Controls visibility of:
     #   _translation_connection_row (always visible when built)
@@ -748,7 +701,6 @@ class SettingsView(
 
     # --- Visibility Updates ---
     def _update_api_visibility(self, settings: AppSettings | None = None) -> None:
-        """Update API key field visibility based on selected providers."""
         if settings is None:
             settings = self._build_settings_with_provider_draft()
         if settings is None:
@@ -825,7 +777,7 @@ class SettingsView(
         if self.on_settings_changed:
             self.on_settings_changed(sanitized)
 
-    # AI: LOCALE CASCADE — must call section _apply_locale_* methods in order.
+    # LOCALE CASCADE — must call section _apply_locale_* methods in order.
     # _apply_locale_llm handles primary translation labels only.
     # Fallback labels handled by dedicated _apply_locale_fallback() / _apply_locale_fallback_local_llm().
     # Each method updates only attributes owned by its own mixin.
@@ -834,7 +786,6 @@ class SettingsView(
 
     # --- Locale ---
     def apply_locale(self) -> None:
-        """Update all labels when locale changes."""
         self._settings_subtab_shell.set_font_family(font_for_language(get_locale()))
         for key in _SETTINGS_SUBTAB_ORDER:
             self._settings_subtab_shell.set_tab_label(key, self._settings_subtab_label(key))
@@ -926,7 +877,6 @@ class SettingsView(
             self.update()
 
     def refresh_prompt_if_empty(self) -> None:
-        """Load default prompt if current is empty."""
         was_empty = not self._prompt_editor.value.strip()
         self._prompt_editor.load_default_if_empty()
         if was_empty and self._prompt_editor.value.strip():

@@ -1,5 +1,3 @@
-"""Context section mixin extracted from SettingsView."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -7,6 +5,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from puripuly_heart.config.settings import MAX_CUSTOM_VOCAB_TERMS
+from puripuly_heart.domain.settings_commands import ChangeIntegratedContext, ChangeCustomVocabulary
 from puripuly_heart.ui.components.settings import (
     CustomVocabularyTagEditor,
     OptionItem,
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
     from puripuly_heart.ui.components.settings import SettingsUnitCard
 
 
-# AI: ATTRIBUTE OWNERSHIP — three widget builders:
+# ATTRIBUTE OWNERSHIP — three widget builders:
 #   _build_integrated_context_unit_card: _integrated_context_label/button/hint/card
 #   _build_prompt_widgets: _prompt_editor, _prompt_mode, _prompt_single/dual_btn,
 #     _prompt_mode_row, _persona_title, _prompt_for_text, _reset_prompt_btn
@@ -47,14 +46,12 @@ if TYPE_CHECKING:
 # (dual-translation template). Mode affects which prompt text is shown.
 
 class ContextSectionMixin:
-    """Mixin providing integrated-context, prompt, and custom-vocabulary methods."""
 
     # ------------------------------------------------------------------
     # Load from settings
     # ------------------------------------------------------------------
 
     def _load_context_from_settings(self, settings: "AppSettings") -> None:
-        """Load prompt and vocabulary settings into controls."""
         if not hasattr(self, '_prompt_editor'):
             return
         provider_name = self._active_prompt_key()
@@ -118,7 +115,7 @@ class ContextSectionMixin:
     def _on_integrated_context_selected(self, value: str) -> None:
         if not self._settings:
             return
-        self._settings.ui.integrated_context_enabled = value == "on"
+        self._command_executor.execute(ChangeIntegratedContext(enabled=(value == "on")))
         self._sync_overlay_controls()
         self._emit_settings_changed()
 
@@ -127,7 +124,6 @@ class ContextSectionMixin:
     # ------------------------------------------------------------------
 
     def _build_prompt_widgets(self) -> ft.Control:
-        """Build the persona/prompt section (Row 8). Returns SharedCardWrapper."""
         self._prompt_editor = PromptEditor(
             on_change=self._on_prompt_change,
             on_commit=self._on_prompt_commit,
@@ -213,7 +209,6 @@ class ContextSectionMixin:
     # ------------------------------------------------------------------
 
     def _build_vocabulary_widgets(self) -> ft.Control:
-        """Build the custom vocabulary section (Row 9). Returns SharedCardWrapper."""
         self._custom_vocab_title = ft.Text(
             t("settings.section.custom_vocabulary"),
             size=24,
@@ -265,7 +260,6 @@ class ContextSectionMixin:
         self._emit_prompt_apply_settings(pending)
 
     def _on_reset_prompt(self, e) -> None:
-        """Reset prompt to default for current provider."""
         if self._prompt_mode != "single":
             self._prompt_mode = "single"
             self._sync_prompt_mode_buttons()
@@ -340,8 +334,10 @@ class ContextSectionMixin:
         ):
             return
 
-        self._settings.stt.custom_terms = updated_terms
-        self._settings.stt.custom_vocabulary_enabled = next_enabled
+        self._command_executor.execute(ChangeCustomVocabulary(
+            terms=updated_terms,
+            enabled=next_enabled,
+        ))
         self._custom_vocab_tag_editor.set_terms(applied_terms)
         self._emit_runtime_detailed(
             f"[Settings] Custom vocabulary applied: language={source_language}, terms={len(applied_terms)}"
@@ -411,7 +407,6 @@ class ContextSectionMixin:
     # ------------------------------------------------------------------
 
     def _apply_locale_context(self) -> None:
-        """Re-translate persona, vocabulary, prompt-mode, and context labels."""
         if not hasattr(self, '_persona_title'):
             return
         self._persona_title.value = t("settings.section.persona")

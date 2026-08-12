@@ -11,12 +11,8 @@ import logging
 import flet as ft
 
 from puripuly_heart.config.settings import load_settings, new_settings_for_first_run
-from puripuly_heart.ui.app_dashboard import AppDashboardMixin
 from puripuly_heart.ui.app_debug import AppDebugPreviewMixin
-from puripuly_heart.ui.app_mic_test import AppMicTestMixin
 from puripuly_heart.ui.app_navigation import AppNavigationMixin
-from puripuly_heart.ui.app_overlay import AppOverlayMixin
-from puripuly_heart.ui.app_settings import AppSettingsMixin
 from puripuly_heart.ui.app_utilities import (
     APP_CONTENT_PADDING,
     DEFAULT_WINDOW_HEIGHT,
@@ -29,7 +25,7 @@ from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
 from puripuly_heart.ui.components.microphone_test_dialog import MicrophoneTestDialog
 from puripuly_heart.ui.components.title_bar import TitleBar
-from puripuly_heart.ui.controller import GuiController
+from puripuly_heart.app.services.gui_controller import GuiController
 from puripuly_heart.ui.fonts import font_for_language, register_fonts
 from puripuly_heart.ui.i18n import get_locale, set_locale, t
 from puripuly_heart.ui.theme import COLOR_BACKGROUND, get_app_theme
@@ -43,19 +39,15 @@ logger = logging.getLogger(__name__)
 
 class TranslatorApp(
     _AppUtilitiesMixin,
-    AppOverlayMixin,
-    AppDashboardMixin,
-    AppSettingsMixin,
-    AppMicTestMixin,
     AppDebugPreviewMixin,
     AppNavigationMixin,
 ):
-    # AI: MRO ORDER CRITICAL — _AppUtilitiesMixin MUST be first.
+    # MRO ORDER CRITICAL — _AppUtilitiesMixin MUST be first.
     # All other mixins call self._log_basic(), self._show_snackbar(),
     # self._queue_settings_mutation_task() defined ONLY in _AppUtilitiesMixin.
     # Python MRO resolves leftmost-first; moving it later breaks every mixin.
 
-    # AI: SHARED STATE — all mixin attributes are initialized HERE, not in mixin __init__.
+    # SHARED STATE — all mixin attributes are initialized HERE, not in mixin __init__.
     # No mixin defines __init__. If you add one, ensure it calls super().__init__()
     # or sets attributes BEFORE other mixins reference them.
     def __init__(self, page: ft.Page, *, config_path, debug_ui_preview: bool = False):
@@ -75,19 +67,19 @@ class TranslatorApp(
         self._launch_high_priority_feedback_reason: str | None = None
         self._launch_high_priority_snackbar = None
         self._microphone_test_dialog: MicrophoneTestDialog | None = None
-        # AI: ATTRIBUTES BELOW are read by mixins in this exact order:
+        # ATTRIBUTES BELOW are read by mixins in this exact order:
         # overlay_state/overlay_failure_reason → AppOverlayMixin.on_overlay_state_changed
         # _launch_high_priority_* → _AppUtilitiesMixin._show_snackbar → _mark_launch_high_priority_feedback_shown
         # _microphone_test_dialog → AppMicTestMixin._get_microphone_test_dialog (lazy init)
         #   + AppNavigationMixin._close_open_dialog_for_navigation
         # Removing or renaming any breaks the corresponding mixin.
-        # AI: INIT SEQUENCE — _setup_page → _build_layout → _wire_callbacks.
+        # INIT SEQUENCE — _setup_page → _build_layout → _wire_callbacks.
         # _build_layout creates view_* instances; _wire_callbacks assigns callbacks TO them.
         # Reversing this order = AttributeError on view_* during wiring.
         self._setup_page()
         self._build_layout()
 
-        # AI: VIEW CALLBACK ASSIGNMENTS — these bridge controller→mixin→view.
+        # VIEW CALLBACK ASSIGNMENTS — these bridge controller→mixin→view.
         # view_settings.show_snackbar goes to _AppUtilitiesMixin (not controller directly).
         # runtime_log_basic/detailed come from controller if available (getattr guard).
         # Calibration callbacks are getattr-guarded because controller may not have them.
@@ -196,9 +188,9 @@ class TranslatorApp(
 
     # --- Methods staying in app.py shell ---
 
-    # AI: CROSS-MIXIN — apply_locale stays in app.py shell because it orchestrates
-    # ALL views + mixins. It calls refresh_overlay_peer_contract (from AppOverlayMixin)
-    # which propagates contract to BOTH view_settings and view_dashboard.
+    # apply_locale stays in app.py shell because it orchestrates ALL views + mixins.
+    # It calls refresh_overlay_peer_contract (from AppOverlayMixin) which propagates
+    # contract to BOTH view_settings and view_dashboard.
     # If you move this to a mixin, it must still reach all 5 targets.
     def apply_locale(self) -> None:
         self.page.title = t("app.title")
@@ -206,7 +198,7 @@ class TranslatorApp(
         self.title_bar.set_title(t("app.title"))
         self.view_dashboard.apply_locale()
         self.view_settings.apply_locale()
-        self.refresh_overlay_peer_contract()
+        self.controller.refresh_overlay_peer_contract()
         self.view_logs.apply_locale()
         debug_preview_panel = getattr(self, "debug_preview_panel", None)
         apply_debug_locale = getattr(debug_preview_panel, "apply_locale", None)
@@ -214,7 +206,7 @@ class TranslatorApp(
             apply_debug_locale()
         self.page.update()
 
-    # AI: TAB KEY INTERCEPT — only active when Dashboard is the current view.
+    # Tab key intercept — only active when Dashboard is the current view.
     # Shift/Ctrl/Alt/Tab are ignored (system shortcuts). Plain Tab on dashboard
     # triggers handle_message_input_tab_key which inserts tab character in input.
     # This handler is assigned in _setup_page (before _build_layout), which is fine
@@ -236,7 +228,7 @@ class TranslatorApp(
         if callable(handler):
             handler()
 
-    # AI: BRIDGE — controller.set_runtime_logging_mode persists mode,
+    # Bridge — controller.set_runtime_logging_mode persists mode,
     # then view_logs.set_runtime_logging_mode updates UI display.
     # Wired in _wire_navigation_callbacks → view_logs.on_mode_change.
     # If controller doesn't have runtime_logging_mode, this crashes — but
@@ -247,7 +239,7 @@ class TranslatorApp(
 
     # --- Callback wiring ---
 
-    # AI: WIRING HUB — delegates to 6 mixin-specific wireup methods.
+    # WIRING HUB — delegates to 6 mixin-specific wireup methods.
     # Each mixin owns its own callbacks; this method is the assembly point.
     # _wire_mic_test_callbacks and _wire_debug_callbacks are empty stubs —
     # mic_test is wired inside _wire_settings_callbacks (it's a settings sub-feature),
@@ -263,29 +255,29 @@ class TranslatorApp(
         # view_logs wiring stays in __init__ (trivial)
 
     def _wire_dashboard_callbacks(self) -> None:
-        self.view_dashboard.on_send_message = self._on_manual_submit
-        self.view_dashboard.on_toggle_translation = self._on_translation_toggle
-        self.view_dashboard.on_toggle_stt = self._on_stt_toggle
-        self.view_dashboard.on_toggle_overlay = self._on_overlay_toggle
-        self.view_dashboard.on_toggle_peer_translation = self._on_peer_translation_toggle
-        self.view_dashboard.on_language_change = self._on_language_change
-        self.view_dashboard.on_message_input_activity = self._on_manual_input_activity
+        self.view_dashboard.on_send_message = self.controller._on_manual_submit_async
+        self.view_dashboard.on_toggle_translation = self.controller._on_translation_toggle_async
+        self.view_dashboard.on_toggle_stt = self.controller._on_stt_toggle_async
+        self.view_dashboard.on_toggle_overlay = self.controller._on_overlay_toggle_async
+        self.view_dashboard.on_toggle_peer_translation = self.controller._on_peer_translation_toggle_async
+        self.view_dashboard.on_language_change = self.controller._on_language_change_async
+        self.view_dashboard.on_message_input_activity = self.controller._on_manual_input_activity_async
         self.view_dashboard.runtime_log_detailed = self._log_detailed
 
     def _wire_settings_callbacks(self) -> None:
-        self.view_settings.on_settings_changed = self._on_settings_changed
-        self.view_settings.on_prompt_apply_settings = self._on_prompt_apply_settings
-        self.view_settings.on_providers_changed = self._on_providers_changed
-        self.view_settings.on_verify_api_key = self._on_verify_api_key
-        self.view_settings.on_secret_cleared = self._on_secret_cleared
-        self.view_settings.on_local_llm_secret_changed = self._on_local_llm_secret_changed
-        self.view_settings.on_start_microphone_test = self._on_start_microphone_test
+        self.view_settings.on_settings_changed = self.controller.apply_settings_with_sync
+        self.view_settings.on_prompt_apply_settings = self.controller.apply_prompt_settings
+        self.view_settings.on_providers_changed = self.controller.apply_pending_providers
+        self.view_settings.on_verify_api_key = self.controller.verify_and_persist_api_key
+        self.view_settings.on_secret_cleared = self.controller.clear_secret_verification
+        self.view_settings.on_local_llm_secret_changed = self.controller.rebuild_local_llm_if_needed
+        self.view_settings.on_start_microphone_test = self.controller._on_start_microphone_test_async
 
     def _wire_overlay_callbacks(self) -> None:
-        self.view_settings.on_desktop_overlay_lock_change = self._on_desktop_overlay_lock_change
-        self.view_settings.on_desktop_overlay_size_change = self._on_desktop_overlay_size_change
-        self.view_settings.on_desktop_overlay_recovery_action = self._on_desktop_overlay_recovery_action
-        self.view_settings.on_desktop_overlay_position_reset = self._on_desktop_overlay_position_reset
+        self.view_settings.on_desktop_overlay_lock_change = self.controller._on_desktop_overlay_lock_change_async
+        self.view_settings.on_desktop_overlay_size_change = self.controller._on_desktop_overlay_size_change_async
+        self.view_settings.on_desktop_overlay_recovery_action = self.controller._on_desktop_overlay_recovery_action
+        self.view_settings.on_desktop_overlay_position_reset = self.controller._on_desktop_overlay_position_reset_async
 
     def _wire_mic_test_callbacks(self) -> None:
         pass  # on_start_microphone_test wired in _wire_settings_callbacks
@@ -299,7 +291,7 @@ class TranslatorApp(
         self.view_logs.set_runtime_logging_mode(self.controller.runtime_logging_mode)
 
 
-# AI: ENTRY POINT — main_gui is the ONLY public API of this module.
+# ENTRY POINT — main_gui is the ONLY public API of this module.
 # External callers (main.py) import ONLY main_gui, never TranslatorApp directly.
 # on_close/on_disconnect share the same closure — both call controller.stop().
 # stop() has no re-entry guard; Flet fires them sequentially so this is safe,

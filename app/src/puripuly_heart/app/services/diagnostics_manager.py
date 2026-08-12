@@ -18,8 +18,6 @@ LOCAL_QWEN_HALLUCINATION_GUIDANCE_TRIGGER_COUNT = 2
 
 
 class DiagnosticsManagerMixin:
-    """Audio and STT diagnostics extracted from GuiController."""
-
     @property
     def debug_capture_fault_profile(self) -> str:
         return self._debug_capture_fault_profile
@@ -41,6 +39,7 @@ class DiagnosticsManagerMixin:
             dash.set_stt_enabled(False)
         self._log_error(f"[STT] Terminal failure: {exc}")
 
+    # Threading: called from STT callback thread, not Flet UI thread
     def _on_final_transcript_suppressed(
         self,
         notification: FinalTranscriptSuppressedNotification,
@@ -54,6 +53,7 @@ class DiagnosticsManagerMixin:
         if notification.stt_provider_name in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B, STTProviderName.LOCAL_QWEN3_ASR_GGUF, STTProviderName.LOCAL_QWEN_17B_GGUF):
             self._record_local_qwen_hallucination_guidance_detection(notification)
 
+    # State machine: count < threshold → wait; count >= threshold AND not shown → show; count >= threshold AND shown → no-op
     def _record_local_qwen_hallucination_guidance_detection(
         self,
         notification: FinalTranscriptSuppressedNotification,

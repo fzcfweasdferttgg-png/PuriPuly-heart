@@ -26,14 +26,18 @@ from puripuly_heart.ui.theme import (
     COLOR_NEUTRAL,
     COLOR_ON_BACKGROUND,
 )
+from puripuly_heart.domain.settings_commands import (
+    ChangeOverlayTarget,
+    ChangeOverlayDesktopSize,
+    ChangeOverlayDesktopBackgroundAlpha,
+    ChangeOverlayTranslation,
+    ChangeOverlayPeerOriginal,
+    ChangeOverlayDesktopPositionReset,
+)
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
-    from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
-
-# ---------------------------------------------------------------------------
-# Module-level constants (shared by overlay methods)
-# ---------------------------------------------------------------------------
+    from puripuly_heart.domain.overlay_contract import OverlayPeerConsumerContract
 
 _OVERLAY_DISTANCE_MIN = 0.5
 _OVERLAY_DISTANCE_MAX = 2.0
@@ -48,7 +52,7 @@ _OVERLAY_TEXT_SCALE_PRESETS = (
 _DESKTOP_OVERLAY_REOPEN_FAILURE_REASONS = frozenset({"window_configuration_failed"})
 
 
-# AI: ATTRIBUTE OWNERSHIP — _build_overlay_widgets creates ~30 controls:
+# ATTRIBUTE OWNERSHIP — _build_overlay_widgets creates ~30 controls:
 #   _overlay_target_title/button, _overlay_translation_title/button,
 #   _overlay_peer_original_title/button,
 #   _desktop_overlay_size_title/button/card, _desktop_overlay_lock_title/button/card,
@@ -70,12 +74,7 @@ class OverlaySectionMixin:
     host ``SettingsView``.
     """
 
-    # ------------------------------------------------------------------
-    # Load from settings
-    # ------------------------------------------------------------------
-
     def _load_overlay_from_settings(self, settings: "AppSettings") -> None:
-        """Load overlay peer contract and calibration from settings."""
         if not hasattr(self, '_overlay_target_card'):
             return
         self._overlay_peer_contract = None
@@ -84,10 +83,6 @@ class OverlaySectionMixin:
             settings.overlay.calibration,
             preserve_draft=self._overlay_calibration_session_active,
         )
-
-    # ------------------------------------------------------------------
-    # Small overlay calibration helpers
-    # ------------------------------------------------------------------
 
     def _overlay_anchor_label_for(self, anchor: str) -> str:
         return t(f"settings.overlay.calibration.anchor.{anchor}")
@@ -112,10 +107,6 @@ class OverlaySectionMixin:
         except (TypeError, ValueError):
             return 1.0
 
-    # ------------------------------------------------------------------
-    # Locale helpers
-    # ------------------------------------------------------------------
-
     def _apply_locale_overlay(self) -> None:
         if not hasattr(self, '_overlay_target_title'):
             return
@@ -136,12 +127,7 @@ class OverlaySectionMixin:
             t("settings.overlay.position_reset.action.desktop"),
         )
 
-    # ------------------------------------------------------------------
-    # Section H widget builder — overlay toggle cards
-    # ------------------------------------------------------------------
-
     def _build_overlay_toggle_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control]:
-        """Build overlay translation, peer original, and target cards."""
         self._overlay_translation_title = ft.Text(
             t("settings.overlay.show_translation"),
             size=24,
@@ -192,12 +178,7 @@ class OverlaySectionMixin:
 
         return (self._overlay_target_card, self._overlay_translation_card, self._overlay_peer_original_card)
 
-    # ------------------------------------------------------------------
-    # Section J widget builder — desktop overlay controls
-    # ------------------------------------------------------------------
-
     def _build_desktop_overlay_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control]:
-        """Build desktop overlay controls."""
         self._overlay_desktop_reset_title = ft.Text(
             t("settings.overlay.position_reset.desktop.title"),
             size=24,
@@ -348,10 +329,6 @@ class OverlaySectionMixin:
 
         return (self._desktop_overlay_size_card, self._desktop_overlay_lock_card, self._desktop_overlay_background_alpha_card)
 
-    # ------------------------------------------------------------------
-    # Settings building with desktop overlay runtime state
-    # ------------------------------------------------------------------
-
     def _settings_with_desktop_overlay_runtime_state(
         self,
         settings: AppSettings | None,
@@ -374,10 +351,6 @@ class OverlaySectionMixin:
             updated_desktop.locked = False
         updated_desktop.validate()
         return updated
-
-    # ------------------------------------------------------------------
-    # Overlay target helpers
-    # ------------------------------------------------------------------
 
     def _normalized_overlay_target(self, value: object) -> str:
         return OVERLAY_TARGET_DESKTOP if value == OVERLAY_TARGET_DESKTOP else OVERLAY_TARGET_STEAMVR
@@ -405,10 +378,6 @@ class OverlaySectionMixin:
             row.visible = not desktop_selected
         for row in getattr(self, "_overlay_desktop_rows", ()):
             row.visible = desktop_selected
-
-    # ------------------------------------------------------------------
-    # Desktop overlay size / alpha normalisation
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _normalize_desktop_overlay_size_preset(value: object) -> str:
@@ -454,10 +423,6 @@ class OverlaySectionMixin:
             self._settings.overlay.desktop_flet.visual.background_alpha
         )
 
-    # ------------------------------------------------------------------
-    # Desktop overlay lock helpers
-    # ------------------------------------------------------------------
-
     def _desktop_overlay_lock_label_for(self, locked: bool) -> str:
         return t(
             "settings.overlay.desktop.lock.value.locked"
@@ -487,10 +452,6 @@ class OverlaySectionMixin:
             == OVERLAY_TARGET_DESKTOP
         )
 
-    # ------------------------------------------------------------------
-    # Desktop overlay main sync
-    # ------------------------------------------------------------------
-
     def _sync_desktop_overlay_main_controls(self) -> None:
         self._set_unit_card_value_text(
             self._desktop_overlay_size_button,
@@ -512,10 +473,6 @@ class OverlaySectionMixin:
         self._desktop_overlay_lock_button.disabled = disabled
         self._overlay_vr_reset_button.disabled = disabled
         self._overlay_desktop_reset_button.disabled = disabled
-
-    # ------------------------------------------------------------------
-    # Desktop overlay status helpers
-    # ------------------------------------------------------------------
 
     def _desktop_overlay_status_is_visible(self) -> bool:
         return bool(
@@ -587,10 +544,6 @@ class OverlaySectionMixin:
                 visible=False,
             )
 
-    # ------------------------------------------------------------------
-    # Overlay target event handlers
-    # ------------------------------------------------------------------
-
     def _on_overlay_target_click(self, e) -> None:
         _ = e
         if not self.page or not self._settings:
@@ -620,15 +573,11 @@ class OverlaySectionMixin:
         target = self._normalized_overlay_target(value)
         if self._current_overlay_target() == target:
             return
-        self._settings.overlay.target = target
+        self._command_executor.execute(ChangeOverlayTarget(target=target))
         if self._overlay_state == "off":
             self._overlay_runtime_target = target
         self._sync_overlay_controls()
         self._emit_settings_changed()
-
-    # ------------------------------------------------------------------
-    # Desktop overlay size event handlers
-    # ------------------------------------------------------------------
 
     def _on_desktop_overlay_size_click(self, e) -> None:
         _ = e
@@ -661,14 +610,10 @@ class OverlaySectionMixin:
             self._sync_desktop_overlay_main_controls()
             self.on_desktop_overlay_size_change(size_preset)
             return
-        self._settings.overlay.desktop_flet.size_preset = size_preset
+        self._command_executor.execute(ChangeOverlayDesktopSize(size_preset=size_preset))
         self._desktop_overlay_pending_size_preset = None
         self._sync_desktop_overlay_main_controls()
         self._emit_settings_changed()
-
-    # ------------------------------------------------------------------
-    # Desktop overlay lock event handlers
-    # ------------------------------------------------------------------
 
     def _on_desktop_overlay_lock_click(self, e) -> None:
         _ = e
@@ -696,10 +641,6 @@ class OverlaySectionMixin:
         self._desktop_overlay_captions_locked = locked
         self._sync_desktop_overlay_main_controls()
 
-    # ------------------------------------------------------------------
-    # Desktop overlay background alpha step handler
-    # ------------------------------------------------------------------
-
     def _on_desktop_overlay_background_alpha_step(self, delta: float) -> None:
         if not self._settings or self._desktop_overlay_background_alpha_decrease_button.disabled:
             return
@@ -716,19 +657,11 @@ class OverlaySectionMixin:
             if self.page:
                 self.update()
             return
-        updated = copy.deepcopy(self._settings)
-        desktop_visual = updated.overlay.desktop_flet.visual
-        desktop_visual.background_alpha = next_alpha
-        desktop_visual.validate()
-        self._settings = updated
+        self._command_executor.execute(ChangeOverlayDesktopBackgroundAlpha(alpha=next_alpha))
         self._sync_desktop_overlay_main_controls()
         if self.page:
             self.update()
         self._emit_settings_changed()
-
-    # ------------------------------------------------------------------
-    # Desktop overlay primary action / view logs
-    # ------------------------------------------------------------------
 
     def _on_desktop_overlay_primary_action(self, e) -> None:
         _ = e
@@ -745,10 +678,6 @@ class OverlaySectionMixin:
         if self.on_view_logs:
             self.on_view_logs()
 
-    # ------------------------------------------------------------------
-    # Desktop overlay position reset
-    # ------------------------------------------------------------------
-
     def _on_desktop_overlay_position_reset(self, e) -> None:
         _ = e
         if not self._settings or self._overlay_desktop_reset_button.disabled:
@@ -759,19 +688,11 @@ class OverlaySectionMixin:
             self._sync_desktop_overlay_main_controls()
             self.on_desktop_overlay_position_reset()
             return
-        desktop_settings = self._settings.overlay.desktop_flet
-        desktop_settings.position.x = None
-        desktop_settings.position.y = None
-        desktop_settings.locked = False
-        desktop_settings.validate()
+        self._command_executor.execute(ChangeOverlayDesktopPositionReset())
         self._desktop_overlay_captions_locked = False
         self._desktop_overlay_pending_position_reset = False
         self._sync_desktop_overlay_main_controls()
         self._emit_settings_changed()
-
-    # ------------------------------------------------------------------
-    # Public sync / setters
-    # ------------------------------------------------------------------
 
     def sync_desktop_overlay_settings(self, settings: AppSettings) -> None:
         self._settings = settings
@@ -866,10 +787,6 @@ class OverlaySectionMixin:
                 self._desktop_overlay_captions_locked = False
         self._sync_overlay_controls()
 
-    # ------------------------------------------------------------------
-    # Overlay calibration reset
-    # ------------------------------------------------------------------
-
     def _on_overlay_calibration_reset(self, e) -> None:
         _ = e
         self._begin_overlay_calibration_session()
@@ -878,10 +795,6 @@ class OverlaySectionMixin:
 
         if self.page:
             self.update()
-
-    # ------------------------------------------------------------------
-    # Overlay translation / peer-original toggle handlers
-    # ------------------------------------------------------------------
 
     def _on_overlay_translation_click(self, e) -> None:
         if not self._settings or self._overlay_translation_button.disabled:
@@ -892,7 +805,7 @@ class OverlaySectionMixin:
     def _on_overlay_translation_selected(self, value: str) -> None:
         if not self._settings:
             return
-        self._settings.overlay.show_translation = value == "on"
+        self._command_executor.execute(ChangeOverlayTranslation(show=(value == "on")))
         self._sync_overlay_controls()
         self._emit_settings_changed()
 
@@ -905,6 +818,6 @@ class OverlaySectionMixin:
     def _on_overlay_peer_original_selected(self, value: str) -> None:
         if not self._settings:
             return
-        self._settings.overlay.show_peer_original = value == "on"
+        self._command_executor.execute(ChangeOverlayPeerOriginal(show=(value == "on")))
         self._sync_overlay_controls()
         self._emit_settings_changed()

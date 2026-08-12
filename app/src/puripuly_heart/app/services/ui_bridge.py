@@ -138,7 +138,7 @@ class UIEventBridge:
         *,
         failure_reason: str | None = None,
     ) -> None:
-        state_handler = getattr(self.app, "on_overlay_state_changed", None)
+        state_handler = getattr(getattr(self.app, "controller", None), "on_overlay_state_changed", None)
         if callable(state_handler):
             state_handler(state=state, failure_reason=failure_reason)
 

@@ -31,8 +31,6 @@ DESKTOP_INTERACTION_MODES = frozenset(
 
 
 class OverlayManagerMixin:
-    """Mixin class containing overlay management methods."""
-
     @property
     def desktop_overlay_captions_locked(self) -> bool:
         return self.desktop_overlay_interaction_mode == DESKTOP_INTERACTION_MODE_PASS_THROUGH
@@ -272,7 +270,7 @@ class OverlayManagerMixin:
         return True
 
     def _notify_desktop_overlay_interaction_mode(self) -> None:
-        handler = getattr(self.app, "on_desktop_overlay_state_changed", None)
+        handler = getattr(self, "on_desktop_overlay_state_changed", None)
         if callable(handler):
             handler(
                 interaction_mode=self.desktop_overlay_interaction_mode,
@@ -632,7 +630,6 @@ class OverlayManagerMixin:
 
         controls: list[dict[str, object]] = []
         if previous_desktop.size_preset != next_desktop.size_preset:
-            self._discard_pending_desktop_bounds_persistence()
             self._drain_pending_desktop_user_bounds_events()
             bounds = self._desktop_center_preserving_bounds_for_size_preset_change(
                 previous_desktop_settings=previous_desktop,

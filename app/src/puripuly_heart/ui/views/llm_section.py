@@ -1,5 +1,3 @@
-"""LlmSectionMixin — LLM/translation provider, local LLM, and OpenAI-compatible controls."""
-
 from __future__ import annotations
 
 import contextlib
@@ -11,17 +9,20 @@ import flet as ft
 
 from puripuly_heart.config.prompts import load_prompt_for_provider
 from puripuly_heart.config.settings import (
-    LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS,
-    LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS,
     AppSettings,
     LLMProviderName,
     TranslationConnection,
     TranslationModel,
     _normalize_local_llm_base_url,
     default_translation_connection,
-    materialize_translation_settings,
     supported_translation_connections,
 )
+from puripuly_heart.domain.settings_commands import (
+    ChangeLocalLLMField,
+    ChangeOpenAICompatibleField,
+    ChangeTranslationSelection,
+)
+from puripuly_heart.domain.settings_validation import validate_extra_body_json
 from puripuly_heart.ui.components.settings import ApiKeyField, OptionItem, SettingsModal
 from puripuly_heart.ui.i18n import provider_label, t
 from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL, COLOR_ON_BACKGROUND, COLOR_PRIMARY, COLOR_NEUTRAL_DARK
@@ -32,16 +33,12 @@ if TYPE_CHECKING:
     from puripuly_heart.ui.views.settings import SettingsView
 
 
-def _reject_json_constant(value: str) -> None:
-    raise json.JSONDecodeError(f"invalid JSON constant: {value}", value, 0)
-
-
 _TRANSLATION_MODEL_LABEL_KEYS = {
     TranslationModel.LOCAL_LLM: "provider.local_llms",
     TranslationModel.OPENAI_COMPATIBLE: "provider.openai_compatible",
 }
 
-# AI: ATTRIBUTE OWNERSHIP — widget builders create:
+# ATTRIBUTE OWNERSHIP — widget builders create:
 #   _build_llm_widgets: _llm_text, _trans_title, _translation_provider_label,
 #     _openai_compatible_key (ApiKeyField)
 #   _build_local_llm_widgets: _local_llm_connection_title/base_url/model/fetch_btn/test_btn/
@@ -55,7 +52,6 @@ _TRANSLATION_MODEL_LABEL_KEYS = {
 # and FallbackLocalLlmSectionMixin._apply_locale_fallback_local_llm().
 
 class LlmSectionMixin:
-    """Mixin providing LLM/translation section methods for SettingsView."""
 
     def _get_llm_modal_value(self, settings: AppSettings) -> str:
         return settings.translation.model.value
@@ -66,11 +62,10 @@ class LlmSectionMixin:
     def _get_llm_display_label(self, settings: AppSettings) -> str:
         return self._translation_model_display_label(settings.translation.model)
 
-    # AI: LOAD ORDER — must be called after _build_llm_widgets and _build_openai_compat_widgets
+    # LOAD ORDER — must be called after _build_llm_widgets and _build_openai_compat_widgets
     # have created the text fields. hasattr guard on _llm_text protects against pre-build calls.
     # Loads both main translation AND OpenAI-compatible provider fields from settings.
     def _load_llm_from_settings(self, settings: "AppSettings") -> None:
-        """Load LLM provider, local LLM, and OpenAI-compatible fields from settings."""
         if not hasattr(self, '_llm_text'):
             return
         self._set_unit_card_value_text(
@@ -110,7 +105,7 @@ class LlmSectionMixin:
             return "openai_compatible"
         return "openai_compatible"
 
-    # AI: PROMPT KEY RESOLUTION — determines which system prompt to show based on
+    # PROMPT KEY RESOLUTION — determines which system prompt to show based on
     # current LLM provider. "local_llm" or "openai_compatible". Used by
     # _ensure_provider_prompt_value and _on_llm_selected to sync prompt editor
     # when provider changes.
@@ -184,9 +179,7 @@ class LlmSectionMixin:
         self._local_llm_base_url.value = normalized
         current = self._provider_settings_draft or self._settings
         if current.local_llm.base_url != normalized:
-            draft = self._ensure_provider_settings_draft()
-            draft.local_llm.base_url = normalized
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeLocalLLMField(field="base_url", value=normalized))
         _update_control_if_mounted(self._local_llm_base_url)
 
     def _on_local_llm_model_change_end(self, e) -> None:
@@ -198,9 +191,7 @@ class LlmSectionMixin:
         self._local_llm_model.value = model
         current = self._provider_settings_draft or self._settings
         if current.local_llm.model != model:
-            draft = self._ensure_provider_settings_draft()
-            draft.local_llm.model = model
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeLocalLLMField(field="model", value=model))
         _update_control_if_mounted(self._local_llm_model)
 
     def _on_local_llm_extra_body_change_end(self, e) -> None:
@@ -208,49 +199,18 @@ class LlmSectionMixin:
         if not self._settings:
             return
         raw = (self._local_llm_extra_body.value or "").strip()
-        try:
-            parsed = (
-                {"reasoning_effort": "none"}
-                if not raw
-                else json.loads(raw, parse_constant=_reject_json_constant)
-            )
-        except json.JSONDecodeError:
-            self._show_local_llm_extra_body_error("settings.local_llm.extra_body.invalid_json")
+        valid, error_key, result = validate_extra_body_json(raw)
+        if not valid:
+            if result is not None:
+                self._show_local_llm_extra_body_error(error_key, key=result)
+            else:
+                self._show_local_llm_extra_body_error(error_key)
             return
+        normalized = result  # validated + deepcopy'd dict
 
-        if not isinstance(parsed, dict):
-            self._show_local_llm_extra_body_error("settings.local_llm.extra_body.must_be_object")
-            return
-
-        lowered = {str(key).lower() for key in parsed}
-        reserved = LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS.intersection(lowered)
-        if reserved:
-            self._show_local_llm_extra_body_error(
-                "settings.local_llm.extra_body.reserved_key",
-                key=sorted(reserved)[0],
-            )
-            return
-
-        sensitive = LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS.intersection(lowered)
-        if sensitive:
-            self._show_local_llm_extra_body_error(
-                "settings.local_llm.extra_body.sensitive_key",
-                key=sorted(sensitive)[0],
-            )
-            return
-
-        try:
-            json.dumps(parsed, allow_nan=False)
-        except (TypeError, ValueError):
-            self._show_local_llm_extra_body_error("settings.local_llm.extra_body.not_serializable")
-            return
-
-        normalized = copy.deepcopy(parsed)
         current = self._provider_settings_draft or self._settings
         if current.local_llm.extra_body != normalized:
-            draft = self._ensure_provider_settings_draft()
-            draft.local_llm.extra_body = normalized
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeLocalLLMField(field="extra_body", value=normalized))
         self._local_llm_extra_body.value = json.dumps(
             normalized,
             ensure_ascii=False,
@@ -287,9 +247,7 @@ class LlmSectionMixin:
         raw_value = (self._openai_compatible_model.value or "").strip()
         current = self._provider_settings_draft or self._settings
         if current.provider.openai_compatible.model != raw_value:
-            draft = self._ensure_provider_settings_draft()
-            draft.provider.openai_compatible.model = raw_value
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeOpenAICompatibleField(field="model", value=raw_value))
 
     def _on_openai_compatible_provider_change(self, e) -> None:
         from puripuly_heart.config.providers import load_providers
@@ -307,10 +265,8 @@ class LlmSectionMixin:
             if self._settings:
                 current = self._provider_settings_draft or self._settings
                 if current.provider.openai_compatible.base_url != base_url:
-                    draft = self._ensure_provider_settings_draft()
-                    draft.provider.openai_compatible.base_url = base_url
-                    draft.provider.openai_compatible.model = ""
-                    self.has_provider_changes = True
+                    self._command_executor.execute(ChangeOpenAICompatibleField(field="base_url", value=base_url))
+                    self._command_executor.execute(ChangeOpenAICompatibleField(field="model", value=""))
             if self._openai_compatible_model:
                 self._openai_compatible_model.value = ""
                 _update_control_if_mounted(self._openai_compatible_model)
@@ -367,9 +323,7 @@ class LlmSectionMixin:
             logger.info("[FetchModels] User selected %s", value)
             _update_control_if_mounted(model_field)
             if self._settings:
-                draft = self._ensure_provider_settings_draft()
-                draft.provider.openai_compatible.model = value
-                self.has_provider_changes = True
+                self._command_executor.execute(ChangeOpenAICompatibleField(field="model", value=value))
 
         modal = SettingsModal(
             self.page,
@@ -484,9 +438,7 @@ class LlmSectionMixin:
         self._openai_compatible_base_url.value = raw_value
         current = self._provider_settings_draft or self._settings
         if current.provider.openai_compatible.base_url != raw_value:
-            draft = self._ensure_provider_settings_draft()
-            draft.provider.openai_compatible.base_url = raw_value
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeOpenAICompatibleField(field="base_url", value=raw_value))
         _update_control_if_mounted(self._openai_compatible_base_url)
 
     def _commit_openai_compatible_fields_from_controls(self) -> None:
@@ -498,7 +450,6 @@ class LlmSectionMixin:
         self._on_openai_compatible_base_url_change_end(None)
 
     def _on_llm_click(self, e) -> None:
-        """Open LLM provider selection modal."""
         if not self.page:
             return
         model_sections = (
@@ -550,14 +501,13 @@ class LlmSectionMixin:
             self._get_llm_display_label(settings),
         )
 
-    # AI: TRANSLATION MODEL+CONNECTION CHANGE — the most complex mutation path.
+    # TRANSLATION MODEL+CONNECTION CHANGE — the most complex mutation path.
     # When user selects a new translation model+connection:
     # 1. Validates connection is supported for model
-    # 2. Creates draft, sets model+connection, updates connection_history
-    # 3. Calls materialize_translation_settings to derive provider from model+connection
-    # 4. Calls _update_api_visibility (merged settings to avoid redundant deepcopy)
-    # 5. If provider changed, switches prompt editor to new provider's prompt
-    # 6. Syncs prompt tab copy text
+    # 2. Delegates model/provider mutation to ChangeTranslationSelection command
+    # 3. Calls _update_api_visibility (merged settings to avoid redundant deepcopy)
+    # 4. If provider changed, switches prompt editor to new provider's prompt
+    # 5. Syncs prompt tab copy text
     #
     # connection_history persists user's last-used connection per model — enables
     # restoring previous selection when toggling back.
@@ -579,16 +529,8 @@ class LlmSectionMixin:
         if old_model == model and old_connection == connection:
             return
 
-        draft = self._ensure_provider_settings_draft()
-        draft.translation = copy.deepcopy(current_settings.translation)
-        draft.translation.model = model
-        draft.translation.connection = connection
-        draft.translation.connection_history = copy.deepcopy(
-            current_settings.translation.connection_history
-        )
-        draft.translation.connection_history[model.value] = connection
-        materialize_translation_settings(draft)
-        new_provider = draft.provider.llm
+        self._command_executor.execute(ChangeTranslationSelection(provider=model.value))
+        new_provider = (self._provider_settings_draft or self._settings).provider.llm
 
         changes: list[str] = []
         if old_model != model:
@@ -616,9 +558,9 @@ class LlmSectionMixin:
         if old_provider != display_settings.provider.llm:
             provider_name = self._active_prompt_key()
             self._prompt_editor.set_provider(provider_name)
-            next_prompt = self._ensure_provider_prompt_value(draft, provider_name)
+            next_prompt = self._ensure_provider_prompt_value(merged, provider_name)
             self._prompt_editor.value = next_prompt
-            draft.system_prompt = next_prompt
+            self._draft_service.stage_prompt_draft(next_prompt)
         self._sync_prompt_tab_copy()
 
         if self.page:
@@ -627,7 +569,6 @@ class LlmSectionMixin:
             _update_control_if_mounted(self._local_llm_connection_card)
 
     def _on_llm_selected(self, value: str) -> None:
-        """Handle LLM provider selection from modal."""
         if not self._settings:
             return
         current_settings = self._build_settings_with_provider_draft()
@@ -643,10 +584,7 @@ class LlmSectionMixin:
         connection = self._restore_translation_connection_for_model(model, history)
         self._apply_translation_selection(model, connection)
 
-    # --- Widget builders (Phase 2.4) ---
-
     def _build_llm_widgets(self) -> ft.Control:
-        """Section B: Translation Provider card and API key field."""
         self._llm_text = self._build_clickable_text(
             t("provider.gemini3_flash"),
             self._on_llm_click,
@@ -679,12 +617,11 @@ class LlmSectionMixin:
         )
         return trans_card
 
-    # AI: WIDGET BUILD — creates _local_llm_connection_card (initially visible=False).
+    # WIDGET BUILD — creates _local_llm_connection_card (initially visible=False).
     # Visibility is toggled by _update_api_visibility based on LLM provider.
     # The card contains: base_url, model, api_key, extra_body text fields.
     # _local_llm_api_key is an ApiKeyField (with verify/save/show_snackbar callbacks).
     def _build_local_llm_widgets(self) -> ft.Control:
-        """Section M: Local LLM Connection card."""
         self._local_llm_connection_title = ft.Text(
             t("settings.openai_compatible.connection", default="Translation Settings"),
             size=24,
@@ -796,12 +733,11 @@ class LlmSectionMixin:
         self._local_llm_connection_card.visible = False
         return self._local_llm_connection_card
 
-    # AI: WIDGET BUILD — creates _translation_openai_card (initially visible=False).
+    # WIDGET BUILD — creates _translation_openai_card (initially visible=False).
     # Includes a provider Dropdown that auto-fills base_url from config/providers.json.
     # When provider changes, model is cleared (provider-specific models differ).
     # _openai_compatible_key is an ApiKeyField with base_url_getter lambda.
     def _build_openai_compat_widgets(self) -> ft.Control:
-        """Section N: OpenAI-Compatible translation card."""
         self._openai_compatible_title = ft.Text(
             t("settings.openai_compatible.connection", default="Translation Provider Settings"),
             size=24,

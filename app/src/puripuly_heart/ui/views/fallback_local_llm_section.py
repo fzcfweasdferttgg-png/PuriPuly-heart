@@ -1,19 +1,14 @@
-"""FallbackLocalLlmSectionMixin — Fallback local LLM card controls."""
-
 from __future__ import annotations
 
-import copy
 import json
 from typing import TYPE_CHECKING
 
 import flet as ft
 
-from puripuly_heart.config.settings import (
-    LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS,
-    LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS,
-    LLMProviderName,
-)
+from puripuly_heart.config.settings import LLMProviderName
 from puripuly_heart.config.settings.llm import _normalize_local_llm_base_url
+from puripuly_heart.domain.settings_commands import ChangeFallbackLocalLLMField
+from puripuly_heart.domain.settings_validation import validate_extra_body_json
 from puripuly_heart.ui.components.settings import ApiKeyField
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL, COLOR_NEUTRAL_DARK, COLOR_PRIMARY
@@ -24,11 +19,7 @@ if TYPE_CHECKING:
     from puripuly_heart.ui.views.settings import SettingsView
 
 
-def _reject_json_constant(value: str) -> None:
-    raise json.JSONDecodeError(f"invalid JSON constant: {value}", value, 0)
-
-
-# AI: ATTRIBUTE OWNERSHIP — _init_fallback_local_llm_controls creates:
+# ATTRIBUTE OWNERSHIP — _init_fallback_local_llm_controls creates:
 #   _fallback_local_llm_base_url/model/fetch_btn/test_btn (TextField/IconButton/TextButton)
 #   _fallback_local_llm_api_key (ApiKeyField), _fallback_local_llm_api_key_helper (Text)
 #   _fallback_local_llm_extra_body/helper/error (TextField/Text/Text)
@@ -42,10 +33,8 @@ def _reject_json_constant(value: str) -> None:
 # labels when locale changes (called from SettingsView._apply_locale).
 
 class FallbackLocalLlmSectionMixin:
-    """Fallback local LLM card: Base URL, Model, API Key, Extra Body."""
 
     def _load_fallback_local_llm_from_settings(self, settings: "AppSettings") -> None:
-        """Load fallback local LLM fields from settings."""
         if not hasattr(self, '_fallback_local_llm_base_url'):
             return
         bt = settings.backup_translation
@@ -179,9 +168,7 @@ class FallbackLocalLlmSectionMixin:
         self._fallback_local_llm_base_url.value = normalized
         current = self._provider_settings_draft or self._settings
         if current.backup_translation.local_llm.base_url != normalized:
-            draft = self._ensure_provider_settings_draft()
-            draft.backup_translation.local_llm.base_url = normalized
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeFallbackLocalLLMField(field="base_url", value=normalized))
         _update_control_if_mounted(self._fallback_local_llm_base_url)
 
     def _on_fallback_local_llm_model_change_end(self, e) -> None:
@@ -193,9 +180,7 @@ class FallbackLocalLlmSectionMixin:
         self._fallback_local_llm_model.value = model
         current = self._provider_settings_draft or self._settings
         if current.backup_translation.local_llm.model != model:
-            draft = self._ensure_provider_settings_draft()
-            draft.backup_translation.local_llm.model = model
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeFallbackLocalLLMField(field="model", value=model))
         _update_control_if_mounted(self._fallback_local_llm_model)
 
     def _set_fallback_extra_body_error(self, message_key: str, **kwargs: object) -> None:
@@ -229,54 +214,21 @@ class FallbackLocalLlmSectionMixin:
         if not self._settings:
             return
         raw = (self._fallback_local_llm_extra_body.value or "").strip()
-        try:
-            parsed = (
-                {"reasoning_effort": "none"}
-                if not raw
-                else json.loads(raw, parse_constant=_reject_json_constant)
-            )
-        except json.JSONDecodeError:
-            self._set_fallback_extra_body_error("settings.local_llm.extra_body.invalid_json")
+
+        valid, error_key, result = validate_extra_body_json(raw)
+        if not valid:
+            if result is not None:
+                self._set_fallback_extra_body_error(error_key, key=result)
+            else:
+                self._set_fallback_extra_body_error(error_key)
             return
 
-        if not isinstance(parsed, dict):
-            self._set_fallback_extra_body_error("settings.local_llm.extra_body.must_be_object")
-            return
-
-        lowered = {str(key).lower() for key in parsed}
-        reserved = LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS.intersection(lowered)
-        if reserved:
-            self._set_fallback_extra_body_error(
-                "settings.local_llm.extra_body.reserved_key", key=sorted(reserved)[0]
-            )
-            return
-
-        sensitive = LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS.intersection(lowered)
-        if sensitive:
-            self._set_fallback_extra_body_error(
-                "settings.local_llm.extra_body.sensitive_key", key=sorted(sensitive)[0]
-            )
-            return
-
-        try:
-            json.dumps(parsed, allow_nan=False)
-        except (TypeError, ValueError):
-            self._set_fallback_extra_body_error("settings.local_llm.extra_body.not_serializable")
-            return
-
-        normalized = copy.deepcopy(parsed)
+        normalized = result
         current = self._provider_settings_draft or self._settings
         if current.backup_translation.local_llm.extra_body != normalized:
-            draft = self._ensure_provider_settings_draft()
-            draft.backup_translation.local_llm.extra_body = normalized
-            self.has_provider_changes = True
-        self._fallback_local_llm_extra_body.value = json.dumps(
-            normalized,
-            ensure_ascii=False,
-            indent=2,
-            allow_nan=False,
-        )
-        self._clear_fallback_extra_body_error()
+            self._command_executor.execute(ChangeFallbackLocalLLMField(field="extra_body", value=normalized))
+            self._fallback_local_llm_extra_body.value = json.dumps(normalized, ensure_ascii=False, indent=2, allow_nan=False)
+            self._clear_fallback_extra_body_error()
 
     def _commit_fallback_local_llm_fields_from_controls(self) -> None:
         if not self._settings:
@@ -318,9 +270,7 @@ class FallbackLocalLlmSectionMixin:
         if len(model_ids) == 1:
             self._fallback_local_llm_model.value = model_ids[0]
             if self._settings:
-                draft = self._ensure_provider_settings_draft()
-                draft.backup_translation.local_llm.model = model_ids[0]
-                self.has_provider_changes = True
+                self._command_executor.execute(ChangeFallbackLocalLLMField(field="model", value=model_ids[0]))
             _update_control_if_mounted(self._fallback_local_llm_model)
             return
 
@@ -332,9 +282,7 @@ class FallbackLocalLlmSectionMixin:
             logger.info("[FetchModels][FallbackLocal] User selected %s", value)
             _update_control_if_mounted(self._fallback_local_llm_model)
             if self._settings:
-                draft = self._ensure_provider_settings_draft()
-                draft.backup_translation.local_llm.model = value
-                self.has_provider_changes = True
+                self._command_executor.execute(ChangeFallbackLocalLLMField(field="model", value=value))
 
         modal = SettingsModal(
             self.page,
@@ -384,7 +332,6 @@ class FallbackLocalLlmSectionMixin:
                 self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _apply_locale_fallback_local_llm(self) -> None:
-        """Update fallback local LLM labels when locale changes."""
         if not hasattr(self, '_fallback_local_llm_api_key'):
             return
         self._fallback_local_llm_api_key.apply_locale()

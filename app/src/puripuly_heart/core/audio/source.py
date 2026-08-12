@@ -661,7 +661,7 @@ def resolve_sounddevice_input_device(*, host_api: str = "", device: str = "") ->
     3. Iterate all devices, filter by hostapi + name match → return first match
     4. None if nothing matches
 
-    AI: do NOT flatten the early-return logic — priority order is load-bearing.
+    do NOT flatten the early-return logic — priority order is load-bearing.
     """
     host_api = (host_api or "").strip()
     device = (device or "").strip()

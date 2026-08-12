@@ -1,5 +1,3 @@
-"""FallbackSectionMixin — Fallback translation OpenAI-compatible card controls."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -8,6 +6,7 @@ import flet as ft
 
 from puripuly_heart.config.providers import load_providers
 from puripuly_heart.config.settings import LLMProviderName
+from puripuly_heart.domain.settings_commands import ChangeFallbackOpenAIField
 from puripuly_heart.ui.components.settings import ApiKeyField
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL_DARK, COLOR_PRIMARY
@@ -18,7 +17,7 @@ if TYPE_CHECKING:
     from puripuly_heart.ui.views.settings import SettingsView
 
 
-# AI: ATTRIBUTE OWNERSHIP — _init_fallback_openai_controls creates:
+# ATTRIBUTE OWNERSHIP — _init_fallback_openai_controls creates:
 #   _fallback_openai_provider (Dropdown), _fallback_openai_base_url (TextField),
 #   _fallback_openai_model (TextField), _fallback_openai_fetch_btn (IconButton),
 #   _fallback_openai_test_btn (TextButton), _fallback_api_key (ApiKeyField)
@@ -29,10 +28,8 @@ if TYPE_CHECKING:
 # LOCALE: _apply_locale_fallback() handles fallback OpenAI locale updates.
 
 class FallbackSectionMixin:
-    """Fallback OpenAI-compatible card: Provider, Model, API Key."""
 
     def _load_fallback_from_settings(self, settings: "AppSettings") -> None:
-        """Load fallback OpenAI-compatible fields from settings."""
         if not hasattr(self, '_fallback_openai_base_url'):
             return
         bt = settings.backup_translation
@@ -145,9 +142,7 @@ class FallbackSectionMixin:
         raw_value = (self._fallback_openai_model.value or "").strip()
         current = self._provider_settings_draft or self._settings
         if current.backup_translation.openai_compatible.model != raw_value:
-            draft = self._ensure_provider_settings_draft()
-            draft.backup_translation.openai_compatible.model = raw_value
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeFallbackOpenAIField(field="model", value=raw_value))
 
     def _on_fallback_provider_change(self, e) -> None:
         from puripuly_heart.config.providers import load_providers
@@ -165,10 +160,8 @@ class FallbackSectionMixin:
             if self._settings:
                 current = self._provider_settings_draft or self._settings
                 if current.backup_translation.openai_compatible.base_url != base_url:
-                    draft = self._ensure_provider_settings_draft()
-                    draft.backup_translation.openai_compatible.base_url = base_url
-                    draft.backup_translation.openai_compatible.model = ""
-                    self.has_provider_changes = True
+                    self._command_executor.execute(ChangeFallbackOpenAIField(field="base_url", value=base_url))
+                    self._command_executor.execute(ChangeFallbackOpenAIField(field="model", value=""))
             if self._fallback_openai_model:
                 self._fallback_openai_model.value = ""
                 _update_control_if_mounted(self._fallback_openai_model)
@@ -201,9 +194,7 @@ class FallbackSectionMixin:
         if len(model_ids) == 1:
             self._fallback_openai_model.value = model_ids[0]
             if self._settings:
-                draft = self._ensure_provider_settings_draft()
-                draft.backup_translation.openai_compatible.model = model_ids[0]
-                self.has_provider_changes = True
+                self._command_executor.execute(ChangeFallbackOpenAIField(field="model", value=model_ids[0]))
             _update_control_if_mounted(self._fallback_openai_model)
             return
 
@@ -215,9 +206,7 @@ class FallbackSectionMixin:
             logger.info("[FetchModels][Fallback] User selected %s", value)
             _update_control_if_mounted(self._fallback_openai_model)
             if self._settings:
-                draft = self._ensure_provider_settings_draft()
-                draft.backup_translation.openai_compatible.model = value
-                self.has_provider_changes = True
+                self._command_executor.execute(ChangeFallbackOpenAIField(field="model", value=value))
 
         modal = SettingsModal(
             self.page,
@@ -285,9 +274,7 @@ class FallbackSectionMixin:
         self._fallback_openai_base_url.value = raw_value
         current = self._provider_settings_draft or self._settings
         if current.backup_translation.openai_compatible.base_url != raw_value:
-            draft = self._ensure_provider_settings_draft()
-            draft.backup_translation.openai_compatible.base_url = raw_value
-            self.has_provider_changes = True
+            self._command_executor.execute(ChangeFallbackOpenAIField(field="base_url", value=raw_value))
         _update_control_if_mounted(self._fallback_openai_base_url)
 
     def _commit_fallback_fields_from_controls(self) -> None:
@@ -302,7 +289,6 @@ class FallbackSectionMixin:
         self._on_fallback_model_change_end(None)
 
     def _apply_locale_fallback(self) -> None:
-        """Update fallback OpenAI labels when locale changes."""
         if not hasattr(self, '_fallback_api_key'):
             return
         self._fallback_api_key.apply_locale()

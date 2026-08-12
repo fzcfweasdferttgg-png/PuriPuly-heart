@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
+from puripuly_heart.domain.settings_commands import ChangeAudioDevice
 from puripuly_heart.ui.components.settings import (
     AudioSettings,
     OptionItem,
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
 
 
-# AI: ATTRIBUTE OWNERSHIP — _build_audio_widgets creates:
+# ATTRIBUTE OWNERSHIP — _build_audio_widgets creates:
 #   _audio_settings (AudioSettings component — owns device enumeration),
 #   _audio_host_api_title/text, _mic_audio_title/text, _loopback_audio_title/text
 #
@@ -27,14 +28,12 @@ if TYPE_CHECKING:
 # _sync_general_audio_card_texts (SettingsHelpersMixin) updates display labels.
 
 class AudioSectionMixin:
-    """Audio device selection event handlers extracted from SettingsView."""
 
     # ------------------------------------------------------------------
     # Load from settings
     # ------------------------------------------------------------------
 
     def _load_audio_from_settings(self, settings: "AppSettings") -> None:
-        """Load audio settings into controls."""
         if not hasattr(self, '_audio_settings'):
             return
         self._audio_settings.host_api = settings.audio.input_host_api
@@ -124,9 +123,11 @@ class AudioSectionMixin:
                 f"[Settings] Desktop loopback output changed: {old_desktop_output} -> {new_desktop_output}"
             )
 
-        self._settings.audio.input_host_api = new_host
-        self._settings.audio.input_device = new_device
-        self._settings.desktop_audio.output_device = new_desktop_output
+        self._command_executor.execute(ChangeAudioDevice(
+            host_api=new_host,
+            input_device=new_device,
+            desktop_output_device=new_desktop_output,
+        ))
         self._emit_settings_changed()
 
     def _on_mic_host_api_click(self, e) -> None:
@@ -194,7 +195,6 @@ class AudioSectionMixin:
     # --- Locale ---
 
     def _apply_locale_audio(self) -> None:
-        """Update audio section labels when locale changes."""
         if not hasattr(self, '_audio_host_api_title'):
             return
         self._audio_host_api_title.value = t("settings.audio_host_api")

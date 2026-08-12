@@ -1,9 +1,5 @@
 """Pipeline lifecycle manager — init, start, stop, mic loop, VAD.
 
-Extracted from GuiController to decouple pipeline management
-from UI layer. This is the RISKIEST extraction — handles the
-critical audio→VAD→STT path.
-
 Architecture:
 - PipelineLifecycleManager creates and owns Pipeline instance
 - Controller delegates start/stop to manager
@@ -55,10 +51,7 @@ STT_RESET_DEADLINE_S = 300.0
 
 @dataclass(slots=True)
 class _HubVadSink:
-    """Adapter between VAD events and Pipeline.
-
-    Moved from GuiController (lines 119-130) to core.
-    """
+    """Adapter between VAD events and Pipeline."""
     hub: Pipeline
     channel: str = "self"
 
@@ -71,16 +64,7 @@ class _HubVadSink:
 
 @dataclass
 class PipelineLifecycleManager:
-    """Manages Pipeline lifecycle — init, start, stop, mic loop, VAD.
-
-    Responsibilities:
-    - Create Pipeline with all providers
-    - Start/stop pipeline and mic loop
-    - Manage VAD + audio source lifecycle
-    - VRC mic receiver management
-
-    Does NOT know about Flet/UI. Uses callbacks for side-effects.
-    """
+    """Does NOT know about Flet/UI. Uses callbacks for side-effects."""
 
     config_path: Path
     clock: SystemClock = field(default_factory=SystemClock)
@@ -103,6 +87,9 @@ class PipelineLifecycleManager:
     _vrc_receiver_lock: asyncio.Lock | None = None
     _last_vrc_mic_sync_enabled: bool | None = None
     receiver: object | None = None  # VrcOscReceiver
+
+    # Dependency-injected audio loop runner (to avoid core/ → app/ import)
+    run_audio_vad_loop: object = None  # injected from app.headless_mic
 
     # Callbacks
     on_pipeline_created: Callable[[Pipeline], None] | None = None
@@ -130,10 +117,6 @@ class PipelineLifecycleManager:
         peer_run_audio_loop: object | None = None,
         peer_vad_model_resolver: object | None = None,
     ) -> Pipeline:
-        """Create and configure Pipeline.
-
-        Mirrors GuiController._init_pipeline() lines 1078-1223.
-        """
         from puripuly_heart.config.prompts import (
             render_dual_translation_prompt_template,
             render_translation_prompt_template,
@@ -224,7 +207,6 @@ class PipelineLifecycleManager:
         return hub
 
     async def start(self, settings: AppSettings) -> None:
-        """Start pipeline and configure VRC receiver."""
         if self.hub is None:
             return
         await self.hub.start(auto_flush_osc=True)
@@ -236,7 +218,6 @@ class PipelineLifecycleManager:
             self.on_pipeline_started()
 
     async def stop(self) -> None:
-        """Graceful shutdown of pipeline and all resources."""
         await self.configure_vrc_receiver(enabled=False)
         await self.stop_mic_loop()
 
@@ -260,11 +241,7 @@ class PipelineLifecycleManager:
             self.on_pipeline_stopped()
 
     async def start_mic_loop(self, settings: AppSettings) -> None:
-        """Start microphone capture with VAD.
-
-        Mirrors GuiController._start_mic_loop() lines 1225-1492.
-        Complex retry logic: primary → name fallback → system default.
-        """
+        """Complex retry logic: primary → name fallback → system default."""
         if self.hub is None:
             return
 
@@ -274,7 +251,6 @@ class PipelineLifecycleManager:
             else False
         )
 
-        from puripuly_heart.app.headless_mic import run_audio_vad_loop
         from puripuly_heart.config.paths import default_vad_model_path
 
         vad_model_path = default_vad_model_path()
@@ -330,7 +306,7 @@ class PipelineLifecycleManager:
 
         sink = _HubVadSink(hub=self.hub, channel="self")
         self._mic_task = asyncio.create_task(
-            run_audio_vad_loop(
+            self.run_audio_vad_loop(
                 source=source,
                 vad=vad,
                 sink=sink,
@@ -340,7 +316,6 @@ class PipelineLifecycleManager:
         )
 
     async def stop_mic_loop(self) -> None:
-        """Stop microphone capture and release resources."""
         if self._mic_task is not None:
             self._mic_task.cancel()
             with contextlib.suppress(Exception):
