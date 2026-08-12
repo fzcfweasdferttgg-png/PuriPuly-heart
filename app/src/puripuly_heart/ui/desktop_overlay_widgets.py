@@ -1,11 +1,4 @@
 from __future__ import annotations
-# AI-REFACTORING: Pure Flet widget builders — no state, no side effects.
-# Each function takes a DesktopCaptionPlan (or parts of it) and returns a
-# Flet control tree. The plan→controls mapping is deterministic: same plan
-# input always produces the same widget tree.
-# All `import flet as ft` are inside function bodies for process isolation —
-# the desktop overlay renderer runs in a subprocess, and flet must only be
-# imported after the subprocess starts. Don't hoist these to module level.
 
 from typing import Any, Callable
 
@@ -101,12 +94,6 @@ def build_desktop_empty_lock_action(
     )
 
 
-# AI-REFACTORING: The caption surface has two visual layers:
-# 1. Full-window background (edit mode only) — opaque Container covering the window
-# 2. Caption slots — Column of slot cards, vertically centered
-# In pass-through mode, the background is absent and slot cards have their own
-# per-card background. The surface visibility is determined by the plan:
-# surface_visible=False → the entire Container is hidden (transparent click-through).
 def build_desktop_caption_surface(plan: DesktopCaptionPlan) -> Any:
     """Build no-outline fixed-slot Flet caption controls from a caption plan."""
 
@@ -169,11 +156,6 @@ def build_desktop_transparent_sizing_host(plan: DesktopCaptionPlan) -> Any:
     )
 
 
-# AI-REFACTORING: Card width fallback logic:
-#   full_window_background_visible (edit mode) → use plan-wide text_width/window_width
-#   otherwise → use slot.card_width/card_text_width (computed by dynamic width estimation)
-# The slot-level width comes from _caption_slot_with_dynamic_width in caption_plan.
-# If slot.card_width is 0 (shouldn't happen but defensive), falls back to plan.text_width.
 def _build_flet_caption_slot(ft: Any, plan: DesktopCaptionPlan, slot: DesktopCaptionSlot) -> Any:
     if plan.full_window_background_visible:
         card_text_width = plan.text_width
@@ -272,12 +254,6 @@ def _caption_line_region_alignment(
     return ft.alignment.center
 
 
-# AI-REFACTORING: Empty secondary region reservation for layout stability.
-# When a slot has secondary_enabled=True and primary lines that are NOT promoted
-# (i.e., they naturally belong in primary), an empty secondary line is injected.
-# This prevents the slot height from jumping when the secondary translation
-# arrives — the space is pre-allocated. Without this, the primary text would
-# shift vertically when the secondary line appears, causing visual jitter.
 def _slot_lines_with_reserved_regions(
     slot: DesktopCaptionSlot,
     *,

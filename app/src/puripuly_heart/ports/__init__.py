@@ -28,6 +28,8 @@ from puripuly_heart.ports.overlay_transport import (
 )
 from puripuly_heart.ports.peer import PeerChannelRuntimeState, PeerRuntimeConfig, SpeechChannelRuntime
 from puripuly_heart.ports.secrets import SecretStore
+from puripuly_heart.ports.settings import AppSettingsProtocol
+from puripuly_heart.ports.settings_draft import SettingsDraftServiceProtocol
 from puripuly_heart.ports.stt import (
     STTBackend,
     STTBackendFloat32Session,
@@ -44,6 +46,7 @@ from puripuly_heart.ports.vad import SpeechChunk, SpeechEnd, SpeechStart, VadEng
 
 __all__ = [
     "AppliedContextMode",
+    "AppSettingsProtocol",
     "AudioFrameF32",
     "AudioSource",
     "ClipboardWatcherRuntime",
@@ -78,6 +81,7 @@ __all__ = [
     "SelfActiveUpdate",
     "SelfTranscriptFinal",
     "SessionLogger",
+    "SettingsDraftServiceProtocol",
     "SpeechChannelRuntime",
     "SpeechChunk",
     "SpeechEnd",

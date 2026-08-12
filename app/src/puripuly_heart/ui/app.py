@@ -10,7 +10,8 @@ import logging
 
 import flet as ft
 
-from puripuly_heart.config.settings import load_settings, new_settings_for_first_run
+from puripuly_heart.adapters.storage.settings_persistence import load_settings
+from puripuly_heart.config.settings import new_settings_for_first_run
 from puripuly_heart.ui.app_debug import AppDebugPreviewMixin
 from puripuly_heart.ui.app_navigation import AppNavigationMixin
 from puripuly_heart.ui.app_utilities import (
@@ -27,11 +28,12 @@ from puripuly_heart.ui.components.microphone_test_dialog import MicrophoneTestDi
 from puripuly_heart.ui.components.title_bar import TitleBar
 from puripuly_heart.app.services.gui_controller import GuiController
 from puripuly_heart.ui.fonts import font_for_language, register_fonts
-from puripuly_heart.ui.i18n import get_locale, set_locale, t
+from puripuly_heart.domain.i18n import get_locale, set_locale, t
 from puripuly_heart.ui.theme import COLOR_BACKGROUND, get_app_theme
 from puripuly_heart.ui.views.about import AboutView
 from puripuly_heart.ui.views.dashboard import DashboardView
 from puripuly_heart.ui.views.logs import LogsView
+from puripuly_heart.ui.views.logs import FletLogHandler
 from puripuly_heart.ui.views.settings import SettingsView
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,7 @@ class TranslatorApp(
             page=page,
             app=self,
             config_path=config_path,
+            log_handler_factory=FletLogHandler,
         )
         self.overlay_state = "off"
         self.overlay_failure_reason: str | None = None

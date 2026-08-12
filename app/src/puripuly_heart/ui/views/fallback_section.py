@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from puripuly_heart.config.providers import load_providers
-from puripuly_heart.config.settings import LLMProviderName
+from puripuly_heart.adapters.storage.providers_persistence import load_providers
+from puripuly_heart.domain.providers import LLMProviderName
 from puripuly_heart.domain.settings_commands import ChangeFallbackOpenAIField
 from puripuly_heart.ui.components.settings import ApiKeyField
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL_DARK, COLOR_PRIMARY
 
 from puripuly_heart.ui.views.settings_helpers import _update_control_if_mounted
@@ -37,7 +37,7 @@ class FallbackSectionMixin:
             self._fallback_openai_base_url.value = bt.openai_compatible.base_url
             self._fallback_openai_base_url.error_text = None
             self._fallback_openai_model.value = bt.openai_compatible.model or ""
-            from puripuly_heart.config.providers import load_providers
+            from puripuly_heart.adapters.storage.providers_persistence import load_providers
             _loaded_providers = load_providers()
             _fb_opts = self._fallback_openai_provider.options or []
             _fb_matched = _fb_opts[0].key if _fb_opts else None
@@ -145,7 +145,7 @@ class FallbackSectionMixin:
             self._command_executor.execute(ChangeFallbackOpenAIField(field="model", value=raw_value))
 
     def _on_fallback_provider_change(self, e) -> None:
-        from puripuly_heart.config.providers import load_providers
+        from puripuly_heart.adapters.storage.providers_persistence import load_providers
         selected = e.data if e else None
         if not selected:
             return

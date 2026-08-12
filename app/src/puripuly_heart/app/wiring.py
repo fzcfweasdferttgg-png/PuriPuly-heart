@@ -308,7 +308,7 @@ def _create_subprocess_stt_backend(
     hotwords: tuple[str, ...] = (),
     data_dir: Path,
 ) -> STTBackend:
-    from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTBackend
+    from puripuly_heart.adapters.inference.subprocess_backend import SubprocessSTTBackend
     from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
 
     language_hint: str | None = None

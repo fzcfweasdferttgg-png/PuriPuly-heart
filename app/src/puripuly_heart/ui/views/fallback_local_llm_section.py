@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from puripuly_heart.config.settings import LLMProviderName
+from puripuly_heart.domain.providers import LLMProviderName
 from puripuly_heart.config.settings.llm import _normalize_local_llm_base_url
 from puripuly_heart.domain.settings_commands import ChangeFallbackLocalLLMField
 from puripuly_heart.domain.settings_validation import validate_extra_body_json
 from puripuly_heart.ui.components.settings import ApiKeyField
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL, COLOR_NEUTRAL_DARK, COLOR_PRIMARY
 
 from puripuly_heart.ui.views.settings_helpers import _update_control_if_mounted

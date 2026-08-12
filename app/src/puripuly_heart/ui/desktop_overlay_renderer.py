@@ -1,20 +1,5 @@
 from __future__ import annotations
 
-# AI-REFACTORING: Desktop overlay renderer — subprocess entry point.
-# Runtime architecture:
-#   5 concurrent tasks (started in _start_runtime_tasks):
-#     1. _bridge_reader_loop — reads websocket messages from parent
-#     2. _parent_monitor_loop — detects parent process exit
-#     3. _window_loop — awaits Flet window close
-#     4. _ui_update_loop — serializes UI updates from _ui_queue
-#     5. _heartbeat_loop — keeps event loop alive
-#   Shutdown: _shutdown_event propagates to all tasks; first-completed task
-#   with non-None result determines exit code.
-#
-# Circular import: this module lazy-imports FletDesktopRendererWindow from
-# desktop_overlay.py (line ~114) to break the cycle. desktop_overlay imports
-# from this module at module level. Don't change either direction.
-
 import argparse
 import asyncio
 import contextlib
@@ -153,11 +138,6 @@ class DesktopOverlayRenderer:
         self.manifest = manifest
         self.lifecycle_sink = lifecycle_sink or StdoutLifecycleSink()
         if window is None:
-            # AI-REFACTORING: Lazy import breaks circular dependency.
-            # desktop_overlay.py imports run_renderer, build_parser, _redact_event,
-            # _STARTUP_FAILURE_EXIT_CODE, _SUCCESS_EXIT_CODE from this module at
-            # module level. This lazy import goes the other direction. If you move
-            # this to module level, Python will raise ImportError at startup.
             from puripuly_heart.ui.desktop_overlay import FletDesktopRendererWindow
             window = FletDesktopRendererWindow(
                 event_sink=self._emit_lifecycle,
@@ -239,16 +219,6 @@ class DesktopOverlayRenderer:
         finally:
             await self.shutdown()
 
-    # AI-REFACTORING: Idempotent shutdown with _shutdown_lock.
-    # _shutdown_event.set() signals all 5 tasks to exit. Then:
-    #   1. Close websocket (bridge_reader gets ConnectionClosed)
-    #   2. Close window (window_loop gets exception or returns)
-    #   3. Cancel all tasks, await their completion
-    #   4. Close parent_monitor (releases Windows handle if applicable)
-    # Order matters: websocket close must happen before task cancellation,
-    # otherwise bridge_reader might miss the ConnectionClosed and hang.
-    # The lock ensures only one shutdown runs even if called from multiple paths
-    # (e.g., runtime error + parent exit + user close all within milliseconds).
     async def shutdown(self) -> None:
         async with self._shutdown_lock:
             if self._shutdown_complete:
@@ -331,14 +301,6 @@ class DesktopOverlayRenderer:
                 "desktop overlay initial snapshot is invalid",
             ) from exc
 
-    # AI-REFACTORING: Startup control drain — controls received between auth and
-    # first snapshot. The parent may send apply_visual_config or apply_window_bounds
-    # immediately after auth, before the first snapshot. These are buffered here
-    # with a 50ms timeout (_INITIAL_RUNTIME_CONTROL_DRAIN_TIMEOUT_S). Non-control
-    # messages are pushed to _startup_pending_messages for the bridge_reader to
-    # process after startup. The priming step (prime_startup_runtime_controls)
-    # applies visual_state and window_bounds BEFORE the first page render, so
-    # the user never sees a flash of default settings.
     async def _drain_startup_runtime_controls(
         self,
         websocket: Any,
@@ -372,13 +334,6 @@ class DesktopOverlayRenderer:
             controls.append(payload)
         return tuple(controls)
 
-    # AI-REFACTORING: Five concurrent tasks — shutdown coordination via _shutdown_event.
-    # When any task returns a _RuntimeOutcome, _wait_for_runtime_outcome picks it up.
-    # When _shutdown_event is set, all tasks check it and exit gracefully.
-    # _ui_update_loop is the single point of UI dispatch — it reads from _ui_queue
-    # and calls window.dispatch_snapshot / dispatch_runtime_control. This serializes
-    # UI updates: even if bridge_reader and startup_controls overlap, UI updates
-    # are applied one at a time in FIFO order.
     def _start_runtime_tasks(self, websocket: Any) -> None:
         self._tasks = {
             asyncio.create_task(self._bridge_reader_loop(websocket)),
@@ -466,12 +421,6 @@ class DesktopOverlayRenderer:
         )
         return None
 
-    # AI-REFACTORING: Single-threaded UI update serialization.
-    # All snapshot and runtime_control messages pass through _ui_queue.
-    # This prevents race conditions between bridge_reader (which parses messages)
-    # and the Flet page (which must be updated on the UI thread).
-    # The wait() on {queue_task, stop_task} ensures clean shutdown — if
-    # _shutdown_event fires while waiting for a message, the loop exits immediately.
     async def _ui_update_loop(self) -> _RuntimeOutcome | None:
         while not self._shutdown_event.is_set():
             queue_task = asyncio.create_task(self._ui_queue.get())
@@ -667,13 +616,6 @@ def _redact_renderer_startup_exception_text(
     return redacted
 
 
-# AI-REFACTORING: Recursive sensitive key redaction.
-# Normalizes keys by removing non-alphanumeric chars before matching against
-# _SENSITIVE_EVENT_KEYS. This catches "session_token", "session-token",
-# "sessionToken", "SESSION.TOKEN", etc. Applied to ALL outgoing events
-# (lifecycle + websocket) to prevent credential leakage in logs or bridge.
-# _redact_renderer_startup_exception_text is separate — it redacts the
-# session_token value from exception messages (which may contain the raw token).
 def _redact_event(event: dict[str, object]) -> dict[str, object]:
     redacted = _redact_value(event)
     if isinstance(redacted, dict):

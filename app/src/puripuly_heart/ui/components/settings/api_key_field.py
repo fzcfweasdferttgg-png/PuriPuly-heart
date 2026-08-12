@@ -9,7 +9,7 @@ import flet as ft
 from flet import Colors as colors
 from flet import Icons as icons
 
-from puripuly_heart.ui.i18n import provider_label, t
+from puripuly_heart.domain.i18n import provider_label, t
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
     COLOR_NEUTRAL,
@@ -176,6 +176,10 @@ class ApiKeyField(ft.Row):
 
     async def _run_verification(self) -> None:
         """Wrapper for run_task compatibility."""
+        # Coalescing loop: while one verify runs, new blur events
+        # set _pending_key/_pending_hash. After current verify
+        # completes, drain the latest pending request. Exits when
+        # no new request arrived (empty hash).
         while True:
             key = getattr(self, "_pending_key", "")
             key_hash = getattr(self, "_pending_hash", "")

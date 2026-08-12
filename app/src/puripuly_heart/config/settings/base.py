@@ -456,6 +456,12 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
     return _enum_to_value(data)  # type: ignore[return-value]
 
 
+# Forward-only migration pipeline: normalizes raw JSON from any prior
+# schema version to the current one. Migrates provider.local_llm nested
+# structure (v0) → flat stt/translation fields (v1), fills missing keys
+# with defaults. Returns (migrated_dict, was_changed).
+
+
 def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     data: dict[str, Any] = copy.deepcopy(raw)
     changed = False
@@ -736,54 +742,3 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     ensure_prompt_defaults(settings)
     settings.validate()
     return settings
-
-
-def load_settings(path: Path) -> AppSettings:
-    raw_text = path.read_text(encoding="utf-8")
-    raw = json.loads(raw_text)
-    if not isinstance(raw, dict):
-        raise ValueError("settings file must contain a JSON object")
-    raw_version = _coerce_int(raw.get("settings_version"), 1)
-    if raw_version < 1:
-        raw_version = 1
-    migrated, changed = _migrate_settings_dict(raw)
-    settings = from_dict(migrated)
-    if changed:
-        if raw_version < SETTINGS_SCHEMA_VERSION:
-            _write_settings_migration_backup(path, raw_text, raw_version)
-        save_settings(path, settings)
-    return settings
-
-
-def save_settings(path: Path, settings: AppSettings) -> None:
-    settings.validate()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_text(
-        path,
-        json.dumps(to_dict(settings), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-
-def _write_settings_migration_backup(path: Path, content: str, source_version: int) -> Path:
-    backup_stem = f"{path.name}.v{source_version}.pre-v{SETTINGS_SCHEMA_VERSION}.bak"
-    backup_path = path.with_name(backup_stem)
-    index = 1
-    while backup_path.exists():
-        backup_path = path.with_name(f"{backup_stem}.{index}")
-        index += 1
-    _atomic_write_text(backup_path, content, encoding="utf-8")
-    return backup_path
-
-
-def _atomic_write_text(path: Path, content: str, *, encoding: str) -> None:
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    try:
-        tmp_path.write_text(content, encoding=encoding)
-        tmp_path.replace(path)
-    except Exception:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise

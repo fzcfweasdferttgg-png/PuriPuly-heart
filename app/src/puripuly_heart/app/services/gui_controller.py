@@ -27,6 +27,7 @@ import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import flet as ft
 
@@ -42,6 +43,7 @@ from puripuly_heart.app.wiring import (
 )
 from puripuly_heart.app.headless_mic import run_audio_vad_loop
 from puripuly_heart.config.audio_host_api import normalize_input_host_api
+from puripuly_heart.config.paths import default_models_dir, default_vad_model_path
 from puripuly_heart.config.settings import (
     DESKTOP_FLET_MIN_HEIGHT,
     DESKTOP_FLET_MIN_WIDTH,
@@ -82,7 +84,7 @@ from puripuly_heart.core.services.toggle_coordinator import ToggleCoordinator
 from puripuly_heart.core.stt.local_stt_manager import LOCAL_STT_PROVIDERS, LocalSTTManager
 from puripuly_heart.core.pipeline.pipeline import Pipeline
 from puripuly_heart.adapters.overlay.sink import OverlayEventAdapter
-from puripuly_heart.config.prompts import render_dual_translation_prompt_template, render_translation_prompt_template
+from puripuly_heart.config.prompts import render_dual_translation_prompt_template, render_translation_prompt_template, warm_prompt_cache
 from puripuly_heart.core.osc.receiver import (
     VRC_OSC_RECEIVER_HOST,
     VRC_OSC_RECEIVER_PORT,
@@ -102,14 +104,12 @@ from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_va
 from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
 from puripuly_heart.app.services.ui_bridge import UIEventBridge
-from puripuly_heart.ui.i18n import get_locale, set_locale, t
+from puripuly_heart.domain.i18n import get_locale, set_locale, t
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 from puripuly_heart.domain.overlay_contract import (
     OverlayPeerConsumerContract,
     build_overlay_peer_consumer_contract,
 )
-from puripuly_heart.ui.views.logs import FletLogHandler
-
 from puripuly_heart.app.services.overlay_manager import DESKTOP_INTERACTION_MODE_EDIT, OverlayManagerMixin
 from puripuly_heart.app.services.clipboard_manager import ClipboardManagerMixin
 from puripuly_heart.app.services.mic_test_manager import MicTestManagerMixin
@@ -233,6 +233,7 @@ class GuiController(
     )
     overlay_calibration: OverlayCalibration = field(default_factory=OverlayCalibration)
     _overlay_calibration_draft: OverlayCalibration | None = None
+    log_handler_factory: Callable[[Any], logging.Handler] | None = field(default=None)
 
 
     @property
@@ -343,6 +344,11 @@ class GuiController(
                 diagnostic_wrapper=self._wrap_diagnostic_audio_source,
                 is_detailed_diag_enabled=lambda: self._detailed_audio_diag_enabled,
                 run_audio_vad_loop=run_audio_vad_loop,
+                default_vad_hangover_ms=DEFAULT_STABLE_VAD_HANGOVER_MS,
+                vad_model_path_factory=default_vad_model_path,
+                render_prompt_template=render_translation_prompt_template,
+                render_dual_prompt_template=render_dual_translation_prompt_template,
+                warm_prompt_cache_fn=warm_prompt_cache,
             )
 
         await self._init_pipeline()
@@ -748,6 +754,7 @@ class GuiController(
         settings_view = getattr(self.app, "view_settings", None)
 
         # Create command executor for settings sections
+        from puripuly_heart.config.settings import materialize_translation_settings
         from puripuly_heart.core.services.settings_command_executor import SettingsCommandExecutor
         if settings_view is not None:
             if settings_view._command_executor is None:
@@ -755,6 +762,7 @@ class GuiController(
                 settings_view._command_executor = SettingsCommandExecutor(
                     settings=self.settings,
                     draft_service=draft_svc,
+                    materialize_fn=materialize_translation_settings,
                 )
 
         # Create providers in controller (wiring layer)
@@ -843,6 +851,7 @@ class GuiController(
         self._local_stt_manager = LocalSTTManager(
             hub=hub,
             config_path=self.config_path,
+            models_dir=default_models_dir(),
             peer_stt_backend_factory=lambda: create_peer_stt_backend(
                 self.settings,
                 secrets=create_secret_store(config_path=self.config_path),
@@ -913,7 +922,7 @@ class GuiController(
     def runtime_logging(self) -> SessionRuntimeLoggingService:
         if self._runtime_logging is None:
             from puripuly_heart.config.paths import user_config_dir
-            self._runtime_logging = SessionRuntimeLoggingService(ui_handler_factory=FletLogHandler, log_dir=user_config_dir())
+            self._runtime_logging = SessionRuntimeLoggingService(ui_handler_factory=self.log_handler_factory, log_dir=user_config_dir())
         logs_view = getattr(self.app, "view_logs", None)
         if logs_view is not None:
             self._runtime_logging.attach_realtime_sink(logs_view)
@@ -1017,7 +1026,6 @@ class GuiController(
 
     # Sequential FIFO queue for settings changes.
     # Prevents race conditions when user rapidly toggles settings.
-    # Mirrors _AppUtilitiesMixin._queue_settings_mutation_task but self-contained.
     def _queue_mutation(self, task_factory) -> None:
         queue = getattr(self, "_mutation_queue", None)
         if queue is None:

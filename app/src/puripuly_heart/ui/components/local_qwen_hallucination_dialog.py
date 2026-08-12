@@ -10,7 +10,7 @@ from puripuly_heart.ui.components.warm_document_dialog import (
     open_warm_document_dialog,
     split_body_paragraphs,
 )
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 
 
 class LocalQwenHallucinationDialog:

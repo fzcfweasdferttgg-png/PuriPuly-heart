@@ -4,10 +4,11 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from puripuly_heart.config.settings import AppSettings, STTProviderName
+from puripuly_heart.config.settings import AppSettings
+from puripuly_heart.domain.providers import STTProviderName
 from puripuly_heart.domain.language import get_stt_compatibility_warning
 from puripuly_heart.ui.components.settings import OptionItem, SettingsModal
-from puripuly_heart.ui.i18n import language_name, provider_label, t
+from puripuly_heart.domain.i18n import language_name, provider_label, t
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
     COLOR_NEUTRAL,

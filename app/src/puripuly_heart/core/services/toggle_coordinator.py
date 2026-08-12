@@ -1,6 +1,5 @@
 """Toggle coordination service — translation and STT toggle state machine.
 
-Extracted from GuiController to decouple toggle logic from UI layer.
 Manages:
 - Translation toggle with intent tracking (stale request detection)
 - STT toggle with local STT readiness checks
@@ -19,10 +18,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from puripuly_heart.config.settings import AppSettings
 from puripuly_heart.core.stt.local_stt_manager import LOCAL_STT_PROVIDERS
 
 if TYPE_CHECKING:
+    from puripuly_heart.config.settings import AppSettings
     from puripuly_heart.core.pipeline.pipeline import Pipeline
     from puripuly_heart.core.stt.local_stt_manager import LocalSTTManager
 
@@ -68,7 +67,7 @@ class ToggleCoordinator:
     log_basic: Callable[[str], None] | None = None
     log_detailed: Callable[[str], None] | None = None
 
-    # External actions (injected via DI — Phase 3/4)
+    # External actions (injected via DI)
     start_mic_loop: Callable[[], Awaitable[None]] | None = None
     stop_mic_loop: Callable[[], Awaitable[None]] | None = None
     rebuild_stt_provider: Callable[[], Awaitable[None]] | None = None
@@ -91,7 +90,6 @@ class ToggleCoordinator:
     async def set_translation_enabled(self, enabled: bool) -> bool:
         """Toggle translation with stale request detection.
 
-        Mirrors GuiController.set_translation_enabled() lines 379-418.
         Returns True if translation is now enabled.
         """
         if self._is_stopping:
@@ -131,8 +129,6 @@ class ToggleCoordinator:
 
     async def set_stt_enabled(self, enabled: bool) -> None:
         """Toggle STT with local readiness checks.
-
-        Mirrors GuiController.set_stt_enabled() lines 419-461.
         """
         if self._is_stopping:
             return
@@ -182,8 +178,6 @@ class ToggleCoordinator:
 
     async def _replace_runtime_stt_provider(self) -> None:
         """Hot-replace STT provider without full pipeline restart.
-
-        Mirrors GuiController._replace_runtime_stt_provider() lines 707-730.
         """
         self._cancel_stt_idle_release()
         if self.log_detailed is not None:
@@ -209,18 +203,22 @@ class ToggleCoordinator:
             and self.settings is not None
             and self.settings.provider.stt_compute == "gpu"
         ):
+            # GPU settle delay — old backend's VRAM must be freed
+            # before the new one allocates, or CUDA/Vulkan may OOM.
             await asyncio.sleep(0.5)
         if self._stt_desired:
             await self._ensure_stt_switch()
 
     async def _run_stt_switch(self) -> None:
         """STT switch state machine.
-
-        Mirrors GuiController._run_stt_switch() lines 742-791.
         """
         if self._stt_switch_lock is None:
             self._stt_switch_lock = asyncio.Lock()
         async with self._stt_switch_lock:
+            # Snapshot _stt_desired here; re-check at loop bottom.
+            # If user toggles STT while this iteration runs async work
+            # (stop/start mic, rebuild provider), the loop re-iterates
+            # with the new value instead of returning stale state.
             while True:
                 desired = self._stt_desired
                 restart = self._stt_restart_requested
@@ -239,6 +237,8 @@ class ToggleCoordinator:
                             from puripuly_heart.core.runtime.local_qwen_lifecycle import (
                                 LOCAL_QWEN_IDLE_RELEASE_SECONDS,
                             )
+                            # Delayed release: keeps the STT backend alive briefly
+                            # so rapid on→off→on doesn't re-download the model.
                             self._stt_idle_release_task = asyncio.create_task(
                                 self._stt_idle_release_after(LOCAL_QWEN_IDLE_RELEASE_SECONDS)
                             )

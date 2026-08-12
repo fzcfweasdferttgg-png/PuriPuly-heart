@@ -15,7 +15,7 @@ from puripuly_heart.config.audio_host_api import (
     normalize_input_host_api,
 )
 from puripuly_heart.ui.components.settings.settings_modal import OptionItem, SettingsModal
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 from puripuly_heart.ui.theme import COLOR_ON_BACKGROUND, COLOR_PRIMARY
 
 logger = logging.getLogger(__name__)

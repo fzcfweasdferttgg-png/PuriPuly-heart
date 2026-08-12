@@ -17,7 +17,7 @@ from puripuly_heart.ui.components.local_qwen_hallucination_dialog import (
     LocalQwenHallucinationDialog,
 )
 from puripuly_heart.ui.components.peer_translation_eula_dialog import PeerTranslationEulaDialog
-from puripuly_heart.ui.i18n import get_locale, t
+from puripuly_heart.domain.i18n import get_locale, t
 
 if TYPE_CHECKING:
     pass

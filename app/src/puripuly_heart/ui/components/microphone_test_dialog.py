@@ -6,7 +6,7 @@ import flet as ft
 
 from puripuly_heart.ui.components.glow import create_glow_stack
 from puripuly_heart.ui.fonts import font_for_language
-from puripuly_heart.ui.i18n import get_locale, t
+from puripuly_heart.domain.i18n import get_locale, t
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
     COLOR_NEUTRAL_DARK,
@@ -68,6 +68,10 @@ class MicrophoneTestDialog:
         self._dialog = self._build_dialog()
         self._is_open = True
         self._page.open(self._dialog)
+
+    # Two close paths: programmatic close(notify=False) vs Flet on_dismiss.
+    # _close_notified guard ensures on_close callback fires at most once
+    # regardless of which path triggers first.
 
     def close(self, *, notify: bool = False) -> None:
         dialog = self._dialog

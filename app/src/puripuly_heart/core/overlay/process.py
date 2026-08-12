@@ -2,20 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import ctypes
 import json
 import logging
 import math
 import os
 import secrets
-import shutil
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
 from puripuly_heart import __version__
+from puripuly_heart.ports.overlay_infrastructure import OverlayInfrastructureProtocol
 from puripuly_heart.ports.overlay_process import OverlayManagedProcess, OverlayProcessRunner
 
 from . import openvr_vendor
@@ -33,35 +31,12 @@ logger = logging.getLogger(__name__)
 
 OverlayProcessManager manages the overlay process lifecycle:
 - off → startup → connected → failed
-- Manifest writing with tempfile cleanup on failure
+- Infrastructure operations (file I/O, OS-level) delegated to OverlayInfrastructureProtocol
 - Process diagnostics and logging
 
 Key invariants:
-- _write_manifest: uses try/finally to cleanup tempfile on failure
-- Dead fields removed: restart_scheduled, _executable_path, _executable_mtime
-- QUIET_TAIL_PROFILE_ENV removed: was unused scaffolding
+- Infrastructure injected via OverlayInfrastructureProtocol (ports/)
 """
-
-
-def _assign_overlay_to_job(pid: int, job_handle: int | None) -> None:
-    """Assign a process to a Job Object by PID."""
-    if job_handle is None:
-        return
-    try:
-        kernel32 = ctypes.windll.kernel32
-        proc = kernel32.OpenProcess(0x1F0FFF, False, pid)  # PROCESS_ALL_ACCESS
-        if not proc:
-            logger.warning("[OverlayJobObject] OpenProcess failed for pid=%d", pid)
-            return
-        try:
-            if not kernel32.AssignProcessToJobObject(job_handle, proc):
-                logger.warning("[OverlayJobObject] AssignProcessToJobObject failed for pid=%d", pid)
-            else:
-                logger.info("[OverlayJobObject] Assigned pid=%d to job", pid)
-        finally:
-            kernel32.CloseHandle(proc)
-    except Exception as exc:
-        logger.warning("[OverlayJobObject] Failed to assign pid=%d: %s", pid, exc)
 
 
 OVERLAY_EXECUTABLE_NAME = "PuriPulyHeartOverlay.exe"
@@ -361,8 +336,7 @@ class DefaultOverlayProcessRunner:
         vendored_bundle: openvr_vendor.VendoredOpenVrBundle,
     ) -> Path:
         if cls._staged_openvr_runtime_dll_needs_refresh(bundled_path, vendored_bundle):
-            bundled_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(vendored_bundle.dll_path, bundled_path)
+            self.infrastructure.copy_file(vendored_bundle.dll_path, bundled_path)
         return openvr_vendor.validate_openvr_runtime_dll(
             bundled_path,
             expected_sha256=vendored_bundle.dll_sha256,
@@ -466,6 +440,7 @@ class OverlayProcessManager:
     diagnostics_dir: Path = field(default_factory=default_overlay_diagnostics_dir)
     diagnostics: OverlayDiagnosticsRecorder | None = None
     job_handle: int | None = None
+    infrastructure: OverlayInfrastructureProtocol | None = None
 
     state: str = field(init=False, default="off")
     failure_reason: str | None = field(init=False, default=None)
@@ -484,6 +459,9 @@ class OverlayProcessManager:
                 overlay_instance_id=self.overlay_instance_id,
                 diagnostics_dir=self.diagnostics_dir,
             )
+        assert self.infrastructure is not None, (
+            "infrastructure (OverlayInfrastructureProtocol) must be provided"
+        )
 
     def set_logging_mode(self, mode: SessionLoggingMode | str) -> None:
         self.logging_mode = normalize_overlay_logging_mode(mode)
@@ -507,9 +485,9 @@ class OverlayProcessManager:
         manifest = self._build_manifest()
         try:
             executable_path = self.process_runner.prepare(manifest)
-            self._manifest_path = self._write_manifest(manifest)
+            self._manifest_path = self.infrastructure.write_manifest(manifest.to_dict())
             self._process = await self.process_runner.spawn(executable_path, self._manifest_path)
-            _assign_overlay_to_job(getattr(self._process, "pid", None), self.job_handle)
+            self.infrastructure.assign_process_to_job(getattr(self._process, "pid", None), self.job_handle)
             self._attach_process_diagnostics(self._process)
             await self._wait_for_startup()
         except OverlayPreparationError as error:
@@ -557,24 +535,6 @@ class OverlayProcessManager:
             locale=self.locale,
             logging_mode=self.logging_mode,
         )
-
-    def _write_manifest(self, manifest: OverlayLaunchManifest) -> Path:
-        """Write manifest to tempfile. Cleans up on failure to avoid orphaned files."""
-        handle = tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            suffix=".json",
-            prefix="puripuly-overlay-",
-            delete=False,
-        )
-        try:
-            json.dump(manifest.to_dict(), handle)
-        except BaseException:
-            handle.close()
-            Path(handle.name).unlink(missing_ok=True)
-            raise
-        handle.close()
-        return Path(handle.name)
 
     async def _wait_for_startup(self) -> None:
         if self._process is None:

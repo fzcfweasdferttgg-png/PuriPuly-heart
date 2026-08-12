@@ -1,3 +1,10 @@
+"""Global i18n helpers — locale selection, bundle loading, translation lookup.
+
+Module-level mutable state (_current_locale, _bundles, _locale_cache).
+Not thread-safe — safe only in single-threaded asyncio context.
+Cache invalidation: set_locale() clears _locale_cache; _bundles grows
+monotonically (never evicted).
+"""
 from __future__ import annotations
 
 import json

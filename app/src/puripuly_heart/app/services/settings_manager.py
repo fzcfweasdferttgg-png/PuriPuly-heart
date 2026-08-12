@@ -12,7 +12,7 @@ from puripuly_heart.config.settings import (
     save_settings,
 )
 from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
-from puripuly_heart.ui.i18n import get_locale, set_locale
+from puripuly_heart.domain.i18n import get_locale, set_locale
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings

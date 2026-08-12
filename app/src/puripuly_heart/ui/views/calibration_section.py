@@ -11,7 +11,7 @@ from puripuly_heart.ui.components.settings import (
     SettingsModal,
     SettingsUnitCard,
 )
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 from puripuly_heart.domain.overlay_calibration import (
     OVERLAY_CALIBRATION_ANCHORS,
     OverlayCalibration,

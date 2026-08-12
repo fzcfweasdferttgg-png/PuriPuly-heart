@@ -1,19 +1,5 @@
 from __future__ import annotations
 
-# AI-REFACTORING: Parent process exit detection — cascading fallback strategy.
-# Used by DesktopOverlayRenderer to terminate the overlay when the parent dies.
-#
-# Selection order (create_parent_monitor):
-#   Windows: OpenProcess(SYNCHRONIZE) → WaitForSingleObject (preferred)
-#            ↓ handle open fails
-#            BridgeDisconnectParentMonitor (passive, waits for websocket disconnect)
-#   POSIX:   PollingParentMonitor (os.kill(pid, 0) every 1s)
-#
-# Why not just poll on Windows? os.kill(pid, 0) on Windows uses OpenProcess
-# with PROCESS_TERMINATE — if the monitor lacks rights, it can accidentally
-# signal or misreport. WaitForSingleObject with SYNCHRONIZE right is the
-# correct kernel-level "is this process alive?" primitive.
-
 import asyncio
 import contextlib
 import logging
@@ -40,14 +26,6 @@ class PollingParentMonitor:
             except TimeoutError:
                 continue
 
-    # AI-REFACTORING: Error handling policy — conservative (assume alive).
-    # ProcessLookupError → PID gone → return False (correct)
-    # PermissionError → process exists but we can't signal it → return True
-    # OSError (catch-all) → unknown edge case → return True (safe default)
-    # Note: on POSIX, os.kill(pid, 0) returns True for zombie processes.
-    # Zombie detection would require /proc/<pid>/status parsing — not worth
-    # the complexity for this use case.
-
     @staticmethod
     def _pid_exists(parent_pid: int) -> bool:
         if parent_pid <= 0:
@@ -62,14 +40,6 @@ class PollingParentMonitor:
             return True
         return True
 
-
-# AI-REFACTORING: This monitor does NO PID probing — intentional.
-# On Windows, os.kill(pid, 0) can trigger TerminateProcess if the caller
-# lacks SYNCHRONIZE rights (edge case with restricted security tokens).
-# Instead, this monitor relies on the bridge websocket disconnecting,
-# which the renderer's _bridge_reader_loop detects and sets _shutdown_event.
-# Trade-off: if the bridge never connects, this monitor hangs forever.
-# This is acceptable because the overlay is non-functional without the bridge.
 
 @dataclass(slots=True)
 class BridgeDisconnectParentMonitor:
@@ -86,13 +56,6 @@ class BridgeDisconnectParentMonitor:
         _ = self.parent_pid
         await stop_event.wait()
 
-
-# AI-REFACTORING: WaitForSingleObject with SYNCHRONIZE right (0x00100000).
-# This is the correct Win32 API for "wait until process exits".
-# The handle remains valid after process exit (kernel transitions it to
-# signaled state). Non-blocking poll (dwMilliseconds=0) checked every 250ms.
-# CloseHandle in finally block ensures cleanup even under task cancellation.
-# The _closed bool flag prevents double-close (safe under Python GIL).
 
 @dataclass(slots=True)
 class WindowsParentHandleMonitor:
@@ -159,11 +122,6 @@ def _default_close_windows_handle(handle: object) -> None:
 
         ctypes.windll.kernel32.CloseHandle(int(handle))
 
-
-# AI-REFACTORING: Injectable dependencies for testing.
-# is_windows: override OS detection without monkey-patching os.name
-# open_windows_handle: inject mock handle opener for unit tests
-# Both have sensible defaults for production use.
 
 def create_parent_monitor(
     parent_pid: int,

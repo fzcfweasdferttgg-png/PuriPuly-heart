@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
 
-
+# Lazy-import sentinels — None until first use.
+# Defers heavy GUI/OSC/soxr imports so CLI subcommands
+# that don't need them start fast.
 HeadlessStdinRunner: Any | None = None
 VrchatOscUdpSender: Any | None = None
 SoxrRuntimeAvailabilityError: type[Exception] | None = None
@@ -175,7 +177,7 @@ def create_llm_provider(*args, **kwargs):
 
 
 def load_settings(path: Path):
-    from puripuly_heart.config.settings import load_settings as load
+    from puripuly_heart.adapters.storage.settings_persistence import load_settings as load
 
     return load(path)
 

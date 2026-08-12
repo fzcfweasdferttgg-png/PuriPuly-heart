@@ -11,11 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from puripuly_heart.config.settings import AppSettings
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.core.stt.controller import ManagedSTTProvider
 
 if TYPE_CHECKING:
+    from puripuly_heart.config.settings import AppSettings
     from puripuly_heart.ports.clock import Clock
     from puripuly_heart.core.pipeline.pipeline import Pipeline
 

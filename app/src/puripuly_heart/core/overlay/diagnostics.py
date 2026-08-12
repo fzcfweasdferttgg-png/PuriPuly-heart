@@ -16,13 +16,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from puripuly_heart.config.paths import user_config_dir
+from puripuly_heart.config.paths import default_overlay_diagnostics_dir
 
 _CHILD_LINE_LIMIT = 100
-
-
-def default_overlay_diagnostics_dir() -> Path:
-    return user_config_dir() / "diagnostics" / "overlay"
 
 
 def _json_safe(value: Any) -> Any:

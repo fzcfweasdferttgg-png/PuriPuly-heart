@@ -8,7 +8,7 @@ from puripuly_heart.ui.components.settings import (
     OptionItem,
     SettingsModal,
 )
-from puripuly_heart.ui.i18n import (
+from puripuly_heart.domain.i18n import (
     available_locales,
     get_locale,
     locale_label,

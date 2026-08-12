@@ -6,7 +6,7 @@ import flet as ft
 
 from puripuly_heart.ui.components.glow import create_glow_stack
 from puripuly_heart.ui.components.warm_document_dialog import open_warm_document_dialog
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 
 FOUNDER_LETTER_PARAGRAPH_KEYS = (
     "openrouter.handoff.letter.p1",

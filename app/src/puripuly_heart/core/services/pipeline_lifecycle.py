@@ -17,8 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from puripuly_heart.config.settings import AppSettings
-from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.audio.gate import VrcMicAudioGate
 from puripuly_heart.core.audio.source import (
     SelfMicCaptureChannelDecision,
@@ -42,6 +40,7 @@ from puripuly_heart.core.vad.silero import SileroVadOnnx
 from puripuly_heart.ports.osc import OscSink
 
 if TYPE_CHECKING:
+    from puripuly_heart.config.settings import AppSettings
     from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 
 logger = logging.getLogger(__name__)
@@ -91,6 +90,13 @@ class PipelineLifecycleManager:
     # Dependency-injected audio loop runner (to avoid core/ → app/ import)
     run_audio_vad_loop: object = None  # injected from app.headless_mic
 
+    # Config DI — defaults injected from app layer
+    default_vad_hangover_ms: float = 500.0
+    vad_model_path_factory: Callable[[], Path] | None = None
+    render_prompt_template: object | None = None
+    render_dual_prompt_template: object | None = None
+    warm_prompt_cache_fn: Callable[[], None] | None = None
+
     # Callbacks
     on_pipeline_created: Callable[[Pipeline], None] | None = None
     on_pipeline_started: Callable[[], None] | None = None
@@ -117,18 +123,14 @@ class PipelineLifecycleManager:
         peer_run_audio_loop: object | None = None,
         peer_vad_model_resolver: object | None = None,
     ) -> Pipeline:
-        from puripuly_heart.config.prompts import (
-            render_dual_translation_prompt_template,
-            render_translation_prompt_template,
-            warm_prompt_cache,
-        )
         from puripuly_heart.core.output_dispatcher import OutputDispatcher
         from puripuly_heart.core.translation_service import TranslationService
 
         assert osc is not None, "osc (OscSink) must be passed by controller"
         assert sender is not None, "sender must be passed by controller"
 
-        warm_prompt_cache()
+        if self.warm_prompt_cache_fn is not None:
+            self.warm_prompt_cache_fn()
 
         if overlay_adapter is None:
             overlay_adapter = object()
@@ -158,7 +160,7 @@ class PipelineLifecycleManager:
             hangover_s=(
                 settings.stt.low_latency_vad_hangover_ms / 1000.0
                 if settings.stt.low_latency_mode
-                else DEFAULT_STABLE_VAD_HANGOVER_MS / 1000.0
+                else self.default_vad_hangover_ms / 1000.0
             ),
             peer_hangover_s=settings.desktop_audio.vad_hangover_ms / 1000.0,
         )
@@ -177,8 +179,8 @@ class PipelineLifecycleManager:
             peer_source_language=settings.languages.peer_source_language,
             peer_target_language=settings.languages.peer_target_language,
             runtime_logging=runtime_logging,
-            render_prompt=render_translation_prompt_template,
-            render_dual_prompt=render_dual_translation_prompt_template,
+            render_prompt=self.render_prompt_template,
+            render_dual_prompt=self.render_dual_prompt_template,
         )
         hub.output_dispatcher = OutputDispatcher(
             osc=osc,
@@ -251,9 +253,8 @@ class PipelineLifecycleManager:
             else False
         )
 
-        from puripuly_heart.config.paths import default_vad_model_path
-
-        vad_model_path = default_vad_model_path()
+        assert self.vad_model_path_factory is not None, "vad_model_path_factory must be injected"
+        vad_model_path = self.vad_model_path_factory()
         ensure_silero_vad_onnx(target_path=vad_model_path)
 
         vad = VadGating(
@@ -265,7 +266,7 @@ class PipelineLifecycleManager:
             hangover_s=(
                 settings.stt.low_latency_vad_hangover_ms / 1000.0
                 if settings.stt.low_latency_mode
-                else DEFAULT_STABLE_VAD_HANGOVER_MS / 1000.0
+                else self.default_vad_hangover_ms / 1000.0
             ),
             diagnostics_enabled=diag_enabled,
         )

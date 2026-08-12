@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import flet as ft
 
@@ -15,7 +15,7 @@ from puripuly_heart.config.settings import (
     STTProviderName,
 )
 from puripuly_heart.ui.fonts import font_for_language
-from puripuly_heart.ui.i18n import (
+from puripuly_heart.domain.i18n import (
     available_locales,
     get_locale,
     locale_label,
@@ -46,6 +46,9 @@ from puripuly_heart.ui.views.osc_section import OscSectionMixin
 from puripuly_heart.ui.views.context_section import ContextSectionMixin
 from puripuly_heart.ui.views.secrets_section import SecretsSectionMixin
 from puripuly_heart.core.services.settings_draft_service import SettingsDraftService
+
+if TYPE_CHECKING:
+    from puripuly_heart.ports.settings_draft import SettingsDraftServiceProtocol as SettingsDraftService
 
 logger = logging.getLogger(__name__)
 

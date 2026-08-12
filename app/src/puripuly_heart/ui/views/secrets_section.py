@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings

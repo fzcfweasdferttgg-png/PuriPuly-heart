@@ -1,21 +1,5 @@
 from __future__ import annotations
 
-# AI-REFACTORING: This module is the central brain of desktop overlay rendering.
-# Data flow:
-#   OverlayPresentationSnapshot → build_desktop_caption_plan() → DesktopCaptionPlan
-#   DesktopCaptionPlan → widgets.build_desktop_caption_surface() → Flet controls
-#   DesktopCaptionPlan → FletDesktopRendererWindow._plan_with_grow_only_caption_card_widths()
-#
-# Key invariants:
-# - Slots are selected by appearance_seq (newest first), NOT by priority.
-#   Priority is used only within _select_visible_caption_lines (dead code, kept
-#   for reference). Upstream contract: ≤2 active blocks at a time.
-# - CJK font selection is dual-track: language tag check (primary subtag) OR
-#   Unicode range scan. Either triggers CJK font family. See _caption_line().
-# - Character width estimation uses hardcoded em-units. Non-CJK non-ASCII
-#   (Cyrillic, Arabic, Thai) falls through to CJK_WIDTH_EM (1.0) — overestimates
-#   by ~40%. Acceptable because card has grow-only floor and ellipsis overflow.
-
 import math
 import re
 from dataclasses import dataclass, replace
@@ -39,7 +23,7 @@ from puripuly_heart.config.settings import (
     DesktopFletOverlayVisualSettings,
 )
 from puripuly_heart.domain.overlay_types import OverlayPresentationBlock, OverlayPresentationSnapshot
-from puripuly_heart.ui.i18n import t_for_locale
+from puripuly_heart.domain.i18n import t_for_locale
 
 # ---------------------------------------------------------------------------
 # Section A — Constants
@@ -129,22 +113,6 @@ class DesktopCaptionMappingRule:
     truncation: str
 
 
-# AI-REFACTORING: This mapping table is a REVIEWABLE CONTRACT between the
-# overlay snapshot domain model and the desktop caption visual layer.
-# It documents every block_variant→slot→role→priority mapping. The table itself
-# is NOT consumed by code at runtime — it exists for human/AI review only.
-# Actual mapping logic lives in _caption_lines_for_block() and its callees.
-# If you change block_variant semantics in overlay_types, update BOTH this
-# table AND the builder functions.
-
-# Reviewable snapshot mapping table required before renderer coding.
-# Current contract inspected in domain.overlay_types:
-# OverlayPresentationSnapshot(revision, calibration, blocks[]), where blocks[]
-# contains OverlayPresentationBlock(channel self|peer, block_variant
-# active_self|active_peer|finalized, primary_text, secondary_text,
-# secondary_enabled, appearance_seq). Desktop visual sizing is owned by repaired
-# desktop visual settings/runtime controls, so snapshot.calibration is not mapped
-# to desktop caption visual state.
 DESKTOP_CAPTION_MAPPING_TABLE: tuple[DesktopCaptionMappingRule, ...] = (
     DesktopCaptionMappingRule(
         snapshot_field="blocks[]",
@@ -841,13 +809,6 @@ def _preview_block(
 # ---------------------------------------------------------------------------
 
 
-# AI-REFACTORING: Slot selection sorts by (appearance_seq, occupant_key) and
-# truncates to MAX_VISIBLE_SLOTS (2). This means the 2 NEWEST blocks are shown,
-# not the 2 highest-priority. Priority is assigned per-line but only used for
-# the (currently dead) _select_visible_caption_lines function.
-# Upstream contract: the overlay presenter sends ≤2 relevant blocks. If this
-# contract changes, either revive _select_visible_caption_lines or change
-# the sort key here.
 def _caption_slots_for_snapshot(
     snapshot: OverlayPresentationSnapshot,
     *,
@@ -1210,15 +1171,6 @@ def _estimated_caption_line_width(text: str, font_size: int) -> float:
     return sum(_estimated_caption_char_width(char, font_size) for char in text)
 
 
-# AI-REFACTORING: Hardcoded em-width estimation — NOT measured from font metrics.
-# Widths: CJK=1.0em, Latin-wide=0.62em, Latin-narrow(ilI|)=0.42em, space=0.32em,
-# punctuation=0.38em, emoji=1.15em. Final fallback for non-CJK non-ASCII scripts
-# (Cyrillic, Arabic, Thai, Devanagari) returns CJK_WIDTH (1.0em) — this
-# OVERESTIMATES by ~40% for these scripts. Acceptable because:
-# 1. Card width has grow-only floor (won't shrink to fit)
-# 2. Text has max_lines + ellipsis overflow
-# 3. Min card width (_DESKTOP_CAPTION_MIN_DYNAMIC_CARD_WIDTH=320) absorbs most error
-# If visual quality matters for Cyrillic, add a _LATIN_NON_CJK_WIDTH_EM=0.55 fallback.
 def _estimated_caption_char_width(char: str, font_size: int) -> float:
     codepoint = ord(char)
     if char.isspace():
@@ -1261,13 +1213,6 @@ def _desktop_caption_font_family_for_text(text: str, language: str | None = None
     return _DESKTOP_CAPTION_LATIN_FONT_FAMILY
 
 
-# AI-REFACTORING: CJK font policy — dual detection track.
-# Track 1: Language tag → primary subtag in _DESKTOP_CAPTION_CJK_LANGUAGE_PRIMARY_SUBTAGS
-# Track 2: Unicode range scan → _is_caption_cjk_or_hangul() on each char
-# Either track triggers CJK font ("Noto Sans CJK JP") and medium weight.
-# Missing ranges: CJK Extension B (0x20000-0x2A6DF), CJK Symbols (0x3000-0x303F),
-# Hangul Jamo Extended-B (0xD7B0-0xD7FF). These are rare in speech transcription.
-# If you add CJK Extension B, use a supplementary plane check (codepoint > 0xFFFF).
 def _desktop_caption_uses_cjk_font_policy(text: str, language: str | None = None) -> bool:
     return _desktop_caption_language_is_cjk(language) or _desktop_caption_text_contains_cjk(text)
 
@@ -1312,12 +1257,6 @@ def _validated_visual_state(
     )
 
 
-# AI-REFACTORING: Cross-validation with settings module.
-# _DESKTOP_CAPTION_SIZE_PRESETS is local to this module. The settings module
-# has DESKTOP_FLET_SIZE_PRESETS with the same keys but stores (width, height) tuples.
-# This function validates they match at runtime. If you add a new size preset,
-# update BOTH _DESKTOP_CAPTION_SIZE_PRESETS here AND DESKTOP_FLET_SIZE_PRESETS
-# in settings.py — the RuntimeError will catch mismatches.
 def _desktop_caption_size_preset_for_dimensions(
     width: int,
     height: int,
@@ -1332,10 +1271,6 @@ def _desktop_caption_size_preset_for_dimensions(
     return _DESKTOP_CAPTION_SIZE_PRESETS[DESKTOP_FLET_DEFAULT_SIZE_PRESET]
 
 
-# AI-REFACTORING: ARGB hex encoding for Flet bgcolor.
-# Flet expects "#AARRGGBB" format. This function encodes alpha as the FIRST
-# two hex digits (e.g., 0.5 alpha → "#80000000"). Don't confuse with RGBA
-# or "#RRGGBBAA" formats used by CSS/web.
 def _caption_background_color(background_alpha: float) -> str:
     if background_alpha <= 0:
         return _DESKTOP_CAPTION_TRANSPARENT

@@ -5,7 +5,7 @@ import json
 from typing import TYPE_CHECKING
 
 from puripuly_heart.app.wiring import build_peer_stt_provider_signature
-from puripuly_heart.config.settings import LLMProviderName, STTProviderName
+from puripuly_heart.domain.providers import LLMProviderName, STTProviderName
 from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
 from puripuly_heart.core.stt.local_stt_manager import LOCAL_STT_PROVIDERS as _LOCAL_STT_PROVIDERS
 

@@ -15,9 +15,21 @@ from __future__ import annotations
 import copy
 import json
 
-from puripuly_heart.config.settings import (
-    LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS,
-    LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS,
+LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS: frozenset[str] = frozenset(
+    {
+        "model",
+        "messages",
+        "stream",
+        "tools",
+        "tool_choice",
+        "functions",
+        "function_call",
+        "max_tokens",
+    }
+)
+
+LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS: frozenset[str] = frozenset(
+    {"api_key", "authorization", "headers", "token", "secret", "password"}
 )
 
 

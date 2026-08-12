@@ -12,7 +12,7 @@ from puripuly_heart.ui.components.settings import (
     OptionItem,
     SettingsModal,
 )
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 from puripuly_heart.ui.theme import COLOR_NEUTRAL
 
 if TYPE_CHECKING:

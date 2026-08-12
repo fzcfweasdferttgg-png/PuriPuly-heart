@@ -7,7 +7,7 @@ import flet as ft
 
 from puripuly_heart import __version__
 from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
     COLOR_NEUTRAL,

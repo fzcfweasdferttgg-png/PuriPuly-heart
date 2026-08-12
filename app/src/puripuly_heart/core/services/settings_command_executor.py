@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from puripuly_heart.config.settings import AppSettings, LLMProviderName, STTProviderName
+from puripuly_heart.domain.providers import LLMProviderName, STTProviderName
 from puripuly_heart.domain.settings_commands import (
     ChangeAudioDevice,
     ChangeBackupTranslation,
@@ -60,7 +60,8 @@ from puripuly_heart.domain.settings_commands import (
 )
 
 if TYPE_CHECKING:
-    from puripuly_heart.core.services.settings_draft_service import SettingsDraftService
+    from puripuly_heart.config.settings import AppSettings
+    from puripuly_heart.ports.settings_draft import SettingsDraftServiceProtocol as SettingsDraftService
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +101,11 @@ class SettingsCommandExecutor:
         self,
         settings: AppSettings,
         draft_service: SettingsDraftService | None = None,
+        materialize_fn: object | None = None,
     ) -> None:
         self._settings = settings
         self._draft_service = draft_service
+        self._materialize_fn = materialize_fn
 
     def update_settings(self, settings: AppSettings) -> None:
         """Update the live settings reference (called after apply_settings)."""
@@ -408,7 +411,7 @@ class SettingsCommandExecutor:
         draft = draft_svc._ensure_provider_settings_draft()
         draft.backup_translation.enabled = cmd.enabled
         if cmd.mode is not None:
-            from puripuly_heart.config.settings import LLMProviderName
+            from puripuly_heart.domain.providers import LLMProviderName
             draft.backup_translation.mode = LLMProviderName(cmd.mode)
         draft_svc.has_provider_changes = True
         return CommandResult(success=True, settings=self._settings)
@@ -421,7 +424,7 @@ class SettingsCommandExecutor:
             return CommandResult(success=False, error="No draft service for translation selection")
         draft = draft_svc._ensure_provider_settings_draft()
         draft.provider.llm = LLMProviderName(cmd.provider)
-        from puripuly_heart.config.settings import materialize_translation_settings
-        materialize_translation_settings(draft)
+        assert self._materialize_fn is not None, "materialize_fn must be injected"
+        self._materialize_fn(draft)
         draft_svc.has_provider_changes = True
         return CommandResult(success=True, settings=self._settings)

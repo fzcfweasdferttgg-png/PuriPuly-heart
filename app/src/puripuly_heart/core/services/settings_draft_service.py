@@ -12,13 +12,16 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Callable
+from typing import TYPE_CHECKING
 
-from puripuly_heart.config.settings import AppSettings
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from puripuly_heart.config.settings import AppSettings
+
+    OverlayStateFn = Callable[[AppSettings], AppSettings] | None
 
 logger = logging.getLogger(__name__)
-
-OverlayStateFn = Callable[[AppSettings], AppSettings] | None
 
 
 class SettingsDraftService:
@@ -46,7 +49,7 @@ class SettingsDraftService:
         self.has_pending_prompt_changes = False
 
     # Lazily creates _provider_settings_draft on first mutation.
-    # 31 call sites from section mixins stage changes through this gate.
+    # Section mixins stage changes through this gate.
     # Persists until consume_*() or reset().
 
     def _ensure_provider_settings_draft(self) -> AppSettings:

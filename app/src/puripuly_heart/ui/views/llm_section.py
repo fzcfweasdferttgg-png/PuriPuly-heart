@@ -24,7 +24,7 @@ from puripuly_heart.domain.settings_commands import (
 )
 from puripuly_heart.domain.settings_validation import validate_extra_body_json
 from puripuly_heart.ui.components.settings import ApiKeyField, OptionItem, SettingsModal
-from puripuly_heart.ui.i18n import provider_label, t
+from puripuly_heart.domain.i18n import provider_label, t
 from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL, COLOR_ON_BACKGROUND, COLOR_PRIMARY, COLOR_NEUTRAL_DARK
 
 from puripuly_heart.ui.views.settings_helpers import _update_control_if_mounted
@@ -86,7 +86,7 @@ class LlmSectionMixin:
         self._openai_compatible_base_url.value = settings.provider.openai_compatible.base_url
         self._openai_compatible_base_url.error_text = None
         self._openai_compatible_model.value = settings.provider.openai_compatible.model or ""
-        from puripuly_heart.config.providers import load_providers
+        from puripuly_heart.adapters.storage.providers_persistence import load_providers
         _loaded_providers = load_providers()
         _opts = self._openai_compatible_provider.options or []
         _matched = _opts[0].key if _opts else None
@@ -250,7 +250,7 @@ class LlmSectionMixin:
             self._command_executor.execute(ChangeOpenAICompatibleField(field="model", value=raw_value))
 
     def _on_openai_compatible_provider_change(self, e) -> None:
-        from puripuly_heart.config.providers import load_providers
+        from puripuly_heart.adapters.storage.providers_persistence import load_providers
         selected = e.data if e else None
         if not selected:
             return
@@ -741,7 +741,7 @@ class LlmSectionMixin:
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
-        from puripuly_heart.config.providers import load_providers
+        from puripuly_heart.adapters.storage.providers_persistence import load_providers
         _providers = load_providers()
         _provider_options = []
         for key, info in _providers.items():

@@ -9,7 +9,7 @@ from puripuly_heart.ui.components.language_card import LanguageCard
 from puripuly_heart.ui.components.language_modal import LanguageModal
 from puripuly_heart.ui.components.power_button import PowerButton
 from puripuly_heart.ui.fonts import font_for_language
-from puripuly_heart.ui.i18n import get_locale, language_name, t
+from puripuly_heart.domain.i18n import get_locale, language_name, t
 from puripuly_heart.domain.overlay_contract import OverlayPeerConsumerContract
 
 DASHBOARD_LAYOUT_GAP = 12

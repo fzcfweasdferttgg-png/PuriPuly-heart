@@ -15,7 +15,7 @@ import flet as ft
 
 from puripuly_heart.ui.components.glow import GLOW_CARD, create_glow_stack
 from puripuly_heart.ui.fonts import font_for_language
-from puripuly_heart.ui.i18n import get_locale, source_label, t
+from puripuly_heart.domain.i18n import get_locale, source_label, t
 from puripuly_heart.ui.theme import (
     COLOR_NEUTRAL,
     COLOR_ON_BACKGROUND,

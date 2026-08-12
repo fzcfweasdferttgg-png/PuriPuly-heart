@@ -37,18 +37,9 @@ DEFAULT_CUSTOM_VOCAB_TERMS: dict[str, tuple[str, ...]] = {
     "zh-CN": ("airi", "shinano"),
     "ja": ("airi", "shinano"),
 }
-LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS = frozenset(
-    {
-        "model",
-        "messages",
-        "stream",
-        "tools",
-        "tool_choice",
-        "functions",
-        "function_call",
-        "max_tokens",
-    }
-)
-LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS = frozenset(
-    {"api_key", "authorization", "headers", "token", "secret", "password"}
+
+# Re-exported from domain — canonical source of truth.
+from puripuly_heart.domain.settings_validation import (  # noqa: E402
+    LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS,
+    LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS,
 )

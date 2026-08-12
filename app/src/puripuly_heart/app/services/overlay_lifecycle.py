@@ -195,6 +195,7 @@ class OverlayLifecycleMixin:
                 )
 
             from puripuly_heart.app.wiring import get_or_create_job_handle
+            from puripuly_heart.adapters.overlay.infrastructure import OverlayInfrastructure
 
             manager = OverlayProcessManager(
                 process_runner=self._overlay_process_runner_for_target(overlay_target),
@@ -208,6 +209,7 @@ class OverlayLifecycleMixin:
                 logging_mode=self.runtime_logging_mode,
                 diagnostics=diagnostics,
                 job_handle=get_or_create_job_handle(),
+                infrastructure=OverlayInfrastructure(),
             )
             self._overlay_manager = manager
             await manager.start()

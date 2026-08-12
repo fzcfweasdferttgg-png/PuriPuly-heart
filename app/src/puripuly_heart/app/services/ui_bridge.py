@@ -11,7 +11,7 @@ import flet as ft
 from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
 from puripuly_heart.domain.events import UIEvent, UIEventType
 from puripuly_heart.domain.models import OSCMessage, Transcript, Translation
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 
 logger = logging.getLogger(__name__)
 

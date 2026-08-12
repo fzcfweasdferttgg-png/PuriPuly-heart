@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from puripuly_heart.ui.fonts import font_for_language
-from puripuly_heart.ui.i18n import get_locale, t
+from puripuly_heart.domain.i18n import get_locale, t
 from puripuly_heart.ui.theme import COLOR_PRIMARY, COLOR_SUCCESS
 
 if TYPE_CHECKING:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
-from puripuly_heart.config.settings import STTProviderName
+from puripuly_heart.domain.providers import STTProviderName
 from puripuly_heart.domain.overlay_contract import (
     OverlayPeerConsumerContract,
     build_overlay_peer_consumer_contract,

@@ -50,7 +50,7 @@ class PeerRuntimeManagerMixin:
             return
         enqueue_disclosure = getattr(hub, "enqueue_peer_translation_disclosure", None)
         if callable(enqueue_disclosure):
-            from puripuly_heart.ui.i18n import t
+            from puripuly_heart.domain.i18n import t
             enqueue_disclosure(t("peer_translation.disclosure"))
 
     def _create_peer_stt_provider_from_runtime_config(

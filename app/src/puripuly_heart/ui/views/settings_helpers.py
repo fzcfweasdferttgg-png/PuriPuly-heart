@@ -18,7 +18,7 @@ from puripuly_heart.ui.components.settings import (
 from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
 from puripuly_heart.ui.components.subtab_shell import TextSubtab, TextSubtabShell
 from puripuly_heart.ui.fonts import font_for_language
-from puripuly_heart.ui.i18n import (
+from puripuly_heart.domain.i18n import (
     get_locale,
     provider_label,
     t,
@@ -645,7 +645,7 @@ class SettingsHelpersMixin:
     def _on_fallback_status_click(self, e) -> None:
         if not self.page:
             return
-        from puripuly_heart.config.settings import LLMProviderName
+        from puripuly_heart.domain.providers import LLMProviderName
         display_settings = self._build_settings_with_provider_draft()
         bt = display_settings.backup_translation if display_settings else None
         if bt and bt.enabled:
@@ -677,8 +677,8 @@ class SettingsHelpersMixin:
     def _on_fallback_status_selected(self, value: str) -> None:
         if not self._settings:
             return
-        from puripuly_heart.config.providers import load_providers
-        from puripuly_heart.config.settings import LLMProviderName
+        from puripuly_heart.adapters.storage.providers_persistence import load_providers
+        from puripuly_heart.domain.providers import LLMProviderName
         # Commit current fallback fields before switching mode
         self._commit_fallback_fields_from_controls()
         self._commit_fallback_local_llm_fields_from_controls()

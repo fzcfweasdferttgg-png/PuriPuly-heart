@@ -1,15 +1,5 @@
 from __future__ import annotations
 
-# AI-REFACTORING: Data flow through desktop overlay modules:
-#   overlay_types.OverlayPresentationSnapshot (from bridge)
-#     → caption_plan.build_desktop_caption_plan() → DesktopCaptionPlan
-#       → widgets.build_desktop_caption_surface() → Flet controls
-#         → FletDesktopRendererWindow._render_page() → page.update()
-#   The renderer (desktop_overlay_renderer.py) owns the websocket bridge
-#   and dispatches snapshots/runtime_controls to this window via the
-#   RendererWindow protocol. Circular import is broken by lazy import
-#   in DesktopOverlayRenderer.__init__ (renderer→desktop_overlay).
-
 import asyncio
 import contextlib
 import inspect
@@ -41,7 +31,7 @@ from puripuly_heart.domain.overlay_types import (
     normalize_overlay_logging_mode,
 )
 from puripuly_heart.ui.fonts import assets_dir
-from puripuly_heart.ui.i18n import t_for_locale
+from puripuly_heart.domain.i18n import t_for_locale
 from puripuly_heart.ui.desktop_overlay_caption_plan import (
     DesktopCaptionPlan,
     DesktopCaptionSlot,
@@ -71,10 +61,6 @@ from puripuly_heart.ui.desktop_overlay_widgets import (
     build_desktop_transparent_sizing_host,
 )
 
-# AI-REFACTORING: renderer imports are top-level here (desktop_overlay→renderer).
-# The reverse direction (renderer→desktop_overlay) uses a lazy import inside
-# DesktopOverlayRenderer.__init__ to break the cycle. Don't move either side
-# to module-level on the other end — it will cause ImportError at startup.
 from puripuly_heart.ui.desktop_overlay_renderer import (
     _STARTUP_FAILURE_EXIT_CODE,
     _SUCCESS_EXIT_CODE,
@@ -219,12 +205,6 @@ class FletDesktopRendererWindow:
         self._caption_card_width_floor_by_block: dict[tuple[str, str, int], float] = {}
         self._last_render_trace: _DesktopRenderTrace | None = None
 
-    # AI-REFACTORING: This method runs BEFORE the Flet page exists. It captures
-    # visual_state and window_bounds from the initial runtime controls so that
-    # _configure_base_window can apply them to the first page render. Controls
-    # that can't be primed are returned as residual for normal dispatch after
-    # the page is created. If you add new startup-sensitive controls, prime
-    # them here — don't wait for dispatch_runtime_control.
     def prime_startup_runtime_controls(
         self,
         payloads: tuple[dict[str, object], ...],
@@ -471,13 +451,6 @@ class FletDesktopRendererWindow:
             emit_event=True,
         )
 
-    # AI-REFACTORING: State machine — interaction_mode determines content_kind:
-    #   EDIT → drag_area (or drag_area_with_empty_lock_action if no slots)
-    #   PASS_THROUGH + surface_visible → caption_surface (no drag, no click)
-    #   PASS_THROUGH + !surface_visible → transparent_host (invisible, layout-stable)
-    # Changing interaction_mode triggers _apply_interaction_window_chrome which
-    # sets window.ignore_mouse_events. The empty lock action in EDIT mode is the
-    # only way for the user to transition to PASS_THROUGH.
     def _render_page(self) -> None:
         page = self._page
         if page is None:
@@ -576,11 +549,6 @@ class FletDesktopRendererWindow:
         self._reveal_window_if_supported()
         page.update()
 
-    # AI-REFACTORING: ignore_mouse_events is the Flet mechanism for click-through.
-    # When True, the overlay window passes all mouse events to the window below.
-    # This MUST be synchronized with _interaction_mode — if they diverge, the
-    # user either can't interact with the overlay (stuck locked) or can't click
-    # through it (stuck interactive). Only EDIT mode allows interaction.
     def _apply_interaction_window_chrome(self) -> None:
         page = self._page
         if page is None:
@@ -863,13 +831,6 @@ class FletDesktopRendererWindow:
         )
         return self._plan_with_grow_only_caption_card_widths(plan)
 
-    # AI-REFACTORING: Grow-only width floor prevents caption card jitter.
-    # When text gets shorter (user stops mid-sentence), the card width stays at
-    # the previous maximum. Floor is clamped to current window_width on shrink.
-    # Floor memory is keyed by (block_id, occupant_key, appearance_seq) — when
-    # a new block appears, old keys are evicted. When all blocks disappear,
-    # memory is cleared. This is intentional: shrinking cards mid-speech looks
-    # like a visual glitch to the user.
     def _plan_with_grow_only_caption_card_widths(
         self,
         plan: DesktopCaptionPlan,
@@ -1042,14 +1003,6 @@ class FletDesktopRendererWindow:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
-    # AI-REFACTORING: Bounds echo suppression prevents feedback loops.
-    # When the parent/controller sends apply_window_bounds, the Flet window
-    # fires MOVE/MOVED/RESIZE/RESIZED events back. Without suppression, the
-    # renderer would emit window_bounds_changed back to the controller, which
-    # might re-apply them, creating an infinite loop. The suppression window
-    # (_PROGRAMMATIC_BOUNDS_ECHO_SUPPRESSION_S = 0.25s) compares incoming
-    # bounds against the last programmatic signature within tolerance
-    # (_PROGRAMMATIC_BOUNDS_ECHO_TOLERANCE_PX = 2.0px).
     async def _emit_debounced_bounds_sample(self) -> None:
         if self._closed.is_set():
             return

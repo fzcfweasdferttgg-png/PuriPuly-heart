@@ -1,7 +1,6 @@
 """Local STT lifecycle manager — install state, download, warmup.
 
-Extracted from GuiController to decouple local STT management
-from UI layer. Manages the state machine:
+Decoupled from UI layer. Manages the state machine:
   ready → missing → downloading → ready/failed
 """
 
@@ -13,10 +12,11 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from puripuly_heart.config.settings import AppSettings, STTProviderName
-from puripuly_heart.core.inference.subprocess_backend import SubprocessSTTError
+from puripuly_heart.domain.providers import STTProviderName
+from puripuly_heart.domain.stt_events import STTError
 from puripuly_heart.core.local_stt_assets import (
     LocalSTTInstallState,
     LocalSTTManifestInvalidError,
@@ -25,6 +25,7 @@ from puripuly_heart.core.local_stt_assets import (
 )
 
 if TYPE_CHECKING:
+    from puripuly_heart.config.settings import AppSettings
     from puripuly_heart.core.pipeline.pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class LocalSTTManager:
 
     hub: Pipeline
     config_path: object  # Path
+    models_dir: Path = field(default_factory=lambda: Path("."))
     peer_stt_backend_factory: Callable[..., object] | None = None
 
     # Callbacks
@@ -188,7 +190,6 @@ class LocalSTTManager:
                 load_local_stt_asset_manifest,
                 resolve_model_id,
             )
-            from puripuly_heart.config.paths import default_models_dir
 
             model_id = resolve_model_id(
                 settings.provider.stt.value, settings.provider.stt_quant
@@ -199,7 +200,7 @@ class LocalSTTManager:
                 self._sync_notice(settings)
                 return False
 
-            model_dir = default_local_stt_model_dir(model_id, data_dir=default_models_dir())
+            model_dir = default_local_stt_model_dir(model_id, data_dir=self.models_dir)
             manifest = load_local_stt_asset_manifest(model_id)
             install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
             if install_state.status != "ready":
@@ -213,13 +214,13 @@ class LocalSTTManager:
 
         try:
             if not await self.hub.stt.warmup():
-                raise SubprocessSTTError("STT warmup returned False")
+                raise STTError("STT warmup returned False")
             self._install_state = LocalSTTInstallState(status="ready")
             if self._runtime_status != "downloading":
                 self._runtime_status = "ready"
             self._sync_notice(settings)
             return True
-        except (LocalSTTModelMissingError, LocalSTTManifestInvalidError, SubprocessSTTError) as exc:
+        except (LocalSTTModelMissingError, LocalSTTManifestInvalidError, STTError) as exc:
             logger.error("Local STT warmup failed: %s", exc)
             return False
 
@@ -234,7 +235,6 @@ class LocalSTTManager:
                 load_local_stt_asset_manifest,
                 resolve_model_id,
             )
-            from puripuly_heart.config.paths import default_models_dir
 
             model_id = resolve_model_id(
                 settings.provider.peer_stt.value,
@@ -244,7 +244,7 @@ class LocalSTTManager:
                 logger.error("Peer local STT: quant not selected")
                 return False
 
-            model_dir = default_local_stt_model_dir(model_id, data_dir=default_models_dir())
+            model_dir = default_local_stt_model_dir(model_id, data_dir=self.models_dir)
             manifest = load_local_stt_asset_manifest(model_id)
             install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
             if install_state.status != "ready":
@@ -261,14 +261,14 @@ class LocalSTTManager:
                 self._runtime_status = "ready"
             self._sync_notice(settings)
             return True
-        except (LocalSTTModelMissingError, LocalSTTManifestInvalidError, SubprocessSTTError) as exc:
+        except (LocalSTTModelMissingError, LocalSTTManifestInvalidError, STTError) as exc:
             logger.error("Peer local STT warmup failed: %s", exc)
             return False
 
     async def _probe_peer_local_stt_backend(self) -> None:
         """Probe peer STT backend — open+close session to verify load."""
         if self.peer_stt_backend_factory is None:
-            raise SubprocessSTTError("peer_stt_backend_factory not configured")
+            raise STTError("peer_stt_backend_factory not configured")
         peer_backend = self.peer_stt_backend_factory()
         session = None
         try:

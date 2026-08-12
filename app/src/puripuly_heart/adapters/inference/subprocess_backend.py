@@ -41,7 +41,7 @@ from typing import AsyncIterator
 import numpy as np
 
 from puripuly_heart.core.audio.format import pcm16le_bytes_to_float32
-from puripuly_heart.domain.stt_events import STTBackendTranscriptEvent
+from puripuly_heart.domain.stt_events import STTBackendTranscriptEvent, STTError
 from puripuly_heart.ports.stt import (
     STTBackend,
     STTBackendSession,
@@ -73,7 +73,7 @@ def _assign_to_job(pid: int, job_handle: int | None) -> None:
         logger.warning("[JobObject] Failed to assign pid=%d: %s", pid, exc)
 
 
-class SubprocessSTTError(RuntimeError):
+class SubprocessSTTError(STTError):
     """Raised when the inference worker subprocess fails."""
 
 
@@ -123,9 +123,9 @@ class SubprocessSTTBackend(STTBackend):
         # Subprocess protocol: spawn → wait "ready" → send "init" → wait "ready".
         # Two-phase init: first "ready" = process started, second = model loaded.
         # Timeouts: 30s for start, 120s for model load (can be slow on first run).
-        # worker.py path: adapters/inference/worker.py relative to core/inference (goes up 3 levels).
+        # worker.py is in the same directory as this file (adapters/inference/).
         worker_script = str(
-            Path(__file__).resolve().parent.parent.parent / "adapters" / "inference" / "worker.py"
+            Path(__file__).resolve().parent / "worker.py"
         )
 
         python_exe = sys.executable

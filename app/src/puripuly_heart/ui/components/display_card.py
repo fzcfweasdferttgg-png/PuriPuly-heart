@@ -5,7 +5,7 @@ from typing import Callable
 import flet as ft
 
 from puripuly_heart.ui.components.glow import create_glow_stack
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.domain.i18n import t
 from puripuly_heart.ui.theme import (
     COLOR_NEUTRAL,
     COLOR_NEUTRAL_DARK,

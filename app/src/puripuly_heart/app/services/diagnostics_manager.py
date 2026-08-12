@@ -5,7 +5,7 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
-from puripuly_heart.config.settings import STTProviderName
+from puripuly_heart.domain.providers import STTProviderName
 from puripuly_heart.core.stt.controller import FinalTranscriptSuppressedNotification
 from puripuly_heart.core.runtime_logging import SessionLoggingMode
 

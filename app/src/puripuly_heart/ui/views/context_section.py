@@ -14,7 +14,7 @@ from puripuly_heart.ui.components.settings import (
 )
 from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
 from puripuly_heart.ui.fonts import font_for_language
-from puripuly_heart.ui.i18n import get_locale, t
+from puripuly_heart.domain.i18n import get_locale, t
 from puripuly_heart.ui.views.settings_helpers import _make_text_button, _set_text_button_label
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,

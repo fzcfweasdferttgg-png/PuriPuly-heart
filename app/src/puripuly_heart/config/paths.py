@@ -52,3 +52,8 @@ def default_vad_model_path() -> Path:
 
 def default_models_dir() -> Path:
     return user_config_dir() / MODELS_DIRNAME
+
+
+def default_overlay_diagnostics_dir() -> Path:
+    """Default directory for overlay diagnostics data."""
+    return user_config_dir() / "diagnostics" / "overlay"
