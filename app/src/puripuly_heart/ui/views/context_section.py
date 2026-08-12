@@ -7,8 +7,16 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from puripuly_heart.config.settings import MAX_CUSTOM_VOCAB_TERMS
-from puripuly_heart.ui.components.settings import OptionItem, SettingsModal
-from puripuly_heart.ui.i18n import t
+from puripuly_heart.ui.components.settings import (
+    CustomVocabularyTagEditor,
+    OptionItem,
+    PromptEditor,
+    SettingsModal,
+)
+from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
+from puripuly_heart.ui.fonts import font_for_language
+from puripuly_heart.ui.i18n import get_locale, t
+from puripuly_heart.ui.views.settings_helpers import _make_text_button, _set_text_button_label
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
     COLOR_NEUTRAL,
@@ -22,8 +30,43 @@ if TYPE_CHECKING:
     from puripuly_heart.ui.components.settings import SettingsUnitCard
 
 
+# AI: ATTRIBUTE OWNERSHIP — three widget builders:
+#   _build_integrated_context_unit_card: _integrated_context_label/button/hint/card
+#   _build_prompt_widgets: _prompt_editor, _prompt_mode, _prompt_single/dual_btn,
+#     _prompt_mode_row, _persona_title, _prompt_for_text, _reset_prompt_btn
+#   _build_vocabulary_widgets: _custom_vocab_title, _custom_vocab_description_text,
+#     _custom_vocab_tag_editor
+#
+# DRAFT PATTERN: _on_prompt_change → _stage_prompt_draft (settings.py)
+# stages prompt text in _provider_settings_draft without triggering apply.
+# _on_prompt_commit → consume_prompt_apply_settings applies only if no pending
+# provider changes. Prompt changes are SEPARATE from provider changes —
+# they use has_pending_prompt_changes, not has_provider_changes.
+#
+# _prompt_mode toggles between "single" (default per-provider prompt) and "dual"
+# (dual-translation template). Mode affects which prompt text is shown.
+
 class ContextSectionMixin:
     """Mixin providing integrated-context, prompt, and custom-vocabulary methods."""
+
+    # ------------------------------------------------------------------
+    # Load from settings
+    # ------------------------------------------------------------------
+
+    def _load_context_from_settings(self, settings: "AppSettings") -> None:
+        """Load prompt and vocabulary settings into controls."""
+        if not hasattr(self, '_prompt_editor'):
+            return
+        provider_name = self._active_prompt_key()
+        self._prompt_editor.set_provider(provider_name)
+        settings.system_prompts = {}
+        if settings.system_prompt.strip():
+            self._prompt_editor.value = settings.system_prompt
+        else:
+            self._prompt_editor.load_default_prompt(emit_change=False)
+            settings.system_prompt = self._prompt_editor.value
+        self._sync_custom_vocabulary_editor_from_settings()
+        self._sync_prompt_tab_copy()
 
     # ------------------------------------------------------------------
     # Integrated context card
@@ -78,6 +121,130 @@ class ContextSectionMixin:
         self._settings.ui.integrated_context_enabled = value == "on"
         self._sync_overlay_controls()
         self._emit_settings_changed()
+
+    # ------------------------------------------------------------------
+    # Prompt widgets
+    # ------------------------------------------------------------------
+
+    def _build_prompt_widgets(self) -> ft.Control:
+        """Build the persona/prompt section (Row 8). Returns SharedCardWrapper."""
+        self._prompt_editor = PromptEditor(
+            on_change=self._on_prompt_change,
+            on_commit=self._on_prompt_commit,
+        )
+        self._prompt_mode = "single"  # "single" or "dual"
+        self._prompt_single_btn = self._make_quant_button(
+            t("settings.prompt_mode.single", default="Single"),
+            self._on_prompt_mode_single,
+        )
+        self._prompt_dual_btn = self._make_quant_button(
+            t("settings.prompt_mode.dual", default="Dual"),
+            self._on_prompt_mode_dual,
+        )
+        self._prompt_single_btn.bgcolor = COLOR_PRIMARY
+        self._prompt_single_btn.border = ft.border.all(1, COLOR_PRIMARY)
+        self._prompt_single_btn.content.color = ft.Colors.WHITE
+        self._prompt_single_btn.content.weight = ft.FontWeight.BOLD
+        self._prompt_mode_row = ft.Row(
+            [self._prompt_single_btn, self._prompt_dual_btn],
+            spacing=4,
+        )
+        self._persona_title = ft.Text(
+            t("settings.section.persona"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
+        )
+        self._prompt_for_text = ft.Text(
+            self._prompt_provider_copy(),
+            size=16,
+            color=COLOR_NEUTRAL,
+        )
+
+        # Reset button (matches Persona title color, hover -> primary)
+        self._reset_prompt_btn = _make_text_button(
+            t("settings.reset_prompt"),
+            icon=ft.Icons.REFRESH_ROUNDED,
+            style=ft.ButtonStyle(
+                color={
+                    ft.ControlState.HOVERED: COLOR_PRIMARY,
+                    ft.ControlState.DEFAULT: COLOR_NEUTRAL,
+                },
+                icon_color={
+                    ft.ControlState.HOVERED: COLOR_PRIMARY,
+                    ft.ControlState.DEFAULT: COLOR_NEUTRAL,
+                },
+                text_style=ft.TextStyle(
+                    size=20,
+                    font_family=font_for_language(get_locale()),
+                ),
+                overlay_color=ft.Colors.TRANSPARENT,
+                animation_duration=0,
+            ),
+            on_click=self._on_reset_prompt,
+        )
+
+        # Header row with title, prompt mode toggle, and reset button
+        persona_header = ft.Row(
+            controls=[self._persona_title, self._prompt_mode_row, ft.Container(expand=True), self._reset_prompt_btn],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        # Simple container like Licenses (no border, no internal scroll)
+        prompt_container = ft.Container(
+            content=self._prompt_editor,
+            width=float("inf"),
+        )
+
+        persona_card = SharedCardWrapper(
+            ft.Column(
+                [
+                    persona_header,
+                    ft.Container(height=16),
+                    prompt_container,
+                ],
+                spacing=0,
+            ),
+            height=None,
+            expand=False,
+        )
+        return persona_card
+
+    # ------------------------------------------------------------------
+    # Vocabulary widgets
+    # ------------------------------------------------------------------
+
+    def _build_vocabulary_widgets(self) -> ft.Control:
+        """Build the custom vocabulary section (Row 9). Returns SharedCardWrapper."""
+        self._custom_vocab_title = ft.Text(
+            t("settings.section.custom_vocabulary"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._custom_vocab_description_text = ft.Text(
+            t("settings.custom_vocabulary.description"),
+            size=16,
+            color=COLOR_NEUTRAL,
+        )
+        self._custom_vocab_tag_editor = CustomVocabularyTagEditor(
+            on_add_terms=self._on_custom_vocabulary_add_terms,
+            on_remove_term=self._on_custom_vocabulary_remove_term,
+        )
+        self._apply_custom_vocabulary_tag_editor_locale()
+        row7 = SharedCardWrapper(
+            ft.Column(
+                [
+                    self._custom_vocab_title,
+                    ft.Container(height=6),
+                    self._custom_vocab_description_text,
+                    ft.Container(height=12),
+                    self._custom_vocab_tag_editor,
+                ],
+                spacing=0,
+            ),
+            height=None,
+            expand=False,
+        )
+        return row7
 
     # ------------------------------------------------------------------
     # Prompt editing
@@ -238,3 +405,19 @@ class ContextSectionMixin:
         except ValueError:
             return
         self._set_custom_vocabulary_terms_for_current_language(current_terms)
+
+    # ------------------------------------------------------------------
+    # Locale helpers
+    # ------------------------------------------------------------------
+
+    def _apply_locale_context(self) -> None:
+        """Re-translate persona, vocabulary, prompt-mode, and context labels."""
+        if not hasattr(self, '_persona_title'):
+            return
+        self._persona_title.value = t("settings.section.persona")
+        self._custom_vocab_title.value = t("settings.section.custom_vocabulary")
+        _set_text_button_label(self._reset_prompt_btn, t("settings.reset_prompt"))
+        self._sync_prompt_tab_copy()
+        self._prompt_single_btn.content.value = t("settings.prompt_mode.single", default="Single")
+        self._prompt_dual_btn.content.value = t("settings.prompt_mode.dual", default="Dual")
+        self._integrated_context_label.value = t("settings.integrated_context")

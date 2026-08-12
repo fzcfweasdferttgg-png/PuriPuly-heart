@@ -1,39 +1,38 @@
-import asyncio
-import contextlib
-import inspect
+"""TranslatorApp — main UI shell.
+
+Mixin-decomposed: shared infrastructure, overlay, dashboard, settings,
+mic test, debug preview, and navigation are in separate mixin modules.
+"""
+
+from __future__ import annotations
+
 import logging
-import webbrowser
-from pathlib import Path
 
 import flet as ft
 
-from puripuly_heart.config.settings import (
-    LLMProviderName,
-    save_settings,
+from puripuly_heart.config.settings import load_settings, new_settings_for_first_run
+from puripuly_heart.ui.app_dashboard import AppDashboardMixin
+from puripuly_heart.ui.app_debug import AppDebugPreviewMixin
+from puripuly_heart.ui.app_mic_test import AppMicTestMixin
+from puripuly_heart.ui.app_navigation import AppNavigationMixin
+from puripuly_heart.ui.app_overlay import AppOverlayMixin
+from puripuly_heart.ui.app_settings import AppSettingsMixin
+from puripuly_heart.ui.app_utilities import (
+    APP_CONTENT_PADDING,
+    DEFAULT_WINDOW_HEIGHT,
+    DEFAULT_WINDOW_WIDTH,
+    MIN_WINDOW_HEIGHT,
+    MIN_WINDOW_WIDTH,
+    _AppUtilitiesMixin,
 )
-from puripuly_heart.domain.language import get_stt_compatibility_warning
 from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
-from puripuly_heart.ui.components.founder_letter_dialog import FounderLetterDialog
-from puripuly_heart.ui.components.local_qwen_hallucination_dialog import (
-    LocalQwenHallucinationDialog,
-)
 from puripuly_heart.ui.components.microphone_test_dialog import MicrophoneTestDialog
-from puripuly_heart.ui.components.peer_translation_eula_dialog import PeerTranslationEulaDialog
 from puripuly_heart.ui.components.title_bar import TitleBar
 from puripuly_heart.ui.controller import GuiController
 from puripuly_heart.ui.fonts import font_for_language, register_fonts
-from puripuly_heart.ui.i18n import (
-    get_locale,
-    language_name,
-    t,
-)
-from puripuly_heart.ui.theme import (
-    COLOR_BACKGROUND,
-    COLOR_PRIMARY,
-    COLOR_SUCCESS,
-    get_app_theme,
-)
+from puripuly_heart.ui.i18n import get_locale, set_locale, t
+from puripuly_heart.ui.theme import COLOR_BACKGROUND, get_app_theme
 from puripuly_heart.ui.views.about import AboutView
 from puripuly_heart.ui.views.dashboard import DashboardView
 from puripuly_heart.ui.views.logs import LogsView
@@ -41,44 +40,24 @@ from puripuly_heart.ui.views.settings import SettingsView
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WINDOW_WIDTH = 1136
-DEFAULT_WINDOW_HEIGHT = 850
-MIN_WINDOW_WIDTH = 1024
-MIN_WINDOW_HEIGHT = 760
-APP_CONTENT_PADDING = 16
-FOUNDER_README_BASE_URL = "https://github.com/kapitalismho/PuriPuly-heart/blob/main"
-FOUNDER_README_PATH_BY_LOCALE = {
-    "ko": "README.ko.md",
-    "zh-CN": "README.zh-CN.md",
-    "ja": "README.ja.md",
-}
-FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE = {
-    "ko": "자신의-api-키-사용하기",
-    "zh-CN": "使用您自己的-api-密钥",
-    "ja": "自分のapiキーを使う",
-}
-FOUNDER_README_DEFAULT_API_KEYS_ANCHOR = "using-your-own-api-keys"
 
+class TranslatorApp(
+    _AppUtilitiesMixin,
+    AppOverlayMixin,
+    AppDashboardMixin,
+    AppSettingsMixin,
+    AppMicTestMixin,
+    AppDebugPreviewMixin,
+    AppNavigationMixin,
+):
+    # AI: MRO ORDER CRITICAL — _AppUtilitiesMixin MUST be first.
+    # All other mixins call self._log_basic(), self._show_snackbar(),
+    # self._queue_settings_mutation_task() defined ONLY in _AppUtilitiesMixin.
+    # Python MRO resolves leftmost-first; moving it later breaks every mixin.
 
-def _callable_accepts_keyword(callable_obj: object, keyword: str) -> bool:
-    try:
-        parameters = inspect.signature(callable_obj).parameters
-    except (TypeError, ValueError):
-        return True
-    return keyword in parameters or any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
-    )
-
-
-def founder_readme_url_for_locale(locale: str | None) -> str:
-    readme_path = FOUNDER_README_PATH_BY_LOCALE.get(locale or "", "README.md")
-    anchor = FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE.get(
-        locale or "", FOUNDER_README_DEFAULT_API_KEYS_ANCHOR
-    )
-    return f"{FOUNDER_README_BASE_URL}/{readme_path}#{anchor}"
-
-
-class TranslatorApp:
+    # AI: SHARED STATE — all mixin attributes are initialized HERE, not in mixin __init__.
+    # No mixin defines __init__. If you add one, ensure it calls super().__init__()
+    # or sets attributes BEFORE other mixins reference them.
     def __init__(self, page: ft.Page, *, config_path, debug_ui_preview: bool = False):
         self.page = page
         self.config_path = config_path
@@ -96,45 +75,31 @@ class TranslatorApp:
         self._launch_high_priority_feedback_reason: str | None = None
         self._launch_high_priority_snackbar = None
         self._microphone_test_dialog: MicrophoneTestDialog | None = None
+        # AI: ATTRIBUTES BELOW are read by mixins in this exact order:
+        # overlay_state/overlay_failure_reason → AppOverlayMixin.on_overlay_state_changed
+        # _launch_high_priority_* → _AppUtilitiesMixin._show_snackbar → _mark_launch_high_priority_feedback_shown
+        # _microphone_test_dialog → AppMicTestMixin._get_microphone_test_dialog (lazy init)
+        #   + AppNavigationMixin._close_open_dialog_for_navigation
+        # Removing or renaming any breaks the corresponding mixin.
+        # AI: INIT SEQUENCE — _setup_page → _build_layout → _wire_callbacks.
+        # _build_layout creates view_* instances; _wire_callbacks assigns callbacks TO them.
+        # Reversing this order = AttributeError on view_* during wiring.
         self._setup_page()
         self._build_layout()
 
-        # Link Dashboard callbacks
-        self.view_dashboard.on_send_message = self._on_manual_submit
-        self.view_dashboard.on_toggle_translation = self._on_translation_toggle
-        self.view_dashboard.on_toggle_stt = self._on_stt_toggle
-        self.view_dashboard.on_toggle_overlay = self._on_overlay_toggle
-        self.view_dashboard.on_toggle_peer_translation = self._on_peer_translation_toggle
-        self.view_dashboard.on_language_change = self._on_language_change
-        self.view_dashboard.on_message_input_activity = self._on_manual_input_activity
-
-        self.view_settings.on_settings_changed = self._on_settings_changed
-        self.view_settings.on_prompt_apply_settings = self._on_prompt_apply_settings
-        self.view_settings.on_providers_changed = self._on_providers_changed
-        self.view_settings.on_verify_api_key = self._on_verify_api_key
-        self.view_settings.on_secret_cleared = self._on_secret_cleared
-        self.view_settings.on_local_llm_secret_changed = self._on_local_llm_secret_changed
-        self.view_settings.on_start_microphone_test = self._on_start_microphone_test
-        self.view_settings.on_desktop_overlay_lock_change = self._on_desktop_overlay_lock_change
-        self.view_settings.on_desktop_overlay_size_change = self._on_desktop_overlay_size_change
-        self.view_settings.on_desktop_overlay_recovery_action = (
-            self._on_desktop_overlay_recovery_action
-        )
-        self.view_settings.on_desktop_overlay_position_reset = (
-            self._on_desktop_overlay_position_reset
-        )
-        self.view_settings.on_view_logs = self._open_logs_tab
+        # AI: VIEW CALLBACK ASSIGNMENTS — these bridge controller→mixin→view.
+        # view_settings.show_snackbar goes to _AppUtilitiesMixin (not controller directly).
+        # runtime_log_basic/detailed come from controller if available (getattr guard).
+        # Calibration callbacks are getattr-guarded because controller may not have them.
         self.view_settings.show_snackbar = self._show_snackbar
-        self.view_logs.on_mode_change = self._on_runtime_logging_mode_change
-        self.view_logs.set_runtime_logging_mode(self.controller.runtime_logging_mode)
         runtime_log_basic = getattr(self.controller, "log_basic", None)
         runtime_log_detailed = getattr(self.controller, "log_detailed", None)
         if callable(runtime_log_basic):
             self.view_settings.runtime_log_basic = runtime_log_basic
         if callable(runtime_log_detailed):
             self.view_settings.runtime_log_detailed = runtime_log_detailed
-        self.view_dashboard.runtime_log_detailed = self._log_detailed
 
+        # Overlay calibration block
         calibration_begin = getattr(self.controller, "begin_overlay_calibration", None)
         calibration_change = getattr(self.controller, "set_overlay_calibration_field", None)
         calibration_apply = getattr(self.controller, "apply_overlay_calibration", None)
@@ -153,6 +118,9 @@ class TranslatorApp:
         if callable(set_overlay_calibration) and overlay_calibration is not None:
             set_overlay_calibration(overlay_calibration)
 
+        # Wire all view callbacks
+        self._wire_callbacks()
+
     def _setup_page(self):
         self.page.title = t("app.title")
         self.page.theme_mode = ft.ThemeMode.LIGHT
@@ -161,7 +129,7 @@ class TranslatorApp:
         self.page.bgcolor = COLOR_BACKGROUND
         self.page.padding = 0
         self.page.window.frameless = True
-        self.page.window.resizable = True  # Ensure resizing is allowed
+        self.page.window.resizable = True
         self.page.window.width = DEFAULT_WINDOW_WIDTH
         self.page.window.height = DEFAULT_WINDOW_HEIGHT
         self.page.window.min_width = MIN_WINDOW_WIDTH
@@ -172,16 +140,14 @@ class TranslatorApp:
     def _build_layout(self):
         self.view_dashboard = DashboardView()
         # Load settings early so SettingsView can set correct initial button states
-        from puripuly_heart.config.settings import load_settings, new_settings_for_first_run
         try:
             _initial_settings = load_settings(self.config_path) if self.config_path.exists() else new_settings_for_first_run()
         except Exception as exc:
             logger.warning("[UI] Failed to load initial settings: %s", exc)
             _initial_settings = None
         # Set locale BEFORE creating SettingsView so t() returns translated labels
-        from puripuly_heart.ui.i18n import set_locale as _early_set_locale
         if _initial_settings is not None:
-            _early_set_locale(_initial_settings.ui.locale)
+            set_locale(_initial_settings.ui.locale)
         self.view_settings = SettingsView(initial_settings=_initial_settings)
         self.view_logs = LogsView()
         self.view_about = AboutView()
@@ -228,285 +194,12 @@ class TranslatorApp:
         else:
             self.page.add(root_content)
 
-    def _build_debug_preview_panel(self) -> DebugPreviewPanel:
-        return DebugPreviewPanel(
-            on_founder_letter=self._preview_founder_letter,
-            on_peer_translation_eula=self._preview_peer_translation_eula,
-            on_local_qwen_hallucination_modal=self._preview_local_qwen_hallucination_modal,
-            on_capture_fault_cycle=self._preview_capture_fault_cycle,
-            on_stt_fault_cycle=self._preview_stt_fault_cycle,
-            on_audio_fault_clear=self._preview_audio_fault_clear,
-            on_github_star_snackbar=self._preview_github_star_snackbar,
-        )
+    # --- Methods staying in app.py shell ---
 
-    def _mark_launch_high_priority_feedback_shown(
-        self,
-        reason: str,
-        snackbar: object | None = None,
-    ) -> None:
-        self._launch_high_priority_feedback_shown = True
-        self._launch_high_priority_feedback_reason = reason
-        if snackbar is not None:
-            self._launch_high_priority_snackbar = snackbar
-
-    def _build_github_star_prompt_snackbar(self, on_click) -> ft.SnackBar:  # noqa: ANN001
-        return ft.SnackBar(
-            content=ft.Row(
-                controls=[
-                    ft.Text(
-                        t("github_star.snackbar.message"),
-                        size=18,
-                        color=ft.Colors.WHITE,
-                        font_family=font_for_language(get_locale()),
-                        expand=True,
-                    ),
-                    ft.TextButton(
-                        text=t("github_star.snackbar.action"),
-                        on_click=on_click,
-                        style=ft.ButtonStyle(
-                            color=ft.Colors.WHITE,
-                            text_style=ft.TextStyle(
-                                size=18,
-                                font_family=font_for_language(get_locale()),
-                            ),
-                            overlay_color=COLOR_PRIMARY,
-                        ),
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
-            ),
-            bgcolor=COLOR_SUCCESS,
-            duration=8000,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            margin=ft.margin.only(bottom=90),
-            padding=20,
-        )
-
-    def _close_github_star_prompt_snackbar(self, snackbar: ft.SnackBar) -> None:
-        close = getattr(self.page, "close", None)
-        if callable(close):
-            with contextlib.suppress(Exception):
-                close(snackbar)
-        else:
-            snackbar.open = False
-            with contextlib.suppress(Exception):
-                self.page.update()
-        self._displace_current_snackbar_for_flet_028()
-
-    def _displace_current_snackbar_for_flet_028(self) -> None:
-        """Force-dismiss the visible SnackBar on Flet 0.28.x.
-
-        Flet 0.28.3 updates the Python-side ``SnackBar.open`` flag on
-        ``page.close(snackbar)`` but the Flutter-side snackbar remains visible
-        until its duration expires. Opening another SnackBar first removes the
-        current one, so use a transparent 1 ms replacement as a narrow shim.
-        """
-
-        open_control = getattr(self.page, "open", None)
-        if not callable(open_control):
-            return
-        dismissor = ft.SnackBar(
-            content=ft.Text("", size=0),
-            bgcolor=ft.Colors.TRANSPARENT,
-            duration=1,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            margin=ft.margin.only(bottom=90),
-            padding=0,
-        )
-        with contextlib.suppress(Exception):
-            open_control(dismissor)
-
-    def _preview_github_star_snackbar(self) -> None:
-        snackbar = None
-
-        def _open_repository(_event) -> None:  # noqa: ANN001
-            webbrowser.open("https://github.com/kapitalismho/PuriPuly-heart")
-            if snackbar is not None:
-                self._close_github_star_prompt_snackbar(snackbar)
-
-        snackbar = self._build_github_star_prompt_snackbar(_open_repository)
-        self.page.open(snackbar)
-
-    def _debug_preview_noop(self) -> None:
-        return None
-
-    def _preview_founder_letter(self) -> None:
-        dialog = FounderLetterDialog(self.page, on_readme=self._on_founder_letter_readme)
-        self._founder_letter_dialog = dialog
-        dialog.open()
-
-    def _preview_peer_translation_eula(self) -> None:
-        self._show_peer_translation_eula(self._debug_preview_noop)
-
-    def _preview_local_qwen_hallucination_modal(self) -> None:
-        self.show_local_qwen_hallucination_dialog()
-
-    def _preview_capture_fault_cycle(self) -> None:
-        profile = self.controller.cycle_debug_capture_fault_profile()
-        self._show_snackbar(
-            t("debug_preview.capture_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
-        )
-
-    def _preview_stt_fault_cycle(self) -> None:
-        profile = self.controller.cycle_debug_stt_fault_profile()
-        self._show_snackbar(
-            t("debug_preview.stt_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
-        )
-
-    def _preview_audio_fault_clear(self) -> None:
-        self.controller.clear_debug_audio_fault_profiles()
-        self._show_snackbar(t("debug_preview.audio_fault_clear"), ft.Colors.GREEN_700)
-
-    def _show_peer_translation_eula(self, on_accept) -> None:
-        dialog = PeerTranslationEulaDialog(
-            self.page,
-            on_accept=on_accept,
-            on_cancel=self._debug_preview_noop,
-        )
-        self._peer_translation_eula_dialog = dialog
-        dialog.open()
-
-    def show_local_qwen_hallucination_dialog(self) -> None:
-        dialog = LocalQwenHallucinationDialog(
-            self.page,
-            on_open_guide=self._open_local_qwen_guide,
-        )
-        self._local_qwen_hallucination_dialog = dialog
-        dialog.open()
-
-    def _open_local_qwen_guide(self) -> None:
-        webbrowser.open(founder_readme_url_for_locale(get_locale()))
-
-    def _accept_peer_translation_eula_and_enable(self) -> None:
-        async def _task():
-            settings = getattr(self.controller, "settings", None)
-            if settings is not None:
-                settings.ui.peer_translation_eula_accepted = True
-                config_path = getattr(self.controller, "config_path", None)
-                if config_path is not None:
-                    save_settings(config_path, settings)
-            await self.controller.set_peer_translation_enabled(True)
-
-        self.page.run_task(_task)
-
-    def _close_open_dialog_for_navigation(self) -> None:
-        microphone_test_dialog = getattr(self, "_microphone_test_dialog", None)
-        if microphone_test_dialog is not None and getattr(
-            microphone_test_dialog,
-            "is_open",
-            False,
-        ):
-            microphone_test_dialog.close(notify=True)
-            return
-
-        dialog = getattr(self.page, "dialog", None)
-        close_dialog = getattr(self.page, "close", None)
-        if dialog is None or not callable(close_dialog):
-            return
-        try:
-            close_dialog(dialog)
-        except Exception:
-            logger.exception("Failed to close dialog during navigation")
-
-    def _queue_settings_mutation_task(self, task_factory) -> None:
-        queue = getattr(self, "_settings_mutation_queue", None)
-        if queue is None:
-            queue = []
-            self._settings_mutation_queue = queue
-        queue.append(task_factory)
-        if getattr(self, "_settings_mutation_worker_active", False):
-            return
-        self._settings_mutation_worker_active = True
-
-        async def _worker():
-            try:
-                while self._settings_mutation_queue:
-                    next_task = self._settings_mutation_queue.pop(0)
-                    try:
-                        await next_task()
-                    except Exception:
-                        logger.exception("Settings mutation task failed")
-            finally:
-                self._settings_mutation_worker_active = False
-
-        self.page.run_task(_worker)
-
-    def _content_padding_for_index(self, index: int) -> int:
-        return 0 if index == 1 else APP_CONTENT_PADDING
-
-    def _on_nav_change(self, index: int):
-        # Track previous tab for Settings auto-apply
-        previous_tab = getattr(self, "_current_tab", 0)
-        if previous_tab != index:
-            self._close_open_dialog_for_navigation()
-        self._current_tab = index
-
-        # Auto-apply Settings changes when leaving Settings (tab 1)
-        if previous_tab == 1 and index != 1:
-            if self.view_settings.has_provider_changes:
-                pending_settings = self.view_settings.consume_provider_apply_settings()
-                if pending_settings is not None:
-                    self.view_settings.has_provider_changes = False
-                    merged_pending = self.controller.merge_settings_tab_apply_with_current_languages(pending_settings)
-                    self.controller.settings = merged_pending
-                    self.controller._save_settings()
-
-                    async def _task():
-                        await self.controller.apply_providers(merged_pending)
-
-                    self._queue_settings_mutation_task(_task)
-            elif getattr(self.view_settings, "has_pending_prompt_changes", False):
-                pending_settings = self.view_settings.consume_prompt_apply_settings()
-                if pending_settings is not None:
-
-                    async def _task():
-                        merged_settings = (
-                            self.controller.merge_settings_tab_apply_with_current_languages(
-                                pending_settings
-                            )
-                        )
-                        await self.controller.apply_settings(merged_settings)
-
-                    self._queue_settings_mutation_task(_task)
-
-        if index == 0:
-            self.content_area.content = self.view_dashboard
-        elif index == 1:
-            self.content_area.content = self.view_settings
-        elif index == 2:
-            self.content_area.content = self.view_logs
-        elif index == 3:
-            self.content_area.content = self.view_about
-
-        self.content_area.padding = self._content_padding_for_index(index)
-        self.content_area.update()
-        if index == 1:
-            self.view_settings.refresh_prompt_if_empty()
-        elif index == 2:
-            # Async scroll after rendering completes
-            async def _scroll():
-                import asyncio
-
-                await asyncio.sleep(0.05)
-                await self.view_logs.scroll_to_bottom()
-
-            self.page.run_task(_scroll)
-
-    def _open_logs_tab(self) -> None:
-        self._on_nav_change(2)
-        self._set_bottom_nav_selected(2)
-
-    def _set_bottom_nav_selected(self, index: int) -> None:
-        selected_attr = getattr(self.bottom_nav, "_selected", None)
-        if selected_attr != index and hasattr(self.bottom_nav, "_selected"):
-            self.bottom_nav._selected = index
-        update_visuals = getattr(self.bottom_nav, "_update_visuals", None)
-        if callable(update_visuals):
-            with contextlib.suppress(Exception):
-                update_visuals()
-
+    # AI: CROSS-MIXIN — apply_locale stays in app.py shell because it orchestrates
+    # ALL views + mixins. It calls refresh_overlay_peer_contract (from AppOverlayMixin)
+    # which propagates contract to BOTH view_settings and view_dashboard.
+    # If you move this to a mixin, it must still reach all 5 targets.
     def apply_locale(self) -> None:
         self.page.title = t("app.title")
         self.page.theme = get_app_theme(font_family=font_for_language(get_locale()))
@@ -521,103 +214,11 @@ class TranslatorApp:
             apply_debug_locale()
         self.page.update()
 
-    def refresh_overlay_peer_contract(self) -> None:
-        controller = getattr(self, "controller", None)
-        build_contract = getattr(controller, "build_overlay_peer_consumer_contract", None)
-        if not callable(build_contract):
-            return
-        contract = build_contract()
-        self.overlay_peer_contract = contract
-        if contract is None:
-            return
-        view_settings = getattr(self, "view_settings", None)
-        set_settings_contract = getattr(view_settings, "set_overlay_peer_contract", None)
-        if callable(set_settings_contract):
-            set_settings_contract(contract)
-        view_dashboard = getattr(self, "view_dashboard", None)
-        set_dashboard_contract = getattr(view_dashboard, "set_overlay_peer_contract", None)
-        if callable(set_dashboard_contract):
-            set_dashboard_contract(contract)
-
-    def _sync_settings_overlay_runtime_state(self) -> None:
-        view_settings = getattr(self, "view_settings", None)
-        set_state = getattr(view_settings, "set_overlay_runtime_state", None)
-        if not callable(set_state):
-            return
-        controller = getattr(self, "controller", None)
-        settings = getattr(controller, "settings", None)
-        overlay_target = None
-        if settings is not None:
-            overlay_target = getattr(settings.overlay, "target", None)
-        desktop_locked = False
-        if controller is not None:
-            desktop_locked = bool(getattr(controller, "desktop_overlay_captions_locked", False))
-        set_state(
-            self.overlay_state,
-            failure_reason=self.overlay_failure_reason,
-            overlay_target=overlay_target,
-            desktop_captions_locked=desktop_locked,
-        )
-
-    def _on_desktop_overlay_lock_change(self, locked: bool) -> None:
-        async def _task():
-            await self.controller.set_desktop_overlay_captions_locked(bool(locked))
-            self._refresh_settings_desktop_overlay_state()
-
-        self.page.run_task(_task)
-
-    def _on_desktop_overlay_size_change(self, size_preset: str) -> None:
-        async def _task():
-            await self.controller.set_desktop_overlay_size_preset(size_preset)
-            self._refresh_settings_desktop_overlay_state()
-
-        self.page.run_task(_task)
-
-    def _on_desktop_overlay_recovery_action(self, action: str) -> None:
-        if action not in {"retry", "reopen"}:
-            return
-
-        async def _task():
-            await self.controller.set_overlay_enabled(True)
-
-        self.page.run_task(_task)
-
-    def _on_desktop_overlay_position_reset(self) -> None:
-        async def _task():
-            await self.controller.reset_desktop_overlay_position()
-            self._refresh_settings_desktop_overlay_state()
-
-        self.page.run_task(_task)
-
-    def _refresh_settings_desktop_overlay_state(self) -> None:
-        controller = getattr(self, "controller", None)
-        settings = getattr(controller, "settings", None)
-        view_settings = getattr(self, "view_settings", None)
-        sync_settings = getattr(view_settings, "sync_desktop_overlay_settings", None)
-        if settings is not None and callable(sync_settings):
-            sync_settings(settings)
-        self._sync_settings_overlay_runtime_state()
-
-    def on_desktop_overlay_state_changed(
-        self,
-        *,
-        interaction_mode: str | None = None,
-        captions_locked: bool | None = None,
-    ) -> None:
-        _ = (interaction_mode, captions_locked)
-        self._sync_settings_overlay_runtime_state()
-
-    def _on_manual_submit(self, _source: str, text: str) -> None:
-        async def _task():
-            await self.controller.submit_text(text)
-
-        self.page.run_task(_task)
-
-    def _on_manual_input_activity(self, has_text: bool) -> None:
-        handler = getattr(self.controller, "note_manual_input_activity", None)
-        if callable(handler):
-            handler(bool(has_text))
-
+    # AI: TAB KEY INTERCEPT — only active when Dashboard is the current view.
+    # Shift/Ctrl/Alt/Tab are ignored (system shortcuts). Plain Tab on dashboard
+    # triggers handle_message_input_tab_key which inserts tab character in input.
+    # This handler is assigned in _setup_page (before _build_layout), which is fine
+    # because it only reads self.page which is already set.
     def _on_keyboard_event(self, event) -> None:
         if getattr(event, "key", None) != "Tab":
             return
@@ -635,359 +236,74 @@ class TranslatorApp:
         if callable(handler):
             handler()
 
-    def _log_basic(self, message: str, *, level: int = logging.INFO) -> None:
-        controller = getattr(self, "controller", None)
-        log_basic = getattr(controller, "log_basic", None)
-        if callable(log_basic):
-            log_basic(message, level=level)
-            return
-        logger.log(level, message)
-
-    def _log_detailed(self, message: str, *, level: int = logging.INFO) -> None:
-        controller = getattr(self, "controller", None)
-        log_detailed = getattr(controller, "log_detailed", None)
-        if callable(log_detailed):
-            log_detailed(message, level=level)
-            return
-        logger.log(level, message)
-
-    def _on_translation_toggle(self, enabled: bool) -> bool:
-        self._log_basic(f"[Dashboard] Translation toggle requested: enabled={enabled}")
-        self._log_detailed(
-            "[Dashboard] Translation toggle detail: "
-            f"dashboard_state={getattr(getattr(self, 'view_dashboard', None), 'is_translation_on', None)} "
-            f"overlay_state={getattr(self, 'overlay_state', 'unknown')}"
-        )
-
-        async def _task():
-            result = await self.controller.set_translation_enabled(enabled)
-            if not result and self.view_dashboard is not None:
-                self.view_dashboard.set_translation_enabled(False)
-
-        self.page.run_task(_task)
-        return True
-
-    def _on_stt_toggle(self, enabled: bool) -> None:
-        self._log_basic(f"[Dashboard] STT toggle requested: enabled={enabled}")
-        self._log_detailed(
-            "[Dashboard] STT toggle detail: "
-            f"dashboard_state={getattr(getattr(self, 'view_dashboard', None), 'is_stt_on', None)} "
-            f"overlay_state={getattr(self, 'overlay_state', 'unknown')}"
-        )
-        self._consume_pending_provider_settings()
-
-        async def _task():
-            await self.controller.set_stt_enabled(enabled)
-
-        self.page.run_task(_task)
-
-    def _on_overlay_toggle(self, enabled: bool) -> None:
-        self._log_basic(f"[Dashboard] Overlay toggle requested: enabled={enabled}")
-        self._log_detailed(
-            "[Dashboard] Overlay toggle detail: "
-            f"overlay_state={getattr(self, 'overlay_state', 'unknown')} "
-            f"failure_reason={getattr(self, 'overlay_failure_reason', None)}"
-        )
-
-        async def _task():
-            await self.controller.set_overlay_enabled(enabled)
-
-        self.page.run_task(_task)
-
-    def _on_peer_translation_toggle(self, enabled: bool) -> None:
-        self._log_basic(f"[Dashboard] Peer toggle requested: enabled={enabled}")
-        self._log_detailed(
-            "[Dashboard] Peer toggle detail: "
-            f"overlay_state={getattr(self, 'overlay_state', 'unknown')} "
-            f"failure_reason={getattr(self, 'overlay_failure_reason', None)}"
-        )
-
-        controller = getattr(self, "controller", None)
-        settings = getattr(controller, "settings", None)
-        ui_settings = getattr(settings, "ui", None)
-        if (
-            enabled
-            and ui_settings is not None
-            and not getattr(ui_settings, "peer_translation_eula_accepted", False)
-        ):
-            self._show_peer_translation_eula(self._accept_peer_translation_eula_and_enable)
-            return
-        self._consume_pending_provider_settings()
-
-        async def _task():
-            await self.controller.set_peer_translation_enabled(enabled)
-
-        self.page.run_task(_task)
-
-    def _on_language_change(
-        self,
-        source_code: str,
-        target_code: str,
-        peer_source_code: str = "",
-        peer_target_code: str = "",
-        second_target_code: str = "",
-    ) -> None:
-        if self.controller.settings is None:
-            return
-        settings = self.controller.settings
-        previous_source_code = settings.languages.source_language
-        previous_target_code = settings.languages.target_language
-        previous_peer_source_code = getattr(settings.languages, "peer_source_language", "")
-        previous_peer_target_code = getattr(settings.languages, "peer_target_language", "")
-        self._log_basic(
-            "[Dashboard] Language change requested: "
-            f"source={previous_source_code}->{source_code} "
-            f"target={previous_target_code}->{target_code} "
-            f"peer_source={previous_peer_source_code}->{peer_source_code} "
-            f"peer_target={previous_peer_target_code}->{peer_target_code} "
-            f"second_target={second_target_code}"
-        )
-        self._log_detailed(
-            f"[Dashboard] Language change detail: overlay_state={getattr(self, 'overlay_state', 'unknown')}"
-        )
-
-        # Check STT provider compatibility and show warning if needed
-        warning = None
-        if source_code != previous_source_code:
-            stt_provider = settings.provider.stt.value
-            warning = get_stt_compatibility_warning(source_code, stt_provider)
-        if warning:
-            snackbar = ft.SnackBar(
-                ft.Text(t(warning.key, language=language_name(warning.language_code))),
-                bgcolor=ft.Colors.ORANGE_700,
-                duration=4000,
-                behavior=ft.SnackBarBehavior.FLOATING,
-                margin=ft.margin.only(bottom=90),
-                padding=20,
-            )
-            self._mark_launch_high_priority_feedback_shown("stt_compatibility", snackbar)
-            self.page.open(snackbar)
-
-        async def _task():
-            await self.controller.on_dashboard_language_change(
-                source_code=source_code,
-                target_code=target_code,
-                peer_source_code=peer_source_code,
-                peer_target_code=peer_target_code,
-                second_target_code=second_target_code,
-            )
-
-        self._queue_settings_mutation_task(_task)
-
-    def _on_settings_changed(self, settings) -> None:
-        async def _task():
-            await self.controller.apply_settings(settings)
-            self._sync_microphone_test_dialog_if_inactive()
-
-        self._queue_settings_mutation_task(_task)
-
-    def _on_start_microphone_test(self) -> None:
-        async def _task():
-            dialog = self._get_microphone_test_dialog()
-            dialog.reset()
-            dialog.open()
-            start_microphone_test = self.controller.start_microphone_test
-            if _callable_accepts_keyword(start_microphone_test, "meter_callback"):
-                start_result = start_microphone_test(meter_callback=dialog.set_level)
-            else:
-                start_result = start_microphone_test()
-            started = await start_result if inspect.isawaitable(start_result) else start_result
-            if not started:
-                dialog.show_failure()
-                return
-
-        self._queue_settings_mutation_task(_task)
-
-    def _on_stop_microphone_test(self) -> None:
-        async def _task() -> None:
-            stop_microphone_test = getattr(self.controller, "stop_microphone_test", None)
-            if callable(stop_microphone_test):
-                result = stop_microphone_test()
-                if inspect.isawaitable(result):
-                    await result
-            self._close_microphone_test_dialog()
-
-        self._queue_settings_mutation_task(_task)
-
-    def _get_microphone_test_dialog(self) -> MicrophoneTestDialog:
-        dialog = getattr(self, "_microphone_test_dialog", None)
-        if dialog is None:
-            dialog = MicrophoneTestDialog(
-                self.page,
-                on_close=self._on_microphone_test_dialog_dismiss,
-            )
-            self._microphone_test_dialog = dialog
-        return dialog
-
-    def _close_microphone_test_dialog(self) -> None:
-        dialog = getattr(self, "_microphone_test_dialog", None)
-        if dialog is None:
-            return
-        dialog.close(notify=False)
-        dialog.reset()
-
-    def _on_microphone_test_dialog_dismiss(self) -> None:
-        self._on_stop_microphone_test()
-
-    def _sync_microphone_test_dialog_if_inactive(self) -> None:
-        controller = getattr(self, "controller", None)
-        if bool(getattr(controller, "microphone_test_active", False)):
-            return
-        self._close_microphone_test_dialog()
-
-    def _on_prompt_apply_settings(self, settings) -> None:
-        async def _task():
-            merged_settings = self.controller.merge_settings_tab_apply_with_current_languages(
-                settings
-            )
-            await self.controller.apply_settings(merged_settings)
-
-        self._queue_settings_mutation_task(_task)
-
+    # AI: BRIDGE — controller.set_runtime_logging_mode persists mode,
+    # then view_logs.set_runtime_logging_mode updates UI display.
+    # Wired in _wire_navigation_callbacks → view_logs.on_mode_change.
+    # If controller doesn't have runtime_logging_mode, this crashes — but
+    # controller always has it (property on GuiController).
     def _on_runtime_logging_mode_change(self, mode: str) -> None:
         self.controller.set_runtime_logging_mode(mode)
         self.view_logs.set_runtime_logging_mode(self.controller.runtime_logging_mode)
 
-    def _consume_pending_provider_settings(self) -> None:
-        """Apply pending provider settings from the Settings view before a toggle."""
-        view_settings = getattr(self, "view_settings", None)
-        if view_settings is None or not getattr(view_settings, "has_provider_changes", False):
-            return
-        pending = view_settings.consume_provider_apply_settings()
-        if pending is not None:
-            view_settings.has_provider_changes = False
-            merged = self.controller.merge_settings_tab_apply_with_current_languages(pending)
-            self.controller.settings = merged
-            self.controller._save_settings()
-            self._log_basic(
-                f"[Dashboard] Consumed pending settings: "
-                f"stt_compute={pending.provider.stt_compute} "
-                f"peer_stt_compute={pending.provider.peer_stt_compute}"
-            )
+    # --- Callback wiring ---
 
-    def _on_providers_changed(self) -> None:
-        pending_settings = None
-        view_settings = getattr(self, "view_settings", None)
-        consume_provider_apply_settings = getattr(
-            view_settings,
-            "consume_provider_apply_settings",
-            None,
-        )
-        if callable(consume_provider_apply_settings) and getattr(
-            view_settings,
-            "has_provider_changes",
-            False,
-        ):
-            pending_settings = consume_provider_apply_settings()
-            view_settings.has_provider_changes = False
+    # AI: WIRING HUB — delegates to 6 mixin-specific wireup methods.
+    # Each mixin owns its own callbacks; this method is the assembly point.
+    # _wire_mic_test_callbacks and _wire_debug_callbacks are empty stubs —
+    # mic_test is wired inside _wire_settings_callbacks (it's a settings sub-feature),
+    # debug is wired inside _build_layout (build-time, not callback-time).
+    def _wire_callbacks(self) -> None:
+        """Wire all view callbacks — delegates to mixin wireup methods."""
+        self._wire_dashboard_callbacks()
+        self._wire_settings_callbacks()
+        self._wire_overlay_callbacks()
+        self._wire_mic_test_callbacks()
+        self._wire_debug_callbacks()
+        self._wire_navigation_callbacks()
+        # view_logs wiring stays in __init__ (trivial)
 
-        async def _task():
-            if pending_settings is None:
-                await self.controller.apply_providers()
-            else:
-                await self.controller.apply_providers(pending_settings)
+    def _wire_dashboard_callbacks(self) -> None:
+        self.view_dashboard.on_send_message = self._on_manual_submit
+        self.view_dashboard.on_toggle_translation = self._on_translation_toggle
+        self.view_dashboard.on_toggle_stt = self._on_stt_toggle
+        self.view_dashboard.on_toggle_overlay = self._on_overlay_toggle
+        self.view_dashboard.on_toggle_peer_translation = self._on_peer_translation_toggle
+        self.view_dashboard.on_language_change = self._on_language_change
+        self.view_dashboard.on_message_input_activity = self._on_manual_input_activity
+        self.view_dashboard.runtime_log_detailed = self._log_detailed
 
-        self._queue_settings_mutation_task(_task)
+    def _wire_settings_callbacks(self) -> None:
+        self.view_settings.on_settings_changed = self._on_settings_changed
+        self.view_settings.on_prompt_apply_settings = self._on_prompt_apply_settings
+        self.view_settings.on_providers_changed = self._on_providers_changed
+        self.view_settings.on_verify_api_key = self._on_verify_api_key
+        self.view_settings.on_secret_cleared = self._on_secret_cleared
+        self.view_settings.on_local_llm_secret_changed = self._on_local_llm_secret_changed
+        self.view_settings.on_start_microphone_test = self._on_start_microphone_test
 
-    def _on_local_llm_secret_changed(self) -> None:
-        async def _task():
-            settings = getattr(self.controller, "settings", None)
-            if settings is None or settings.provider.llm != LLMProviderName.LOCAL_LLM:
-                return
-            await self.controller.apply_providers(force_rebuild_llm=True)
+    def _wire_overlay_callbacks(self) -> None:
+        self.view_settings.on_desktop_overlay_lock_change = self._on_desktop_overlay_lock_change
+        self.view_settings.on_desktop_overlay_size_change = self._on_desktop_overlay_size_change
+        self.view_settings.on_desktop_overlay_recovery_action = self._on_desktop_overlay_recovery_action
+        self.view_settings.on_desktop_overlay_position_reset = self._on_desktop_overlay_position_reset
 
-        self._queue_settings_mutation_task(_task)
+    def _wire_mic_test_callbacks(self) -> None:
+        pass  # on_start_microphone_test wired in _wire_settings_callbacks
 
-    def _on_founder_letter_readme(self) -> None:
-        webbrowser.open(founder_readme_url_for_locale(get_locale()))
+    def _wire_debug_callbacks(self) -> None:
+        pass  # Debug preview wired in _build_layout via _build_debug_preview_panel
 
-    def _api_key_verification_matches_current_field(self, provider: str, key: str) -> bool:
-        field_name_map = {
-            "openai_compatible": "_openai_compatible_key",
-            "backup_openai_compatible": "_fallback_api_key",
-        }
-        field_name = field_name_map.get(provider)
-        if field_name is None:
-            return True
-
-        field = getattr(getattr(self, "view_settings", None), field_name, None)
-        if field is None:
-            return True
-
-        current_key = getattr(field, "value", None)
-        if current_key is None:
-            return True
-
-        return current_key == key
-
-    async def _on_verify_api_key(self, provider: str, key: str, *, base_url: str | None = None) -> tuple[bool, str]:
-        logger.info("[VerifyKey][UI] provider=%s key_len=%d base_url=%s", provider, len(key), base_url or "(from settings)")
-        success, msg = await self.controller.verify_api_key(provider, key, base_url=base_url)
-        logger.info("[VerifyKey][UI] provider=%s success=%s msg=%s", provider, success, msg)
-
-        if not self._api_key_verification_matches_current_field(provider, key):
-            logger.info("[VerifyKey][UI] field changed since request, discarding result")
-            return success, msg
-
-        # Save verification result to settings
-        self.controller.settings.api_key_verified.set_verified(provider, success)
-        save_settings(self.controller.config_path, self.controller.settings)
-        logger.info("[VerifyKey][UI] saved api_key_verified.%s=%s", provider, success)
-
-        # Sync verification result with dashboard needs_key flags
-        if provider == "openai_compatible":
-            self.view_dashboard.set_translation_needs_key(not success, update_ui=False)
-        elif provider == "local_llm":
-            self.view_dashboard.set_translation_needs_key(not success, update_ui=False)
-
-        return success, msg
-
-    def _on_secret_cleared(self, key: str) -> None:
-        """Reset verification status when API key is cleared."""
-        logger.info("[VerifyKey][UI] secret_cleared key=%s", key)
-        field_map = {
-            "openai_compatible_api_key": "openai_compatible",
-            "local_llm_api_key": "local_llm",
-            "backup_api_key": "backup_openai_compatible",
-            "fallback_local_llm_api_key": "fallback_local_llm",
-        }
-        verified_key = field_map.get(key)
-        if verified_key is not None:
-            self.controller.settings.api_key_verified.set_verified(verified_key, False)
-            save_settings(self.controller.config_path, self.controller.settings)
-            if key in ("openai_compatible_api_key", "local_llm_api_key"):
-                self.view_dashboard.set_translation_needs_key(True, update_ui=False)
-
-    def _show_snackbar(self, message: str, bgcolor, duration: int = 4000) -> None:
-        """Show a snackbar above the bottom nav."""
-        snackbar = ft.SnackBar(
-            ft.Text(message, size=18, color=ft.Colors.WHITE),
-            bgcolor=bgcolor,
-            duration=duration,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            margin=ft.margin.only(bottom=90),
-            padding=20,
-        )
-        self._mark_launch_high_priority_feedback_shown("snackbar", snackbar)
-        self.page.open(snackbar)
-
-    def on_overlay_state_changed(
-        self,
-        *,
-        state: str,
-        failure_reason: str | None = None,
-    ) -> None:
-        previous_state = getattr(self, "overlay_state", "unknown")
-        self._log_basic(f"[Overlay] State changed: {previous_state} -> {state}")
-        self.overlay_state = state
-        self.overlay_failure_reason = failure_reason
-        self._log_detailed(
-            f"[Overlay] State detail: overlay_state={state} failure_reason={failure_reason}"
-        )
-        self._sync_settings_overlay_runtime_state()
-        self.refresh_overlay_peer_contract()
+    def _wire_navigation_callbacks(self) -> None:
+        self.view_settings.on_view_logs = self._open_logs_tab
+        self.view_logs.on_mode_change = self._on_runtime_logging_mode_change
+        self.view_logs.set_runtime_logging_mode(self.controller.runtime_logging_mode)
 
 
+# AI: ENTRY POINT — main_gui is the ONLY public API of this module.
+# External callers (main.py) import ONLY main_gui, never TranslatorApp directly.
+# on_close/on_disconnect share the same closure — both call controller.stop().
+# stop() has no re-entry guard; Flet fires them sequentially so this is safe,
+# but if you make them concurrent, add a lock.
 async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False):
     import asyncio
 

@@ -489,7 +489,7 @@ class OverlayManagerMixin:
             f"x={bounds['x']} y={bounds['y']} width={bounds['width']} "
             f"height={bounds['height']} size_preset={desktop_settings.size_preset}"
         )
-        self._save_settings()
+        self.save_settings()
 
     async def _handle_desktop_overlay_reset_requested(
         self,
@@ -516,7 +516,7 @@ class OverlayManagerMixin:
         desktop_settings.locked = False
         desktop_settings.validate()
         self._set_desktop_overlay_interaction_mode(DESKTOP_INTERACTION_MODE_EDIT)
-        self._save_settings()
+        self.save_settings()
         if not desktop_renderer_active:
             return
         await self._broadcast_desktop_runtime_control(

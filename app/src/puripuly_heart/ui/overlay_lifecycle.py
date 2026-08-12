@@ -77,11 +77,11 @@ class OverlayLifecycleMixin:
 
         if enabled:
             await self._begin_overlay_start()
-            self._save_settings()
+            self.save_settings()
             return
 
         await self._shutdown_overlay_runtime(preserve_failure_reason=True)
-        self._save_settings()
+        self.save_settings()
 
     def on_overlay_start_failed(self, failure_reason: str | None) -> None:
         previous_state = self.overlay_state

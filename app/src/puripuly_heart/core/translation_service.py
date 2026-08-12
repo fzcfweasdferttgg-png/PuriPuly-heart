@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
+from puripuly_heart.core.language import source_language_for, target_language_for
 from puripuly_heart.domain.language import get_llm_language_name
 from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.domain.models import ChannelId, Translation
@@ -94,16 +95,10 @@ class TranslationService:
     )
 
     def _source_language_for(self, runtime: _ChannelRuntimeLike) -> str:
-        # Peer channel has separate language settings; self uses defaults.
-        if runtime.channel == "peer" and self.peer_source_language:
-            return self.peer_source_language
-        return self.source_language
+        return source_language_for(self, runtime)
 
     def _target_language_for(self, runtime: _ChannelRuntimeLike) -> str:
-        # Peer channel has separate language settings; self uses defaults.
-        if runtime.channel == "peer" and self.peer_target_language:
-            return self.peer_target_language
-        return self.target_language
+        return target_language_for(self, runtime)
 
     def _other_runtime(
         self, runtime: _ChannelRuntimeLike, self_rt: object, peer_rt: object

@@ -9,7 +9,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from uuid import UUID
     from puripuly_heart.core.pipeline.buffer_manager_standalone import BufferManager
+    from puripuly_heart.core.pipeline.channel_runtime import _MergeBuffer
     from puripuly_heart.core.pipeline.peer_turn_tracker import PeerTurnTracker
     from puripuly_heart.core.pipeline.pipeline_context import PipelineContext
     from puripuly_heart.core.vad.gating import VadEvent
@@ -44,17 +46,17 @@ class VADHandler:
     def mark_resume_pending(self, event: VadEvent) -> None:
         self._buffer._mark_resume_pending(event)
 
-    def maybe_confirm_resume(self, event: VadEvent) -> object:
+    def maybe_confirm_resume(self, event: VadEvent) -> _MergeBuffer | None:
         return self._buffer._maybe_confirm_resume(event)
 
-    def maybe_update_buffer_end_time(self, utterance_id: object) -> None:
-        self._buffer._maybe_update_buffer_end_time(utterance_id)  # type: ignore[arg-type]
+    def maybe_update_buffer_end_time(self, utterance_id: UUID) -> None:
+        self._buffer._maybe_update_buffer_end_time(utterance_id)
 
-    def maybe_start_finalize_wait(self, utterance_id: object) -> None:
-        self._buffer._maybe_start_finalize_wait(utterance_id)  # type: ignore[arg-type]
+    def maybe_start_finalize_wait(self, utterance_id: UUID) -> None:
+        self._buffer._maybe_start_finalize_wait(utterance_id)
 
     async def maybe_clear_resume_on_end(self, event: VadEvent) -> None:
         await self._buffer._maybe_clear_resume_on_end(event)
 
-    def record_peer_speech_end(self, utterance_id: object, speech_end_at: float) -> None:
-        self._peer_turns.on_peer_speech_end(utterance_id, speech_end_at)  # type: ignore[arg-type]
+    def record_peer_speech_end(self, utterance_id: UUID, speech_end_at: float) -> None:
+        self._peer_turns.on_peer_speech_end(utterance_id, speech_end_at)

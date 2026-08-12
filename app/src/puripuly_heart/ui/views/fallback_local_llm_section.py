@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from typing import TYPE_CHECKING
 
 import flet as ft
 
@@ -19,13 +20,45 @@ from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL, COLOR_NEUTRAL_
 
 from puripuly_heart.ui.views.settings_helpers import _update_control_if_mounted
 
+if TYPE_CHECKING:
+    from puripuly_heart.ui.views.settings import SettingsView
+
 
 def _reject_json_constant(value: str) -> None:
     raise json.JSONDecodeError(f"invalid JSON constant: {value}", value, 0)
 
 
+# AI: ATTRIBUTE OWNERSHIP — _init_fallback_local_llm_controls creates:
+#   _fallback_local_llm_base_url/model/fetch_btn/test_btn (TextField/IconButton/TextButton)
+#   _fallback_local_llm_api_key (ApiKeyField), _fallback_local_llm_api_key_helper (Text)
+#   _fallback_local_llm_extra_body/helper/error (TextField/Text/Text)
+#   _fallback_local_llm_extra_body_error_key/_kwargs (error state for re-translation)
+#
+# EXTRA BODY PATTERN: mirrors LlmSectionMixin's local_llm extra_body handling.
+# Same reserved/sensitive key validation, same JSON parsing, same error display.
+# The error_key/kwargs pair enables _apply_locale_fallback_local_llm to re-translate visible errors.
+#
+# LOCALE: _apply_locale_fallback_local_llm updates all fallback-local-llm
+# labels when locale changes (called from SettingsView._apply_locale).
+
 class FallbackLocalLlmSectionMixin:
     """Fallback local LLM card: Base URL, Model, API Key, Extra Body."""
+
+    def _load_fallback_local_llm_from_settings(self, settings: "AppSettings") -> None:
+        """Load fallback local LLM fields from settings."""
+        if not hasattr(self, '_fallback_local_llm_base_url'):
+            return
+        bt = settings.backup_translation
+        if bt.enabled and bt.mode == LLMProviderName.LOCAL_LLM:
+            self._fallback_local_llm_base_url.value = bt.local_llm.base_url
+            self._fallback_local_llm_base_url.error_text = None
+            self._fallback_local_llm_model.value = bt.local_llm.model or ""
+            self._fallback_local_llm_model.error_text = None
+            self._fallback_local_llm_extra_body.value = (
+                json.dumps(bt.local_llm.extra_body, ensure_ascii=False, indent=2)
+                if bt.local_llm.extra_body else ""
+            )
+            self._fallback_local_llm_extra_body_error.visible = False
 
     def _init_fallback_local_llm_controls(
         self,
@@ -349,3 +382,37 @@ class FallbackLocalLlmSectionMixin:
             logger.warning("[TestConnection][FallbackLocal] %d — %s", status_code, body)
             if self.show_snackbar:
                 self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
+
+    def _apply_locale_fallback_local_llm(self) -> None:
+        """Update fallback local LLM labels when locale changes."""
+        if not hasattr(self, '_fallback_local_llm_api_key'):
+            return
+        self._fallback_local_llm_api_key.apply_locale()
+        self._fallback_local_llm_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
+        self._fallback_local_llm_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
+        self._fallback_local_llm_base_url.label = t("settings.local_llm.base_url", default="Base URL")
+        self._fallback_local_llm_model.label = t("settings.local_llm.model", default="Model")
+        self._fallback_local_llm_extra_body.label = t("settings.local_llm.extra_body", default="Extra Body")
+        self._fallback_local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description", default="")
+        self._fallback_local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
+        _fb_helper = t("settings.local_llm.api_key.description", default="")
+        self._fallback_local_llm_api_key_helper.value = _fb_helper
+        self._fallback_local_llm_api_key_helper.visible = bool(_fb_helper.strip())
+        if self._fallback_local_llm_base_url.error_text:
+            self._fallback_local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
+        if self._fallback_local_llm_model.error_text:
+            self._fallback_local_llm_model.error_text = t("settings.local_llm.model.required")
+        if self._fallback_local_llm_extra_body_error.visible:
+            fb_error_key = self._fallback_local_llm_extra_body_error_key
+            fb_error_kwargs = self._fallback_local_llm_extra_body_error_kwargs
+            if fb_error_key:
+                if "key" not in fb_error_kwargs:
+                    fb_msg = t(fb_error_key, default="")
+                else:
+                    template = t(fb_error_key, default="")
+                    try:
+                        fb_msg = template.format(**fb_error_kwargs)
+                    except Exception:
+                        fb_msg = template
+                self._fallback_local_llm_extra_body_error.value = fb_msg
+                self._fallback_local_llm_extra_body.error_text = fb_msg

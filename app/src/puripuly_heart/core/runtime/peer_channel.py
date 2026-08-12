@@ -20,12 +20,17 @@ import asyncio
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig, PeerChannelRuntimeState, PeerRuntimeConfig
 from puripuly_heart.core.clock import Clock
 from puripuly_heart.core.pipeline.pipeline import Pipeline
 from puripuly_heart.ports.peer import SpeechChannelRuntime
+
+if TYPE_CHECKING:
+    from puripuly_heart.ports.audio import AudioSource
+    from puripuly_heart.ports.hub import STTProvider
+    from puripuly_heart.ports.vad import VadEngine
 
 __all__ = [
     "PeerChannelRuntimeState",
@@ -53,10 +58,10 @@ class PeerChannelRuntime:
         clock: Clock,
         stt_factory: Callable[
             [PeerRuntimeConfig, Callable[[Exception], Awaitable[None]]],
-            Awaitable[object] | object,
+            Awaitable[STTProvider] | STTProvider,
         ],
-        source_factory: Callable[[PeerRuntimeConfig], object],
-        vad_factory: Callable[[PeerRuntimeConfig, Path], object],
+        source_factory: Callable[[PeerRuntimeConfig], AudioSource],
+        vad_factory: Callable[[PeerRuntimeConfig, Path], VadEngine],
         vad_model_resolver: Callable[[], Path],
         run_audio_loop: Callable[..., Awaitable[None]],
     ) -> None:

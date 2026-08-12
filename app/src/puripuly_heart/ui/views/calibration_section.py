@@ -4,14 +4,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import flet as ft
+
 from puripuly_heart.ui.components.settings import (
     OptionItem,
     SettingsModal,
+    SettingsUnitCard,
 )
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.domain.overlay_calibration import (
     OVERLAY_CALIBRATION_ANCHORS,
     OverlayCalibration,
+)
+from puripuly_heart.ui.theme import (
+    COLOR_NEUTRAL,
+    COLOR_ON_BACKGROUND,
 )
 
 from .overlay_section import (
@@ -31,6 +38,168 @@ class CalibrationSectionMixin:
     This class has **no** ``__init__`` — it relies on attributes set by the
     host ``SettingsView``.
     """
+
+    # ------------------------------------------------------------------
+    # Section I widget builder — overlay calibration controls
+    # ------------------------------------------------------------------
+
+    def _build_overlay_calibration_widgets(
+        self,
+    ) -> tuple[ft.Control, ft.Control, ft.Control, ft.Control, ft.Control, ft.Control]:
+        """Build overlay calibration controls."""
+        self._overlay_anchor_title = ft.Text(
+            t("settings.overlay.calibration.anchor"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_anchor_button = self._build_clickable_text(
+            self._overlay_anchor_label_for(self._overlay_calibration.anchor),
+            self._on_overlay_anchor_click,
+        )
+        self._overlay_anchor_card = self._wrap_unit_card(
+            title=self._overlay_anchor_title,
+            value=self._overlay_anchor_button,
+        )
+
+        self._overlay_distance_title = ft.Text(
+            t("settings.overlay.calibration.distance"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_distance_value_text = ft.Text(
+            self._format_overlay_calibration_number(self._overlay_calibration.distance),
+            size=28,
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        (
+            self._overlay_distance_card_content,
+            self._overlay_distance_decrease_button,
+            self._overlay_distance_increase_button,
+            self._overlay_distance_decrease_glyph,
+            self._overlay_distance_increase_glyph,
+        ) = self._build_overlay_step_split_layout(
+            title=self._overlay_distance_title,
+            value_text=self._overlay_distance_value_text,
+            decrease_text="\uff0d",
+            increase_text="\uff0b",
+            on_decrease=lambda _e: self._on_overlay_distance_step(-_OVERLAY_OFFSET_STEP),
+            on_increase=lambda _e: self._on_overlay_distance_step(_OVERLAY_OFFSET_STEP),
+        )
+        self._overlay_distance_card = self._wrap_card(
+            self._overlay_distance_card_content,
+            expand=True,
+            height=SettingsUnitCard.DEFAULT_HEIGHT,
+        )
+
+        self._overlay_offset_x_title = ft.Text(
+            t("settings.overlay.calibration.offset_x"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_offset_x_value_text = ft.Text(
+            self._format_overlay_calibration_number(self._overlay_calibration.offset_x),
+            size=28,
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        (
+            self._overlay_offset_x_card_content,
+            self._overlay_offset_x_decrease_button,
+            self._overlay_offset_x_increase_button,
+            self._overlay_offset_x_decrease_glyph,
+            self._overlay_offset_x_increase_glyph,
+        ) = self._build_overlay_step_split_layout(
+            title=self._overlay_offset_x_title,
+            value_text=self._overlay_offset_x_value_text,
+            decrease_text="\u25c0",
+            increase_text="\u25b6",
+            on_decrease=lambda _e: self._on_overlay_offset_x_step(-_OVERLAY_OFFSET_STEP),
+            on_increase=lambda _e: self._on_overlay_offset_x_step(_OVERLAY_OFFSET_STEP),
+        )
+        self._overlay_offset_x_card = self._wrap_card(
+            self._overlay_offset_x_card_content,
+            expand=True,
+            height=SettingsUnitCard.DEFAULT_HEIGHT,
+        )
+
+        self._overlay_offset_y_title = ft.Text(
+            t("settings.overlay.calibration.offset_y"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_offset_y_value_text = ft.Text(
+            self._format_overlay_calibration_number(self._overlay_calibration.offset_y),
+            size=28,
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        (
+            self._overlay_offset_y_card_content,
+            self._overlay_offset_y_decrease_button,
+            self._overlay_offset_y_increase_button,
+            self._overlay_offset_y_decrease_glyph,
+            self._overlay_offset_y_increase_glyph,
+        ) = self._build_overlay_step_split_layout(
+            title=self._overlay_offset_y_title,
+            value_text=self._overlay_offset_y_value_text,
+            decrease_text="\u25b2",
+            increase_text="\u25bc",
+            on_decrease=lambda _e: self._on_overlay_offset_y_step(-_OVERLAY_OFFSET_STEP),
+            on_increase=lambda _e: self._on_overlay_offset_y_step(_OVERLAY_OFFSET_STEP),
+        )
+        self._overlay_offset_y_card = self._wrap_card(
+            self._overlay_offset_y_card_content,
+            expand=True,
+            height=SettingsUnitCard.DEFAULT_HEIGHT,
+        )
+
+        self._overlay_text_scale_title = ft.Text(
+            t("settings.overlay.calibration.text_scale"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_text_scale_text = self._build_clickable_text(
+            self._overlay_text_scale_label_for(self._overlay_calibration.text_scale),
+            self._on_overlay_text_scale_click,
+        )
+        self._overlay_text_scale_card = self._wrap_unit_card(
+            title=self._overlay_text_scale_title,
+            value=self._overlay_text_scale_text,
+        )
+
+        self._overlay_vr_reset_title = ft.Text(
+            t("settings.overlay.position_reset.vr.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_vr_reset_button = self._build_clickable_text(
+            t("settings.overlay.position_reset.action.vr"),
+            self._on_overlay_position_reset,
+            height=72,
+            expand=False,
+        )
+        self._overlay_vr_reset_card = self._wrap_unit_card(
+            title=self._overlay_vr_reset_title,
+            value=self._overlay_vr_reset_button,
+        )
+
+        self._overlay_reset_title = self._overlay_vr_reset_title
+
+        return (
+            self._overlay_anchor_card,
+            self._overlay_distance_card,
+            self._overlay_offset_x_card,
+            self._overlay_offset_y_card,
+            self._overlay_text_scale_card,
+            self._overlay_vr_reset_card,
+        )
 
     def set_overlay_calibration(
         self,
@@ -206,3 +375,20 @@ class CalibrationSectionMixin:
         for field_name in OverlayCalibration.__dataclass_fields__:
             self._update_overlay_calibration_draft(field_name, getattr(defaults, field_name))
         self._commit_overlay_calibration_draft()
+
+    # ------------------------------------------------------------------
+    # Locale helpers
+    # ------------------------------------------------------------------
+
+    def _apply_locale_calibration(self) -> None:
+        if not hasattr(self, '_overlay_anchor_title'):
+            return
+        self._overlay_anchor_title.value = t("settings.overlay.calibration.anchor")
+        self._overlay_distance_title.value = t("settings.overlay.calibration.distance")
+        self._overlay_offset_x_title.value = t("settings.overlay.calibration.offset_x")
+        self._overlay_offset_y_title.value = t("settings.overlay.calibration.offset_y")
+        self._overlay_text_scale_title.value = t("settings.overlay.calibration.text_scale")
+        self._overlay_vr_reset_title.value = t("settings.overlay.position_reset.vr.title")
+        self._set_unit_card_value_text(
+            self._overlay_vr_reset_button, t("settings.overlay.position_reset.action.vr")
+        )

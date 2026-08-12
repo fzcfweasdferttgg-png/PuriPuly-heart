@@ -51,11 +51,10 @@ from puripuly_heart.domain.overlay_types import SessionLoggingMode
 from puripuly_heart.ports.logging_sink import RealtimeLogSink
 
 __all__ = [
-    "RealtimeLogSink", "SessionLoggingMode", "RuntimeLoggingSinks", "SessionRuntimeLoggingService",
+    "SessionLoggingMode", "SessionRuntimeLoggingService",
+    "configure_main_logging",
     "LATENCY_CAUSE_E2E_THRESHOLD_MS", "LATENCY_DOMINANT_STAGE_NORMAL",
-    "LATENCY_DOMINANT_STAGE_POST_STT_OUTPUT", "LATENCY_DOMINANT_STAGE_STT_FINALIZATION",
-    "LATENCY_DOMINANT_STAGE_THRESHOLD_MS", "LATENCY_TRACE_POINT_CONTRACTS",
-    "LatencyTracePointContract", "compute_latency_dominant_stage",
+    "compute_latency_dominant_stage",
     "format_basic_latency_summary", "format_detailed_latency_breakdown",
     "format_detailed_latency_trace", "format_latency_cause_metric",
     "format_translation_ready_for_output",

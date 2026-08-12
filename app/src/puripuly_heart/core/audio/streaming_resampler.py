@@ -98,4 +98,4 @@ class MonoFirstStreamingResampler:
         return mixdown_to_mono_f32(reshaped)
 
 
-__all__ = ["MonoFirstStreamingResampler", "NOOP_SAMPLE_RATE_HZ"]
+__all__ = ["MonoFirstStreamingResampler"]

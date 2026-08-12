@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from puripuly_heart.core.pipeline.transcript_mediator import TranscriptMediator
     from puripuly_heart.core.pipeline.translation_executor import TranslationExecutor
     from puripuly_heart.ports.hub import STTProvider
+    from puripuly_heart.ports.osc import OscSink
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ class AudioMediator:
     def mark_promo_eligible(self) -> None:
         self._promo_eligible = True
 
-    def _send_stt_connected_notification(self, osc: object) -> None:
+    def _send_stt_connected_notification(self, osc: OscSink) -> None:
         if not self._promo_eligible:
             return
         self._promo_eligible = False

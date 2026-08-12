@@ -6,6 +6,8 @@ import copy
 import math
 from typing import TYPE_CHECKING
 
+import flet as ft
+
 from puripuly_heart.config.settings import (
     DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
     DESKTOP_FLET_SIZE_PRESET_DISPLAY_ORDER,
@@ -16,9 +18,14 @@ from puripuly_heart.config.settings import (
 from puripuly_heart.ui.components.settings import (
     OptionItem,
     SettingsModal,
+    SettingsUnitCard,
 )
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration
+from puripuly_heart.ui.theme import (
+    COLOR_NEUTRAL,
+    COLOR_ON_BACKGROUND,
+)
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -41,12 +48,42 @@ _OVERLAY_TEXT_SCALE_PRESETS = (
 _DESKTOP_OVERLAY_REOPEN_FAILURE_REASONS = frozenset({"window_configuration_failed"})
 
 
+# AI: ATTRIBUTE OWNERSHIP — _build_overlay_widgets creates ~30 controls:
+#   _overlay_target_title/button, _overlay_translation_title/button,
+#   _overlay_peer_original_title/button,
+#   _desktop_overlay_size_title/button/card, _desktop_overlay_lock_title/button/card,
+#   _desktop_overlay_background_alpha_* (title/value_text/card_content/increase/decrease),
+#   _desktop_overlay_status_title/reason_text/helper_text/primary_action/view_logs_action/body/card,
+#   _overlay_empty_card, _overlay_desktop_reset_spacer_a/b
+#
+# _sync_overlay_controls is the central sync method — updates ALL overlay control
+# visibility and disabled states. Called from set_overlay_runtime_state,
+# set_overlay_peer_contract, _on_overlay_target_selected, and apply_locale.
+#
+# SHARED CONSTANTS: _OVERLAY_DISTANCE_MIN/MAX, _OVERLAY_OFFSET_STEP,
+# _OVERLAY_TEXT_SCALE_PRESETS are also imported by CalibrationSectionMixin.
+
 class OverlaySectionMixin:
     """Mixin that provides overlay-related helpers for SettingsView.
 
     This class has **no** ``__init__`` — it relies on attributes set by the
     host ``SettingsView``.
     """
+
+    # ------------------------------------------------------------------
+    # Load from settings
+    # ------------------------------------------------------------------
+
+    def _load_overlay_from_settings(self, settings: "AppSettings") -> None:
+        """Load overlay peer contract and calibration from settings."""
+        if not hasattr(self, '_overlay_target_card'):
+            return
+        self._overlay_peer_contract = None
+        self._sync_overlay_controls()
+        self.set_overlay_calibration(
+            settings.overlay.calibration,
+            preserve_draft=self._overlay_calibration_session_active,
+        )
 
     # ------------------------------------------------------------------
     # Small overlay calibration helpers
@@ -74,6 +111,242 @@ class OverlaySectionMixin:
             return float(preset_key)
         except (TypeError, ValueError):
             return 1.0
+
+    # ------------------------------------------------------------------
+    # Locale helpers
+    # ------------------------------------------------------------------
+
+    def _apply_locale_overlay(self) -> None:
+        if not hasattr(self, '_overlay_target_title'):
+            return
+        self._overlay_target_title.value = t("settings.overlay.caption_location")
+        self._overlay_translation_title.value = t("settings.overlay.show_translation")
+        self._overlay_peer_original_title.value = t("settings.overlay.show_peer_original")
+        self._desktop_overlay_size_title.value = t("settings.overlay.desktop.size.title")
+        self._desktop_overlay_background_alpha_title.value = t(
+            "settings.overlay.desktop.background_alpha.title"
+        )
+        self._desktop_overlay_lock_title.value = t("settings.overlay.desktop.lock.title")
+        self._desktop_overlay_view_logs_action.content.value = t(
+            "settings.overlay.desktop.recovery.action.view_details"
+        )
+        self._overlay_desktop_reset_title.value = t("settings.overlay.position_reset.desktop.title")
+        self._set_unit_card_value_text(
+            self._overlay_desktop_reset_button,
+            t("settings.overlay.position_reset.action.desktop"),
+        )
+
+    # ------------------------------------------------------------------
+    # Section H widget builder — overlay toggle cards
+    # ------------------------------------------------------------------
+
+    def _build_overlay_toggle_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control]:
+        """Build overlay translation, peer original, and target cards."""
+        self._overlay_translation_title = ft.Text(
+            t("settings.overlay.show_translation"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_translation_button = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_overlay_translation_click,
+        )
+        self._overlay_translation_card = self._wrap_unit_card(
+            title=self._overlay_translation_title,
+            value=self._overlay_translation_button,
+        )
+
+        self._overlay_peer_original_title = ft.Text(
+            t("settings.overlay.show_peer_original"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_peer_original_button = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_overlay_peer_original_click,
+        )
+        self._overlay_peer_original_card = self._wrap_unit_card(
+            title=self._overlay_peer_original_title,
+            value=self._overlay_peer_original_button,
+        )
+
+        self._overlay_target_title = ft.Text(
+            t("settings.overlay.caption_location"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_target_button = self._build_clickable_text(
+            self._overlay_target_label_for(OVERLAY_TARGET_STEAMVR),
+            self._on_overlay_target_click,
+            size=28,
+            max_lines=2,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._overlay_target_card = self._wrap_unit_card(
+            title=self._overlay_target_title,
+            value=self._overlay_target_button,
+        )
+
+        return (self._overlay_target_card, self._overlay_translation_card, self._overlay_peer_original_card)
+
+    # ------------------------------------------------------------------
+    # Section J widget builder — desktop overlay controls
+    # ------------------------------------------------------------------
+
+    def _build_desktop_overlay_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control]:
+        """Build desktop overlay controls."""
+        self._overlay_desktop_reset_title = ft.Text(
+            t("settings.overlay.position_reset.desktop.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._overlay_desktop_reset_button = self._build_clickable_text(
+            t("settings.overlay.position_reset.action.desktop"),
+            self._on_desktop_overlay_position_reset,
+            height=72,
+            expand=False,
+        )
+        self._overlay_desktop_reset_card = self._wrap_unit_card(
+            title=self._overlay_desktop_reset_title,
+            value=self._overlay_desktop_reset_button,
+        )
+        self._overlay_reset_title = self._overlay_vr_reset_title
+
+        self._desktop_overlay_size_title = ft.Text(
+            t("settings.overlay.desktop.size.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._desktop_overlay_size_button = self._build_clickable_text(
+            self._desktop_overlay_size_label_for("medium"),
+            self._on_desktop_overlay_size_click,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._desktop_overlay_size_card = self._wrap_unit_card(
+            title=self._desktop_overlay_size_title,
+            value=self._desktop_overlay_size_button,
+        )
+
+        self._desktop_overlay_background_alpha_title = ft.Text(
+            t("settings.overlay.desktop.background_alpha.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._desktop_overlay_background_alpha_value_text = ft.Text(
+            "40%",
+            size=28,
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        (
+            self._desktop_overlay_background_alpha_card_content,
+            self._desktop_overlay_background_alpha_decrease_button,
+            self._desktop_overlay_background_alpha_increase_button,
+            self._desktop_overlay_background_alpha_decrease_glyph,
+            self._desktop_overlay_background_alpha_increase_glyph,
+        ) = self._build_overlay_step_split_layout(
+            title=self._desktop_overlay_background_alpha_title,
+            value_text=self._desktop_overlay_background_alpha_value_text,
+            decrease_text="\uff0d",
+            increase_text="\uff0b",
+            on_decrease=lambda _e: self._on_desktop_overlay_background_alpha_step(
+                -_DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP
+            ),
+            on_increase=lambda _e: self._on_desktop_overlay_background_alpha_step(
+                _DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP
+            ),
+        )
+        self._desktop_overlay_background_alpha_card = self._wrap_card(
+            self._desktop_overlay_background_alpha_card_content,
+            expand=True,
+            height=SettingsUnitCard.DEFAULT_HEIGHT,
+        )
+
+        self._desktop_overlay_lock_title = ft.Text(
+            t("settings.overlay.desktop.lock.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._desktop_overlay_lock_button = self._build_clickable_text(
+            self._desktop_overlay_lock_label_for(False),
+            self._on_desktop_overlay_lock_click,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._desktop_overlay_lock_card = self._wrap_unit_card(
+            title=self._desktop_overlay_lock_title,
+            value=self._desktop_overlay_lock_button,
+        )
+
+        self._desktop_overlay_status_title = ft.Text(
+            t("settings.overlay.status.off"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._desktop_overlay_reason_text = ft.Text(
+            "",
+            size=15,
+            color=COLOR_NEUTRAL,
+            text_align=ft.TextAlign.CENTER,
+            max_lines=2,
+            overflow=ft.TextOverflow.ELLIPSIS,
+            visible=False,
+        )
+        self._desktop_overlay_helper_text = ft.Text(
+            "",
+            size=14,
+            color=COLOR_NEUTRAL,
+            text_align=ft.TextAlign.CENTER,
+            max_lines=2,
+            overflow=ft.TextOverflow.ELLIPSIS,
+            visible=False,
+        )
+        self._desktop_overlay_primary_action = self._build_clickable_text(
+            "",
+            self._on_desktop_overlay_primary_action,
+            size=20,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._desktop_overlay_primary_action.visible = False
+        self._desktop_overlay_view_logs_action = self._build_clickable_text(
+            t("settings.overlay.desktop.recovery.action.view_details"),
+            self._on_desktop_overlay_view_logs,
+            size=16,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._desktop_overlay_view_logs_action.visible = False
+        self._desktop_overlay_status_body = ft.Column(
+            [
+                self._desktop_overlay_reason_text,
+                self._desktop_overlay_primary_action,
+                self._desktop_overlay_view_logs_action,
+                self._desktop_overlay_helper_text,
+            ],
+            spacing=6,
+            expand=True,
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        self._desktop_overlay_status_card = self._wrap_unit_card(
+            title=self._desktop_overlay_status_title,
+            value=self._desktop_overlay_status_body,
+        )
+        self._overlay_empty_card = self._wrap_empty_unit_card()
+        self._overlay_desktop_reset_spacer_a = self._wrap_empty_unit_card()
+        self._overlay_desktop_reset_spacer_b = self._wrap_empty_unit_card()
+
+        return (self._desktop_overlay_size_card, self._desktop_overlay_lock_card, self._desktop_overlay_background_alpha_card)
 
     # ------------------------------------------------------------------
     # Settings building with desktop overlay runtime state

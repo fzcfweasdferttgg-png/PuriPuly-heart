@@ -18,6 +18,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# AI: SECRETS LIFECYCLE — loaded LAST in load_from_settings (after all UI sections).
+# Creates no UI controls — only reads/writes secret values via create_secret_store.
+# _restore_api_key_icons syncs verification status icons from settings.api_key_verified.
+# _on_secret_change → _write_secret_value → store.set/store.delete.
+# _verify_key → on_verify_api_key callback (async, delegated to App).
+
 class SecretsSectionMixin:
     """Secret/API-key event handlers extracted from SettingsView."""
 

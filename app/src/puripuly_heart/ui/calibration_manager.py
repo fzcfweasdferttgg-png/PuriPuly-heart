@@ -49,7 +49,7 @@ class CalibrationManagerMixin:
         self._overlay_calibration_draft = None
         if self.settings is not None:
             self.settings.overlay.calibration = self.overlay_calibration.copy()
-            self._save_settings()
+            self.save_settings()
         self._schedule_overlay_calibration_emit()
         return self.overlay_calibration.copy()
 

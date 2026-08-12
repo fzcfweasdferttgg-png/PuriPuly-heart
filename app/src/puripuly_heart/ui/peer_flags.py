@@ -77,16 +77,6 @@ class PeerFlagsMixin:
             with contextlib.suppress(Exception):
                 refresh_contract()
 
-    def _record_translation_toggle_intent(self, enabled: bool) -> int:
-        self._translation_toggle_intent_enabled = bool(enabled)
-        self._translation_toggle_generation += 1
-        return self._translation_toggle_generation
-
-    def _translation_toggle_intent_matches(self, *, enabled: bool, generation: int) -> bool:
-        return generation == self._translation_toggle_generation and (
-            self._translation_toggle_intent_enabled == bool(enabled)
-        )
-
     def _peer_runtime_should_be_active(self, settings: AppSettings) -> bool:
         return bool(
             self._peer_translation_activation_requested_for(settings)
@@ -143,4 +133,4 @@ class PeerFlagsMixin:
         if enabled:
             self._enqueue_peer_translation_disclosure()
         self._refresh_overlay_peer_consumers()
-        self._save_settings()
+        self.save_settings()

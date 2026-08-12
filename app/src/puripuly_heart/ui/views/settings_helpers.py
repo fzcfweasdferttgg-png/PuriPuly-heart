@@ -31,6 +31,7 @@ from puripuly_heart.ui.theme import (
     COLOR_NEUTRAL,
     COLOR_ON_BACKGROUND,
     COLOR_PRIMARY,
+    COLOR_SURFACE,
 )
 
 if TYPE_CHECKING:
@@ -55,10 +56,6 @@ def _make_text_button(label: str, **kwargs) -> ft.TextButton:
 
 def _set_text_button_label(button: ft.TextButton, label: str) -> None:
     button.text = label
-
-
-def _reject_json_constant(value: str) -> None:
-    raise json.JSONDecodeError(f"invalid JSON constant: {value}", value, 0)
 
 
 def _update_control_if_mounted(control: ft.Control) -> None:
@@ -121,6 +118,21 @@ def _setting_action_text_size(text: str) -> int:
 
 # ── Mixin class ───────────────────────────────────────────────────────────
 
+# AI: SHARED INFRASTRUCTURE — provides UI primitives used by ALL other mixins:
+#   _wrap_card, _wrap_unit_card, _wrap_empty_unit_card (card wrappers)
+#   _build_clickable_text, _set_unit_card_value_text (text controls)
+#   _build_overlay_step_split_layout (overlay calibration step controls)
+#   _build_settings_subtab_shell (4-tab navigation)
+#   _emit_runtime_basic/detailed (logging)
+#   _sync_general_audio_card_texts (audio section display)
+#   _sync_prompt_tab_copy (prompt tab label sync)
+#   _sync_custom_vocabulary_editor_from_settings (vocab editor sync)
+#   _on_fallback_status_click/selected (backup translation mode toggle)
+#
+# MRO POSITION: SettingsHelpersMixin is FIRST in the class hierarchy of SettingsView.
+# Its methods are available to all other mixins via self.* because Python MRO
+# resolves to the first class in the MRO that defines a method.
+
 class SettingsHelpersMixin:
     """UI builder and helper methods extracted from SettingsView."""
 
@@ -160,6 +172,17 @@ class SettingsHelpersMixin:
         height: float | int | None = SettingsUnitCard.DEFAULT_HEIGHT,
     ) -> SharedCardWrapper:
         return self._wrap_card(ft.Container(expand=True), expand=True, height=height)
+
+    # --- Quant-style toggle button ---
+    def _make_quant_button(self, label: str, on_click) -> ft.Container:
+        return ft.Container(
+            content=ft.Text(label, size=14, color=COLOR_ON_BACKGROUND),
+            bgcolor=COLOR_SURFACE,
+            border=ft.border.all(1, COLOR_DIVIDER),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=on_click,
+        )
 
     # --- Clickable Text Builders ---
     def _build_clickable_text(

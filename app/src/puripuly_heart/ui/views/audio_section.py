@@ -7,17 +7,102 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from puripuly_heart.ui.components.settings import (
+    AudioSettings,
     OptionItem,
     SettingsModal,
 )
 from puripuly_heart.ui.i18n import t
+from puripuly_heart.ui.theme import COLOR_NEUTRAL
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
 
 
+# AI: ATTRIBUTE OWNERSHIP — _build_audio_widgets creates:
+#   _audio_settings (AudioSettings component — owns device enumeration),
+#   _audio_host_api_title/text, _mic_audio_title/text, _loopback_audio_title/text
+#
+# AudioSettings is a stateful component that enumerates audio devices.
+# Host API selection resets microphone (device list changes per host API).
+# _sync_general_audio_card_texts (SettingsHelpersMixin) updates display labels.
+
 class AudioSectionMixin:
     """Audio device selection event handlers extracted from SettingsView."""
+
+    # ------------------------------------------------------------------
+    # Load from settings
+    # ------------------------------------------------------------------
+
+    def _load_audio_from_settings(self, settings: "AppSettings") -> None:
+        """Load audio settings into controls."""
+        if not hasattr(self, '_audio_settings'):
+            return
+        self._audio_settings.host_api = settings.audio.input_host_api
+        self._audio_settings.microphone = settings.audio.input_device
+        self._audio_settings.desktop_output_device = settings.desktop_audio.output_device
+        self._sync_general_audio_card_texts()
+
+    # ------------------------------------------------------------------
+    # Widget builders
+    # ------------------------------------------------------------------
+
+    def _build_audio_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control]:
+        """Create host-API, mic-audio, and loopback-audio cards.
+
+        Also initialises ``self._audio_settings``.
+        Returns ``(host_api_card, mic_audio_card, loopback_audio_card)``.
+        """
+        self._audio_settings = AudioSettings(on_change=self._on_audio_change)
+
+        # -- Host API --
+        self._audio_host_api_title = ft.Text(
+            t("settings.audio_host_api"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._audio_host_api_text = self._build_clickable_text(
+            t("settings.default_option"),
+            self._on_mic_host_api_click,
+        )
+        host_api_card = self._wrap_unit_card(
+            title=self._audio_host_api_title,
+            value=self._audio_host_api_text,
+        )
+
+        # -- Microphone Audio --
+        self._mic_audio_title = ft.Text(
+            t("settings.section.microphone_audio"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._mic_audio_text = self._build_clickable_text(
+            t("settings.default_option"),
+            self._on_mic_audio_click,
+        )
+        mic_audio_card = self._wrap_unit_card(
+            title=self._mic_audio_title,
+            value=self._mic_audio_text,
+        )
+
+        # -- Loopback Audio --
+        self._loopback_audio_title = ft.Text(
+            t("settings.section.loopback_audio"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._loopback_audio_text = self._build_clickable_text(
+            t("settings.default_option"),
+            self._on_loopback_audio_click,
+        )
+        loopback_audio_card = self._wrap_unit_card(
+            title=self._loopback_audio_title,
+            value=self._loopback_audio_text,
+        )
+
+        return (host_api_card, mic_audio_card, loopback_audio_card)
 
     def _on_audio_change(self) -> None:
         if not self._settings:
@@ -105,3 +190,15 @@ class AudioSectionMixin:
         if self.page:
             self._loopback_audio_text.update()
         self._on_audio_change()
+
+    # --- Locale ---
+
+    def _apply_locale_audio(self) -> None:
+        """Update audio section labels when locale changes."""
+        if not hasattr(self, '_audio_host_api_title'):
+            return
+        self._audio_host_api_title.value = t("settings.audio_host_api")
+        self._mic_audio_title.value = t("settings.section.microphone_audio")
+        self._loopback_audio_title.value = t("settings.section.loopback_audio")
+        self._audio_settings.apply_locale()
+        self._sync_general_audio_card_texts()

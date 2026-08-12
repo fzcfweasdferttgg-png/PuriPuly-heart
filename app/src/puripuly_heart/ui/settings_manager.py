@@ -167,7 +167,7 @@ class SettingsManagerMixin:
         self._last_microphone_test_audio_settings_signature = next_microphone_test_audio_signature
         self._sync_overlay_calibration_cache(settings)
         self._sync_desktop_overlay_interaction_mode_from_settings(settings)
-        self._save_settings()
+        self.save_settings()
         await self._broadcast_desktop_runtime_control_payloads(desktop_runtime_controls)
         await self._sync_clipboard_watcher()
         self._refresh_local_stt_runtime_state()
@@ -305,7 +305,7 @@ class SettingsManagerMixin:
         save_settings(path, settings)
         return settings
 
-    def _save_settings(self) -> None:
+    def save_settings(self) -> None:
         assert self.settings is not None
         logger = logging.getLogger(__name__)
         try:
@@ -358,4 +358,4 @@ class SettingsManagerMixin:
             return
         self.settings.languages.recent_source_languages = list(source)
         self.settings.languages.recent_target_languages = list(target)
-        self._save_settings()
+        self.save_settings()

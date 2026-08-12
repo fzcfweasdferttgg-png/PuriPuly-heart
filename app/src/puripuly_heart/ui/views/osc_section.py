@@ -11,6 +11,7 @@ from puripuly_heart.ui.components.settings import (
     SettingsModal,
 )
 from puripuly_heart.ui.i18n import t
+from puripuly_heart.ui.theme import COLOR_NEUTRAL
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -18,6 +19,104 @@ if TYPE_CHECKING:
 
 class OscSectionMixin:
     """OSC-related event handlers extracted from SettingsView."""
+
+    # ------------------------------------------------------------------
+    # Load from settings
+    # ------------------------------------------------------------------
+
+    def _load_osc_from_settings(self, settings: "AppSettings") -> None:
+        """Load OSC toggle states from settings into controls."""
+        if not hasattr(self, '_vrc_mic_text'):
+            return
+        self._vrc_mic_text.content.value = t(
+            "settings.vrc_mic.on" if settings.osc.vrc_mic_intercept else "settings.vrc_mic.off"
+        )
+        self._chatbox_source_text.content.value = t(
+            "settings.chatbox_source.on"
+            if settings.osc.chatbox_include_source
+            else "settings.chatbox_source.off"
+        )
+        self._clipboard_auto_translate_text.content.value = t(
+            "settings.clipboard_auto_translate.on"
+            if settings.ui.clipboard_auto_translate_enabled
+            else "settings.clipboard_auto_translate.off"
+        )
+
+    # ------------------------------------------------------------------
+    # Widget builders
+    # ------------------------------------------------------------------
+
+    def _build_osc_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control, ft.Control]:
+        """Create chatbox-source, clipboard-auto-translate, VRC-mic, and microphone-test cards.
+
+        Returns ``(chatbox_source_card, clipboard_auto_translate_card,
+        vrc_mic_card, microphone_test_card)``.
+        """
+        # -- Chatbox source --
+        self._chatbox_source_text = self._build_clickable_text(
+            t("settings.chatbox_source.on"),
+            self._on_chatbox_source_click,
+        )
+        self._chatbox_source_title = ft.Text(
+            t("settings.chatbox_include_source"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        chatbox_source_card = self._wrap_unit_card(
+            title=self._chatbox_source_title,
+            value=self._chatbox_source_text,
+        )
+
+        # -- Clipboard auto-translate --
+        self._clipboard_auto_translate_text = self._build_clickable_text(
+            t("settings.clipboard_auto_translate.off"),
+            self._on_clipboard_auto_translate_click,
+        )
+        self._clipboard_auto_translate_title = ft.Text(
+            t("settings.clipboard_auto_translate"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        clipboard_auto_translate_card = self._wrap_unit_card(
+            title=self._clipboard_auto_translate_title,
+            value=self._clipboard_auto_translate_text,
+        )
+
+        # -- VRC mic intercept --
+        self._vrc_mic_text = self._build_clickable_text(
+            t("settings.vrc_mic.on"),
+            self._on_vrc_mic_click,
+        )
+        self._vrc_mic_title = ft.Text(
+            t("settings.vrc_mic_intercept"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        vrc_mic_card = self._wrap_unit_card(
+            title=self._vrc_mic_title,
+            value=self._vrc_mic_text,
+        )
+
+        # -- Microphone test --
+        self._microphone_test_text = self._build_clickable_text(
+            t("settings.microphone_test.action"),
+            self._on_microphone_test_click,
+        )
+        self._microphone_test_title = ft.Text(
+            t("settings.microphone_test"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        microphone_test_card = self._wrap_unit_card(
+            title=self._microphone_test_title,
+            value=self._microphone_test_text,
+        )
+
+        return (chatbox_source_card, clipboard_auto_translate_card, vrc_mic_card, microphone_test_card)
 
     def _on_vrc_mic_click(self, e) -> None:
         """Toggle VRC mic intercept immediately from the unit card."""
@@ -82,3 +181,13 @@ class OscSectionMixin:
         if self.page:
             self._chatbox_source_text.update()
         self._emit_settings_changed()
+
+    # --- Locale ---
+
+    def _apply_locale_osc(self) -> None:
+        """Update OSC section labels when locale changes."""
+        if not hasattr(self, '_vrc_mic_title'):
+            return
+        self._vrc_mic_title.value = t("settings.vrc_mic_intercept")
+        self._chatbox_source_title.value = t("settings.chatbox_include_source")
+        self._clipboard_auto_translate_title.value = t("settings.clipboard_auto_translate")

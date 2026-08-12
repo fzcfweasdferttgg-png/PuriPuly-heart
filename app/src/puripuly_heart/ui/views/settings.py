@@ -2,73 +2,37 @@
 
 from __future__ import annotations
 
-import contextlib
 import copy
-import json
 import logging
-import re
 from pathlib import Path
 from typing import Callable
 
 import flet as ft
 
-from puripuly_heart.app.wiring import create_secret_store
-from puripuly_heart.config.prompts import load_prompt_for_provider
 from puripuly_heart.config.settings import (
-    DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
-    DESKTOP_FLET_SIZE_PRESET_DISPLAY_ORDER,
-    DESKTOP_FLET_SIZE_PRESET_ORDER,
-    LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS,
-    LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS,
-    MAX_CUSTOM_VOCAB_TERMS,
-    OVERLAY_TARGET_DESKTOP,
     OVERLAY_TARGET_STEAMVR,
     AppSettings,
     LLMProviderName,
     STTProviderName,
-    _normalize_local_llm_base_url,
 )
-from puripuly_heart.ui.components.settings import (
-    ApiKeyField,
-    AudioSettings,
-    CustomVocabularyTagEditor,
-    OptionItem,
-    PromptEditor,
-    SettingsModal,
-    SettingsUnitCard,
-)
-from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
-from puripuly_heart.ui.components.subtab_shell import TextSubtab, TextSubtabShell
 from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import (
     available_locales,
     get_locale,
-    language_name,
     locale_label,
     native_locale_label,
     provider_label,
     t,
 )
-from puripuly_heart.domain.overlay_calibration import (
-    OVERLAY_CALIBRATION_ANCHORS,
-    OverlayCalibration,
-)
+from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 from puripuly_heart.ui.theme import (
-    COLOR_DIVIDER,
     COLOR_NEUTRAL,
-    COLOR_NEUTRAL_DARK,
-    COLOR_ON_BACKGROUND,
-    COLOR_PRIMARY,
-    COLOR_SURFACE,
 )
 
 from puripuly_heart.ui.views.settings_helpers import (
     SettingsHelpersMixin,
-    _CENTER_ALIGNMENT,
     _SETTINGS_SUBTAB_ORDER,
-    _make_text_button,
-    _set_text_button_label,
     _update_control_if_mounted,
 )
 from puripuly_heart.ui.views.stt_section import SttSectionMixin
@@ -85,6 +49,82 @@ from puripuly_heart.ui.views.secrets_section import SecretsSectionMixin
 
 logger = logging.getLogger(__name__)
 
+# AI: MIXIN OWNERSHIP MAP — who creates which self._* attributes.
+#
+# __init__ (settings.py):
+#   _settings, _provider_settings_draft, _config_path, has_provider_changes,
+#   has_pending_prompt_changes, all on_* callbacks, model_discovery,
+#   runtime_log_basic/detailed
+#
+# _build_general_tab (settings.py):
+#   _settings_subtab_shell (via _build_ui)
+#
+# _build_api_tab (settings.py):
+#   _translation_connection_row, _openrouter_routing_row,
+#   _stub_title, _stub_text, _translation_connection_card,
+#   _fallback_status_title, _fallback_status_text, _fallback_status_card,
+#   _fallback_openai_title, _fallback_openai_card,
+#   _fallback_local_llm_title, _fallback_local_llm_card,
+#   _trans_compute_spacer
+#
+# UiSectionMixin._build_ui_language_widgets:
+#   _ui_text, _ui_title
+# UiSectionMixin._build_low_latency_widgets:
+#   _low_latency_text, _low_latency_title, _low_latency_card
+# UiSectionMixin._build_vad_widgets:
+#   _self_vad_title, _vad_slider, _self_vad_card,
+#   _peer_vad_title, _peer_vad_slider, _peer_vad_field,
+#   _peer_hangover_field, _peer_pre_roll_field, _peer_vad_card
+#
+# OscSectionMixin._build_osc_widgets:
+#   _chatbox_source_text/title, _clipboard_auto_translate_text/title,
+#   _vrc_mic_text/title, _microphone_test_text/title
+#
+# AudioSectionMixin._build_audio_widgets:
+#   _audio_settings, _audio_host_api_title/text, _mic_audio_title/text,
+#   _loopback_audio_title/text
+#
+# ContextSectionMixin._build_integrated_context_unit_card:
+#   _integrated_context_label, _integrated_context_button, _integrated_context_hint,
+#   _integrated_context_card
+# ContextSectionMixin._build_prompt_widgets:
+#   _prompt_editor, _prompt_mode, _prompt_single_btn, _prompt_dual_btn,
+#   _prompt_mode_row, _persona_title, _prompt_for_text, _reset_prompt_btn
+# ContextSectionMixin._build_vocabulary_widgets:
+#   _custom_vocab_title, _custom_vocab_description_text, _custom_vocab_tag_editor
+#
+# OverlaySectionMixin._build_overlay_widgets:
+#   ~30+ _overlay_* / _desktop_overlay_* controls
+#
+# CalibrationSectionMixin._build_overlay_calibration_widgets:
+#   _overlay_anchor_title/button/card, _overlay_distance_*,
+#   _overlay_offset_x_*, _overlay_offset_y_*,
+#   _overlay_text_scale_*, _overlay_vr_reset_*
+#
+# SttSectionMixin._build_stt_widgets:
+#   _stt_text, _stt_compute_label/gpu_btn/cpu_btn/row,
+#   _stt_quant_label/q8_btn/q6k_btn/f16_btn/int8_btn/row,
+#   _stt_backend_label/onnx_btn/gguf_btn/row, _stt_title, _stt_provider_label
+# SttSectionMixin._build_peer_stt_widgets:
+#   _peer_stt_text, _peer_stt_compute_*, _peer_quant_*,
+#   _peer_stt_backend_*, _peer_provider_title, _peer_stt_label
+#
+# LlmSectionMixin._build_llm_widgets:
+#   _llm_text, _trans_title, _translation_provider_label,
+#   _openai_compatible_key (ApiKeyField)
+# LlmSectionMixin._build_local_llm_widgets:
+#   _local_llm_connection_title/base_url/model/fetch_btn/test_btn/api_key/...,
+#   _local_llm_connection_card
+# LlmSectionMixin._build_openai_compat_widgets:
+#   _openai_compatible_title/provider/base_url/model/fetch_btn/test_btn,
+#   _translation_openai_card
+#
+# FallbackSectionMixin._init_fallback_openai_controls:
+#   _fallback_openai_provider, _fallback_openai_base_url, _fallback_openai_model,
+#   _fallback_openai_fetch_btn, _fallback_openai_test_btn, _fallback_api_key
+# FallbackLocalLlmSectionMixin._init_fallback_local_llm_controls:
+#   _fallback_local_llm_base_url/model/fetch_btn/test_btn/api_key/...,
+#   _fallback_local_llm_extra_body/helper/error
 
 class SettingsView(
     ft.Column,
@@ -154,857 +194,55 @@ class SettingsView(
         self._build_ui()
 
     # --- Card Wrapper (About page pattern) ---
-    def _build_ui(self) -> None:
-        """Build the settings UI with Bento grid layout."""
-        # === API provider surfaces: Self STT + Peer STT + Shared Translation ===
-        self._stt_text = self._build_clickable_text(
-            provider_label(STTProviderName.LOCAL_QWEN.value),
-            self._on_stt_click,
-        )
-        self._stt_compute_label = ft.Text(
-            t("settings.compute.label"), size=14, color=COLOR_ON_BACKGROUND
-        )
-        self._stt_compute_gpu_btn = ft.Container(
-            content=ft.Text("GPU", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-            bgcolor=COLOR_PRIMARY,
-            border=ft.border.all(1, COLOR_PRIMARY),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=self._on_stt_compute_gpu_click,
-        )
-        self._stt_compute_cpu_btn = ft.Container(
-            content=ft.Text("CPU", size=14, color=COLOR_ON_BACKGROUND),
-            bgcolor=COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_DIVIDER),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=self._on_stt_compute_cpu_click,
-        )
-        self._stt_compute_row = ft.Row(
-            [self._stt_compute_label, self._stt_compute_gpu_btn, self._stt_compute_cpu_btn],
-            spacing=8,
-            visible=False,
-        )
-        self._stt_quant_label = ft.Text(
-            t("settings.quant.label", default="Quant:"), size=14, color=COLOR_ON_BACKGROUND
-        )
-        self._stt_quant_q8_btn = self._make_quant_button("Q8_0", lambda e: self._apply_stt_quant("q8_0"))
-        self._stt_quant_q6k_btn = self._make_quant_button("Q6_K", lambda e: self._apply_stt_quant("q6_k"))
-        self._stt_quant_f16_btn = self._make_quant_button("F16", lambda e: self._apply_stt_quant("f16"))
-        self._stt_quant_int8_btn = self._make_quant_button("int8", lambda e: self._apply_stt_quant("int8"))
-        # Set initial quant button state based on loaded settings
-        _init_stt = self._initial_settings.provider.stt if self._initial_settings else STTProviderName.LOCAL_QWEN
-        _init_quant = self._initial_settings.provider.stt_quant if self._initial_settings else ""
-        _init_available = self._INITIAL_QUANTS_FOR_PROVIDER.get(_init_stt, ["int8"])
-        _init_active = _init_quant if _init_quant in _init_available else ""
-        for _q, _btn in [("q8_0", self._stt_quant_q8_btn), ("q6_k", self._stt_quant_q6k_btn), ("f16", self._stt_quant_f16_btn), ("int8", self._stt_quant_int8_btn)]:
-            _btn.visible = _q in _init_available
-            if _q == _init_active:
-                _btn.bgcolor = COLOR_PRIMARY
-                _btn.border = ft.border.all(1, COLOR_PRIMARY)
-                _btn.content.color = ft.Colors.WHITE
-                _btn.content.weight = ft.FontWeight.BOLD
-        self._stt_quant_row = ft.Row(
-            [self._stt_quant_label, self._stt_quant_q8_btn, self._stt_quant_q6k_btn, self._stt_quant_f16_btn, self._stt_quant_int8_btn],
-            spacing=8,
-        )
-        self._stt_backend_label = ft.Text(
-            t("settings.backend.label", default="Backend:"), size=14, color=COLOR_ON_BACKGROUND
-        )
-        # Set initial backend button state based on loaded settings
-        _init_backend = self._initial_settings.provider.stt_backend if self._initial_settings else "onnx"
-        _init_is_onnx = _init_backend == "onnx"
-        self._stt_backend_onnx_btn = ft.Container(
-            content=ft.Text("DirectML", size=14, weight=ft.FontWeight.BOLD if _init_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if _init_is_onnx else COLOR_ON_BACKGROUND),
-            bgcolor=COLOR_PRIMARY if _init_is_onnx else COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_PRIMARY if _init_is_onnx else COLOR_DIVIDER),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=self._on_stt_backend_onnx_click,
-        )
-        self._stt_backend_gguf_btn = ft.Container(
-            content=ft.Text("Vulkan", size=14, weight=ft.FontWeight.BOLD if not _init_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if not _init_is_onnx else COLOR_ON_BACKGROUND),
-            bgcolor=COLOR_PRIMARY if not _init_is_onnx else COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_PRIMARY if not _init_is_onnx else COLOR_DIVIDER),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=self._on_stt_backend_gguf_click,
-        )
-        self._stt_backend_row = ft.Row(
-            [self._stt_backend_label, self._stt_backend_onnx_btn, self._stt_backend_gguf_btn],
-            spacing=8,
-            visible=False,
-        )
-        self._stt_title = ft.Text(
-            t("settings.section.stt"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
-        )
-        self._stt_provider_label = ft.Text(
-            t("settings.self_stt_provider"), size=16, color=COLOR_ON_BACKGROUND
-        )
-        stt_card = self._wrap_unit_card(
-            title=self._stt_title,
-            value=self._stt_text,
-        )
+    def _build_prompt_tab(self) -> list[ft.Control]:
+        """Build the Prompt tab controls."""
+        persona_card = self._build_prompt_widgets()
+        row7 = self._build_vocabulary_widgets()
+        return [row7, persona_card]
 
-        self._llm_text = self._build_clickable_text(
-            t("provider.gemini3_flash"),
-            self._on_llm_click,
-        )
-        self._trans_title = ft.Text(
-            t("settings.section.translation"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._translation_provider_label = ft.Text(
-            t("settings.shared_translation_provider"), size=16, color=COLOR_ON_BACKGROUND
-        )
-        trans_card = self._wrap_unit_card(
-            title=self._trans_title,
-            value=self._llm_text,
-        )
+    def _build_overlay_tab(self) -> list[ft.Control]:
+        """Build the Overlay tab controls."""
+        # === Section H: Overlay Cards ===
+        target_card, translation_card, peer_original_card = self._build_overlay_toggle_widgets()
 
-        # API Key for Translation card (inline)
-        self._openai_compatible_key = ApiKeyField(
-            "settings.openai_compatible_api_key",
-            "openai_compatible_api_key",
-            "openai_compatible",
-            on_verify=self._verify_key,
-            on_save=self._on_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-            base_url_getter=lambda: self._openai_compatible_base_url.value,
-        )
-
-        # === General Tab Row 1: UI / Include Original / Integrated Context ===
-        self._ui_text = self._build_clickable_text(
-            locale_label(get_locale()),
-            self._on_ui_click,
-        )
-        self._ui_title = ft.Text(
-            t("settings.section.ui"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
-        )
-        ui_card = self._wrap_unit_card(
-            title=self._ui_title,
-            value=self._ui_text,
-        )
-
-        self._audio_settings = AudioSettings(on_change=self._on_audio_change)
-        self._chatbox_source_text = self._build_clickable_text(
-            t("settings.chatbox_source.on"),
-            self._on_chatbox_source_click,
-        )
-        self._chatbox_source_title = ft.Text(
-            t("settings.chatbox_include_source"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        chatbox_source_card = self._wrap_unit_card(
-            title=self._chatbox_source_title,
-            value=self._chatbox_source_text,
-        )
-
-        self._clipboard_auto_translate_text = self._build_clickable_text(
-            t("settings.clipboard_auto_translate.off"),
-            self._on_clipboard_auto_translate_click,
-        )
-        self._clipboard_auto_translate_title = ft.Text(
-            t("settings.clipboard_auto_translate"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        clipboard_auto_translate_card = self._wrap_unit_card(
-            title=self._clipboard_auto_translate_title,
-            value=self._clipboard_auto_translate_text,
-        )
-
-        self._vrc_mic_text = self._build_clickable_text(
-            t("settings.vrc_mic.on"),
-            self._on_vrc_mic_click,
-        )
-        self._vrc_mic_title = ft.Text(
-            t("settings.vrc_mic_intercept"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        vrc_mic_card = self._wrap_unit_card(
-            title=self._vrc_mic_title,
-            value=self._vrc_mic_text,
-        )
-
-        self._microphone_test_text = self._build_clickable_text(
-            t("settings.microphone_test.action"),
-            self._on_microphone_test_click,
-        )
-        self._microphone_test_title = ft.Text(
-            t("settings.microphone_test"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        microphone_test_card = self._wrap_unit_card(
-            title=self._microphone_test_title,
-            value=self._microphone_test_text,
-        )
-
-        integrated_context_card = self._build_integrated_context_unit_card()
-
-        general_primary_row = ft.Container(
-            content=ft.Row(
-                [
-                    ui_card,
-                    chatbox_source_card,
-                    integrated_context_card,
-                ],
-                spacing=16,
-                expand=True,
-            ),
-        )
-
-        # === General Tab Row 2: Host API / Microphone Audio / Loopback Audio ===
-        self._mic_audio_text = self._build_clickable_text(
-            t("settings.default_option"),
-            self._on_mic_audio_click,
-        )
-        self._audio_host_api_title = ft.Text(
-            t("settings.audio_host_api"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._audio_host_api_text = self._build_clickable_text(
-            t("settings.default_option"),
-            self._on_mic_host_api_click,
-        )
-        host_api_card = self._wrap_unit_card(
-            title=self._audio_host_api_title,
-            value=self._audio_host_api_text,
-        )
-        self._mic_audio_title = ft.Text(
-            t("settings.section.microphone_audio"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        mic_audio_card = self._wrap_unit_card(
-            title=self._mic_audio_title,
-            value=self._mic_audio_text,
-        )
-
-        self._loopback_audio_text = self._build_clickable_text(
-            t("settings.default_option"),
-            self._on_loopback_audio_click,
-        )
-        self._loopback_audio_title = ft.Text(
-            t("settings.section.loopback_audio"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        loopback_audio_card = self._wrap_unit_card(
-            title=self._loopback_audio_title,
-            value=self._loopback_audio_text,
-        )
-        general_audio_row = ft.Container(
-            content=ft.Row(
-                [host_api_card, mic_audio_card, loopback_audio_card],
-                spacing=16,
-                expand=True,
-            ),
-        )
-
-        # === API Tab Row 2: Response Mode / Routing / Fallback ===
-        self._low_latency_text = self._build_clickable_text(
-            t("toggle.off"),
-            self._on_low_latency_click,
-        )
-        self._low_latency_title = ft.Text(
-            t("settings.low_latency_mode"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._low_latency_card = self._wrap_unit_card(
-            title=self._low_latency_title,
-            value=self._low_latency_text,
-        )
-
-        # === General Tab Row 3: VRChat Mute Sync / Self VAD / Peer VAD ===
-        self._self_vad_title = ft.Text(
-            t("settings.section.self_vad_sensitivity"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._vad_slider = ft.Slider(
-            min=0.0,
-            max=1.0,
-            divisions=20,
-            value=0.5,
-            label="0.50",
-            active_color=COLOR_PRIMARY,
-            on_change=self._handle_vad_visual_change,
-            on_change_end=self._handle_vad_change,
-        )
-        self._self_vad_card = self._wrap_unit_card(
-            title=self._self_vad_title,
-            value=ft.Container(content=self._vad_slider, alignment=_CENTER_ALIGNMENT, expand=True),
-        )
-
-        self._peer_vad_title = ft.Text(
-            t("settings.section.peer_vad_sensitivity"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._peer_vad_slider = ft.Slider(
-            min=0.0,
-            max=1.0,
-            divisions=20,
-            value=0.6,
-            label="0.60",
-            active_color=COLOR_PRIMARY,
-            on_change=self._handle_peer_vad_visual_change,
-            on_change_end=self._handle_peer_vad_change,
-        )
-        self._peer_vad_field = self._build_numeric_setting_field(
-            label=t("settings.vad.peer"),
-            value="0.60",
-            on_change_end=self._on_peer_vad_threshold_change,
-        )
-        self._peer_hangover_field = self._build_numeric_setting_field(
-            label=t("settings.vad.peer_hangover_ms"),
-            value="700",
-            on_change_end=self._on_peer_hangover_change,
-        )
-        self._peer_pre_roll_field = self._build_numeric_setting_field(
-            label=t("settings.vad.peer_pre_roll_ms"),
-            value="500",
-            on_change_end=self._on_peer_pre_roll_change,
-        )
-        self._peer_vad_card = self._wrap_unit_card(
-            title=self._peer_vad_title,
-            value=ft.Container(
-                content=self._peer_vad_slider,
-                alignment=_CENTER_ALIGNMENT,
-                expand=True,
-            ),
-        )
-        general_vad_row = ft.Container(
-            content=ft.Row(
-                [microphone_test_card, self._self_vad_card, self._peer_vad_card],
-                spacing=16,
-                expand=True,
-            ),
-        )
-        general_clipboard_row = ft.Container(
-            content=ft.Row(
-                [
-                    clipboard_auto_translate_card,
-                    vrc_mic_card,
-                ],
-                spacing=16,
-                expand=True,
-            ),
-        )
-
-        # === Peer STT card ===
-        self._peer_provider_title = ft.Text(
-            t("settings.section.peer_stt"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._dashboard_language_redirect_text = ft.Text(
-            t("settings.dashboard_language_redirect"),
-            size=16,
-            color=COLOR_NEUTRAL,
-        )
-        self._peer_stt_text = self._build_clickable_text(
-            provider_label(STTProviderName.LOCAL_QWEN.value),
-            self._on_peer_stt_click,
-        )
-        self._peer_stt_compute_label = ft.Text(
-            t("settings.compute.label"), size=14, color=COLOR_ON_BACKGROUND
-        )
-        self._peer_stt_compute_gpu_btn = ft.Container(
-            content=ft.Text("GPU", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-            bgcolor=COLOR_PRIMARY,
-            border=ft.border.all(1, COLOR_PRIMARY),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=self._on_peer_stt_compute_gpu_click,
-        )
-        self._peer_stt_compute_cpu_btn = ft.Container(
-            content=ft.Text("CPU", size=14, color=COLOR_ON_BACKGROUND),
-            bgcolor=COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_DIVIDER),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=self._on_peer_stt_compute_cpu_click,
-        )
-        self._peer_stt_compute_row = ft.Row(
-            [self._peer_stt_compute_label, self._peer_stt_compute_gpu_btn, self._peer_stt_compute_cpu_btn],
-            spacing=8,
-            visible=False,
-        )
-        self._peer_quant_label = ft.Text(
-            t("settings.quant.label", default="Quant:"), size=14, color=COLOR_ON_BACKGROUND
-        )
-        self._peer_quant_q8_btn = self._make_quant_button("Q8_0", lambda e: self._apply_peer_quant("q8_0"))
-        self._peer_quant_q6k_btn = self._make_quant_button("Q6_K", lambda e: self._apply_peer_quant("q6_k"))
-        self._peer_quant_f16_btn = self._make_quant_button("F16", lambda e: self._apply_peer_quant("f16"))
-        self._peer_quant_int8_btn = self._make_quant_button("int8", lambda e: self._apply_peer_quant("int8"))
-        # Set initial PEER quant button state based on loaded settings
-        _init_peer = self._initial_settings.provider.peer_stt if self._initial_settings else STTProviderName.LOCAL_QWEN
-        _init_peer_quant = self._initial_settings.provider.peer_stt_quant if self._initial_settings else ""
-        _init_peer_available = self._INITIAL_QUANTS_FOR_PROVIDER.get(_init_peer, ["int8"])
-        _init_peer_active = _init_peer_quant if _init_peer_quant in _init_peer_available else ""
-        for _q, _btn in [("q8_0", self._peer_quant_q8_btn), ("q6_k", self._peer_quant_q6k_btn), ("f16", self._peer_quant_f16_btn), ("int8", self._peer_quant_int8_btn)]:
-            _btn.visible = _q in _init_peer_available
-            if _q == _init_peer_active:
-                _btn.bgcolor = COLOR_PRIMARY
-                _btn.border = ft.border.all(1, COLOR_PRIMARY)
-                _btn.content.color = ft.Colors.WHITE
-                _btn.content.weight = ft.FontWeight.BOLD
-        self._peer_quant_row = ft.Row(
-            [self._peer_quant_label, self._peer_quant_q8_btn, self._peer_quant_q6k_btn, self._peer_quant_f16_btn, self._peer_quant_int8_btn],
-            spacing=8,
-        )
-        self._peer_stt_backend_label = ft.Text(
-            t("settings.backend.label", default="Backend:"), size=14, color=COLOR_ON_BACKGROUND
-        )
-        # Set initial PEER backend button state based on loaded settings
-        _init_peer_backend = self._initial_settings.provider.peer_stt_backend if self._initial_settings else "onnx"
-        _init_peer_is_onnx = _init_peer_backend == "onnx"
-        self._peer_stt_backend_onnx_btn = ft.Container(
-            content=ft.Text("DirectML", size=14, weight=ft.FontWeight.BOLD if _init_peer_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if _init_peer_is_onnx else COLOR_ON_BACKGROUND),
-            bgcolor=COLOR_PRIMARY if _init_peer_is_onnx else COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_PRIMARY if _init_peer_is_onnx else COLOR_DIVIDER),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=self._on_peer_stt_backend_onnx_click,
-        )
-        self._peer_stt_backend_gguf_btn = ft.Container(
-            content=ft.Text("Vulkan", size=14, weight=ft.FontWeight.BOLD if not _init_peer_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if not _init_peer_is_onnx else COLOR_ON_BACKGROUND),
-            bgcolor=COLOR_PRIMARY if not _init_peer_is_onnx else COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_PRIMARY if not _init_peer_is_onnx else COLOR_DIVIDER),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=self._on_peer_stt_backend_gguf_click,
-        )
-        self._peer_stt_backend_row = ft.Row(
-            [self._peer_stt_backend_label, self._peer_stt_backend_onnx_btn, self._peer_stt_backend_gguf_btn],
-            spacing=8,
-            visible=False,
-        )
-        self._peer_stt_label = ft.Text(
-            t("settings.peer_stt_provider"),
-            size=16,
-            color=COLOR_ON_BACKGROUND,
-        )
-        peer_stt_card = self._wrap_unit_card(
-            title=self._peer_provider_title,
-            value=self._peer_stt_text,
-        )
-        self._trans_compute_spacer = ft.Container(height=32, visible=False)
-        row1 = ft.Container(
-            content=ft.Column([
-                ft.Row(
-                    [
-                        ft.Column([self._stt_backend_row, self._stt_compute_row, self._stt_quant_row, stt_card], spacing=4, expand=True),
-                        ft.Column([self._peer_stt_backend_row, self._peer_stt_compute_row, self._peer_quant_row, peer_stt_card], spacing=4, expand=True),
-                        ft.Column([self._trans_compute_spacer, trans_card], spacing=4, expand=True),
-                    ],
-                    spacing=16,
-                    expand=True,
-                ),
-            ], spacing=6),
-        )
-
-        self._overlay_translation_title = ft.Text(
-            t("settings.overlay.show_translation"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_translation_button = self._build_clickable_text(
-            t("settings.option.on"),
-            self._on_overlay_translation_click,
-        )
-        self._overlay_translation_card = self._wrap_unit_card(
-            title=self._overlay_translation_title,
-            value=self._overlay_translation_button,
-        )
-
-        self._overlay_peer_original_title = ft.Text(
-            t("settings.overlay.show_peer_original"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_peer_original_button = self._build_clickable_text(
-            t("settings.option.on"),
-            self._on_overlay_peer_original_click,
-        )
-        self._overlay_peer_original_card = self._wrap_unit_card(
-            title=self._overlay_peer_original_title,
-            value=self._overlay_peer_original_button,
-        )
-
-        self._overlay_target_title = ft.Text(
-            t("settings.overlay.caption_location"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_target_button = self._build_clickable_text(
-            self._overlay_target_label_for(OVERLAY_TARGET_STEAMVR),
-            self._on_overlay_target_click,
-            size=28,
-            max_lines=2,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self._overlay_target_card = self._wrap_unit_card(
-            title=self._overlay_target_title,
-            value=self._overlay_target_button,
-        )
-
-        self._overlay_anchor_title = ft.Text(
-            t("settings.overlay.calibration.anchor"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_anchor_button = self._build_clickable_text(
-            self._overlay_anchor_label_for(self._overlay_calibration.anchor),
-            self._on_overlay_anchor_click,
-        )
-        self._overlay_anchor_card = self._wrap_unit_card(
-            title=self._overlay_anchor_title,
-            value=self._overlay_anchor_button,
-        )
-
-        self._overlay_distance_title = ft.Text(
-            t("settings.overlay.calibration.distance"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_distance_value_text = ft.Text(
-            self._format_overlay_calibration_number(self._overlay_calibration.distance),
-            size=28,
-            color=COLOR_ON_BACKGROUND,
-            text_align=ft.TextAlign.CENTER,
-        )
+        # === Section I: Overlay Calibration ===
         (
-            self._overlay_distance_card_content,
-            self._overlay_distance_decrease_button,
-            self._overlay_distance_increase_button,
-            self._overlay_distance_decrease_glyph,
-            self._overlay_distance_increase_glyph,
-        ) = self._build_overlay_step_split_layout(
-            title=self._overlay_distance_title,
-            value_text=self._overlay_distance_value_text,
-            decrease_text="－",
-            increase_text="＋",
-            on_decrease=lambda _e: self._on_overlay_distance_step(-_OVERLAY_OFFSET_STEP),
-            on_increase=lambda _e: self._on_overlay_distance_step(_OVERLAY_OFFSET_STEP),
-        )
-        self._overlay_distance_card = self._wrap_card(
-            self._overlay_distance_card_content,
-            expand=True,
-            height=SettingsUnitCard.DEFAULT_HEIGHT,
-        )
+            anchor_card,
+            distance_card,
+            offset_x_card,
+            offset_y_card,
+            text_scale_card,
+            vr_reset_card,
+        ) = self._build_overlay_calibration_widgets()
 
-        self._overlay_offset_x_title = ft.Text(
-            t("settings.overlay.calibration.offset_x"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_offset_x_value_text = ft.Text(
-            self._format_overlay_calibration_number(self._overlay_calibration.offset_x),
-            size=28,
-            color=COLOR_ON_BACKGROUND,
-            text_align=ft.TextAlign.CENTER,
-        )
-        (
-            self._overlay_offset_x_card_content,
-            self._overlay_offset_x_decrease_button,
-            self._overlay_offset_x_increase_button,
-            self._overlay_offset_x_decrease_glyph,
-            self._overlay_offset_x_increase_glyph,
-        ) = self._build_overlay_step_split_layout(
-            title=self._overlay_offset_x_title,
-            value_text=self._overlay_offset_x_value_text,
-            decrease_text="◀",
-            increase_text="▶",
-            on_decrease=lambda _e: self._on_overlay_offset_x_step(-_OVERLAY_OFFSET_STEP),
-            on_increase=lambda _e: self._on_overlay_offset_x_step(_OVERLAY_OFFSET_STEP),
-        )
-        self._overlay_offset_x_card = self._wrap_card(
-            self._overlay_offset_x_card_content,
-            expand=True,
-            height=SettingsUnitCard.DEFAULT_HEIGHT,
-        )
+        # === Section J: Desktop Overlay ===
+        size_card, lock_card, bg_alpha_card = self._build_desktop_overlay_widgets()
 
-        self._overlay_offset_y_title = ft.Text(
-            t("settings.overlay.calibration.offset_y"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_offset_y_value_text = ft.Text(
-            self._format_overlay_calibration_number(self._overlay_calibration.offset_y),
-            size=28,
-            color=COLOR_ON_BACKGROUND,
-            text_align=ft.TextAlign.CENTER,
-        )
-        (
-            self._overlay_offset_y_card_content,
-            self._overlay_offset_y_decrease_button,
-            self._overlay_offset_y_increase_button,
-            self._overlay_offset_y_decrease_glyph,
-            self._overlay_offset_y_increase_glyph,
-        ) = self._build_overlay_step_split_layout(
-            title=self._overlay_offset_y_title,
-            value_text=self._overlay_offset_y_value_text,
-            decrease_text="▲",
-            increase_text="▼",
-            on_decrease=lambda _e: self._on_overlay_offset_y_step(-_OVERLAY_OFFSET_STEP),
-            on_increase=lambda _e: self._on_overlay_offset_y_step(_OVERLAY_OFFSET_STEP),
-        )
-        self._overlay_offset_y_card = self._wrap_card(
-            self._overlay_offset_y_card_content,
-            expand=True,
-            height=SettingsUnitCard.DEFAULT_HEIGHT,
-        )
-
-        self._overlay_text_scale_title = ft.Text(
-            t("settings.overlay.calibration.text_scale"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_text_scale_text = self._build_clickable_text(
-            self._overlay_text_scale_label_for(self._overlay_calibration.text_scale),
-            self._on_overlay_text_scale_click,
-        )
-        self._overlay_text_scale_card = self._wrap_unit_card(
-            title=self._overlay_text_scale_title,
-            value=self._overlay_text_scale_text,
-        )
-
-        self._overlay_vr_reset_title = ft.Text(
-            t("settings.overlay.position_reset.vr.title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_vr_reset_button = self._build_clickable_text(
-            t("settings.overlay.position_reset.action.vr"),
-            self._on_overlay_position_reset,
-            height=72,
-            expand=False,
-        )
-        self._overlay_vr_reset_card = self._wrap_unit_card(
-            title=self._overlay_vr_reset_title,
-            value=self._overlay_vr_reset_button,
-        )
-
-        self._overlay_desktop_reset_title = ft.Text(
-            t("settings.overlay.position_reset.desktop.title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._overlay_desktop_reset_button = self._build_clickable_text(
-            t("settings.overlay.position_reset.action.desktop"),
-            self._on_desktop_overlay_position_reset,
-            height=72,
-            expand=False,
-        )
-        self._overlay_desktop_reset_card = self._wrap_unit_card(
-            title=self._overlay_desktop_reset_title,
-            value=self._overlay_desktop_reset_button,
-        )
-        self._overlay_reset_title = self._overlay_vr_reset_title
-
-        self._desktop_overlay_size_title = ft.Text(
-            t("settings.overlay.desktop.size.title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._desktop_overlay_size_button = self._build_clickable_text(
-            self._desktop_overlay_size_label_for("medium"),
-            self._on_desktop_overlay_size_click,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self._desktop_overlay_size_card = self._wrap_unit_card(
-            title=self._desktop_overlay_size_title,
-            value=self._desktop_overlay_size_button,
-        )
-
-        self._desktop_overlay_background_alpha_title = ft.Text(
-            t("settings.overlay.desktop.background_alpha.title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._desktop_overlay_background_alpha_value_text = ft.Text(
-            "40%",
-            size=28,
-            color=COLOR_ON_BACKGROUND,
-            text_align=ft.TextAlign.CENTER,
-        )
-        (
-            self._desktop_overlay_background_alpha_card_content,
-            self._desktop_overlay_background_alpha_decrease_button,
-            self._desktop_overlay_background_alpha_increase_button,
-            self._desktop_overlay_background_alpha_decrease_glyph,
-            self._desktop_overlay_background_alpha_increase_glyph,
-        ) = self._build_overlay_step_split_layout(
-            title=self._desktop_overlay_background_alpha_title,
-            value_text=self._desktop_overlay_background_alpha_value_text,
-            decrease_text="－",
-            increase_text="＋",
-            on_decrease=lambda _e: self._on_desktop_overlay_background_alpha_step(
-                -_DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP
-            ),
-            on_increase=lambda _e: self._on_desktop_overlay_background_alpha_step(
-                _DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP
-            ),
-        )
-        self._desktop_overlay_background_alpha_card = self._wrap_card(
-            self._desktop_overlay_background_alpha_card_content,
-            expand=True,
-            height=SettingsUnitCard.DEFAULT_HEIGHT,
-        )
-
-        self._desktop_overlay_lock_title = ft.Text(
-            t("settings.overlay.desktop.lock.title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._desktop_overlay_lock_button = self._build_clickable_text(
-            self._desktop_overlay_lock_label_for(False),
-            self._on_desktop_overlay_lock_click,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self._desktop_overlay_lock_card = self._wrap_unit_card(
-            title=self._desktop_overlay_lock_title,
-            value=self._desktop_overlay_lock_button,
-        )
-
-        self._desktop_overlay_status_title = ft.Text(
-            t("settings.overlay.status.off"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._desktop_overlay_reason_text = ft.Text(
-            "",
-            size=15,
-            color=COLOR_NEUTRAL,
-            text_align=ft.TextAlign.CENTER,
-            max_lines=2,
-            overflow=ft.TextOverflow.ELLIPSIS,
-            visible=False,
-        )
-        self._desktop_overlay_helper_text = ft.Text(
-            "",
-            size=14,
-            color=COLOR_NEUTRAL,
-            text_align=ft.TextAlign.CENTER,
-            max_lines=2,
-            overflow=ft.TextOverflow.ELLIPSIS,
-            visible=False,
-        )
-        self._desktop_overlay_primary_action = self._build_clickable_text(
-            "",
-            self._on_desktop_overlay_primary_action,
-            size=20,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self._desktop_overlay_primary_action.visible = False
-        self._desktop_overlay_view_logs_action = self._build_clickable_text(
-            t("settings.overlay.desktop.recovery.action.view_details"),
-            self._on_desktop_overlay_view_logs,
-            size=16,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self._desktop_overlay_view_logs_action.visible = False
-        self._desktop_overlay_status_body = ft.Column(
-            [
-                self._desktop_overlay_reason_text,
-                self._desktop_overlay_primary_action,
-                self._desktop_overlay_view_logs_action,
-                self._desktop_overlay_helper_text,
-            ],
-            spacing=6,
-            expand=True,
-            alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-        self._desktop_overlay_status_card = self._wrap_unit_card(
-            title=self._desktop_overlay_status_title,
-            value=self._desktop_overlay_status_body,
-        )
-        self._overlay_empty_card = self._wrap_empty_unit_card()
-        self._overlay_desktop_reset_spacer_a = self._wrap_empty_unit_card()
-        self._overlay_desktop_reset_spacer_b = self._wrap_empty_unit_card()
-
+        # === Section K: Overlay Row Layout (cross-cutting) ===
         overlay_row1 = ft.Container(
             content=ft.Row(
-                [
-                    self._overlay_target_card,
-                    self._overlay_translation_card,
-                    self._overlay_peer_original_card,
-                ],
+                [target_card, translation_card, peer_original_card],
                 spacing=16,
                 expand=True,
             ),
         )
         overlay_row2 = ft.Container(
             content=ft.Row(
-                [
-                    self._overlay_anchor_card,
-                    self._overlay_distance_card,
-                    self._overlay_offset_x_card,
-                ],
+                [anchor_card, distance_card, offset_x_card],
                 spacing=16,
                 expand=True,
             ),
         )
         overlay_row3 = ft.Container(
             content=ft.Row(
-                [
-                    self._overlay_offset_y_card,
-                    self._overlay_text_scale_card,
-                    self._overlay_vr_reset_card,
-                ],
+                [offset_y_card, text_scale_card, vr_reset_card],
                 spacing=16,
                 expand=True,
             ),
         )
         overlay_row4 = ft.Container(
             content=ft.Row(
-                [
-                    self._desktop_overlay_size_card,
-                    self._desktop_overlay_lock_card,
-                    self._desktop_overlay_background_alpha_card,
-                ],
+                [size_card, lock_card, bg_alpha_card],
                 spacing=16,
                 expand=True,
             ),
@@ -1038,7 +276,121 @@ class SettingsView(
         self._desktop_overlay_recovery_row = overlay_row6
         self._sync_overlay_target_specific_visibility()
 
-        # === Row 7: Response Mode / Translation Connection / Fallback ===
+        return [
+            overlay_row1,
+            overlay_row2,
+            overlay_row3,
+            overlay_row4,
+            overlay_row5,
+            overlay_row6,
+        ]
+
+    # AI: CROSS-TAB DEPENDENCY — this method creates widgets used by _build_api_tab.
+    # Specifically: _low_latency_card (from UiSectionMixin._build_low_latency_widgets)
+    # is embedded in _translation_connection_row inside _build_api_tab.
+    # General tab also creates _stt_backend_row, _peer_stt_backend_row,
+    # _stt_compute_row, _peer_stt_compute_row (from SttSectionMixin._build_stt_widgets)
+    # which _update_api_visibility controls.
+
+    def _build_general_tab(self) -> list[ft.Control]:
+        """Build the General tab controls."""
+        # Delegated widget creation (each builder stores attrs on self for handlers)
+        ui_card = self._build_ui_language_widgets()
+        self._build_low_latency_widgets()  # stores _low_latency_card on self
+        host_api_card, mic_audio_card, loopback_audio_card = self._build_audio_widgets()
+        self_vad_card, peer_vad_card = self._build_vad_widgets()
+        chatbox_source_card, clipboard_auto_translate_card, vrc_mic_card, microphone_test_card = (
+            self._build_osc_widgets()
+        )
+        integrated_context_card = self._build_integrated_context_unit_card()
+
+        # Cross-cutting layout — stays in settings.py
+        general_primary_row = ft.Container(
+            content=ft.Row(
+                [ui_card, chatbox_source_card, integrated_context_card],
+                spacing=16,
+                expand=True,
+            ),
+        )
+        general_audio_row = ft.Container(
+            content=ft.Row(
+                [host_api_card, mic_audio_card, loopback_audio_card],
+                spacing=16,
+                expand=True,
+            ),
+        )
+        general_vad_row = ft.Container(
+            content=ft.Row(
+                [microphone_test_card, self_vad_card, peer_vad_card],
+                spacing=16,
+                expand=True,
+            ),
+        )
+        general_clipboard_row = ft.Container(
+            content=ft.Row(
+                [
+                    clipboard_auto_translate_card,
+                    vrc_mic_card,
+                ],
+                spacing=16,
+                expand=True,
+            ),
+        )
+
+        return [
+            general_primary_row,
+            general_audio_row,
+            general_vad_row,
+            general_clipboard_row,
+        ]
+
+    # AI: ORDER CONSTRAINT — assert at line ~315 guards the _low_latency_card dependency.
+    # Section L (translation connection) assembles cards from THREE sources:
+    #   - _low_latency_card: from UiSectionMixin (created in _build_general_tab)
+    #   - _translation_connection_card / _fallback_status_card: created HERE in settings.py
+    #   - _local_llm_connection_card: from LlmSectionMixin._build_local_llm_widgets
+    #
+    # FALLBACK CARDS OWNERSHIP QUIRK: _fallback_openai_card and _fallback_local_llm_card
+    # are CREATED in _build_api_tab (settings.py) but their internal controls
+    # (_fallback_openai_provider, _fallback_openai_model, etc.) are created by
+    # _init_fallback_openai_controls / _init_fallback_local_llm_controls in the
+    # FallbackSectionMixin / FallbackLocalLlmSectionMixin. The cards wrap those controls.
+
+    def _build_api_tab(self) -> list[ft.Control]:
+        """Build the API provider tab controls.
+
+        Order constraint: MUST be called AFTER _build_general_tab() —
+        uses _low_latency_card created in the General tab's Response Mode section.
+        """
+        assert hasattr(self, '_low_latency_card'), (
+            "_low_latency_card must exist before _build_api_tab — "
+            "call _build_general_tab() first"
+        )
+
+        # === Section A: Self STT ===
+        stt_card = self._build_stt_widgets()
+
+        # === Section B: Translation Provider ===
+        trans_card = self._build_llm_widgets()
+
+        # === Section G: Peer STT ===
+        peer_stt_card = self._build_peer_stt_widgets()
+        self._trans_compute_spacer = ft.Container(height=32, visible=False)
+        row1 = ft.Container(
+            content=ft.Column([
+                ft.Row(
+                    [
+                        ft.Column([self._stt_backend_row, self._stt_compute_row, self._stt_quant_row, stt_card], spacing=4, expand=True),
+                        ft.Column([self._peer_stt_backend_row, self._peer_stt_compute_row, self._peer_quant_row, peer_stt_card], spacing=4, expand=True),
+                        ft.Column([self._trans_compute_spacer, trans_card], spacing=4, expand=True),
+                    ],
+                    spacing=16,
+                    expand=True,
+                ),
+            ], spacing=6),
+        )
+
+        # === Section L: Translation Connection ===
         self._stub_title = ft.Text(
             "Stub",
             size=24,
@@ -1081,196 +433,13 @@ class SettingsView(
         )
         self._openrouter_routing_row = self._translation_connection_row
 
-        self._local_llm_connection_title = ft.Text(
-            t("settings.openai_compatible.connection", default="Translation Settings"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._local_llm_base_url = ft.TextField(
-            label=t("settings.local_llm.base_url"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_local_llm_field_change,
-            on_blur=self._on_local_llm_base_url_change_end,
-            on_submit=self._on_local_llm_base_url_change_end,
-        )
-        self._local_llm_model = ft.TextField(
-            label=t("settings.local_llm.model"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_local_llm_field_change,
-            on_blur=self._on_local_llm_model_change_end,
-            on_submit=self._on_local_llm_model_change_end,
-        )
-        self._local_llm_fetch_btn = ft.IconButton(
-            icon=ft.Icons.REFRESH,
-            tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
-            on_click=self._fetch_local_llm_models,
-        )
-        self._local_llm_test_btn = ft.TextButton(
-            text=t("settings.local_llm.test_connection", default="Test connection"),
-            on_click=self._test_local_llm_connection,
-        )
-        self._local_llm_api_key = ApiKeyField(
-            "settings.local_llm.api_key",
-            "local_llm_api_key",
-            "local_llm",
-            on_verify=None,
-            on_save=self._on_local_llm_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-            show_status=False,
-        )
-        local_llm_api_key_description = t("settings.local_llm.api_key.description")
-        self._local_llm_api_key_helper = ft.Text(
-            local_llm_api_key_description,
-            size=15,
-            color=COLOR_NEUTRAL,
-            visible=bool(local_llm_api_key_description.strip()),
-        )
-        self._local_llm_extra_body = ft.TextField(
-            label=t("settings.local_llm.extra_body"),
-            value=json.dumps({"reasoning_effort": "none"}, ensure_ascii=False, indent=2),
-            multiline=True,
-            min_lines=3,
-            max_lines=6,
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_local_llm_field_change,
-            on_blur=self._on_local_llm_extra_body_change_end,
-            on_submit=self._on_local_llm_extra_body_change_end,
-        )
-        self._local_llm_extra_body_helper = ft.Text(
-            t("settings.local_llm.extra_body.description"),
-            size=15,
-            color=COLOR_NEUTRAL,
-        )
-        self._local_llm_extra_body_error = ft.Text(
-            "",
-            size=13,
-            color=ft.Colors.RED_600,
-            visible=False,
-        )
-        self._local_llm_extra_body_error_key = ""
-        self._local_llm_extra_body_error_kwargs: dict[str, object] = {}
-        self._local_llm_connection_card = self._wrap_card(
-            ft.Column(
-                [
-                    self._local_llm_connection_title,
-                    ft.Container(height=4),
-                    ft.Row([self._local_llm_base_url, self._local_llm_test_btn], spacing=4),
-                    ft.Row([self._local_llm_model, self._local_llm_fetch_btn], spacing=4),
-                    self._local_llm_api_key,
-                    self._local_llm_api_key_helper,
-                    self._local_llm_extra_body,
-                    self._local_llm_extra_body_helper,
-                    self._local_llm_extra_body_error,
-                ],
-                spacing=8,
-            ),
-            height=None,
-        )
-        self._local_llm_connection_card.visible = False
+        # === Section M: Local LLM Connection ===
+        self._build_local_llm_widgets()
 
-        # Translation OpenAI-compatible provider card
-        self._openai_compatible_title = ft.Text(
-            t("settings.openai_compatible.connection", default="Translation Provider Settings"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        from puripuly_heart.config.providers import load_providers
-        _providers = load_providers()
-        _provider_options = []
-        for key, info in _providers.items():
-            _provider_options.append(ft.dropdown.Option(key=key, text=info.get("label", key)))
-        self._openai_compatible_provider = ft.Dropdown(
-            label=t("settings.openai_compatible.provider", default="Provider"),
-            options=_provider_options,
-            value=_provider_options[0].key if _provider_options else None,
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_openai_compatible_provider_change,
-        )
-        self._openai_compatible_base_url = ft.TextField(
-            label=t("settings.openai_compatible.base_url", default="Base URL"),
-            value="https://api.openai.com/v1",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_openai_compatible_field_change,
-            on_blur=self._on_openai_compatible_base_url_change_end,
-            on_submit=self._on_openai_compatible_base_url_change_end,
-        )
-        self._openai_compatible_model = ft.TextField(
-            label=t("settings.openai_compatible.model", default="Model"),
-            hint_text=t("settings.openai_compatible.model.hint", default="Enter model name or click refresh"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_openai_compatible_field_change,
-            on_blur=self._on_openai_compatible_model_change_end,
-            on_submit=self._on_openai_compatible_model_change_end,
-        )
-        self._openai_compatible_fetch_btn = ft.IconButton(
-            icon=ft.Icons.REFRESH,
-            tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
-            on_click=self._fetch_models,
-        )
-        self._openai_compatible_test_btn = ft.TextButton(
-            text=t("settings.local_llm.test_connection", default="Test connection"),
-            on_click=self._test_openai_compatible_connection,
-        )
-        self._translation_openai_card = self._wrap_card(
-            ft.Column(
-                [
-                    self._openai_compatible_title,
-                    ft.Container(height=4),
-                    self._openai_compatible_provider,
-                    ft.Row([self._openai_compatible_model, self._openai_compatible_fetch_btn], spacing=4),
-                    self._openai_compatible_key,
-                    self._openai_compatible_test_btn,
-                ],
-                spacing=8,
-            ),
-            height=None,
-        )
-        self._translation_openai_card.visible = False
+        # === Section N: OpenAI-Compatible ===
+        self._build_openai_compat_widgets()
 
-        # Fallback OpenAI-compatible card
+        # === Section O: Fallback OpenAI ===
         self._init_fallback_openai_controls(
             on_verify=self._verify_key,
             on_save=self._on_secret_change,
@@ -1300,7 +469,7 @@ class SettingsView(
         )
         self._fallback_openai_card.visible = False
 
-        # Fallback local LLM card
+        # === Section P: Fallback Local LLM ===
         self._init_fallback_local_llm_controls(
             on_save=self._on_secret_change,
             show_snackbar=lambda msg, bg: (
@@ -1332,153 +501,42 @@ class SettingsView(
         )
         self._fallback_local_llm_card.visible = False
 
-        # === Row 8: Persona (2x2) - Licenses style ===
-        self._prompt_editor = PromptEditor(
-            on_change=self._on_prompt_change,
-            on_commit=self._on_prompt_commit,
-        )
-        self._prompt_mode = "single"  # "single" or "dual"
-        self._prompt_single_btn = self._make_quant_button(
-            t("settings.prompt_mode.single", default="Single"),
-            self._on_prompt_mode_single,
-        )
-        self._prompt_dual_btn = self._make_quant_button(
-            t("settings.prompt_mode.dual", default="Dual"),
-            self._on_prompt_mode_dual,
-        )
-        self._prompt_single_btn.bgcolor = COLOR_PRIMARY
-        self._prompt_single_btn.border = ft.border.all(1, COLOR_PRIMARY)
-        self._prompt_single_btn.content.color = ft.Colors.WHITE
-        self._prompt_single_btn.content.weight = ft.FontWeight.BOLD
-        self._prompt_mode_row = ft.Row(
-            [self._prompt_single_btn, self._prompt_dual_btn],
-            spacing=4,
-        )
-        self._persona_title = ft.Text(
-            t("settings.section.persona"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
-        )
-        self._prompt_for_text = ft.Text(
-            self._prompt_provider_copy(),
-            size=16,
-            color=COLOR_NEUTRAL,
-        )
+        return [
+            row1,
+            self._translation_connection_row,
+            self._local_llm_connection_card,
+            self._translation_openai_card,
+            self._fallback_openai_card,
+            self._fallback_local_llm_card,
+        ]
 
-        # Reset button (matches Persona title color, hover -> primary)
-        self._reset_prompt_btn = _make_text_button(
-            t("settings.reset_prompt"),
-            icon=ft.Icons.REFRESH_ROUNDED,
-            style=ft.ButtonStyle(
-                color={
-                    ft.ControlState.HOVERED: COLOR_PRIMARY,
-                    ft.ControlState.DEFAULT: COLOR_NEUTRAL,
-                },
-                icon_color={
-                    ft.ControlState.HOVERED: COLOR_PRIMARY,
-                    ft.ControlState.DEFAULT: COLOR_NEUTRAL,
-                },
-                text_style=ft.TextStyle(
-                    size=20,
-                    font_family=font_for_language(get_locale()),
-                ),
-                overlay_color=ft.Colors.TRANSPARENT,
-                animation_duration=0,
-            ),
-            on_click=self._on_reset_prompt,
-        )
+    # AI: BUILD ORDER CONSTRAINT — this is the single most fragile invariant.
+    # _build_general_tab() MUST run before _build_api_tab() because
+    # _build_low_latency_widgets() (called from _build_general_tab via UiSectionMixin)
+    # creates self._low_latency_card, which _build_api_tab() asserts exists and embeds
+    # in _translation_connection_row. Reordering these calls WILL crash at runtime.
+    # _build_prompt_tab and _build_overlay_tab are independent of each other
+    # and of general/api, but must run after both (prompt uses _prompt_editor
+    # created by _build_prompt_widgets via ContextSectionMixin).
 
-        # Header row with title, prompt mode toggle, and reset button
-        persona_header = ft.Row(
-            controls=[self._persona_title, self._prompt_mode_row, ft.Container(expand=True), self._reset_prompt_btn],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
+    def _build_ui(self) -> None:
+        """Build the settings UI with Bento grid layout."""
+        general_rows = self._build_general_tab()
+        api_rows = self._build_api_tab()
 
-        # Simple container like Licenses (no border, no internal scroll)
-        prompt_container = ft.Container(
-            content=self._prompt_editor,
-            width=float("inf"),
-        )
+        prompt_rows = self._build_prompt_tab()
 
-        persona_card = SharedCardWrapper(
-            ft.Column(
-                [
-                    persona_header,
-                    ft.Container(height=16),
-                    prompt_container,
-                ],
-                spacing=0,
-            ),
-            height=None,
-            expand=False,
-        )
-        # === Row 9: Custom Vocabulary (2x1) ===
-        self._custom_vocab_title = ft.Text(
-            t("settings.section.custom_vocabulary"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._custom_vocab_description_text = ft.Text(
-            t("settings.custom_vocabulary.description"),
-            size=16,
-            color=COLOR_NEUTRAL,
-        )
-        self._custom_vocab_tag_editor = CustomVocabularyTagEditor(
-            on_add_terms=self._on_custom_vocabulary_add_terms,
-            on_remove_term=self._on_custom_vocabulary_remove_term,
-        )
-        self._apply_custom_vocabulary_tag_editor_locale()
-        row7 = SharedCardWrapper(
-            ft.Column(
-                [
-                    self._custom_vocab_title,
-                    ft.Container(height=6),
-                    self._custom_vocab_description_text,
-                    ft.Container(height=12),
-                    self._custom_vocab_tag_editor,
-                ],
-                spacing=0,
-            ),
-            height=None,
-            expand=False,
-        )
+        overlay_rows = self._build_overlay_tab()
 
         self._settings_subtab_shell = self._build_settings_subtab_shell(
             {
-                "api": [
-                    row1,
-                    self._translation_connection_row,
-                    self._local_llm_connection_card,
-                    self._translation_openai_card,
-                    self._fallback_openai_card,
-                    self._fallback_local_llm_card,
-                ],
-                "general": [
-                    general_primary_row,
-                    general_audio_row,
-                    general_vad_row,
-                    general_clipboard_row,
-                ],
-                "prompt": [row7, persona_card],
-                "overlay": [
-                    overlay_row1,
-                    overlay_row2,
-                    overlay_row3,
-                    overlay_row4,
-                    overlay_row5,
-                    overlay_row6,
-                ],
+                "api": api_rows,
+                "general": general_rows,
+                "prompt": prompt_rows,
+                "overlay": overlay_rows,
             }
         )
         self.controls = [self._settings_subtab_shell]
-
-    def _populate_host_apis(self) -> None:
-        """Legacy hook for tests; host APIs are handled by AudioSettings."""
-        return None
-
-    def _refresh_microphones(self) -> None:
-        """Legacy hook for tests; microphone list is handled by AudioSettings."""
-        return None
 
     def _build_locale_options(self) -> list[ft.dropdown.Option]:
         """Build locale dropdown options."""
@@ -1502,6 +560,11 @@ class SettingsView(
         target.system_prompt = source.system_prompt
         target.system_prompts = {}
 
+    # AI: DRAFT MERGE — returns _settings with provider fields overlaid from draft.
+    # Used by: _update_api_visibility, apply_locale, _on_*_click (display), build_provider_apply_settings.
+    # Cost: one copy.deepcopy per call. Mixin callers often build merged once and pass
+    # to _update_api_visibility(merged) to avoid double-deepcopy.
+
     def _build_settings_with_provider_draft(self) -> AppSettings | None:
         if self._settings is None:
             return None
@@ -1510,6 +573,10 @@ class SettingsView(
         merged = copy.deepcopy(self._settings)
         self._copy_provider_draft_fields(self._provider_settings_draft, merged)
         return merged
+
+    # AI: DRAFT GATE — lazily creates _provider_settings_draft on first mutation.
+    # All mixin event handlers use this to stage changes before apply/consume.
+    # The draft persists until consume_provider_apply_settings() resets it.
 
     def _ensure_provider_settings_draft(self) -> AppSettings:
         assert self._settings is not None
@@ -1536,6 +603,13 @@ class SettingsView(
         if not self._settings:
             return ""
         return self._settings.system_prompt
+
+    # AI: COMMIT CHAIN — before building final settings, must flush dirty text fields:
+    # _commit_local_llm_fields_from_controls (LlmSectionMixin)
+    # _commit_openai_compatible_fields_from_controls (LlmSectionMixin)
+    # _commit_fallback_fields_from_controls (FallbackSectionMixin)
+    # _commit_fallback_local_llm_fields_from_controls (FallbackLocalLlmSectionMixin)
+    # Missing any _commit_* call would lose uncommitted text field edits.
 
     def build_provider_apply_settings(self) -> AppSettings | None:
         self._commit_local_llm_fields_from_controls()
@@ -1587,6 +661,20 @@ class SettingsView(
             self._provider_settings_draft = None
         return settings
 
+    # AI: LOAD ORDER — the sequence matters:
+    # 1. Reset state flags (_provider_settings_draft=None, has_provider_changes=False, etc.)
+    # 2. _load_*_from_settings for each section (populates widget values)
+    # 3. _update_api_visibility AFTER all sections loaded (needs provider values to decide visibility)
+    # 4. Backup translation status display (reads settings.backup_translation)
+    # 5. _load_secrets (reads secret store, sets API key field values)
+    #
+    # DRAFT PATTERN: _provider_settings_draft is None until user changes a provider field.
+    # _ensure_provider_settings_draft() lazily creates it via deepcopy of _settings.
+    # Multiple mixin event handlers mutate the draft via this gate (31 call sites).
+    # Flet is single-threaded — no race condition between concurrent handlers.
+    #
+    # DEAD PARAMETER: preserve_custom_vocab_draft (kept for backward compat, body is _ = param).
+
     # --- Load Settings ---
     def load_from_settings(
         self,
@@ -1596,6 +684,7 @@ class SettingsView(
         preserve_custom_vocab_draft: bool = False,
     ) -> None:
         """Load current settings into the UI."""
+        _ = preserve_custom_vocab_draft  # kept for backward compatibility; no longer used
         self._settings = settings
         self._provider_settings_draft = None
         self._config_path = config_path
@@ -1609,76 +698,19 @@ class SettingsView(
             self._overlay_runtime_target = self._current_overlay_target()
         self._sync_clickable_text_control_fonts(font_for_language(settings.ui.locale))
 
-        # UI Language
-        self._ui_text.content.value = locale_label(settings.ui.locale)
+        self._load_ui_from_settings(settings)
+        self._load_stt_from_settings(settings)
+        self._load_llm_from_settings(settings)
+        self._load_fallback_from_settings(settings)
+        self._load_fallback_local_llm_from_settings(settings)
+        self._load_audio_from_settings(settings)
+        self._load_vad_and_latency_from_settings(settings)
+        self._load_osc_from_settings(settings)
+        self._load_context_from_settings(settings)
+        self._load_overlay_from_settings(settings)
 
-        # STT Provider
-        self._set_unit_card_value_text(
-            self._stt_text,
-            provider_label(settings.provider.stt.value),
-        )
-        self._set_unit_card_value_text(
-            self._peer_stt_text,
-            provider_label(self._effective_peer_stt_provider(settings).value),
-        )
+        # Update API key field visibility after all sections loaded
         self._update_api_visibility(settings)
-
-        # LLM Provider
-        self._set_unit_card_value_text(
-            self._llm_text,
-            self._get_llm_display_label(settings),
-        )
-        self._local_llm_base_url.value = settings.local_llm.base_url
-        self._local_llm_base_url.error_text = None
-        self._local_llm_model.value = settings.local_llm.model
-        self._local_llm_model.error_text = None
-        self._local_llm_extra_body.value = json.dumps(
-            settings.local_llm.extra_body,
-            ensure_ascii=False,
-            indent=2,
-        )
-        self._clear_local_llm_extra_body_error()
-
-        # OpenAI Compatible
-        self._openai_compatible_base_url.value = settings.provider.openai_compatible.base_url
-        self._openai_compatible_base_url.error_text = None
-        self._openai_compatible_model.value = settings.provider.openai_compatible.model or ""
-        # Sync provider dropdown from base_url
-        from puripuly_heart.config.providers import load_providers
-        _loaded_providers = load_providers()
-        _opts = self._openai_compatible_provider.options or []
-        _matched = _opts[0].key if _opts else None
-        for _pk, _pi in _loaded_providers.items():
-            if _pi.get("base_url") == settings.provider.openai_compatible.base_url:
-                _matched = _pk
-                break
-        self._openai_compatible_provider.value = _matched
-
-        # Fallback OpenAI Compatible
-        bt = settings.backup_translation
-        if bt.enabled and bt.mode == LLMProviderName.OPENAI_COMPATIBLE:
-            self._fallback_openai_base_url.value = bt.openai_compatible.base_url
-            self._fallback_openai_base_url.error_text = None
-            self._fallback_openai_model.value = bt.openai_compatible.model or ""
-            _fb_opts = self._fallback_openai_provider.options or []
-            _fb_matched = _fb_opts[0].key if _fb_opts else None
-            for _pk, _pi in _loaded_providers.items():
-                if _pi.get("base_url") == bt.openai_compatible.base_url:
-                    _fb_matched = _pk
-                    break
-            self._fallback_openai_provider.value = _fb_matched
-
-        # Fallback local LLM
-        if bt.enabled and bt.mode == LLMProviderName.LOCAL_LLM:
-            self._fallback_local_llm_base_url.value = bt.local_llm.base_url
-            self._fallback_local_llm_base_url.error_text = None
-            self._fallback_local_llm_model.value = bt.local_llm.model or ""
-            self._fallback_local_llm_model.error_text = None
-            self._fallback_local_llm_extra_body.value = (
-                json.dumps(bt.local_llm.extra_body, ensure_ascii=False, indent=2)
-                if bt.local_llm.extra_body else ""
-            )
-            self._fallback_local_llm_extra_body_error.visible = False
 
         # Backup translation status display
         bt = settings.backup_translation
@@ -1691,62 +723,29 @@ class SettingsView(
         else:
             self._set_unit_card_value_text(self._fallback_status_text, t("option.disabled"))
 
-        # Audio Settings
-        self._audio_settings.host_api = settings.audio.input_host_api
-        self._audio_settings.microphone = settings.audio.input_device
-        self._audio_settings.desktop_output_device = settings.desktop_audio.output_device
-        self._sync_general_audio_card_texts()
-
-        # VAD
-        self._vad_slider.value = settings.stt.vad_speech_threshold
-        self._vad_slider.label = f"{settings.stt.vad_speech_threshold:.2f}"
-        self._peer_vad_slider.value = settings.desktop_audio.vad_speech_threshold
-        self._peer_vad_slider.label = f"{settings.desktop_audio.vad_speech_threshold:.2f}"
-        self._peer_vad_field.value = f"{settings.desktop_audio.vad_speech_threshold:.2f}"
-        self._peer_hangover_field.value = str(settings.desktop_audio.vad_hangover_ms)
-        self._peer_pre_roll_field.value = str(settings.desktop_audio.vad_pre_roll_ms)
-        self._low_latency_text.content.value = t(
-            "toggle.on" if settings.stt.low_latency_mode else "toggle.off"
-        )
-        # --- 新增：读取 VRChat 同步开关状态 ---
-        self._vrc_mic_text.content.value = t(
-            "settings.vrc_mic.on" if settings.osc.vrc_mic_intercept else "settings.vrc_mic.off"
-        )
-        self._chatbox_source_text.content.value = t(
-            "settings.chatbox_source.on"
-            if settings.osc.chatbox_include_source
-            else "settings.chatbox_source.off"
-        )
-        self._clipboard_auto_translate_text.content.value = t(
-            "settings.clipboard_auto_translate.on"
-            if settings.ui.clipboard_auto_translate_enabled
-            else "settings.clipboard_auto_translate.off"
-        )
-        # Prompt
-        provider_name = self._active_prompt_key()
-        self._prompt_editor.set_provider(provider_name)
-        settings.system_prompts = {}
-        if settings.system_prompt.strip():
-            self._prompt_editor.value = settings.system_prompt
-        else:
-            self._prompt_editor.load_default_prompt(emit_change=False)
-            settings.system_prompt = self._prompt_editor.value
-
-        _ = preserve_custom_vocab_draft
-        self._sync_custom_vocabulary_editor_from_settings()
-        self._sync_prompt_tab_copy()
-        self._overlay_peer_contract = None
-        self._sync_overlay_controls()
-        self.set_overlay_calibration(
-            settings.overlay.calibration,
-            preserve_draft=self._overlay_calibration_session_active,
-        )
-
         # Load secrets
         self._load_secrets(settings, config_path)
 
         if self.page:
             self.update()
+    # AI: CROSS-CUTTING VISIBILITY COORDINATOR — called from 7+ call sites across
+    # stt_section.py, llm_section.py, settings_helpers.py, overlay_section.py.
+    # Controls visibility of:
+    #   _translation_connection_row (always visible when built)
+    #   _local_llm_connection_card (visible when LLM == LOCAL_LLM)
+    #   _translation_openai_card (visible when LLM == OPENAI_COMPATIBLE)
+    #   _fallback_openai_card (visible when backup enabled + OPENAI_COMPATIBLE)
+    #   _fallback_local_llm_card (visible when backup enabled + LOCAL_LLM)
+    #   _stt_compute_row / _peer_stt_compute_row (visible for local STT providers)
+    #   _stt_backend_row / _peer_stt_backend_row (visible for dual-backend models)
+    #
+    # Mixin callers (e.g. _on_stt_selected) build merged settings once and pass
+    # to avoid redundant deepcopy inside this method.
+    #
+    # SAFETY: All callers execute after _build_ui() completes (post-build).
+    # If a future mixin calls this before widgets are built, it will crash with
+    # AttributeError — no hasattr guard exists (by design: fail-fast).
+
     # --- Visibility Updates ---
     def _update_api_visibility(self, settings: AppSettings | None = None) -> None:
         """Update API key field visibility based on selected providers."""
@@ -1826,6 +825,13 @@ class SettingsView(
         if self.on_settings_changed:
             self.on_settings_changed(sanitized)
 
+    # AI: LOCALE CASCADE — must call section _apply_locale_* methods in order.
+    # _apply_locale_llm handles primary translation labels only.
+    # Fallback labels handled by dedicated _apply_locale_fallback() / _apply_locale_fallback_local_llm().
+    # Each method updates only attributes owned by its own mixin.
+    # Intentionally omitted: secrets (no locale-sensitive labels). Fallback handled by dedicated methods.
+    # _sync_overlay_controls at the end updates overlay target visibility after locale change.
+
     # --- Locale ---
     def apply_locale(self) -> None:
         """Update all labels when locale changes."""
@@ -1833,73 +839,13 @@ class SettingsView(
         for key in _SETTINGS_SUBTAB_ORDER:
             self._settings_subtab_shell.set_tab_label(key, self._settings_subtab_label(key))
 
-        # STT / PEER backend & quant labels
-        self._stt_backend_label.value = t("settings.backend.label", default="Engine:")
-        self._stt_quant_label.value = t("settings.quant.label", default="Quality:")
-        self._peer_stt_backend_label.value = t("settings.backend.label", default="Engine:")
-        self._peer_quant_label.value = t("settings.quant.label", default="Quality:")
-
-        # Section titles
-        self._stt_title.value = t("settings.section.stt")
-        self._trans_title.value = t("settings.section.translation")
-        self._stt_compute_label.value = t("settings.compute.label")
-        self._peer_stt_compute_label.value = t("settings.compute.label")
-        self._stt_provider_label.value = t("settings.self_stt_provider")
-        self._translation_provider_label.value = t("settings.shared_translation_provider")
-        self._fallback_openai_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
-        self._fallback_openai_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
-        self._fallback_local_llm_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
-        self._fallback_local_llm_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
-        self._ui_title.value = t("settings.section.ui")
-        self._audio_host_api_title.value = t("settings.audio_host_api")
-        self._mic_audio_title.value = t("settings.section.microphone_audio")
-        self._loopback_audio_title.value = t("settings.section.loopback_audio")
-        self._self_vad_title.value = t("settings.section.self_vad_sensitivity")
-        self._peer_vad_title.value = t("settings.section.peer_vad_sensitivity")
-        self._microphone_test_title.value = t("settings.microphone_test")
-        self._peer_vad_field.label = t("settings.vad.peer")
-        self._peer_hangover_field.label = t("settings.vad.peer_hangover_ms")
-        self._peer_pre_roll_field.label = t("settings.vad.peer_pre_roll_ms")
-        self._low_latency_title.value = t("settings.low_latency_mode")
-        self._local_llm_connection_title.value = t("settings.openai_compatible.connection", default="Translation Settings")
-        self._local_llm_base_url.label = t("settings.local_llm.base_url")
-        self._local_llm_model.label = t("settings.local_llm.model")
-        self._local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
-        self._local_llm_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
-        self._openai_compatible_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
-        self._local_llm_api_key.apply_locale()
-        self._fallback_api_key.apply_locale()
-        self._fallback_local_llm_api_key.apply_locale()
-        local_llm_api_key_description = t("settings.local_llm.api_key.description")
-        self._local_llm_api_key_helper.value = local_llm_api_key_description
-        self._local_llm_api_key_helper.visible = bool(local_llm_api_key_description.strip())
-        self._local_llm_extra_body.label = t("settings.local_llm.extra_body")
-        self._local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description")
-        # Translation OpenAI-compatible labels
-        self._openai_compatible_title.value = t("settings.openai_compatible.connection", default="Translation Provider Settings")
-        self._openai_compatible_provider.label = t("settings.openai_compatible.provider", default="Provider")
-        self._openai_compatible_base_url.label = t("settings.openai_compatible.base_url", default="Base URL")
-        self._openai_compatible_model.label = t("settings.openai_compatible.model", default="Model")
-        self._openai_compatible_model.hint_text = t("settings.openai_compatible.model.hint", default="Enter model name or click refresh")
-        self._openai_compatible_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
-        self._openai_compatible_key.apply_locale()
-        # Fallback OpenAI labels
-        self._fallback_openai_provider.label = t("settings.openai_compatible.provider", default="Provider")
-        self._fallback_openai_base_url.label = t("settings.openai_compatible.base_url", default="Base URL")
-        self._fallback_openai_model.label = t("settings.openai_compatible.model", default="Model")
-        self._fallback_openai_model.hint_text = t("settings.openai_compatible.model.hint", default="Enter model name or click refresh")
-        # Fallback Local LLM labels
-        self._fallback_local_llm_base_url.label = t("settings.local_llm.base_url", default="Base URL")
-        self._fallback_local_llm_model.label = t("settings.local_llm.model", default="Model")
-        self._fallback_local_llm_extra_body.label = t("settings.local_llm.extra_body", default="Extra Body")
-        self._fallback_local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description", default="")
-        self._fallback_openai_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
-        self._fallback_local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
-        _fb_helper = t("settings.local_llm.api_key.description", default="")
-        self._fallback_local_llm_api_key_helper.value = _fb_helper
-        self._fallback_local_llm_api_key_helper.visible = bool(_fb_helper.strip())
-        # Fallback status card
-        self._fallback_status_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
+        self._apply_locale_stt()
+        self._apply_locale_ui()
+        self._apply_locale_audio()
+        self._apply_locale_osc()
+        self._apply_locale_llm()
+        self._apply_locale_fallback()
+        self._apply_locale_fallback_local_llm()
         if self._settings:
             _bt = self._settings.backup_translation
             if _bt.enabled:
@@ -1907,79 +853,9 @@ class SettingsView(
             else:
                 _fb_label = t("option.disabled")
             self._set_unit_card_value_text(self._fallback_status_text, _fb_label)
-        if self._local_llm_base_url.error_text:
-            self._local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
-        if self._local_llm_model.error_text:
-            self._local_llm_model.error_text = t("settings.local_llm.model.required")
-        if self._fallback_local_llm_base_url.error_text:
-            self._fallback_local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
-        if self._fallback_local_llm_model.error_text:
-            self._fallback_local_llm_model.error_text = t("settings.local_llm.model.required")
-        if self._fallback_openai_base_url.error_text:
-            self._fallback_openai_base_url.error_text = t(
-                "settings.openai_compatible.base_url.required", default="Base URL is required"
-            )
-        if self._local_llm_extra_body_error.visible:
-            error_key = self._local_llm_extra_body_error_key
-            error_kwargs = self._local_llm_extra_body_error_kwargs
-            if error_key:
-                message = self._local_llm_extra_body_error_message(error_key, **error_kwargs)
-                self._local_llm_extra_body_error.value = message
-                self._local_llm_extra_body.error_text = message
-        if self._fallback_local_llm_extra_body_error.visible:
-            fb_error_key = self._fallback_local_llm_extra_body_error_key
-            fb_error_kwargs = self._fallback_local_llm_extra_body_error_kwargs
-            if fb_error_key:
-                if "key" not in fb_error_kwargs:
-                    fb_msg = t(fb_error_key, default="")
-                else:
-                    template = t(fb_error_key, default="")
-                    try:
-                        fb_msg = template.format(**fb_error_kwargs)
-                    except Exception:
-                        fb_msg = template
-                self._fallback_local_llm_extra_body_error.value = fb_msg
-                self._fallback_local_llm_extra_body.error_text = fb_msg
-        self._persona_title.value = t("settings.section.persona")
-        self._custom_vocab_title.value = t("settings.section.custom_vocabulary")
-        self._vrc_mic_title.value = t("settings.vrc_mic_intercept")
-        self._chatbox_source_title.value = t("settings.chatbox_include_source")
-        self._clipboard_auto_translate_title.value = t("settings.clipboard_auto_translate")
-        self._peer_provider_title.value = t("settings.section.peer_stt")
-        self._dashboard_language_redirect_text.value = t("settings.dashboard_language_redirect")
-        self._peer_stt_label.value = t("settings.peer_stt_provider")
-        self._overlay_target_title.value = t("settings.overlay.caption_location")
-        self._overlay_translation_title.value = t("settings.overlay.show_translation")
-        self._overlay_peer_original_title.value = t("settings.overlay.show_peer_original")
-        self._integrated_context_label.value = t("settings.integrated_context")
-        self._audio_settings.apply_locale()
-        self._sync_general_audio_card_texts()
-        self._overlay_anchor_title.value = t("settings.overlay.calibration.anchor")
-        self._overlay_distance_title.value = t("settings.overlay.calibration.distance")
-        self._overlay_offset_x_title.value = t("settings.overlay.calibration.offset_x")
-        self._overlay_offset_y_title.value = t("settings.overlay.calibration.offset_y")
-        self._overlay_text_scale_title.value = t("settings.overlay.calibration.text_scale")
-        self._overlay_vr_reset_title.value = t("settings.overlay.position_reset.vr.title")
-        self._overlay_desktop_reset_title.value = t("settings.overlay.position_reset.desktop.title")
-        self._desktop_overlay_size_title.value = t("settings.overlay.desktop.size.title")
-        self._desktop_overlay_background_alpha_title.value = t(
-            "settings.overlay.desktop.background_alpha.title"
-        )
-        self._desktop_overlay_lock_title.value = t("settings.overlay.desktop.lock.title")
-        self._set_unit_card_value_text(
-            self._overlay_vr_reset_button, t("settings.overlay.position_reset.action.vr")
-        )
-        self._set_unit_card_value_text(
-            self._overlay_desktop_reset_button,
-            t("settings.overlay.position_reset.action.desktop"),
-        )
-        _set_text_button_label(self._reset_prompt_btn, t("settings.reset_prompt"))
-        self._sync_prompt_tab_copy()
-        # Prompt mode buttons
-        self._prompt_single_btn.content.value = t("settings.prompt_mode.single", default="Single")
-        self._prompt_dual_btn.content.value = t("settings.prompt_mode.dual", default="Dual")
-        # Desktop overlay view logs
-        self._desktop_overlay_view_logs_action.content.value = t("settings.overlay.desktop.recovery.action.view_details")
+        self._apply_locale_context()
+        self._apply_locale_overlay()
+        self._apply_locale_calibration()
 
         # Update dynamic buttons by replacing the entire style object
         ui_font = font_for_language(get_locale())

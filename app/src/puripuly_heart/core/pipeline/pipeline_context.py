@@ -13,6 +13,8 @@ import traceback
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
 from uuid import UUID
 
+from puripuly_heart.core.language import source_language_for, target_language_for
+
 from puripuly_heart.core.pipeline.channel_runtime import ChannelRuntime
 from puripuly_heart.core.pipeline.latency_tracker import LatencyTracker
 from puripuly_heart.core.runtime_logging import (
@@ -260,14 +262,10 @@ class PipelineContext:
     # ── Language (1.4) ─────────────────────────────────────────────────
 
     def _source_language_for(self, runtime: ChannelRuntime) -> str:
-        if runtime.channel == "peer" and self.peer_source_language:
-            return self.peer_source_language
-        return self.source_language
+        return source_language_for(self, runtime)
 
     def _target_language_for(self, runtime: ChannelRuntime) -> str:
-        if runtime.channel == "peer" and self.peer_target_language:
-            return self.peer_target_language
-        return self.target_language
+        return target_language_for(self, runtime)
 
     def _other_runtime(self, runtime: ChannelRuntime) -> ChannelRuntime:
         return self.peer_runtime if runtime is self.self_runtime else self.self_runtime

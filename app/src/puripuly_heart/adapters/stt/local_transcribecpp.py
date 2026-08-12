@@ -12,10 +12,6 @@ def _default_backend() -> str:
     return "cpu" if os.environ.get("PURIPULY_MODE", "gpu").lower() == "cpu" else "vulkan"
 
 
-class LocalTranscribecppInferenceError(RuntimeError):
-    """Raised when transcribe.cpp inference fails."""
-
-
 def create_transcribecpp_recognizer(
     *,
     model_path: Path,

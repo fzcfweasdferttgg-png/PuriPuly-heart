@@ -33,6 +33,18 @@ from puripuly_heart.domain.models import (
     UtteranceBundle,
 )
 from puripuly_heart.ports.hub import STTProvider
+from puripuly_heart.ports.pipeline_mediators import (
+    AudioMediatorProtocol,
+    BufferManagerProtocol,
+    LifecycleManagerProtocol,
+    OutputMediatorProtocol,
+    OverlayEmitterProtocol,
+    PeerTurnTrackerProtocol,
+    TranscriptMediatorProtocol,
+    TranslationExecutorProtocol,
+    TranslationLoggerProtocol,
+    VADHandlerProtocol,
+)
 from puripuly_heart.core.pipeline.latency_tracker import LatencyTracker
 from puripuly_heart.core.pipeline.pipeline_context import PipelineContext
 from puripuly_heart.core.pipeline.peer_turn_tracker import PeerTurnTracker
@@ -425,6 +437,53 @@ class Pipeline:
 
     def _clear_osc_typing_reasons(self) -> None:
         self.output_mediator.clear_typing_reasons()
+
+    # -- LLM lifecycle encapsulation --
+
+    async def set_llm(self, llm: object) -> None:
+        """Replace primary LLM provider and sync translation_service."""
+        import contextlib
+        previous = self.llm
+        self.llm = llm
+        if previous is not None:
+            with contextlib.suppress(Exception):
+                await previous.close()
+        if self.translation_service is not None:
+            self.translation_service.llm = llm
+
+    async def set_fallback_llm(self, llm: object) -> None:
+        """Replace fallback LLM provider and sync translation_service."""
+        import contextlib
+        previous = self.fallback_llm
+        self.fallback_llm = llm
+        if previous is not None:
+            with contextlib.suppress(Exception):
+                await previous.close()
+        if self.translation_service is not None:
+            self.translation_service.fallback_llm = llm
+
+    # -- STT lifecycle wrappers --
+
+    async def close_stt(self) -> None:
+        """Close STT backend. Safe to call when stt is None."""
+        if self.stt is not None:
+            import contextlib
+            with contextlib.suppress(Exception):
+                await self.stt.close()
+
+    async def warmup_stt(self) -> None:
+        """Warm up STT backend. Safe to call when stt is None."""
+        if self.stt is not None:
+            import contextlib
+            with contextlib.suppress(Exception):
+                await self.stt.warmup()
+
+    async def reset_stt_for_idle(self) -> None:
+        """Release idle STT backend. Safe to call when stt is None."""
+        if self.stt is not None:
+            import contextlib
+            with contextlib.suppress(Exception):
+                await self.stt.reset_for_idle()
 
     # -- TranslationExecutor delegation --
 

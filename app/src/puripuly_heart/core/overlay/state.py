@@ -54,6 +54,16 @@ from puripuly_heart.core.overlay.types_common import (
     OverlayTerminalUpdatePredicate,
     OverlayTerminalUpdateReason,
 )
+from puripuly_heart.ports.overlay_modules import (
+    EntryStoreProtocol,
+    SelfEventDispatcherProtocol,
+    PeerEventDispatcherProtocol,
+    EventHelpersProtocol,
+    RefreshManagerProtocol,
+    ExpirationEngineProtocol,
+    SelectionEngineProtocol,
+    BlockRendererProtocol,
+)
 
 
 # ── Composition root ──────────────────────────────────────────────────
@@ -74,46 +84,46 @@ class OverlayPresentationState:
     """
 
     entries: dict[OverlayEntryKey, OverlayLogicalTurnEntry] = field(default_factory=dict)
-    _store: EntryStore = field(init=False, repr=False)
-    _event_helpers: EventHelpers = field(init=False, repr=False)
-    _self_dispatcher: SelfEventDispatcher = field(init=False, repr=False)
-    _peer_dispatcher: PeerEventDispatcher = field(init=False, repr=False)
+    _store: EntryStoreProtocol = field(init=False, repr=False)
+    _event_helpers: EventHelpersProtocol = field(init=False, repr=False)
+    _self_dispatcher: SelfEventDispatcherProtocol = field(init=False, repr=False)
+    _peer_dispatcher: PeerEventDispatcherProtocol = field(init=False, repr=False)
     retired_preview_self_seqs: OrderedDict[OverlayEntryKey, int] = field(
         default_factory=OrderedDict
     )
-    _refresh: RefreshManager = field(init=False, repr=False)
-    _expiration: ExpirationEngine = field(init=False, repr=False)
-    _renderer: BlockRenderer = field(init=False, repr=False)
-    _selection: SelectionEngine = field(init=False, repr=False)
+    _refresh: RefreshManagerProtocol = field(init=False, repr=False)
+    _expiration: ExpirationEngineProtocol = field(init=False, repr=False)
+    _renderer: BlockRendererProtocol = field(init=False, repr=False)
+    _selection: SelectionEngineProtocol = field(init=False, repr=False)
     _pending_removals: list[OverlayEntryRemovalRecord] = field(default_factory=list)
     _snapshot: OverlayPresentationSnapshot = field(default_factory=OverlayPresentationSnapshot)
 
     def __post_init__(self) -> None:
-        self._store = EntryStore()
+        self._store: EntryStoreProtocol = EntryStore()
         self._store.entries = self.entries
         self._store._pending_removals = self._pending_removals
-        self._expiration = ExpirationEngine(self._store)
-        self._refresh = RefreshManager(on_snapshot=lambda: self._snapshot)
+        self._expiration: ExpirationEngineProtocol = ExpirationEngine(self._store)
+        self._refresh: RefreshManagerProtocol = RefreshManager(on_snapshot=lambda: self._snapshot)
         # Composition order is deliberate: BlockRenderer before SelectionEngine (circular dependency resolved via callback)
         # BlockRenderer created before SelectionEngine so its build_presentation_block
         # can be passed as callback. selection is wired after SelectionEngine creation.
-        self._renderer = BlockRenderer(self._refresh)
-        self._selection = SelectionEngine(
+        self._renderer: BlockRendererProtocol = BlockRenderer(self._refresh)
+        self._selection: SelectionEngineProtocol = SelectionEngine(
             self._store,
             on_build_presentation_block=self._renderer.build_presentation_block,
         )
         self._renderer._selection = self._selection
-        self._event_helpers = EventHelpers(
+        self._event_helpers: EventHelpersProtocol = EventHelpers(
             self._store,
             self.retired_preview_self_seqs,
             on_entry_is_publishable=self.entry_is_publishable,
             on_ensure_entry_visibility_metadata=self._ensure_entry_visibility_metadata,
             on_finalized_occupant_key=self._finalized_occupant_key,
         )
-        self._self_dispatcher = SelfEventDispatcher(
+        self._self_dispatcher: SelfEventDispatcherProtocol = SelfEventDispatcher(
             self._store, self._event_helpers, self.retired_preview_self_seqs
         )
-        self._peer_dispatcher = PeerEventDispatcher(self._store, self._event_helpers)
+        self._peer_dispatcher: PeerEventDispatcherProtocol = PeerEventDispatcher(self._store, self._event_helpers)
 
     def snapshot(self) -> OverlayPresentationSnapshot:
         return self._snapshot

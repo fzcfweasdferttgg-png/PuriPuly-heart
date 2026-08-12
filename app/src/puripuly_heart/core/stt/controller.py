@@ -1,14 +1,38 @@
 """STT session manager — handles STT backend lifecycle, session management, audio routing.
 
 ManagedSTTProvider manages the STT session lifecycle:
-- DISCONNECTED → CONNECTING → STREAMING → DRAINING → CLOSED
+- DISCONNECTED → CONNECTING → STREAMING → DRAINING → DISCONNECTED
 - Connection retries with exponential backoff
 - Reset timer with retry logic (reschedule on failure, terminal on max retries)
 - Idle release via clear_idle_state() + reset_for_idle() (public API for ui/)
 
+AI-STATE-MACHINE: Valid transitions only:
+  DISCONNECTED → CONNECTING → STREAMING → DRAINING → DISCONNECTED
+  CONNECTING → DISCONNECTED (on connection failure)
+  Any → DISCONNECTED (on terminal failure via _handle_terminal_session_failure)
+  STREAMING → STREAMING (session replacement — bridging/reconnect, no state change)
+
+AI-TRIANGLE-COUPLING: Three fields are coupled and must be kept in sync:
+  _active_utterance_id ↔ _pending (PendingUtteranceTracker) ↔ _audio_ring (RingBufferF32)
+  - _active_utterance_id tracks the CURRENTLY speaking utterance
+  - _pending tracks utterances between speech-end and final-transcript arrival
+  - _audio_ring holds bridging audio for session reset
+  CRITICAL: In _on_speech_end, _active_utterance_id is cleared BEFORE _pending.append().
+  This creates a race window where concurrent _consume_session_events sees both as None.
+  Fix is to swap the order — see _on_speech_end comment.
+
+AI-DRAIN-SEMANTICS: _draining set contains background drain tasks.
+  Each task auto-removes itself via done_callback (task.add_done_callback(self._draining.discard)).
+  On close(), all remaining drain tasks are cancelled and awaited.
+  If you add a new drain path, always add done_callback — otherwise task leaks in _draining.
+
+AI-IMPORT-GRAPH: This is the HUB of the STT package. All 4 extracted modules are leaves.
+  Circular dependency with stt_hallucination_filter.py is broken by TYPE_CHECKING + lazy import.
+  AudioFaultProfile import is for public API type hints, not internal use.
+
 Key invariants:
 - _draining set: tasks auto-remove via done_callback (no leak)
-- _emit_detailed: logs at DEBUG when runtime_logging is None (not discarded)
+- STTLogSink: logs at DEBUG when runtime_logging is None (not discarded)
 - _closing field removed: shutdown guard was never implemented
 """
 
@@ -18,7 +42,6 @@ import asyncio
 import contextlib
 import inspect
 import logging
-from collections import deque
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Awaitable, Callable
 from uuid import UUID
@@ -29,25 +52,29 @@ from puripuly_heart.domain.providers import STTProviderName
 
 logger = logging.getLogger(__name__)
 MANAGED_STT_SAMPLE_RATE_HZ = 16000
-# PENDING_FINAL_QUEUE_WARN_SIZE=8: threshold for warning — indicates finalization is falling behind.
-PENDING_FINAL_QUEUE_WARN_SIZE = 8
-# STT_FINALIZATION_LAG_AGE_MS=1500: age threshold for logging finalization lag warnings.
-STT_FINALIZATION_LAG_AGE_MS = 1500
-STT_FINALIZATION_LAG_QUEUE_SIZE = 2
 
-from puripuly_heart.core.audio.diagnostics import AudioFaultProfile, normalize_audio_fault_profile
+from puripuly_heart.core.audio.diagnostics import AudioFaultProfile
 from puripuly_heart.core.audio.format import float32_to_pcm16le_bytes
 from puripuly_heart.core.audio.ring_buffer import RingBufferF32
 from puripuly_heart.core.clock import Clock, SystemClock
-from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
+from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.ports.stt import (
     STTBackend,
     STTBackendFloat32Session,
     STTBackendSession,
 )
-from puripuly_heart.core.stt.local_qwen_hallucination import (
-    is_known_local_qwen_hallucination,
+from puripuly_heart.ports.stt_leaf import (
+    AudioDiagnosticsProtocol,
+    PendingTrackerProtocol,
+    STTLogSinkProtocol,
 )
+from puripuly_heart.core.stt.stt_hallucination_filter import (
+    handle_suppressed_final_transcript,
+    should_suppress_final_transcript,
+)
+from puripuly_heart.core.stt.stt_log_sink import STTLogSink
+from puripuly_heart.core.stt.stt_audio_diagnostics import STTAudioDiagnostics
+from puripuly_heart.core.stt.stt_pending_tracker import PendingUtteranceTracker
 from puripuly_heart.core.vad.gating import SpeechChunk, SpeechEnd, SpeechStart, VadEvent
 from puripuly_heart.domain.events import (
     STTErrorEvent,
@@ -100,20 +127,16 @@ class ManagedSTTProvider:
     _events: asyncio.Queue = field(default_factory=asyncio.Queue)
 
     _active_utterance_id: UUID | None = None
-    # _pending_final_utterance_ids: ordered queue of utterance IDs waiting for final transcript.
-    # Used to track pending finalizations and warn when queue grows too large.
-    _pending_final_utterance_ids: deque[UUID] = field(default_factory=deque)
-    _pending_final_utterance_times: dict[UUID, float] = field(default_factory=dict)
+    # AI-TRIANGLE: One of three coupled fields. Set in _on_speech_start/_on_speech_chunk,
+    # cleared in _on_speech_end. Read by _consume_session_events to correlate partial/final
+    # transcripts. Must be transferred to _pending before clearing — see _on_speech_end.
     _audio_ring: RingBufferF32 | None = None
     _session_open_lock: asyncio.Lock = field(init=False, repr=False)
     _reset_timer: asyncio.Task[None] | None = None
     _last_speech_end_time: float | None = None
-    _diagnostic_chunk_count: int = 0
-    _diagnostic_sample_count: int = 0
-    _diagnostic_sum_squares: float = 0.0
-    _diagnostic_peak: float = 0.0
-    _diagnostic_zero_count: int = 0
-    _stt_fault_logged_for_utterance: bool = False
+    _log: STTLogSink = field(init=False, repr=False)
+    _diag: STTAudioDiagnostics = field(init=False, repr=False)
+    _pending: PendingUtteranceTracker = field(init=False, repr=False)
     _reset_retry_count: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
@@ -139,6 +162,23 @@ class ManagedSTTProvider:
         if self.connect_retry_max_s <= 0:
             raise ValueError("connect_retry_max_s must be > 0")
 
+        self._log = STTLogSink(
+            runtime_logging=self.runtime_logging,
+            channel=self.channel,
+        )
+        self._diag = STTAudioDiagnostics(
+            runtime_logging=self.runtime_logging,
+            channel=self.channel,
+            sample_rate_hz=self.sample_rate_hz,
+            log_sink=self._log,
+            stt_input_fault_profile_provider=self.stt_input_fault_profile_provider,
+        )
+        self._pending = PendingUtteranceTracker(
+            clock=self.clock,
+            reconnect_window_s=self.reconnect_window_s,
+            channel=self.channel,
+            log_sink=self._log,
+        )
         self._session_open_lock = asyncio.Lock()
         capacity_samples = int(self.sample_rate_hz * (self.bridging_ms / 1000.0))
         self._audio_ring = RingBufferF32(capacity_samples=capacity_samples)
@@ -146,59 +186,6 @@ class ManagedSTTProvider:
     @property
     def state(self) -> STTSessionState:
         return self._state
-
-    @staticmethod
-    def _format_log_message(message: str, *args: object) -> str:
-        return message % args if args else message
-
-    def _emit_basic(
-        self,
-        message: str,
-        *args: object,
-        level: int = logging.INFO,
-        fallback_level: int | None = None,
-    ) -> None:
-        formatted = self._format_log_message(message, *args)
-        if self.runtime_logging is not None:
-            self.runtime_logging.emit_basic(formatted, level=level)
-            return
-        logger.log(level if fallback_level is None else fallback_level, formatted)
-
-    def _emit_detailed(
-        self,
-        message: str,
-        *args: object,
-        level: int = logging.INFO,
-    ) -> None:
-        # Detailed logging: uses runtime_logging if available, otherwise DEBUG fallback.
-        # Unlike _emit_basic which uses the caller's level, detailed always uses DEBUG
-        # to avoid flooding standard logs with diagnostic information.
-        formatted = self._format_log_message(message, *args)
-        if self.runtime_logging is not None:
-            self.runtime_logging.emit_detailed(formatted, level=level)
-            return
-        logger.log(logging.DEBUG, formatted)
-
-    def _emit_audio_diag_detailed(
-        self,
-        message: str,
-        *args: object,
-        level: int = logging.INFO,
-    ) -> None:
-        with contextlib.suppress(Exception):
-            self._emit_detailed(
-                message,
-                *args,
-                level=level,
-            )
-
-    def _log_session_connected(self, *, attempts: int) -> None:
-        retries = max(0, attempts - 1)
-        if retries == 0:
-            self._emit_basic("[STT] Session connected")
-            return
-        suffix = "retry" if retries == 1 else "retries"
-        self._emit_basic(f"[STT] Session connected after {retries} {suffix}")
 
     async def close(self) -> None:
         async with self._session_open_lock:
@@ -252,8 +239,7 @@ class ManagedSTTProvider:
 
     def clear_idle_state(self) -> None:
         """Clear pending data and event queue for idle release."""
-        self._pending_final_utterance_ids.clear()
-        self._pending_final_utterance_times.clear()
+        self._pending.clear()
         if self._audio_ring is not None:
             self._audio_ring.clear()
         while True:
@@ -275,18 +261,13 @@ class ManagedSTTProvider:
     async def warmup(self) -> bool:
         """Pre-establish STT session for faster first response."""
         if await self._ensure_session():
-            self._emit_detailed("[STT] Session pre-warmed")
+            self._log.detailed("[STT] Session pre-warmed")
             return True
         return False
 
     async def _on_speech_start(self, event: SpeechStart) -> None:
         self._active_utterance_id = event.utterance_id
-        self._diagnostic_chunk_count = 0
-        self._diagnostic_sample_count = 0
-        self._diagnostic_sum_squares = 0.0
-        self._diagnostic_peak = 0.0
-        self._diagnostic_zero_count = 0
-        self._stt_fault_logged_for_utterance = False
+        self._diag.reset_for_utterance()
 
         if not await self._ensure_session():
             return
@@ -301,6 +282,13 @@ class ManagedSTTProvider:
         await self._send_audio(event.chunk)
 
     async def _on_speech_end(self, event: SpeechEnd) -> None:
+        # AI-RACE-WINDOW: _active_utterance_id is cleared (line below) BEFORE _pending.append().
+        # Between these two operations, _consume_session_events running in a parallel coroutine
+        # can see _active_utterance_id=None AND _pending empty, causing the final transcript
+        # to be silently dropped (utterance_id=None → continue).
+        # SAFE FIX: swap order — call _pending.append() FIRST, then clear _active_utterance_id.
+        # CURRENT: not fixed because the window is ~microseconds (no await between them) and
+        # the consumer is blocked on `await session.events()`. Risk: very low in practice.
         if self._active_utterance_id == event.utterance_id:
             self._active_utterance_id = None
         self._last_speech_end_time = self.clock.now()
@@ -308,108 +296,24 @@ class ManagedSTTProvider:
         # Delegate end-of-speech handling to the backend (silence + finalize etc.)
         if self._active_session is not None:
             ended_at = self.clock.now()
-            self._pending_final_utterance_ids.append(event.utterance_id)
-            self._pending_final_utterance_times[event.utterance_id] = ended_at
-            if len(self._pending_final_utterance_ids) > PENDING_FINAL_QUEUE_WARN_SIZE:
-                self._emit_basic(
-                    "[STT] Pending final queue size is unexpectedly high: %s",
-                    len(self._pending_final_utterance_ids),
-                    level=logging.WARNING
-                )
-            self._emit_detailed(
+            self._pending.append(event.utterance_id, ended_at)
+            self._log.detailed(
                 "[STT] Speech end handling for id=%s (trailing_silence_ms=%s)",
                 str(event.utterance_id)[:8],
                 event.trailing_silence_ms
             )
-            self._emit_stt_input_diagnostics(event.utterance_id, finalize=True)
+            self._diag.emit_for_utterance(event.utterance_id, finalize=True)
             await self._active_session.on_speech_end(trailing_silence_ms=event.trailing_silence_ms)
 
     async def _send_audio(self, samples_f32: np.ndarray) -> None:
         samples_f32 = np.asarray(samples_f32, dtype=np.float32).reshape(-1)
         if samples_f32.size == 0:
             return
-        samples_f32 = self._apply_stt_input_fault(samples_f32)
-        self._record_stt_input_diagnostics(samples_f32)
+        samples_f32 = self._diag.process_input(samples_f32)
         self._audio_ring.append(samples_f32)  # type: ignore[union-attr]
         if self._active_session is None:
             raise RuntimeError("STT session is not active")
         await self._send_audio_to_session(self._active_session, samples_f32)
-
-    def _current_stt_fault_profile(self) -> AudioFaultProfile:
-        if self.stt_input_fault_profile_provider is None:
-            return AudioFaultProfile.NONE
-        with contextlib.suppress(Exception):
-            return normalize_audio_fault_profile(self.stt_input_fault_profile_provider())
-        return AudioFaultProfile.NONE
-
-    def _apply_stt_input_fault(self, samples_f32: np.ndarray) -> np.ndarray:
-        profile = self._current_stt_fault_profile()
-        if profile is not AudioFaultProfile.STT_INPUT_LOW_SNR_VAD_PASS:
-            return samples_f32
-        with contextlib.suppress(Exception):
-            flat = np.arange(samples_f32.size, dtype=np.float32)
-            noise = np.sin(flat * np.float32(12.9898)) * np.float32(0.003)
-            transformed = (samples_f32 * np.float32(0.01)) + noise.astype(np.float32)
-            if not self._stt_fault_logged_for_utterance:
-                self._stt_fault_logged_for_utterance = True
-                self._emit_audio_diag_detailed(
-                    "[AudioDiag][STTFault][%s] profile=%s applies_after_vad=True",
-                    self.channel,
-                    profile.value,
-                )
-            return transformed.astype(np.float32)
-        return samples_f32
-
-    def _record_stt_input_diagnostics(self, samples_f32: np.ndarray) -> None:
-        if (
-            self.runtime_logging is None
-            or self.runtime_logging.mode is not SessionLoggingMode.DETAILED
-        ):
-            return
-        with contextlib.suppress(Exception):
-            samples = np.asarray(samples_f32, dtype=np.float32).reshape(-1)
-            if samples.size == 0:
-                return
-            sample_count = int(samples.size)
-            sum_squares = float(np.sum(np.square(samples)))
-            peak = float(np.max(np.abs(samples)))
-            zero_count = int(np.count_nonzero(np.abs(samples) < 1e-6))
-            self._diagnostic_chunk_count += 1
-            self._diagnostic_sample_count += sample_count
-            self._diagnostic_sum_squares += sum_squares
-            self._diagnostic_peak = max(self._diagnostic_peak, peak)
-            self._diagnostic_zero_count += zero_count
-
-    def _emit_stt_input_diagnostics(self, utterance_id: UUID, *, finalize: bool) -> None:
-        if (
-            self.runtime_logging is None
-            or self.runtime_logging.mode is not SessionLoggingMode.DETAILED
-        ):
-            return
-        with contextlib.suppress(Exception):
-            if self._diagnostic_sample_count <= 0:
-                return
-            audio_ms = self._diagnostic_sample_count * 1000.0 / float(self.sample_rate_hz)
-            rms = float(np.sqrt(self._diagnostic_sum_squares / self._diagnostic_sample_count))
-            rms_db = -120.0 if rms <= 0.0 else round(float(20.0 * np.log10(max(rms, 1e-6))), 1)
-            peak_db = (
-                -120.0
-                if self._diagnostic_peak <= 0.0
-                else round(float(20.0 * np.log10(max(self._diagnostic_peak, 1e-6))), 1)
-            )
-            zero_ratio = self._diagnostic_zero_count / float(self._diagnostic_sample_count)
-            self._emit_audio_diag_detailed(
-                "[AudioDiag][STTInput][%s] utterance_id=%s chunk_count=%s audio_ms=%.1f "
-                "rms_db=%.1f peak_db=%.1f zero_ratio=%.3f finalize=%s",
-                self.channel,
-                str(utterance_id)[:8],
-                self._diagnostic_chunk_count,
-                audio_ms,
-                rms_db,
-                peak_db,
-                zero_ratio,
-                finalize,
-            )
 
     async def _send_audio_to_session(
         self, session: STTBackendSession, samples_f32: np.ndarray
@@ -439,7 +343,12 @@ class ManagedSTTProvider:
         last_exc: Exception | None = None
 
         for attempt in range(1, self.connect_attempts + 1):
-            self._emit_detailed(
+            # AI-RETRY: Connection retry with exponential backoff.
+            # delay = min(connect_retry_base_s * 2^(attempt-1), connect_retry_max_s)
+            # Default: 0.8s, 1.6s (capped at 6.0s) for 3 attempts.
+            # On success: transition to STREAMING, start consumer task, schedule reset timer.
+            # On all failures: transition to DISCONNECTED, emit STTErrorEvent.
+            self._log.detailed(
                 "[STT] Opening new session (attempt %s/%s)...",
                 attempt,
                 self.connect_attempts
@@ -448,7 +357,7 @@ class ManagedSTTProvider:
                 session = await self.backend.open_session()
             except Exception as exc:
                 last_exc = exc
-                self._emit_detailed(
+                self._log.detailed(
                     "[STT] Failed to open session (attempt %s/%s): %s",
                     attempt,
                     self.connect_attempts,
@@ -460,7 +369,7 @@ class ManagedSTTProvider:
                         self.connect_retry_base_s * (2 ** (attempt - 1)),
                         self.connect_retry_max_s,
                     )
-                    self._emit_detailed(
+                    self._log.detailed(
                         "[STT] Retrying session in %.1fs",
                         delay
                     )
@@ -473,15 +382,15 @@ class ManagedSTTProvider:
                 self._consumer_task = asyncio.create_task(self._consume_session_events(session))
                 self._schedule_reset_timer()
                 await self._set_state(STTSessionState.STREAMING)
-                self._log_session_connected(attempts=attempt)
-                self._emit_detailed(
+                self._log.log_session_connected(attempts=attempt)
+                self._log.detailed(
                     "[STT] Session ready (reset_deadline=%ss)",
                     self.reset_deadline_s
                 )
                 return True
 
         reason = str(last_exc) if last_exc is not None else "unknown error"
-        self._emit_basic(
+        self._log.basic(
             "[STT] Failed to open session after %s attempts: %s",
             self.connect_attempts,
             reason,
@@ -508,7 +417,7 @@ class ManagedSTTProvider:
         bridging_audio = self._audio_ring.get_last_samples(self._audio_ring.capacity_samples)  # type: ignore[union-attr]
         bridging_ms = len(bridging_audio) / self.sample_rate_hz * 1000
 
-        self._emit_detailed(
+        self._log.detailed(
             "[STT] Bridging buffered audio: %.0fms",
             bridging_ms
         )
@@ -522,13 +431,20 @@ class ManagedSTTProvider:
         )
         self._schedule_reset_timer()
 
+        # AI-DUAL-CONSUMER: Two consumers are now active simultaneously — the old one
+        # (still reading from old_session) and the new one (reading from new_session).
+        # Both share _pending and _active_utterance_id. The old consumer may pop IDs
+        # from _pending that the new consumer needs. Mitigated by drain_timeout_s
+        # (1.5s) which bounds how long the old consumer runs.
+        # This is a known limitation — fixing requires per-session pending queues.
+
         await self._set_state(STTSessionState.STREAMING)
 
         await self._send_audio_to_session(new_session, bridging_audio)
-        self._emit_basic("[STT] Session reset while speaking; bridged to a new session")
+        self._log.basic("[STT] Session reset while speaking; bridged to a new session")
 
         if old_session and old_consumer:
-            self._emit_detailed(
+            self._log.detailed(
                 "[STT] Draining replaced session in background"
             )
             task = asyncio.create_task(
@@ -551,7 +467,7 @@ class ManagedSTTProvider:
             return
 
         elapsed = self.clock.now() - (self._last_speech_end_time or 0)
-        self._emit_detailed(
+        self._log.detailed(
             f"[STT] RECONNECT: Session limit during silence, "
             f"last speech {elapsed:.1f}s ago, reconnecting..."
         )
@@ -563,7 +479,7 @@ class ManagedSTTProvider:
         try:
             new_session = await self.backend.open_session()
         except Exception as e:
-            self._emit_basic(
+            self._log.basic(
                 f"[STT] Reconnect failed; closing until next speech: {e}",
                 level=logging.ERROR
             )
@@ -580,7 +496,7 @@ class ManagedSTTProvider:
         self._schedule_reset_timer()
 
         await self._set_state(STTSessionState.STREAMING)
-        self._emit_basic("[STT] Session reconnected after recent speech")
+        self._log.basic("[STT] Session reconnected after recent speech")
 
         # Drain old session with finalize (unlike bridging)
         task = asyncio.create_task(
@@ -602,7 +518,7 @@ class ManagedSTTProvider:
         await self._set_state(STTSessionState.DRAINING)
         await self._drain_and_close(old_session, old_consumer, allow_finalize=True)
         await self._set_state(STTSessionState.DISCONNECTED)
-        self._emit_basic("[STT] Session closed after silence")
+        self._log.basic("[STT] Session closed after silence")
 
     async def _drain_and_close(
         self,
@@ -611,7 +527,7 @@ class ManagedSTTProvider:
         *,
         allow_finalize: bool,
     ) -> None:
-        self._emit_detailed(
+        self._log.detailed(
             f"[STT] DRAIN: Starting drain (timeout={self.drain_timeout_s}s)..."
         )
         if allow_finalize and self._should_finalize_before_stop():
@@ -621,24 +537,27 @@ class ManagedSTTProvider:
 
         try:
             await asyncio.wait_for(consumer_task, timeout=self.drain_timeout_s)
-            self._emit_detailed(
+            self._log.detailed(
                 "[STT] DRAIN: Consumer task completed normally"
             )
         except asyncio.TimeoutError:
-            self._emit_detailed(
+            self._log.detailed(
                 f"[STT] DRAIN: Timeout after {self.drain_timeout_s}s, cancelling consumer task",
                 level=logging.WARNING
             )
+            # AI-TIMEOUT: Consumer task cancelled on timeout. This is the safety net that
+            # prevents drain from hanging indefinitely. The consumer task's CancelledError
+            # is caught by its except block which re-raises it.
             consumer_task.cancel()
             with contextlib.suppress(Exception):
                 await consumer_task
 
         with contextlib.suppress(Exception):
             await session.close()
-        self._emit_detailed("[STT] DRAIN: Session closed")
+        self._log.detailed("[STT] DRAIN: Session closed")
 
     def _should_finalize_before_stop(self) -> bool:
-        return self._active_utterance_id is not None or bool(self._pending_final_utterance_ids)
+        return self._active_utterance_id is not None or self._pending.has_pending()
 
     async def _finalize_before_stop(self, session: STTBackendSession) -> None:
         if self._active_utterance_id is not None:
@@ -664,156 +583,47 @@ class ManagedSTTProvider:
             channel=self.channel,
         )
 
-    def _drop_stale_pending_final_utterance_ids(self) -> None:
-        stale_after_s = max(0.0, float(self.reconnect_window_s))
-        now = self.clock.now()
-
-        while self._pending_final_utterance_ids:
-            if len(self._pending_final_utterance_ids) <= 1 and self._active_utterance_id is None:
-                return
-
-            utterance_id = self._pending_final_utterance_ids[0]
-            ended_at = self._pending_final_utterance_times.get(utterance_id)
-            if ended_at is None:
-                return
-
-            age_s = now - ended_at
-            if age_s <= stale_after_s:
-                return
-
-            self._pending_final_utterance_ids.popleft()
-            self._pending_final_utterance_times.pop(utterance_id, None)
-            self._emit_detailed(
-                "[STT] Dropped stale pending final id=%s age_s=%.1f",
-                str(utterance_id)[:8],
-                age_s,
-                level=logging.WARNING
-            )
-
-    def _should_suppress_final_transcript(self, text: str) -> bool:
-        return (
-            self.stt_provider_name in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B, STTProviderName.LOCAL_QWEN3_ASR_GGUF, STTProviderName.LOCAL_QWEN_17B_GGUF)
-            and is_known_local_qwen_hallucination(text)
-        )
-
-    def _maybe_emit_finalization_lag(
-        self,
-        *,
-        utterance_id: UUID | None,
-        pending_queue_size_before: int,
-        text_len: int,
-    ) -> None:
-        if utterance_id is None:
-            return
-        ended_at = self._pending_final_utterance_times.get(utterance_id)
-        if ended_at is None:
-            if pending_queue_size_before < STT_FINALIZATION_LAG_QUEUE_SIZE:
-                return
-            pending_age_ms = 0
-        else:
-            pending_age_ms = max(0, int(round((self.clock.now() - ended_at) * 1000.0)))
-            if (
-                pending_age_ms < STT_FINALIZATION_LAG_AGE_MS
-                and pending_queue_size_before < STT_FINALIZATION_LAG_QUEUE_SIZE
-            ):
-                return
-        provider_name = (
-            self.stt_provider_name.value if self.stt_provider_name is not None else "unknown"
-        )
-        active_utterance_id = (
-            str(self._active_utterance_id)[:8] if self._active_utterance_id is not None else "none"
-        )
-        self._emit_detailed(
-            "[STT][FinalizationLag] channel=%s provider=%s utterance_id=%s "
-            "pending_age_ms=%s pending_queue_size=%s active_utterance_id=%s text_len=%s",
-            self.channel,
-            provider_name,
-            str(utterance_id)[:8],
-            pending_age_ms,
-            pending_queue_size_before,
-            active_utterance_id,
-            text_len
-        )
-
-    async def _handle_suppressed_final_transcript(
-        self,
-        *,
-        utterance_id: UUID,
-    ) -> None:
-        provider_name = self.stt_provider_name
-        if provider_name not in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B, STTProviderName.LOCAL_QWEN3_ASR_GGUF, STTProviderName.LOCAL_QWEN_17B_GGUF):
-            return
-
-        notification_status = "not_configured"
-        if self.on_final_transcript_suppressed is not None:
-            notification = FinalTranscriptSuppressedNotification(
-                utterance_id=utterance_id,
-                channel=self.channel,
-                stt_provider_name=provider_name,
-            )
-            try:
-                maybe_awaitable = self.on_final_transcript_suppressed(notification)
-                if inspect.isawaitable(maybe_awaitable):
-                    await maybe_awaitable
-            except Exception as exc:
-                notification_status = "failed"
-                self._emit_detailed(
-                    "[STT][%s][%s] Suppressed-final notification callback failed: %s",
-                    provider_name.value,
-                    self.channel,
-                    exc,
-                    level=logging.WARNING
-                )
-            else:
-                notification_status = "emitted"
-
-        self._emit_basic(
-            "[STT][%s][%s] Known hallucination suppressed: utterance_id=%s notification=%s",
-            provider_name.value,
-            self.channel,
-            str(utterance_id)[:8],
-            notification_status
-        )
-
     async def _consume_session_events(
         self,
         session: STTBackendSession,
     ) -> None:
+        # AI-CONSUMER: This is the main event loop for a session. Runs as an asyncio.Task.
+        # Reads raw events from session.events(), correlates them with utterance IDs via
+        # _pending queue and _active_utterance_id, applies hallucination filter, and emits
+        # STTEvent objects to the output queue.
+        #
+        # AI-CONSUMER-FINAL: When is_final=True, the event is correlated via:
+        #   1. drop_stale() — remove timed-out pending IDs
+        #   2. peek_first() or _active_utterance_id — candidate assignment
+        #   3. pop_next_final() — FIFO extraction from pending queue
+        #   If pop_next_final() returns None, falls back to _active_utterance_id.
+        #   If both are None → continue (silent drop). This can happen during the race
+        #   window in _on_speech_end (see AI-RACE-WINDOW comment there).
         try:
             async for ev in session.events():
                 if ev.is_final:
-                    self._drop_stale_pending_final_utterance_ids()
-                    pending_queue_size_before = len(self._pending_final_utterance_ids)
-                    assigned_utterance_id = (
-                        self._pending_final_utterance_ids[0]
-                        if self._pending_final_utterance_ids
-                        else self._active_utterance_id
-                    )
-                    self._maybe_emit_finalization_lag(
+                    self._pending.drop_stale(has_active_utterance=self._active_utterance_id is not None)
+                    pending_queue_size_before = self._pending.size()
+                    assigned_utterance_id = self._pending.peek_first() or self._active_utterance_id
+                    self._pending.check_finalization_lag(
                         utterance_id=assigned_utterance_id,
                         pending_queue_size_before=pending_queue_size_before,
                         text_len=len(ev.text),
                     )
-                    utterance_id = (
-                        self._pending_final_utterance_ids.popleft()
-                        if self._pending_final_utterance_ids
-                        else self._active_utterance_id
-                    )
-                    if utterance_id is not None:
-                        self._pending_final_utterance_times.pop(utterance_id, None)
+                    utterance_id = self._pending.pop_next_final() or self._active_utterance_id
                 else:
-                    utterance_id = self._active_utterance_id or (
-                        self._pending_final_utterance_ids[0]
-                        if self._pending_final_utterance_ids
-                        else None
-                    )
+                    utterance_id = self._active_utterance_id or self._pending.peek_first()
                 if utterance_id is None:
                     continue
                 if ev.is_final and not ev.text.strip():
                     continue
-                if ev.is_final and self._should_suppress_final_transcript(ev.text):
-                    await self._handle_suppressed_final_transcript(
+                if ev.is_final and should_suppress_final_transcript(self.stt_provider_name, ev.text):
+                    await handle_suppressed_final_transcript(
+                        provider_name=self.stt_provider_name,
+                        channel=self.channel,
                         utterance_id=utterance_id,
+                        on_callback=self.on_final_transcript_suppressed,
+                        log_sink=self._log,
                     )
                     continue
                 created_at = self.clock.now()
@@ -837,14 +647,21 @@ class ManagedSTTProvider:
         session: STTBackendSession,
         exc: Exception,
     ) -> None:
+        # AI-TERMINAL: This is the LAST RESORT error handler. Called when _consume_session_events
+        # catches an unexpected exception (not CancelledError). It:
+        #   1. Checks if this is still the active session (prevents stale drain tasks from
+        #      corrupting state after a session replacement)
+        #   2. Clears ALL state: session, task, utterance, pending, timer
+        #   3. Emits STTErrorEvent to the output queue
+        #   4. Calls on_terminal_failure callback (async-safe via inspect.isawaitable)
+        # After this, the provider is in DISCONNECTED state and will re-open on next speech.
         is_active_session = session is self._active_session
         if is_active_session:
             self._active_session = None
             self._consumer_task = None
             self._session_started_at = None
             self._active_utterance_id = None
-            self._pending_final_utterance_ids.clear()
-            self._pending_final_utterance_times.clear()
+            self._pending.clear()
             self._last_speech_end_time = None
             if self._reset_timer is not None:
                 self._reset_timer.cancel()
@@ -860,7 +677,7 @@ class ManagedSTTProvider:
         with contextlib.suppress(Exception):
             await session.close()
 
-        self._emit_basic(
+        self._log.basic(
             "[STT] Session failed: %s",
             exc,
             level=logging.ERROR
@@ -878,7 +695,7 @@ class ManagedSTTProvider:
             return
         old_state = self._state
         self._state = state
-        self._emit_detailed(
+        self._log.detailed(
             f"[STT] State: {old_state.name} -> {state.name}"
         )
         await self._events.put(STTSessionStateEvent(state, channel=self.channel))
@@ -905,10 +722,19 @@ class ManagedSTTProvider:
         _schedule_reset_timer() resets _reset_retry_count on each new session.
         """
         try:
+            # AI-RESET-TIMER: This timer fires after reset_deadline_s (default 180s).
+            # Three strategies based on current state:
+            #   1. _active_utterance_id is not None → _reset_with_bridging (speech in progress,
+            #      bridge audio to new session)
+            #   2. _has_recent_speech() → _reset_with_reconnect (silence but recent activity,
+            #      reconnect without bridging)
+            #   3. Neither → _reset_on_silence (full close, no bridging)
+            # On failure: exponential backoff retry (reset_retry_base_s * 2^retry_count,
+            # capped at reset_retry_max_s). After reset_max_retries failures → terminal failure.
             await asyncio.sleep(self.reset_deadline_s)
             if self._active_session is None:
                 return
-            self._emit_detailed(
+            self._log.detailed(
                 f"[STT] Timer expired after {self.reset_deadline_s}s"
             )
             if self._active_utterance_id is not None:

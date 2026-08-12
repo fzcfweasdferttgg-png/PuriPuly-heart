@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from puripuly_heart.app.wiring import build_peer_stt_provider_signature
 from puripuly_heart.config.settings import LLMProviderName, STTProviderName
 from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
+from puripuly_heart.core.stt.local_stt_manager import LOCAL_STT_PROVIDERS as _LOCAL_STT_PROVIDERS
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -73,16 +74,9 @@ class ProviderSignaturesMixin:
             custom_terms,
         )
 
-    _LOCAL_STT_PROVIDERS = frozenset({
-        STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B,
-        STTProviderName.LOCAL_GIGAAM_RNNT, STTProviderName.LOCAL_PARAKEET_TDT,
-        STTProviderName.LOCAL_GIGAAM_RNNT_GGUF, STTProviderName.LOCAL_PARAKEET_TDT_GGUF,
-        STTProviderName.LOCAL_QWEN3_ASR_GGUF, STTProviderName.LOCAL_QWEN_17B_GGUF,
-    })
-
     def _build_self_stt_provider_signature(self, settings: AppSettings) -> tuple[object, ...]:
         local_qwen_identity = None
-        if settings.provider.stt in self._LOCAL_STT_PROVIDERS:
+        if settings.provider.stt in _LOCAL_STT_PROVIDERS:
             from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir, resolve_model_id
             from puripuly_heart.config.paths import default_models_dir
             model_id = resolve_model_id(settings.provider.stt.value, settings.provider.stt_quant)

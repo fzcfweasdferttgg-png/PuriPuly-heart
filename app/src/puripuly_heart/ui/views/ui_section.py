@@ -12,28 +12,159 @@ from puripuly_heart.ui.components.settings import (
 )
 from puripuly_heart.ui.i18n import (
     available_locales,
+    get_locale,
     locale_label,
     native_locale_label,
     t,
 )
+from puripuly_heart.ui.theme import (
+    COLOR_NEUTRAL,
+    COLOR_PRIMARY,
+)
+from puripuly_heart.ui.views.settings_helpers import _CENTER_ALIGNMENT, _update_control_if_mounted
 
 if TYPE_CHECKING:
-    pass
+    from puripuly_heart.config.settings import AppSettings
 
 
-def _update_control_if_mounted(control: ft.Control) -> None:
-    """Update a Flet control only while it is attached to a page."""
-    if getattr(control, "page", None) is None:
-        return
-    try:
-        control.update()
-    except AssertionError as exc:
-        if "Control must be added" not in str(exc):
-            raise
-
+# AI: CROSS-TAB CRITICAL — _build_low_latency_widgets creates self._low_latency_card
+# which is embedded in _translation_connection_row inside _build_api_tab (settings.py).
+# This is the ONLY cross-tab attribute dependency in the entire SettingsView.
+# _build_general_tab must call _build_low_latency_widgets BEFORE _build_api_tab runs.
 
 class UiSectionMixin:
     """Mixin providing UI section event handlers for SettingsView."""
+
+    # ------------------------------------------------------------------
+    # Widget builders
+    # ------------------------------------------------------------------
+
+    def _build_ui_language_widgets(self) -> ft.Control:
+        """Create UI language card. Returns the card control."""
+        self._ui_text = self._build_clickable_text(
+            locale_label(get_locale()),
+            self._on_ui_click,
+        )
+        self._ui_title = ft.Text(
+            t("settings.section.ui"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
+        )
+        ui_card = self._wrap_unit_card(
+            title=self._ui_title,
+            value=self._ui_text,
+        )
+        return ui_card
+
+    def _build_low_latency_widgets(self) -> ft.Control:
+        """Create low-latency mode card. Stores on self; returns the card."""
+        self._low_latency_text = self._build_clickable_text(
+            t("toggle.off"),
+            self._on_low_latency_click,
+        )
+        self._low_latency_title = ft.Text(
+            t("settings.low_latency_mode"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._low_latency_card = self._wrap_unit_card(
+            title=self._low_latency_title,
+            value=self._low_latency_text,
+        )
+        return self._low_latency_card
+
+    def _build_vad_widgets(self) -> tuple[ft.Control, ft.Control]:
+        """Create self-VAD and peer-VAD cards.
+
+        Returns ``(self_vad_card, peer_vad_card)``.
+        """
+        # -- Self VAD --
+        self._self_vad_title = ft.Text(
+            t("settings.section.self_vad_sensitivity"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._vad_slider = ft.Slider(
+            min=0.0,
+            max=1.0,
+            divisions=20,
+            value=0.5,
+            label="0.50",
+            active_color=COLOR_PRIMARY,
+            on_change=self._handle_vad_visual_change,
+            on_change_end=self._handle_vad_change,
+        )
+        self._self_vad_card = self._wrap_unit_card(
+            title=self._self_vad_title,
+            value=ft.Container(content=self._vad_slider, alignment=_CENTER_ALIGNMENT, expand=True),
+        )
+
+        # -- Peer VAD --
+        self._peer_vad_title = ft.Text(
+            t("settings.section.peer_vad_sensitivity"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._peer_vad_slider = ft.Slider(
+            min=0.0,
+            max=1.0,
+            divisions=20,
+            value=0.6,
+            label="0.60",
+            active_color=COLOR_PRIMARY,
+            on_change=self._handle_peer_vad_visual_change,
+            on_change_end=self._handle_peer_vad_change,
+        )
+        self._peer_vad_field = self._build_numeric_setting_field(
+            label=t("settings.vad.peer"),
+            value="0.60",
+            on_change_end=self._on_peer_vad_threshold_change,
+        )
+        self._peer_hangover_field = self._build_numeric_setting_field(
+            label=t("settings.vad.peer_hangover_ms"),
+            value="700",
+            on_change_end=self._on_peer_hangover_change,
+        )
+        self._peer_pre_roll_field = self._build_numeric_setting_field(
+            label=t("settings.vad.peer_pre_roll_ms"),
+            value="500",
+            on_change_end=self._on_peer_pre_roll_change,
+        )
+        self._peer_vad_card = self._wrap_unit_card(
+            title=self._peer_vad_title,
+            value=ft.Container(
+                content=self._peer_vad_slider,
+                alignment=_CENTER_ALIGNMENT,
+                expand=True,
+            ),
+        )
+        return (self._self_vad_card, self._peer_vad_card)
+
+    # ------------------------------------------------------------------
+    # Load from settings
+    # ------------------------------------------------------------------
+
+    def _load_ui_from_settings(self, settings: "AppSettings") -> None:
+        """Load UI language from settings into controls."""
+        if not hasattr(self, '_ui_text'):
+            return
+        self._ui_text.content.value = locale_label(settings.ui.locale)
+
+    def _load_vad_and_latency_from_settings(self, settings: "AppSettings") -> None:
+        """Load VAD and low-latency settings into controls."""
+        if not hasattr(self, '_vad_slider'):
+            return
+        self._vad_slider.value = settings.stt.vad_speech_threshold
+        self._vad_slider.label = f"{settings.stt.vad_speech_threshold:.2f}"
+        self._peer_vad_slider.value = settings.desktop_audio.vad_speech_threshold
+        self._peer_vad_slider.label = f"{settings.desktop_audio.vad_speech_threshold:.2f}"
+        self._peer_vad_field.value = f"{settings.desktop_audio.vad_speech_threshold:.2f}"
+        self._peer_hangover_field.value = str(settings.desktop_audio.vad_hangover_ms)
+        self._peer_pre_roll_field.value = str(settings.desktop_audio.vad_pre_roll_ms)
+        self._low_latency_text.content.value = t(
+            "toggle.on" if settings.stt.low_latency_mode else "toggle.off"
+        )
 
     # ------------------------------------------------------------------
     # UI language
@@ -253,3 +384,18 @@ class UiSectionMixin:
         if self.page:
             self._low_latency_text.update()
         self._emit_settings_changed()
+
+    # --- Locale ---
+
+    def _apply_locale_ui(self) -> None:
+        """Update UI / VAD / low-latency section labels when locale changes."""
+        if not hasattr(self, '_ui_title'):
+            return
+        self._ui_title.value = t("settings.section.ui")
+        self._self_vad_title.value = t("settings.section.self_vad_sensitivity")
+        self._peer_vad_title.value = t("settings.section.peer_vad_sensitivity")
+        self._microphone_test_title.value = t("settings.microphone_test")
+        self._peer_vad_field.label = t("settings.vad.peer")
+        self._peer_hangover_field.label = t("settings.vad.peer_hangover_ms")
+        self._peer_pre_roll_field.label = t("settings.vad.peer_pre_roll_ms")
+        self._low_latency_title.value = t("settings.low_latency_mode")

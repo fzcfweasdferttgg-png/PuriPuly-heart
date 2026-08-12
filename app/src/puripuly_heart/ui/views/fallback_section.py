@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import flet as ft
 
 from puripuly_heart.config.providers import load_providers
@@ -12,9 +14,41 @@ from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL_DARK, COLOR_PRI
 
 from puripuly_heart.ui.views.settings_helpers import _update_control_if_mounted
 
+if TYPE_CHECKING:
+    from puripuly_heart.ui.views.settings import SettingsView
+
+
+# AI: ATTRIBUTE OWNERSHIP — _init_fallback_openai_controls creates:
+#   _fallback_openai_provider (Dropdown), _fallback_openai_base_url (TextField),
+#   _fallback_openai_model (TextField), _fallback_openai_fetch_btn (IconButton),
+#   _fallback_openai_test_btn (TextButton), _fallback_api_key (ApiKeyField)
+#
+# CARDS ARE CREATED IN settings.py _build_api_tab, not here — this mixin only
+# creates the controls that go INSIDE the card.
+#
+# LOCALE: _apply_locale_fallback() handles fallback OpenAI locale updates.
 
 class FallbackSectionMixin:
     """Fallback OpenAI-compatible card: Provider, Model, API Key."""
+
+    def _load_fallback_from_settings(self, settings: "AppSettings") -> None:
+        """Load fallback OpenAI-compatible fields from settings."""
+        if not hasattr(self, '_fallback_openai_base_url'):
+            return
+        bt = settings.backup_translation
+        if bt.enabled and bt.mode == LLMProviderName.OPENAI_COMPATIBLE:
+            self._fallback_openai_base_url.value = bt.openai_compatible.base_url
+            self._fallback_openai_base_url.error_text = None
+            self._fallback_openai_model.value = bt.openai_compatible.model or ""
+            from puripuly_heart.config.providers import load_providers
+            _loaded_providers = load_providers()
+            _fb_opts = self._fallback_openai_provider.options or []
+            _fb_matched = _fb_opts[0].key if _fb_opts else None
+            for _pk, _pi in _loaded_providers.items():
+                if _pi.get("base_url") == bt.openai_compatible.base_url:
+                    _fb_matched = _pk
+                    break
+            self._fallback_openai_provider.value = _fb_matched
 
     def _init_fallback_openai_controls(
         self,
@@ -266,3 +300,20 @@ class FallbackSectionMixin:
             return
         self._on_fallback_base_url_change_end(None)
         self._on_fallback_model_change_end(None)
+
+    def _apply_locale_fallback(self) -> None:
+        """Update fallback OpenAI labels when locale changes."""
+        if not hasattr(self, '_fallback_api_key'):
+            return
+        self._fallback_api_key.apply_locale()
+        self._fallback_openai_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
+        self._fallback_openai_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
+        self._fallback_openai_provider.label = t("settings.openai_compatible.provider", default="Provider")
+        self._fallback_openai_base_url.label = t("settings.openai_compatible.base_url", default="Base URL")
+        self._fallback_openai_model.label = t("settings.openai_compatible.model", default="Model")
+        self._fallback_openai_model.hint_text = t("settings.openai_compatible.model.hint", default="Enter model name or click refresh")
+        self._fallback_openai_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
+        if self._fallback_openai_base_url.error_text:
+            self._fallback_openai_base_url.error_text = t(
+                "settings.openai_compatible.base_url.required", default="Base URL is required"
+            )

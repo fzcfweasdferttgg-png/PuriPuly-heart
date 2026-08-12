@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import flet as ft
 
 from puripuly_heart.config.settings import AppSettings, STTProviderName
@@ -10,22 +12,29 @@ from puripuly_heart.ui.components.settings import OptionItem, SettingsModal
 from puripuly_heart.ui.i18n import language_name, provider_label, t
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
+    COLOR_NEUTRAL,
     COLOR_ON_BACKGROUND,
     COLOR_PRIMARY,
     COLOR_SURFACE,
 )
 
+from puripuly_heart.ui.views.settings_helpers import _update_control_if_mounted
 
-def _update_control_if_mounted(control: ft.Control) -> None:
-    """Update a Flet control only while it is attached to a page."""
-    if getattr(control, "page", None) is None:
-        return
-    try:
-        control.update()
-    except AssertionError as exc:
-        if "Control must be added" not in str(exc):
-            raise
+if TYPE_CHECKING:
+    from puripuly_heart.ui.views.settings import SettingsView
 
+
+# AI: ATTRIBUTE OWNERSHIP — _build_stt_widgets and _build_peer_stt_widgets create:
+#   _stt_text, _stt_compute_label/gpu_btn/cpu_btn/row,
+#   _stt_quant_label/q8_btn/q6k_btn/f16_btn/int8_btn/row,
+#   _stt_backend_label/onnx_btn/gguf_btn/row, _stt_title, _stt_provider_label
+#   _peer_stt_text, _peer_stt_compute_label/gpu_btn/cpu_btn/row,
+#   _peer_quant_label/q8_btn/q6k_btn/f16_btn/int8_btn/row,
+#   _peer_stt_backend_label/onnx_btn/gguf_btn/row,
+#   _peer_provider_title, _dashboard_language_redirect_text, _peer_stt_label
+#
+# These attributes are used by _update_api_visibility (settings.py) to control
+# compute/backend/quant row visibility based on selected provider.
 
 class SttSectionMixin:
     """Mixin providing STT section methods for SettingsView."""
@@ -42,6 +51,19 @@ class SttSectionMixin:
         STTProviderName.LOCAL_QWEN3_ASR_GGUF: ["q8_0", "q6_k", "f16"],
         STTProviderName.LOCAL_QWEN_17B_GGUF: ["q8_0", "q6_k", "f16"],
     }
+
+    def _load_stt_from_settings(self, settings: "AppSettings") -> None:
+        """Load STT provider labels from settings into UI."""
+        if not hasattr(self, '_stt_text'):
+            return
+        self._set_unit_card_value_text(
+            self._stt_text,
+            provider_label(settings.provider.stt.value),
+        )
+        self._set_unit_card_value_text(
+            self._peer_stt_text,
+            provider_label(self._effective_peer_stt_provider(settings).value),
+        )
 
     def _effective_peer_stt_provider(self, settings: AppSettings | None) -> STTProviderName:
         if settings is None:
@@ -233,15 +255,10 @@ class SttSectionMixin:
     def _is_local_stt(self, provider: STTProviderName) -> bool:
         return provider in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B, STTProviderName.LOCAL_GIGAAM_RNNT, STTProviderName.LOCAL_PARAKEET_TDT, STTProviderName.LOCAL_GIGAAM_RNNT_GGUF, STTProviderName.LOCAL_PARAKEET_TDT_GGUF, STTProviderName.LOCAL_QWEN3_ASR_GGUF, STTProviderName.LOCAL_QWEN_17B_GGUF)
 
-    def _make_quant_button(self, label: str, on_click) -> ft.Container:
-        return ft.Container(
-            content=ft.Text(label, size=14, color=COLOR_ON_BACKGROUND),
-            bgcolor=COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_DIVIDER),
-            border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
-            on_click=on_click,
-        )
+    # AI: SHARED QUANT SYNC — used by both self-stt and peer-stt quant buttons.
+    # Buttons are pre-created in _build_stt_widgets / _build_peer_stt_widgets.
+    # Visibility + style are set atomically. _update_control_if_mounted is safe
+    # to call before widgets are mounted to a page (no-op if page is None).
 
     def _sync_quant_buttons(
         self,
@@ -410,6 +427,11 @@ class SttSectionMixin:
     def _on_peer_stt_backend_gguf_click(self, e) -> None:
         self._apply_peer_stt_backend("gguf")
 
+    # AI: BACKEND SWITCH — when switching ONNX↔GGUF, also changes the STT PROVIDER
+    # (e.g. LOCAL_QWEN → LOCAL_QWEN3_ASR_GGUF). The provider enum carries the backend
+    # implicitly. After switching, resets quant to first available for new provider.
+    # Calls _update_api_visibility to show/hide compute/backend rows for new provider.
+
     def _apply_stt_backend(self, value: str) -> None:
         if not self._settings:
             return
@@ -478,3 +500,225 @@ class SttSectionMixin:
         merged = self._build_settings_with_provider_draft()
         self._update_api_visibility(merged)
         self.has_provider_changes = True
+
+    # --- Widget builders (called from _build_api_tab) ---
+
+    # AI: WIDGET BUILD ORDER — called from _build_api_tab (settings.py).
+    # Creates all self-stt UI controls AND reads self._initial_settings for
+    # initial quant/backend button state. Uses _make_quant_button from SettingsHelpersMixin.
+    # Returns _wrap_unit_card (the stt_card) but also creates ~20 self._* attributes
+    # as side effect — the card is just the visible container.
+
+    def _build_stt_widgets(self) -> ft.Control:
+        """Build Self STT widgets (Section A). Returns stt_card."""
+        self._stt_text = self._build_clickable_text(
+            provider_label(STTProviderName.LOCAL_QWEN.value),
+            self._on_stt_click,
+        )
+        self._stt_compute_label = ft.Text(
+            t("settings.compute.label"), size=14, color=COLOR_ON_BACKGROUND
+        )
+        self._stt_compute_gpu_btn = ft.Container(
+            content=ft.Text("GPU", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            bgcolor=COLOR_PRIMARY,
+            border=ft.border.all(1, COLOR_PRIMARY),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=self._on_stt_compute_gpu_click,
+        )
+        self._stt_compute_cpu_btn = ft.Container(
+            content=ft.Text("CPU", size=14, color=COLOR_ON_BACKGROUND),
+            bgcolor=COLOR_SURFACE,
+            border=ft.border.all(1, COLOR_DIVIDER),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=self._on_stt_compute_cpu_click,
+        )
+        self._stt_compute_row = ft.Row(
+            [self._stt_compute_label, self._stt_compute_gpu_btn, self._stt_compute_cpu_btn],
+            spacing=8,
+            visible=False,
+        )
+        self._stt_quant_label = ft.Text(
+            t("settings.quant.label", default="Quant:"), size=14, color=COLOR_ON_BACKGROUND
+        )
+        self._stt_quant_q8_btn = self._make_quant_button("Q8_0", lambda e: self._apply_stt_quant("q8_0"))
+        self._stt_quant_q6k_btn = self._make_quant_button("Q6_K", lambda e: self._apply_stt_quant("q6_k"))
+        self._stt_quant_f16_btn = self._make_quant_button("F16", lambda e: self._apply_stt_quant("f16"))
+        self._stt_quant_int8_btn = self._make_quant_button("int8", lambda e: self._apply_stt_quant("int8"))
+        # Set initial quant button state based on loaded settings
+        _init_stt = self._initial_settings.provider.stt if self._initial_settings else STTProviderName.LOCAL_QWEN
+        _init_quant = self._initial_settings.provider.stt_quant if self._initial_settings else ""
+        _init_available = self._INITIAL_QUANTS_FOR_PROVIDER.get(_init_stt, ["int8"])
+        _init_active = _init_quant if _init_quant in _init_available else ""
+        for _q, _btn in [("q8_0", self._stt_quant_q8_btn), ("q6_k", self._stt_quant_q6k_btn), ("f16", self._stt_quant_f16_btn), ("int8", self._stt_quant_int8_btn)]:
+            _btn.visible = _q in _init_available
+            if _q == _init_active:
+                _btn.bgcolor = COLOR_PRIMARY
+                _btn.border = ft.border.all(1, COLOR_PRIMARY)
+                _btn.content.color = ft.Colors.WHITE
+                _btn.content.weight = ft.FontWeight.BOLD
+        self._stt_quant_row = ft.Row(
+            [self._stt_quant_label, self._stt_quant_q8_btn, self._stt_quant_q6k_btn, self._stt_quant_f16_btn, self._stt_quant_int8_btn],
+            spacing=8,
+        )
+        self._stt_backend_label = ft.Text(
+            t("settings.backend.label", default="Backend:"), size=14, color=COLOR_ON_BACKGROUND
+        )
+        # Set initial backend button state based on loaded settings
+        _init_backend = self._initial_settings.provider.stt_backend if self._initial_settings else "onnx"
+        _init_is_onnx = _init_backend == "onnx"
+        self._stt_backend_onnx_btn = ft.Container(
+            content=ft.Text("DirectML", size=14, weight=ft.FontWeight.BOLD if _init_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if _init_is_onnx else COLOR_ON_BACKGROUND),
+            bgcolor=COLOR_PRIMARY if _init_is_onnx else COLOR_SURFACE,
+            border=ft.border.all(1, COLOR_PRIMARY if _init_is_onnx else COLOR_DIVIDER),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=self._on_stt_backend_onnx_click,
+        )
+        self._stt_backend_gguf_btn = ft.Container(
+            content=ft.Text("Vulkan", size=14, weight=ft.FontWeight.BOLD if not _init_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if not _init_is_onnx else COLOR_ON_BACKGROUND),
+            bgcolor=COLOR_PRIMARY if not _init_is_onnx else COLOR_SURFACE,
+            border=ft.border.all(1, COLOR_PRIMARY if not _init_is_onnx else COLOR_DIVIDER),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=self._on_stt_backend_gguf_click,
+        )
+        self._stt_backend_row = ft.Row(
+            [self._stt_backend_label, self._stt_backend_onnx_btn, self._stt_backend_gguf_btn],
+            spacing=8,
+            visible=False,
+        )
+        self._stt_title = ft.Text(
+            t("settings.section.stt"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
+        )
+        self._stt_provider_label = ft.Text(
+            t("settings.self_stt_provider"), size=16, color=COLOR_ON_BACKGROUND
+        )
+        return self._wrap_unit_card(
+            title=self._stt_title,
+            value=self._stt_text,
+        )
+
+    # AI: PEER STT BUILD — mirrors _build_stt_widgets for peer side.
+    # Reads self._initial_settings for initial peer quant/backend state.
+    # Returns peer_stt_card, but creates ~15 self._* peer_stt_* attributes.
+
+    def _build_peer_stt_widgets(self) -> ft.Control:
+        """Build Peer STT widgets (Section G). Returns peer_stt_card."""
+        self._peer_provider_title = ft.Text(
+            t("settings.section.peer_stt"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._dashboard_language_redirect_text = ft.Text(
+            t("settings.dashboard_language_redirect"),
+            size=16,
+            color=COLOR_NEUTRAL,
+        )
+        self._peer_stt_text = self._build_clickable_text(
+            provider_label(STTProviderName.LOCAL_QWEN.value),
+            self._on_peer_stt_click,
+        )
+        self._peer_stt_compute_label = ft.Text(
+            t("settings.compute.label"), size=14, color=COLOR_ON_BACKGROUND
+        )
+        self._peer_stt_compute_gpu_btn = ft.Container(
+            content=ft.Text("GPU", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            bgcolor=COLOR_PRIMARY,
+            border=ft.border.all(1, COLOR_PRIMARY),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=self._on_peer_stt_compute_gpu_click,
+        )
+        self._peer_stt_compute_cpu_btn = ft.Container(
+            content=ft.Text("CPU", size=14, color=COLOR_ON_BACKGROUND),
+            bgcolor=COLOR_SURFACE,
+            border=ft.border.all(1, COLOR_DIVIDER),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=self._on_peer_stt_compute_cpu_click,
+        )
+        self._peer_stt_compute_row = ft.Row(
+            [self._peer_stt_compute_label, self._peer_stt_compute_gpu_btn, self._peer_stt_compute_cpu_btn],
+            spacing=8,
+            visible=False,
+        )
+        self._peer_quant_label = ft.Text(
+            t("settings.quant.label", default="Quant:"), size=14, color=COLOR_ON_BACKGROUND
+        )
+        self._peer_quant_q8_btn = self._make_quant_button("Q8_0", lambda e: self._apply_peer_quant("q8_0"))
+        self._peer_quant_q6k_btn = self._make_quant_button("Q6_K", lambda e: self._apply_peer_quant("q6_k"))
+        self._peer_quant_f16_btn = self._make_quant_button("F16", lambda e: self._apply_peer_quant("f16"))
+        self._peer_quant_int8_btn = self._make_quant_button("int8", lambda e: self._apply_peer_quant("int8"))
+        # Set initial PEER quant button state based on loaded settings
+        _init_peer = self._initial_settings.provider.peer_stt if self._initial_settings else STTProviderName.LOCAL_QWEN
+        _init_peer_quant = self._initial_settings.provider.peer_stt_quant if self._initial_settings else ""
+        _init_peer_available = self._INITIAL_QUANTS_FOR_PROVIDER.get(_init_peer, ["int8"])
+        _init_peer_active = _init_peer_quant if _init_peer_quant in _init_peer_available else ""
+        for _q, _btn in [("q8_0", self._peer_quant_q8_btn), ("q6_k", self._peer_quant_q6k_btn), ("f16", self._peer_quant_f16_btn), ("int8", self._peer_quant_int8_btn)]:
+            _btn.visible = _q in _init_peer_available
+            if _q == _init_peer_active:
+                _btn.bgcolor = COLOR_PRIMARY
+                _btn.border = ft.border.all(1, COLOR_PRIMARY)
+                _btn.content.color = ft.Colors.WHITE
+                _btn.content.weight = ft.FontWeight.BOLD
+        self._peer_quant_row = ft.Row(
+            [self._peer_quant_label, self._peer_quant_q8_btn, self._peer_quant_q6k_btn, self._peer_quant_f16_btn, self._peer_quant_int8_btn],
+            spacing=8,
+        )
+        self._peer_stt_backend_label = ft.Text(
+            t("settings.backend.label", default="Backend:"), size=14, color=COLOR_ON_BACKGROUND
+        )
+        # Set initial PEER backend button state based on loaded settings
+        _init_peer_backend = self._initial_settings.provider.peer_stt_backend if self._initial_settings else "onnx"
+        _init_peer_is_onnx = _init_peer_backend == "onnx"
+        self._peer_stt_backend_onnx_btn = ft.Container(
+            content=ft.Text("DirectML", size=14, weight=ft.FontWeight.BOLD if _init_peer_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if _init_peer_is_onnx else COLOR_ON_BACKGROUND),
+            bgcolor=COLOR_PRIMARY if _init_peer_is_onnx else COLOR_SURFACE,
+            border=ft.border.all(1, COLOR_PRIMARY if _init_peer_is_onnx else COLOR_DIVIDER),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=self._on_peer_stt_backend_onnx_click,
+        )
+        self._peer_stt_backend_gguf_btn = ft.Container(
+            content=ft.Text("Vulkan", size=14, weight=ft.FontWeight.BOLD if not _init_peer_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if not _init_peer_is_onnx else COLOR_ON_BACKGROUND),
+            bgcolor=COLOR_PRIMARY if not _init_peer_is_onnx else COLOR_SURFACE,
+            border=ft.border.all(1, COLOR_PRIMARY if not _init_peer_is_onnx else COLOR_DIVIDER),
+            border_radius=6,
+            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            on_click=self._on_peer_stt_backend_gguf_click,
+        )
+        self._peer_stt_backend_row = ft.Row(
+            [self._peer_stt_backend_label, self._peer_stt_backend_onnx_btn, self._peer_stt_backend_gguf_btn],
+            spacing=8,
+            visible=False,
+        )
+        self._peer_stt_label = ft.Text(
+            t("settings.peer_stt_provider"),
+            size=16,
+            color=COLOR_ON_BACKGROUND,
+        )
+        return self._wrap_unit_card(
+            title=self._peer_provider_title,
+            value=self._peer_stt_text,
+        )
+
+    # --- Locale ---
+
+    def _apply_locale_stt(self) -> None:
+        """Update STT / peer section labels when locale changes."""
+        if not hasattr(self, '_stt_backend_label'):
+            return
+        self._stt_backend_label.value = t("settings.backend.label", default="Engine:")
+        self._stt_quant_label.value = t("settings.quant.label", default="Quality:")
+        self._peer_stt_backend_label.value = t("settings.backend.label", default="Engine:")
+        self._peer_quant_label.value = t("settings.quant.label", default="Quality:")
+        self._stt_title.value = t("settings.section.stt")
+        self._stt_compute_label.value = t("settings.compute.label")
+        self._peer_stt_compute_label.value = t("settings.compute.label")
+        self._stt_provider_label.value = t("settings.self_stt_provider")
+        self._peer_provider_title.value = t("settings.section.peer_stt")
+        self._dashboard_language_redirect_text.value = t("settings.dashboard_language_redirect")
+        self._peer_stt_label.value = t("settings.peer_stt_provider")
