@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 #
 # __init__ (settings.py):
 #   _settings, _provider_settings_draft, _config_path, has_provider_changes,
-#   has_pending_prompt_changes, all on_* callbacks, model_discovery,
+#   has_pending_prompt_changes, all on_* callbacks,
 #   runtime_log_basic/detailed
 #
 # _build_general_tab (settings.py):
@@ -167,8 +167,11 @@ class SettingsView(
         self.on_desktop_overlay_position_reset: Callable[[], None] | None = None
         self.on_view_logs: Callable[[], None] | None = None
         self.on_start_microphone_test: Callable[[], None] | None = None
+        self.on_load_secrets: Callable[[Path], dict[str, str]] | None = None
+        self.on_write_secret: Callable[[str, str, Path], bool] | None = None
+        self.on_fetch_models: Callable[[str, str], list[str]] | None = None
+        self.on_test_connection: Callable[[str, str], tuple[int, str]] | None = None
         self.show_snackbar: Callable[[str, str], None] | None = None
-        self.model_discovery: object | None = None
         self.runtime_log_basic: Callable[..., None] | None = None
         self.runtime_log_detailed: Callable[..., None] | None = None
 

@@ -279,7 +279,6 @@ class LlmSectionMixin:
         )
 
     def _do_fetch_models(self, *, base_url_field, model_field, api_key_field=None) -> None:
-        import asyncio
         import logging
         from puripuly_heart.ui.components.settings.settings_modal import OptionItem, SettingsModal
 
@@ -294,12 +293,12 @@ class LlmSectionMixin:
 
         logger.info("[FetchModels] Requesting %s/models (has_key=%s)", base_url, bool(api_key))
 
-        if self.model_discovery is None:
-            logger.error("[FetchModels] model_discovery not initialized")
+        if not self.on_fetch_models:
+            logger.error("[FetchModels] on_fetch_models callback not set")
             return
 
         try:
-            model_ids = asyncio.run(self.model_discovery.fetch_models(base_url, api_key))
+            model_ids = self.on_fetch_models(base_url, api_key)
         except Exception as exc:
             logger.error("[FetchModels] Failed: %s", exc)
             return
@@ -343,7 +342,6 @@ class LlmSectionMixin:
         )
 
     def _test_local_llm_connection(self, e) -> None:
-        import asyncio
         import logging
 
         logger = logging.getLogger(__name__)
@@ -355,12 +353,12 @@ class LlmSectionMixin:
 
         logger.info("[TestConnection] Pinging %s (has_key=%s)", base_url, bool(api_key))
 
-        if self.model_discovery is None:
-            logger.error("[TestConnection] model_discovery not initialized")
+        if not self.on_test_connection:
+            logger.error("[TestConnection] on_test_connection callback not set")
             return
 
         try:
-            status_code, body = asyncio.run(self.model_discovery.test_connection(base_url, api_key))
+            status_code, body = self.on_test_connection(base_url, api_key)
         except Exception as exc:
             logger.error("[TestConnection] Failed: %s", exc)
             if self.show_snackbar:
@@ -381,7 +379,6 @@ class LlmSectionMixin:
                 self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _test_openai_compatible_connection(self, e) -> None:
-        import asyncio
         import logging
 
         logger = logging.getLogger(__name__)
@@ -393,11 +390,11 @@ class LlmSectionMixin:
 
         logger.info("[TestConnection][OpenAI] Pinging %s (has_key=%s)", base_url, bool(api_key))
 
-        if self.model_discovery is None:
+        if not self.on_test_connection:
             return
 
         try:
-            status_code, body = asyncio.run(self.model_discovery.test_connection(base_url, api_key))
+            status_code, body = self.on_test_connection(base_url, api_key)
         except Exception as exc:
             logger.error("[TestConnection][OpenAI] Failed: %s", exc)
             if self.show_snackbar:

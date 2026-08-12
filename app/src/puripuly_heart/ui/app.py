@@ -272,6 +272,10 @@ class TranslatorApp(
         self.view_settings.on_secret_cleared = self.controller.clear_secret_verification
         self.view_settings.on_local_llm_secret_changed = self.controller.rebuild_local_llm_if_needed
         self.view_settings.on_start_microphone_test = self.controller._on_start_microphone_test_async
+        self.view_settings.on_load_secrets = self.controller.load_secrets
+        self.view_settings.on_write_secret = self.controller.write_secret
+        self.view_settings.on_fetch_models = self.controller.fetch_models
+        self.view_settings.on_test_connection = self.controller.test_connection
 
     def _wire_overlay_callbacks(self) -> None:
         self.view_settings.on_desktop_overlay_lock_change = self.controller._on_desktop_overlay_lock_change_async

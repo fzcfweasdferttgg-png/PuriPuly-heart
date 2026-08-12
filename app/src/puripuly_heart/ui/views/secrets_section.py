@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from puripuly_heart.app.wiring import create_secret_store
 from puripuly_heart.ui.i18n import t
 
 if TYPE_CHECKING:
@@ -17,34 +16,34 @@ logger = logging.getLogger(__name__)
 
 
 # SECRETS LIFECYCLE — loaded LAST in load_from_settings (after all UI sections).
-# Creates no UI controls — only reads/writes secret values via create_secret_store.
+# Creates no UI controls — only reads/writes secret values via callbacks.
 # _restore_api_key_icons syncs verification status icons from settings.api_key_verified.
-# _on_secret_change → _write_secret_value → store.set/store.delete.
+# _on_secret_change → _write_secret_value → on_write_secret callback.
 # _verify_key → on_verify_api_key callback (async, delegated to App).
 
 class SecretsSectionMixin:
 
     def _load_secrets(self, settings: AppSettings, config_path: Path) -> None:
+        if not self.on_load_secrets:
+            logger.warning("[Secrets] on_load_secrets callback not set")
+            return
         try:
-            store = create_secret_store(config_path=config_path)
+            secrets = self.on_load_secrets(config_path)
         except Exception as exc:
-            logger.warning("[Secrets] Failed to create store: %s", exc)
+            logger.warning("[Secrets] Failed to load: %s", exc)
             self._emit_runtime_basic(f"Failed to load secrets: {exc}", level=logging.WARNING)
             return
 
-        oc_key = store.get("openai_compatible_api_key") or ""
-        backup_key = store.get("backup_api_key") or ""
-        fallback_llm_key = store.get("fallback_local_llm_api_key") or ""
-        local_llm_key = store.get("local_llm_api_key") or ""
+        self._openai_compatible_key.value = secrets.get("openai_compatible_api_key", "")
+        self._fallback_api_key.value = secrets.get("backup_api_key", "")
+        self._fallback_local_llm_api_key.value = secrets.get("fallback_local_llm_api_key", "")
+        self._local_llm_api_key.value = secrets.get("local_llm_api_key", "")
+
         logger.info(
             "[Secrets] Loaded keys: oc=%s backup=%s fallback_llm=%s local_llm=%s",
-            bool(oc_key), bool(backup_key), bool(fallback_llm_key), bool(local_llm_key),
+            bool(self._openai_compatible_key.value), bool(self._fallback_api_key.value),
+            bool(self._fallback_local_llm_api_key.value), bool(self._local_llm_api_key.value),
         )
-
-        self._openai_compatible_key.value = oc_key
-        self._fallback_api_key.value = backup_key
-        self._fallback_local_llm_api_key.value = fallback_llm_key
-        self._local_llm_api_key.value = local_llm_key
 
         # Restore verification status icons from saved settings
         self._restore_api_key_icons(settings)
@@ -73,16 +72,15 @@ class SecretsSectionMixin:
         if not self._settings or not self._config_path:
             logger.warning("[Secrets] Write skipped: no settings or config_path")
             return False
+        if not self.on_write_secret:
+            logger.warning("[Secrets] on_write_secret callback not set")
+            return False
 
         try:
-            store = create_secret_store(config_path=self._config_path)
-            if value:
-                store.set(key, value)
-                logger.info("[Secrets] Saved key=%s len=%d", key, len(value))
-            else:
-                store.delete(key)
-                logger.info("[Secrets] Deleted key=%s", key)
-            return True
+            ok = self.on_write_secret(key, value, self._config_path)
+            if ok:
+                logger.info("[Secrets] %s key=%s", "Saved" if value else "Deleted", key)
+            return ok
         except Exception as exc:
             logger.warning("[Secrets] Failed to write key=%s: %s", key, exc)
             self._emit_runtime_basic(

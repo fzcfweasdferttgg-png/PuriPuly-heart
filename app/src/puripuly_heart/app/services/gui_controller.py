@@ -746,8 +746,6 @@ class GuiController(
             self._api_key_verifier = ApiKeyVerifier(model_discovery=self.model_discovery)
 
         settings_view = getattr(self.app, "view_settings", None)
-        if settings_view is not None:
-            settings_view.model_discovery = self.model_discovery
 
         # Create command executor for settings sections
         from puripuly_heart.core.services.settings_command_executor import SettingsCommandExecutor
@@ -1138,6 +1136,39 @@ class GuiController(
             view_dashboard = getattr(self.app, "view_dashboard", None)
             if view_dashboard and key in ("openai_compatible_api_key", "local_llm_api_key"):
                 view_dashboard.set_translation_needs_key(True, update_ui=False)
+
+    def load_secrets(self, config_path: Path) -> dict[str, str]:
+        store = create_secret_store(config_path=config_path)
+        return {
+            "openai_compatible_api_key": store.get("openai_compatible_api_key") or "",
+            "backup_api_key": store.get("backup_api_key") or "",
+            "fallback_local_llm_api_key": store.get("fallback_local_llm_api_key") or "",
+            "local_llm_api_key": store.get("local_llm_api_key") or "",
+        }
+
+    def write_secret(self, key: str, value: str, config_path: Path) -> bool:
+        try:
+            store = create_secret_store(config_path=config_path)
+            if value:
+                store.set(key, value)
+            else:
+                store.delete(key)
+            return True
+        except Exception:
+            logger.warning("[Secrets] Failed to write key=%s", key, exc_info=True)
+            return False
+
+    def fetch_models(self, base_url: str, api_key: str) -> list[str]:
+        if self.model_discovery is None:
+            logger.error("[FetchModels] model_discovery not initialized")
+            return []
+        return asyncio.run(self.model_discovery.fetch_models(base_url, api_key))
+
+    def test_connection(self, base_url: str, api_key: str) -> tuple[int, str]:
+        if self.model_discovery is None:
+            logger.error("[TestConnection] model_discovery not initialized")
+            return 0, "model_discovery not initialized"
+        return asyncio.run(self.model_discovery.test_connection(base_url, api_key))
 
     def auto_apply_pending_on_leave(self) -> None:
         view_settings = getattr(self.app, "view_settings", None)

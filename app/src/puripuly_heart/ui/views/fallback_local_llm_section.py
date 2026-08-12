@@ -243,7 +243,6 @@ class FallbackLocalLlmSectionMixin:
         self._on_fallback_local_llm_extra_body_change_end(None)
 
     def _fetch_fallback_local_llm_models(self, e) -> None:
-        import asyncio
         import logging
         from puripuly_heart.ui.components.settings.settings_modal import OptionItem, SettingsModal
 
@@ -255,11 +254,11 @@ class FallbackLocalLlmSectionMixin:
         api_key = (self._fallback_local_llm_api_key.value or "").strip()
         logger.info("[FetchModels][FallbackLocal] Requesting %s/models (has_key=%s)", base_url, bool(api_key))
 
-        if self.model_discovery is None:
+        if not self.on_fetch_models:
             return
 
         try:
-            model_ids = asyncio.run(self.model_discovery.fetch_models(base_url, api_key))
+            model_ids = self.on_fetch_models(base_url, api_key)
         except Exception as exc:
             logger.error("[FetchModels][FallbackLocal] Failed: %s", exc)
             return
@@ -295,7 +294,6 @@ class FallbackLocalLlmSectionMixin:
         modal.open(current=current_value or model_ids[0])
 
     def _test_fallback_local_llm_connection(self, e) -> None:
-        import asyncio
         import logging
 
         logger = logging.getLogger(__name__)
@@ -307,11 +305,11 @@ class FallbackLocalLlmSectionMixin:
 
         logger.info("[TestConnection][FallbackLocal] Pinging %s (has_key=%s)", base_url, bool(api_key))
 
-        if self.model_discovery is None:
+        if not self.on_test_connection:
             return
 
         try:
-            status_code, body = asyncio.run(self.model_discovery.test_connection(base_url, api_key))
+            status_code, body = self.on_test_connection(base_url, api_key)
         except Exception as exc:
             logger.error("[TestConnection][FallbackLocal] Failed: %s", exc)
             if self.show_snackbar:
