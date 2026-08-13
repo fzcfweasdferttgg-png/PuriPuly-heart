@@ -1302,10 +1302,7 @@ class GuiController(
 
     def _on_translation_toggle_async(self, enabled: bool) -> None:
         async def _task():
-            actual = await self.set_translation_enabled(enabled)
-            view_dashboard = getattr(self.app, "view_dashboard", None)
-            if view_dashboard:
-                view_dashboard.set_translation_enabled(actual)
+            await self.set_translation_enabled(enabled)
         self.page.run_task(_task)
 
     def _on_stt_toggle_async(self, enabled: bool) -> None:
