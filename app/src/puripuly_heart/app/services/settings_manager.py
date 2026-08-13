@@ -162,7 +162,7 @@ class SettingsManagerMixin:
                 f"{self.hub is not None and presenter is not None and getattr(self.hub, 'overlay_sink', None) is presenter}"
             )
         prev_llm_provider = self.settings.provider.llm if self.settings else None
-        prev_llm_model = self.settings.provider.llm_model if self.settings else None
+        prev_llm_model = self.settings.provider.openai_compatible.model if self.settings else None
         prev_llm_base_url = self.settings.provider.openai_compatible.base_url if self.settings else None
         self.settings = settings
         self._last_microphone_test_audio_settings_signature = next_microphone_test_audio_signature
@@ -188,14 +188,14 @@ class SettingsManagerMixin:
             prev_llm_provider is not None
             and (
                 prev_llm_provider != settings.provider.llm
-                or prev_llm_model != settings.provider.llm_model
+                or prev_llm_model != settings.provider.openai_compatible.model
                 or prev_llm_base_url != settings.provider.openai_compatible.base_url
             )
         )
         if llm_provider_changed:
             self.log_basic(
                 f"[Settings] LLM provider changed: {prev_llm_provider}->{settings.provider.llm} "
-                f"model={prev_llm_model}->{settings.provider.llm_model} rebuilding"
+                f"model={prev_llm_model}->{settings.provider.openai_compatible.model} rebuilding"
             )
             await self._rebuild_llm_provider()
 

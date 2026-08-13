@@ -256,7 +256,7 @@ class ToggleCoordinator:
                     ):
                         break
                     if self.start_mic_loop is not None:
-                        await self.start_mic_loop()
+                        await self.start_mic_loop(self.settings)
                     if (
                         self.hub is not None
                         and self.settings.provider.stt not in LOCAL_STT_PROVIDERS
