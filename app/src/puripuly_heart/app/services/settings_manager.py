@@ -6,10 +6,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from puripuly_heart.adapters.storage.settings_persistence import load_settings, save_settings
 from puripuly_heart.config.settings import (
-    load_settings,
     new_settings_for_first_run,
-    save_settings,
 )
 from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.domain.i18n import get_locale, set_locale

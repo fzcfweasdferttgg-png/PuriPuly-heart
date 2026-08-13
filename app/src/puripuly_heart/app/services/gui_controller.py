@@ -44,6 +44,7 @@ from puripuly_heart.app.wiring import (
 from puripuly_heart.app.headless_mic import run_audio_vad_loop
 from puripuly_heart.config.audio_host_api import normalize_input_host_api
 from puripuly_heart.config.paths import default_models_dir, default_vad_model_path
+from puripuly_heart.adapters.storage.settings_persistence import load_settings, save_settings
 from puripuly_heart.config.settings import (
     DESKTOP_FLET_MIN_HEIGHT,
     DESKTOP_FLET_MIN_WIDTH,
@@ -53,9 +54,7 @@ from puripuly_heart.config.settings import (
     AppSettings,
     LLMProviderName,
     STTProviderName,
-    load_settings,
     new_settings_for_first_run,
-    save_settings,
 )
 from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.runtime.local_qwen_lifecycle import LOCAL_QWEN_IDLE_RELEASE_SECONDS

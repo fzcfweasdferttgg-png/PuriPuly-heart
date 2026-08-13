@@ -10,11 +10,9 @@ from puripuly_heart.config.settings.base import (
     detect_system_locale,
     ensure_prompt_defaults,
     from_dict,
-    load_settings,
     materialize_translation_settings,
     new_settings_for_first_run,
     resolve_first_run_ui_locale,
-    save_settings,
     to_dict,
 )
 from puripuly_heart.config.settings.constants import (
