@@ -1169,12 +1169,36 @@ class GuiController(
         if self.model_discovery is None:
             logger.error("[FetchModels] model_discovery not initialized")
             return []
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    asyncio.run,
+                    self.model_discovery.fetch_models(base_url, api_key),
+                )
+                return future.result(timeout=30)
         return asyncio.run(self.model_discovery.fetch_models(base_url, api_key))
 
     def test_connection(self, base_url: str, api_key: str) -> tuple[int, str]:
         if self.model_discovery is None:
             logger.error("[TestConnection] model_discovery not initialized")
             return 0, "model_discovery not initialized"
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    asyncio.run,
+                    self.model_discovery.test_connection(base_url, api_key),
+                )
+                return future.result(timeout=30)
         return asyncio.run(self.model_discovery.test_connection(base_url, api_key))
 
     def auto_apply_pending_on_leave(self) -> None:
@@ -1335,12 +1359,12 @@ class GuiController(
                 show_snackbar = getattr(view_dashboard, "show_snackbar", None)
                 if callable(show_snackbar):
                     show_snackbar(warning)
-        self.on_dashboard_language_change(
+        self.page.run_task(lambda: self.on_dashboard_language_change(
             source_code, target_code,
             peer_source_code=peer_source_code,
             peer_target_code=peer_target_code,
             second_target_code=second_target_code,
-        )
+        ))
 
     def _on_manual_submit_async(self, _source, text: str) -> None:
         async def _task():

@@ -7,6 +7,7 @@ from puripuly_heart.ui.components.display_card import DisplayCard
 from puripuly_heart.ui.components.glow import create_background_glow_stack
 from puripuly_heart.ui.components.language_card import LanguageCard
 from puripuly_heart.ui.components.language_modal import LanguageModal
+from puripuly_heart.ui.components.peer_translation_eula_dialog import PeerTranslationEulaDialog
 from puripuly_heart.ui.components.power_button import PowerButton
 from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.domain.i18n import get_locale, language_name, t
@@ -391,6 +392,13 @@ class DashboardView(ft.Column):
             recent=self._recent_target_langs,
             none_option=t("dashboard.language.second_target_disabled", default="Disabled"),
         )
+
+    def show_peer_eula_dialog(self, *, on_accept: Callable[[], None]) -> None:
+        dialog = PeerTranslationEulaDialog(
+            self.page,
+            on_accept=on_accept,
+        )
+        dialog.open()
 
     def _on_second_target_select(self, lang_code: str):
         # Guard: second target must differ from source and target

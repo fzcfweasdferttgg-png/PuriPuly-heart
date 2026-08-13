@@ -204,7 +204,7 @@ class LocalSTTManager:
             manifest = load_local_stt_asset_manifest(model_id)
             install_state = inspect_local_stt_install_state(model_dir, manifest=manifest)
             if install_state.status != "ready":
-                raise LocalSTTModelMissingError(f"model status: {install_state.status}")
+                raise LocalSTTModelMissingError(f"model status: {install_state.status} (path: {model_dir})")
         except (LocalSTTModelMissingError, LocalSTTManifestInvalidError) as exc:
             logger.error("Local STT model not available: %s", exc)
             self._install_state = LocalSTTInstallState(status="missing")
