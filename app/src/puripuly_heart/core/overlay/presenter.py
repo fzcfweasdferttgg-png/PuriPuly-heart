@@ -75,39 +75,12 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     peer_presentation_refresh_burst: bool = True
     self_presentation_refresh_burst: bool = True
 
-    _terminal_registry: OrderedDict[tuple[str, UUID], int] = field(
-        init=False,
-        default_factory=OrderedDict,
-    )
-    _scene_terminal_keys: set[tuple[str, UUID]] = field(
-        init=False,
-        default_factory=set,
-    )
     _scene_terminal_reasons: dict[tuple[str, UUID], str] = field(
         init=False,
         default_factory=dict,
     )
-    _expiration_tasks: dict[tuple[str, UUID], asyncio.Task[None]] = field(
-        init=False,
-        default_factory=dict,
-    )
     _revision: int = field(init=False, default=0)
-    _appearance_seq: int = field(init=False, default=0)
     _presentation_state: OverlayPresentationState = field(init=False)
-    _peer_presentation_refresh_burst_task: asyncio.Task[None] | None = field(
-        init=False,
-        default=None,
-    )
-    _self_presentation_refresh_burst_task: asyncio.Task[None] | None = field(
-        init=False,
-        default=None,
-    )
-    _self_presentation_refresh_burst_cancel_reasons: dict[asyncio.Task[None], str] = field(
-        init=False, default_factory=dict
-    )
-    _self_presentation_refresh_burst_cancel_cleanup_counts: dict[asyncio.Task[None], int] = field(
-        init=False, default_factory=dict
-    )
     # Serializes emit() only.
     # _publish_if_changed runs WITHOUT the lock — safe in asyncio single-thread.
     # Don't move _publish_if_changed inside lock — it would block event processing
@@ -118,6 +91,17 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
     )
 
     def __post_init__(self) -> None:
+        # Fields owned by mixins (defined in mixin __slots__, not dataclass fields).
+        # Initialized here because mixins have no __init__.
+        self._terminal_registry = OrderedDict()
+        self._scene_terminal_keys = set()
+        self._expiration_tasks = {}
+        self._appearance_seq = 0
+        self._peer_presentation_refresh_burst_task = None
+        self._self_presentation_refresh_burst_task = None
+        self._self_presentation_refresh_burst_cancel_reasons = {}
+        self._self_presentation_refresh_burst_cancel_cleanup_counts = {}
+        # Existing initialization
         self._presentation_state = OverlayPresentationState()
         self._presentation_state.generate_snapshot(
             revision=0,

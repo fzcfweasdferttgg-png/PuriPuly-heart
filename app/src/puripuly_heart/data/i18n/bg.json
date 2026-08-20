@@ -431,5 +431,7 @@
   "provider.openai_compatible": "OpenAI-съвместим",
   "settings.translation_connection.openai_compatible": "OpenAI-съвместим API",
   "settings.translation_connection.openai_compatible.description": "Свържете се с всякакъв OpenAI-съвместим API",
-  "settings.backup_translation.connection": "Настройки на резервен превод"
+  "settings.backup_translation.connection": "Настройки на резервен превод",
+  "provider.none": "Няма",
+  "provider.none.description": "STT е деактивиран"
 }

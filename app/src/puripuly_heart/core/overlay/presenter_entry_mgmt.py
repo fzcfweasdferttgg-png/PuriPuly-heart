@@ -30,23 +30,17 @@ if TYPE_CHECKING:
 class PresenterEntryMgmtMixin:
     """Entry lifecycle management: creation, expiration, tombstoning, visibility.
 
-    Entry lifecycle:
-      created → visible (ever_visible=True) → expired OR displaced → tombstoned
-
-    Key mechanisms:
-    - **Tombstoning**: removed entries are stored in _terminal_registry to
-      prevent re-creation from late-arriving STT transcripts.
-    - **Expiration**: async tasks sleep until TTL, then remove the entry.
-      _expiration_revision ensures stale tasks become no-ops when deadline changes.
-    - **Live turn tracking**: _live_self_turn_key / _live_peer_turn_key track
-      the currently active turn per channel (self/peer).
-    - **Displacement**: newer turns can evict older finalized entries that
-      are no longer visible.
-
-    TTL constants (from presenter_constants):
-    - VISIBLE_TTL_SECONDS, LATE_ARRIVAL_WINDOW_SECONDS,
-      SELF_TRANSLATION_MIN_VISIBLE_SECONDS
+    __slots__ — fields owned by this mixin, previously on OverlayPresenter dataclass.
+    Initialized in OverlayPresenter.__post_init__ (not here — mixin has no __init__).
     """
+
+    __slots__ = (
+        '_terminal_registry',
+        '_scene_terminal_keys',
+        '_expiration_tasks',
+        '_appearance_seq',
+    )
+
 
     def _entry_key(self, channel: str | None, utterance_id: UUID | None) -> tuple[str, UUID]:
         if channel not in ("self", "peer"):

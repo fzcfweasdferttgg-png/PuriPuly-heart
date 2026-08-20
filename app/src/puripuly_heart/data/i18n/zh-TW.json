@@ -431,5 +431,7 @@
   "provider.openai_compatible": "OpenAI 相容",
   "settings.translation_connection.openai_compatible": "OpenAI 相容 API",
   "settings.translation_connection.openai_compatible.description": "連線到任何 OpenAI 相容 API 提供商",
-  "settings.backup_translation.connection": "備份翻譯設定"
+  "settings.backup_translation.connection": "備份翻譯設定",
+  "provider.none": "無",
+  "provider.none.description": "STT 已停用"
 }

@@ -221,10 +221,16 @@ class PresenterLoggingMixin:
         protected_selected: list[tuple[str, UUID]],
         retained_hidden: list[tuple[str, UUID]],
     ) -> None:
-        pass
+        # STUB — called by presenter.py _publish_if_changed but intentionally empty.
+        # Diagnostic logging was planned but not implemented.
+        # Arguments are unused. No impact on functionality.
+        _ = (active_self_present, finalized_limit, candidate_keys, selected_keys, protected_selected, retained_hidden)
 
     def _record_deadline(self, entry: OverlayLogicalTurnEntry) -> None:
-        pass
+        # STUB — called by PresenterEntryMgmtMixin._schedule_expiration but intentionally empty.
+        # Diagnostic logging was planned but not implemented.
+        # Argument is unused. No impact on functionality.
+        _ = entry
 
     def _record_self_presentation_refresh_burst_start(
         self,

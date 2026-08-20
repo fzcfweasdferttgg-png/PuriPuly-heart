@@ -667,6 +667,12 @@ class GuiController(
         self.settings = next_settings
         if self._provider_manager is not None:
             self._provider_manager.settings = next_settings
+        logger.info(
+            "[Settings] apply_providers: stt_quant=%s peer_stt_quant=%s llm=%s",
+            self.settings.provider.stt_quant,
+            self.settings.provider.peer_stt_quant,
+            self.settings.provider.llm.value,
+        )
         self.save_settings()
 
         # Update command executor's settings reference after apply
@@ -767,29 +773,30 @@ class GuiController(
             )
 
         stt = None
-        try:
-            backend = create_stt_backend(
-                self.settings,
-                secrets=secrets,
-                diagnostics_enabled=self._detailed_audio_diag_enabled,
-            )
-            stt = ManagedSTTProvider(
-                backend=backend,
-                sample_rate_hz=self.settings.audio.internal_sample_rate_hz,
-                stt_provider_name=self.settings.provider.stt,
-                clock=self.clock,
-                reset_deadline_s=STT_RESET_DEADLINE_S,
-                drain_timeout_s=self.settings.stt.drain_timeout_s,
-                bridging_ms=self.settings.audio.ring_buffer_ms,
-                on_terminal_failure=self._on_self_terminal_failure,
-                on_final_transcript_suppressed=self._on_final_transcript_suppressed,
-                runtime_logging=self.runtime_logging,
-                stt_input_fault_profile_provider=lambda: (
-                    self._debug_stt_fault_profile if self._debug_audio_fault_allowed() else "none"
-                ),
-            )
-        except Exception as exc:
-            self._log_error(f"STT backend not available: {exc}")
+        if self.settings.provider.stt != STTProviderName.NONE:
+            try:
+                backend = create_stt_backend(
+                    self.settings,
+                    secrets=secrets,
+                    diagnostics_enabled=self._detailed_audio_diag_enabled,
+                )
+                stt = ManagedSTTProvider(
+                    backend=backend,
+                    sample_rate_hz=self.settings.audio.internal_sample_rate_hz,
+                    stt_provider_name=self.settings.provider.stt,
+                    clock=self.clock,
+                    reset_deadline_s=STT_RESET_DEADLINE_S,
+                    drain_timeout_s=self.settings.stt.drain_timeout_s,
+                    bridging_ms=self.settings.audio.ring_buffer_ms,
+                    on_terminal_failure=self._on_self_terminal_failure,
+                    on_final_transcript_suppressed=self._on_final_transcript_suppressed,
+                    runtime_logging=self.runtime_logging,
+                    stt_input_fault_profile_provider=lambda: (
+                        self._debug_stt_fault_profile if self._debug_audio_fault_allowed() else "none"
+                    ),
+                )
+            except Exception as exc:
+                self._log_error(f"STT backend not available: {exc}")
 
         osc, sender = create_osc_sink(
             self.settings, clock=self.clock, runtime_logging=self.runtime_logging,
@@ -1193,8 +1200,20 @@ class GuiController(
         if view_settings.has_provider_changes:
             pending = view_settings.consume_provider_apply_settings()
             if pending is not None:
+                logger.info(
+                    "[Settings] auto_apply: pending stt_quant=%s peer_stt_quant=%s llm=%s",
+                    pending.provider.stt_quant,
+                    pending.provider.peer_stt_quant,
+                    pending.provider.llm.value,
+                )
                 view_settings.has_provider_changes = False
                 merged = self.merge_settings_tab_apply_with_current_languages(pending)
+                logger.info(
+                    "[Settings] auto_apply: merged stt_quant=%s peer_stt_quant=%s llm=%s",
+                    merged.provider.stt_quant,
+                    merged.provider.peer_stt_quant,
+                    merged.provider.llm.value,
+                )
                 self.settings = merged
                 self.save_settings()
 
@@ -1376,3 +1395,7 @@ class GuiController(
 
     def _log_error(self, message: str) -> None:
         self.log_basic(message, level=logging.ERROR)
+        show_snackbar = getattr(self.app, "_show_snackbar", None)
+        if callable(show_snackbar):
+            with contextlib.suppress(Exception):
+                show_snackbar(message, ft.Colors.RED_700)

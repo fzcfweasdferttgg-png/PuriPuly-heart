@@ -101,8 +101,8 @@ class OpenAICompatibleSettings:
 
 @dataclass(slots=True)
 class ProviderSettings:
-    stt: STTProviderName = STTProviderName.LOCAL_QWEN
-    peer_stt: STTProviderName = STTProviderName.LOCAL_QWEN
+    stt: STTProviderName = STTProviderName.NONE
+    peer_stt: STTProviderName = STTProviderName.NONE
     stt_compute: str = "gpu"
     peer_stt_compute: str = "gpu"
     stt_backend: str = "onnx"

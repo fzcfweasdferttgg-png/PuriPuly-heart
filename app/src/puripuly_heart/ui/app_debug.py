@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from puripuly_heart.ui.app_utilities import founder_readme_url_for_locale
+from puripuly_heart.ui.app_utilities import (
+    founder_readme_url_for_locale,
+    show_snackbar,
+    build_github_star_prompt_snackbar,
+    close_github_star_prompt_snackbar,
+)
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
 from puripuly_heart.ui.components.founder_letter_dialog import FounderLetterDialog
 from puripuly_heart.ui.components.local_qwen_hallucination_dialog import (
@@ -63,16 +68,16 @@ class AppDebugPreviewMixin:
         def _open_repository(_event) -> None:  # noqa: ANN001
             webbrowser.open("https://github.com/kapitalismho/PuriPuly-heart")
             if snackbar is not None:
-                self._close_github_star_prompt_snackbar(snackbar)
+                close_github_star_prompt_snackbar(self.page, snackbar)
 
-        snackbar = self._build_github_star_prompt_snackbar(_open_repository)
+        snackbar = build_github_star_prompt_snackbar(_open_repository)
         self.page.open(snackbar)
 
     def _debug_preview_noop(self) -> None:
         return None
 
     def _preview_founder_letter(self) -> None:
-        dialog = FounderLetterDialog(self.page, on_readme=self._on_founder_letter_readme)
+        dialog = FounderLetterDialog(self.page, on_readme=self._open_local_qwen_guide)
         self._founder_letter_dialog = dialog
         dialog.open()
 
@@ -84,19 +89,19 @@ class AppDebugPreviewMixin:
 
     def _preview_capture_fault_cycle(self) -> None:
         profile = self.controller.cycle_debug_capture_fault_profile()
-        self._show_snackbar(
-            t("debug_preview.capture_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
+        show_snackbar(
+            self, t("debug_preview.capture_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
         )
 
     def _preview_stt_fault_cycle(self) -> None:
         profile = self.controller.cycle_debug_stt_fault_profile()
-        self._show_snackbar(
-            t("debug_preview.stt_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
+        show_snackbar(
+            self, t("debug_preview.stt_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
         )
 
     def _preview_audio_fault_clear(self) -> None:
         self.controller.clear_debug_audio_fault_profiles()
-        self._show_snackbar(t("debug_preview.audio_fault_clear"), ft.Colors.GREEN_700)
+        show_snackbar(self, t("debug_preview.audio_fault_clear"), ft.Colors.GREEN_700)
 
     # DUAL USE — called both from preview (on_accept=_debug_preview_noop)
     # and from AppDashboardMixin._on_peer_translation_toggle (on_accept=enable callback).
@@ -125,14 +130,8 @@ class AppDebugPreviewMixin:
         self._local_qwen_hallucination_dialog = dialog
         dialog.open()
 
-    # DUPLICATE URL OPENERS — both open the same founder readme URL.
-    # _open_local_qwen_guide is for hallucination dialog's "read guide" button.
-    # _on_founder_letter_readme is for founder letter dialog's "read more" button.
-    # They exist as separate methods for semantic clarity (different UI contexts).
-    # If URL logic changes, update BOTH methods (or extract to shared helper).
+    # URL OPENER — single method for opening the founder readme URL.
+    # Used by both hallucination dialog ("read guide") and founder letter dialog ("read more").
 
     def _open_local_qwen_guide(self) -> None:
-        webbrowser.open(founder_readme_url_for_locale(get_locale()))
-
-    def _on_founder_letter_readme(self) -> None:
         webbrowser.open(founder_readme_url_for_locale(get_locale()))

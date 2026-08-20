@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import flet as ft
+
+logger = logging.getLogger(__name__)
 
 from puripuly_heart.config.settings import AppSettings
 from puripuly_heart.domain.providers import STTProviderName
@@ -47,6 +50,7 @@ class SttSectionMixin:
     _ONNX_QUANTS = ["int8"]  # extend here when fp16/fp32 are available
     _GGUF_QUANTS = ["q8_0", "q6_k", "f16"]
     _INITIAL_QUANTS_FOR_PROVIDER: dict[STTProviderName, list[str]] = {
+        STTProviderName.NONE: [],
         STTProviderName.LOCAL_QWEN: ["int8"],
         STTProviderName.LOCAL_QWEN_17B: ["int8"],
         STTProviderName.LOCAL_GIGAAM_RNNT: ["int8"],
@@ -71,7 +75,7 @@ class SttSectionMixin:
 
     def _effective_peer_stt_provider(self, settings: AppSettings | None) -> STTProviderName:
         if settings is None:
-            return STTProviderName.LOCAL_QWEN
+            return STTProviderName.NONE
         return settings.provider.peer_stt
 
     def _peer_stt_option_item(self, provider: STTProviderName) -> OptionItem:
@@ -104,6 +108,12 @@ class SttSectionMixin:
             allowed = _DIRECTML_PROVIDERS
         options = [
             OptionItem(
+                value=STTProviderName.NONE.value,
+                label=provider_label(STTProviderName.NONE.value),
+                description=t(f"provider.{STTProviderName.NONE.value}.description", default=""),
+            )
+        ] + [
+            OptionItem(
                 value=p.value,
                 label=provider_label(p.value),
                 description=t(f"provider.{p.value}.description", default=""),
@@ -113,7 +123,7 @@ class SttSectionMixin:
         current = (
             display_settings.provider.stt.value
             if display_settings is not None
-            else STTProviderName.LOCAL_QWEN.value
+            else STTProviderName.NONE.value
         )
         modal = SettingsModal(
             self.page,
@@ -209,11 +219,13 @@ class SttSectionMixin:
             allowed = _VULKAN_PROVIDERS
         else:
             allowed = _DIRECTML_PROVIDERS
-        options = [self._peer_stt_option_item(provider) for provider in STTProviderName if provider in allowed]
+        options = [self._peer_stt_option_item(STTProviderName.NONE)] + [
+            self._peer_stt_option_item(provider) for provider in STTProviderName if provider in allowed
+        ]
         current_provider = (
             display_settings.provider.peer_stt
             if display_settings is not None
-            else STTProviderName.LOCAL_QWEN
+            else STTProviderName.NONE
         )
         current = current_provider.value
         SettingsModal(
@@ -324,16 +336,20 @@ class SttSectionMixin:
     def _apply_stt_quant(self, quant: str) -> None:
         if not self._settings:
             return
+        logger.info("[STT] User selected self quant: %s", quant)
         self._command_executor.execute(ChangeSTTQuant(quant=quant, channel="self"))
         merged = self._build_settings_with_provider_draft()
+        logger.info("[STT] Draft after self quant: stt_quant=%s", merged.provider.stt_quant)
         self._sync_stt_quant_buttons(merged.provider.stt, quant)
         self.has_provider_changes = True
 
     def _apply_peer_quant(self, quant: str) -> None:
         if not self._settings:
             return
+        logger.info("[STT] User selected peer quant: %s", quant)
         self._command_executor.execute(ChangeSTTQuant(quant=quant, channel="peer"))
         merged = self._build_settings_with_provider_draft()
+        logger.info("[STT] Draft after peer quant: peer_stt_quant=%s", merged.provider.peer_stt_quant)
         self._sync_peer_quant_buttons(merged.provider.peer_stt, quant)
         self.has_provider_changes = True
 
@@ -486,7 +502,7 @@ class SttSectionMixin:
 
     def _build_stt_widgets(self) -> ft.Control:
         self._stt_text = self._build_clickable_text(
-            provider_label(STTProviderName.LOCAL_QWEN.value),
+            provider_label(STTProviderName.NONE.value),
             self._on_stt_click,
         )
         self._stt_compute_label = ft.Text(
@@ -521,7 +537,7 @@ class SttSectionMixin:
         self._stt_quant_f16_btn = self._make_quant_button("F16", lambda e: self._apply_stt_quant("f16"))
         self._stt_quant_int8_btn = self._make_quant_button("int8", lambda e: self._apply_stt_quant("int8"))
         # Set initial quant button state based on loaded settings
-        _init_stt = self._initial_settings.provider.stt if self._initial_settings else STTProviderName.LOCAL_QWEN
+        _init_stt = self._initial_settings.provider.stt if self._initial_settings else STTProviderName.NONE
         _init_quant = self._initial_settings.provider.stt_quant if self._initial_settings else ""
         _init_available = self._INITIAL_QUANTS_FOR_PROVIDER.get(_init_stt, ["int8"])
         _init_active = _init_quant if _init_quant in _init_available else ""
@@ -591,7 +607,7 @@ class SttSectionMixin:
             color=COLOR_NEUTRAL,
         )
         self._peer_stt_text = self._build_clickable_text(
-            provider_label(STTProviderName.LOCAL_QWEN.value),
+            provider_label(STTProviderName.NONE.value),
             self._on_peer_stt_click,
         )
         self._peer_stt_compute_label = ft.Text(
@@ -626,7 +642,7 @@ class SttSectionMixin:
         self._peer_quant_f16_btn = self._make_quant_button("F16", lambda e: self._apply_peer_quant("f16"))
         self._peer_quant_int8_btn = self._make_quant_button("int8", lambda e: self._apply_peer_quant("int8"))
         # Set initial PEER quant button state based on loaded settings
-        _init_peer = self._initial_settings.provider.peer_stt if self._initial_settings else STTProviderName.LOCAL_QWEN
+        _init_peer = self._initial_settings.provider.peer_stt if self._initial_settings else STTProviderName.NONE
         _init_peer_quant = self._initial_settings.provider.peer_stt_quant if self._initial_settings else ""
         _init_peer_available = self._INITIAL_QUANTS_FOR_PROVIDER.get(_init_peer, ["int8"])
         _init_peer_active = _init_peer_quant if _init_peer_quant in _init_peer_available else ""

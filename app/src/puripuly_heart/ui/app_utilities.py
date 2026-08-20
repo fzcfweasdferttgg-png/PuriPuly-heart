@@ -76,10 +76,121 @@ def founder_readme_url_for_locale(locale: str | None) -> str:
     return f"{FOUNDER_README_BASE_URL}/{readme_path}#{anchor}"
 
 
+# --- Module-level utility functions (extracted from _AppUtilitiesMixin) ---
+# These functions break the MRO invariant: callers no longer need
+# _AppUtilitiesMixin to be first in MRO. Thin wrapper methods on the
+# mixin delegate here for backward compat (gui_controller getattr).
+
+
+def show_snackbar(app, message: str, bgcolor, duration: int = 4000) -> None:
+    """Create and display a floating SnackBar on the app's page.
+
+    Module-level replacement for _AppUtilitiesMixin._show_snackbar.
+    Calls app._mark_launch_high_priority_feedback_shown to track launch feedback.
+    """
+    snackbar = ft.SnackBar(
+        ft.Text(message, size=18, color=ft.Colors.WHITE),
+        bgcolor=bgcolor,
+        duration=duration,
+        behavior=ft.SnackBarBehavior.FLOATING,
+        margin=ft.margin.only(bottom=90),
+        padding=20,
+    )
+    app._mark_launch_high_priority_feedback_shown("snackbar", snackbar)
+    app.page.open(snackbar)
+
+
+def log_basic(app, message: str, *, level: int = logging.INFO) -> None:
+    """Log a basic message via controller or stdlib logger fallback.
+
+    Module-level replacement for _AppUtilitiesMixin._log_basic.
+    """
+    controller = getattr(app, "controller", None)
+    log_basic_fn = getattr(controller, "log_basic", None)
+    if callable(log_basic_fn):
+        log_basic_fn(message, level=level)
+        return
+    logger.log(level, message)
+
+
+def build_github_star_prompt_snackbar(on_click) -> ft.SnackBar:  # noqa: ANN001
+    """Build the GitHub star prompt SnackBar.
+
+    Module-level replacement for _AppUtilitiesMixin._build_github_star_prompt_snackbar.
+    Pure function — does not access app state.
+    """
+    return ft.SnackBar(
+        content=ft.Row(
+            controls=[
+                ft.Text(
+                    t("github_star.snackbar.message"),
+                    size=18,
+                    color=ft.Colors.WHITE,
+                    font_family=font_for_language(get_locale()),
+                    expand=True,
+                ),
+                ft.TextButton(
+                    text=t("github_star.snackbar.action"),
+                    on_click=on_click,
+                    style=ft.ButtonStyle(
+                        color=ft.Colors.WHITE,
+                        text_style=ft.TextStyle(
+                            size=18,
+                            font_family=font_for_language(get_locale()),
+                        ),
+                        overlay_color=COLOR_PRIMARY,
+                    ),
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+        ),
+        bgcolor=COLOR_SUCCESS,
+        duration=8000,
+        behavior=ft.SnackBarBehavior.FLOATING,
+        margin=ft.margin.only(bottom=90),
+        padding=20,
+    )
+
+
+def close_github_star_prompt_snackbar(page, snackbar: ft.SnackBar) -> None:
+    """Close the GitHub star prompt SnackBar with Flet 0.28 shim.
+
+    Module-level replacement for _AppUtilitiesMixin._close_github_star_prompt_snackbar.
+    Inlines the Flet 0.28 dismiss workaround.
+    """
+    close = getattr(page, "close", None)
+    if callable(close):
+        with contextlib.suppress(Exception):
+            close(snackbar)
+    else:
+        snackbar.open = False
+        with contextlib.suppress(Exception):
+            page.update()
+    # Flet 0.28 shim — force-dismiss visible SnackBar
+    open_control = getattr(page, "open", None)
+    if not callable(open_control):
+        return
+    dismissor = ft.SnackBar(
+        content=ft.Text("", size=0),
+        bgcolor=ft.Colors.TRANSPARENT,
+        duration=1,
+        behavior=ft.SnackBarBehavior.FLOATING,
+        margin=ft.margin.only(bottom=90),
+        padding=0,
+    )
+    with contextlib.suppress(Exception):
+        open_control(dismissor)
+
+
 class _AppUtilitiesMixin:
     """Logging, snackbar, settings mutation queue, Flet workarounds.
 
-    Must be first in MRO so all other mixins can use these methods.
+    Core methods are available as both module-level utility functions
+    (show_snackbar, log_basic, etc.) and thin wrapper methods on this mixin.
+    MRO order is no longer critical — direct callers use module-level functions.
+    Wrappers exist for backward compat (gui_controller getattr pattern).
     """
 
     # METHODS BELOW are called by ALL other mixins via self.* — they form the shared
@@ -94,12 +205,7 @@ class _AppUtilitiesMixin:
     # Other mixins access self.controller directly because they only run post-init.
 
     def _log_basic(self, message: str, *, level: int = logging.INFO) -> None:
-        controller = getattr(self, "controller", None)
-        log_basic = getattr(controller, "log_basic", None)
-        if callable(log_basic):
-            log_basic(message, level=level)
-            return
-        logger.log(level, message)
+        log_basic(self, message, level=level)
 
     def _log_detailed(self, message: str, *, level: int = logging.INFO) -> None:
         controller = getattr(self, "controller", None)
@@ -117,16 +223,7 @@ class _AppUtilitiesMixin:
     # page.open(snackbar) is the Flet 0.28 API; older Flet uses page.snackbar = ...
 
     def _show_snackbar(self, message: str, bgcolor, duration: int = 4000) -> None:
-        snackbar = ft.SnackBar(
-            ft.Text(message, size=18, color=ft.Colors.WHITE),
-            bgcolor=bgcolor,
-            duration=duration,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            margin=ft.margin.only(bottom=90),
-            padding=20,
-        )
-        self._mark_launch_high_priority_feedback_shown("snackbar", snackbar)
-        self.page.open(snackbar)
+        show_snackbar(self, message, bgcolor, duration)
 
     def _mark_launch_high_priority_feedback_shown(
         self,
@@ -139,77 +236,10 @@ class _AppUtilitiesMixin:
             self._launch_high_priority_snackbar = snackbar
 
     def _build_github_star_prompt_snackbar(self, on_click) -> ft.SnackBar:  # noqa: ANN001
-        return ft.SnackBar(
-            content=ft.Row(
-                controls=[
-                    ft.Text(
-                        t("github_star.snackbar.message"),
-                        size=18,
-                        color=ft.Colors.WHITE,
-                        font_family=font_for_language(get_locale()),
-                        expand=True,
-                    ),
-                    ft.TextButton(
-                        text=t("github_star.snackbar.action"),
-                        on_click=on_click,
-                        style=ft.ButtonStyle(
-                            color=ft.Colors.WHITE,
-                            text_style=ft.TextStyle(
-                                size=18,
-                                font_family=font_for_language(get_locale()),
-                            ),
-                            overlay_color=COLOR_PRIMARY,
-                        ),
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
-            ),
-            bgcolor=COLOR_SUCCESS,
-            duration=8000,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            margin=ft.margin.only(bottom=90),
-            padding=20,
-        )
+        return build_github_star_prompt_snackbar(on_click)
 
     def _close_github_star_prompt_snackbar(self, snackbar: ft.SnackBar) -> None:
-        close = getattr(self.page, "close", None)
-        if callable(close):
-            with contextlib.suppress(Exception):
-                close(snackbar)
-        else:
-            snackbar.open = False
-            with contextlib.suppress(Exception):
-                self.page.update()
-        self._displace_current_snackbar_for_flet_028()
-
-    # FLET 0.28 SHIM — page.close(snackbar) updates Python state but Flutter-side
-    # snackbar remains visible until duration expires. Opening a transparent 1ms snackbar
-    # forces the old one off-screen. This is a WORKAROUND for Flet bug, not our logic.
-    # If Flet fixes this in a future version, this method becomes dead code.
-
-    def _displace_current_snackbar_for_flet_028(self) -> None:
-        """Force-dismiss the visible SnackBar on Flet 0.28.x.
-
-        Flet 0.28.3 updates the Python-side ``SnackBar.open`` flag on
-        ``page.close(snackbar)`` but the Flutter-side snackbar remains visible
-        until its duration expires. Opening another SnackBar first removes the
-        current one, so use a transparent 1 ms replacement as a narrow shim.
-        """
-        open_control = getattr(self.page, "open", None)
-        if not callable(open_control):
-            return
-        dismissor = ft.SnackBar(
-            content=ft.Text("", size=0),
-            bgcolor=ft.Colors.TRANSPARENT,
-            duration=1,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            margin=ft.margin.only(bottom=90),
-            padding=0,
-        )
-        with contextlib.suppress(Exception):
-            open_control(dismissor)
+        close_github_star_prompt_snackbar(self.page, snackbar)
 
     # --- Settings mutation queue ---
 

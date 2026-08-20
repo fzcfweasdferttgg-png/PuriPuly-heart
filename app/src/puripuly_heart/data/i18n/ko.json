@@ -431,5 +431,7 @@
   "provider.openai_compatible": "OpenAI 호환",
   "settings.translation_connection.openai_compatible": "OpenAI 호환 API",
   "settings.translation_connection.openai_compatible.description": "OpenAI 호환 API 공급자에 연결",
-  "settings.backup_translation.connection": "백업 번역 설정"
+  "settings.backup_translation.connection": "백업 번역 설정",
+  "provider.none": "없음",
+  "provider.none.description": "STT 비활성화"
 }

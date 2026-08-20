@@ -155,7 +155,8 @@ class SettingsDraftService:
         logger.info(
             "[Settings] consume: backup.enabled=%s backup.mode=%s "
             "backup.oc.base_url=%s backup.oc.model=%s "
-            "backup.llm.base_url=%s backup.llm.model=%s has_changes=%s",
+            "backup.llm.base_url=%s backup.llm.model=%s has_changes=%s "
+            "stt=%s stt_quant=%s peer_stt=%s peer_stt_quant=%s llm=%s",
             settings.backup_translation.enabled,
             settings.backup_translation.mode.value,
             settings.backup_translation.openai_compatible.base_url,
@@ -163,6 +164,11 @@ class SettingsDraftService:
             settings.backup_translation.local_llm.base_url,
             settings.backup_translation.local_llm.model,
             self.has_provider_changes,
+            settings.provider.stt.value,
+            settings.provider.stt_quant,
+            settings.provider.peer_stt.value,
+            settings.provider.peer_stt_quant,
+            settings.provider.llm.value,
         )
         self._settings = settings
         self._provider_settings_draft = None

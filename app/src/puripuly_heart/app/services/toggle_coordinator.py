@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from puripuly_heart.app.services.local_stt_manager import LOCAL_STT_PROVIDERS
+from puripuly_heart.domain.providers import STTProviderName
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -250,10 +251,16 @@ class ToggleCoordinator:
                         if self.stop_mic_loop is not None:
                             await self.stop_mic_loop()
                         await self.hub.close_stt()
+                    if self.settings.provider.stt == STTProviderName.NONE:
+                        logger.debug("[STT] Provider is NONE — skipping mic start")
+                        break
                     if (
                         self.local_stt_manager is not None
                         and not await self.local_stt_manager.ensure_ready(self.settings)
                     ):
+                        break
+                    if self.hub is not None and self.hub.stt is None:
+                        logger.warning("[STT] No STT backend available — skipping mic start")
                         break
                     if self.start_mic_loop is not None:
                         await self.start_mic_loop(self.settings)

@@ -4,6 +4,7 @@ from enum import Enum
 
 
 class STTProviderName(str, Enum):
+    NONE = "none"
     LOCAL_QWEN = "local_qwen"
     LOCAL_QWEN_17B = "local_qwen_17b"
     LOCAL_GIGAAM_RNNT = "local_gigaam_rnnt"

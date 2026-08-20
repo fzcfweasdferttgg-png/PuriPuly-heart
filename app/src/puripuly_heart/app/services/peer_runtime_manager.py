@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from puripuly_heart.app.wiring import build_peer_stt_provider_signature
 from puripuly_heart.config.settings import STT_RESET_DEADLINE_S
+from puripuly_heart.domain.providers import STTProviderName
 from puripuly_heart.core.audio.desktop_pipeline import DesktopPeerPipeline
 from puripuly_heart.core.audio.desktop_source import DesktopLoopbackAudioSource
 from puripuly_heart.core.runtime.peer_channel import PeerChannelRuntime, PeerRuntimeConfig
@@ -57,10 +58,12 @@ class PeerRuntimeManagerMixin:
         self,
         config: PeerRuntimeConfig,
         on_terminal_failure,
-    ) -> ManagedSTTProvider:
+    ) -> ManagedSTTProvider | None:
         from puripuly_heart.app.wiring import create_peer_stt_backend, create_secret_store
 
         assert self.settings is not None
+        if self.settings.provider.peer_stt == STTProviderName.NONE:
+            return None  # type: ignore[return-value]
         secrets = create_secret_store(config_path=self.config_path)
         peer_backend = create_peer_stt_backend(
             self.settings,

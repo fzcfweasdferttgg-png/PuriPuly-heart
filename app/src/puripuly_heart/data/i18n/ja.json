@@ -431,5 +431,7 @@
   "provider.openai_compatible": "OpenAI互換",
   "settings.translation_connection.openai_compatible": "OpenAI互換API",
   "settings.translation_connection.openai_compatible.description": "OpenAI互換性APIプロバイダに接続",
-  "settings.backup_translation.connection": "バックアップ翻訳設定"
+  "settings.backup_translation.connection": "バックアップ翻訳設定",
+  "provider.none": "なし",
+  "provider.none.description": "STT無効"
 }

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.core.stt.controller import ManagedSTTProvider
+from puripuly_heart.domain.providers import STTProviderName
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -120,6 +121,13 @@ class ProviderManager:
     async def rebuild_stt_provider(self) -> None:
         """Rebuild STT provider for later enable."""
         if self.hub is None or self.settings is None:
+            return
+
+        # Skip if STT is disabled (provider = none)
+        if self.settings.provider.stt == STTProviderName.NONE:
+            await self.hub.replace_stt_provider(None)
+            if self.on_stt_rebuilt is not None:
+                self.on_stt_rebuilt(None)
             return
 
         stt = None

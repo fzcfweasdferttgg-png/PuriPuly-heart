@@ -92,15 +92,3 @@ class CalibrationManagerMixin:
                 "[Overlay] Skipping calibration update; no running loop and page.run_task unavailable",
                 level=logging.WARNING,
             )
-
-    def begin_overlay_calibration_for_test(self) -> None:
-        self.begin_overlay_calibration()
-
-    def set_overlay_calibration_field_for_test(self, field_name: str, value: object) -> None:
-        self.set_overlay_calibration_field(field_name, value)
-
-    def apply_overlay_calibration_for_test(self) -> None:
-        self.apply_overlay_calibration()
-
-    def cancel_overlay_calibration_for_test(self) -> None:
-        self.cancel_overlay_calibration()

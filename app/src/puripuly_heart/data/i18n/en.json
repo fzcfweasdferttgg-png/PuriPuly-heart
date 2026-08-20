@@ -299,6 +299,8 @@
   "provider.qwen35_plus.description": "A choice for people in mainland China",
   "provider.local_llms": "Local LLMs",
   "provider.gemma4_31b_cerebras": "Gemma 4 31B (Cerebras)",
+  "provider.none": "None",
+  "provider.none.description": "STT disabled",
   "provider.local_qwen": "Qwen ASR 0.6B (Local)",
   "provider.local_qwen_17b": "Qwen ASR 1.7B (Local)",
   "provider.local_gigaam_rnnt": "GigaAM v3 (Local)",

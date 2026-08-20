@@ -45,10 +45,11 @@ class TranslatorApp(
     AppDebugPreviewMixin,
     AppNavigationMixin,
 ):
-    # MRO ORDER CRITICAL — _AppUtilitiesMixin MUST be first.
-    # All other mixins call self._log_basic(), self._show_snackbar(),
-    # self._queue_settings_mutation_task() defined ONLY in _AppUtilitiesMixin.
-    # Python MRO resolves leftmost-first; moving it later breaks every mixin.
+    # MRO ORDER — no longer critical. Core methods (_show_snackbar, _log_basic)
+    # are now module-level utility functions in app_utilities.py. Mixin callers
+    # (AppDebugPreviewMixin) use module-level functions directly. Thin wrapper
+    # methods on _AppUtilitiesMixin exist for backward compat (gui_controller
+    # getattr pattern, view_settings.show_snackbar assignment).
 
     # SHARED STATE — all mixin attributes are initialized HERE, not in mixin __init__.
     # No mixin defines __init__. If you add one, ensure it calls super().__init__()

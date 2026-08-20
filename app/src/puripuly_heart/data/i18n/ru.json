@@ -334,6 +334,8 @@
   "provider.local_cpu_auto.unavailable": "Доступно после установки всех трёх CPU-моделей ASR",
   "provider.local_parakeet_v3": "Parakeet TDT 0.6B v3",
   "provider.local_parakeet_v3.description": "",
+  "provider.none": "Нет",
+  "provider.none.description": "STT отключён",
   "provider.local_qwen": "Qwen3 ASR 0.6B (Локальный)",
   "provider.local_qwen_gpu": "Qwen3 ASR 1.7B",
   "provider.local_qwen_gpu.description": "Нужно 3 ГБ свободной VRAM.\nРаботает также на Radeon и Arc.",

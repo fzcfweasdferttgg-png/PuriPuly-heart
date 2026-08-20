@@ -473,11 +473,11 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         stt["custom_vocabulary_enabled"] = any(bool(t) for t in _parse_custom_terms(stt.get("custom_terms")).values()); changed = True
     rpd = data.get("provider"); pd = rpd if isinstance(rpd, dict) else {}
     if rpd is None: pd = {}; data["provider"] = pd; changed = True
-    elif not isinstance(rpd, dict): pd = {"stt": STTProviderName.LOCAL_QWEN.value, "llm": LLMProviderName.OPENAI_COMPATIBLE.value}; data["provider"] = pd; changed = True
+    elif not isinstance(rpd, dict): pd = {"stt": STTProviderName.NONE.value, "llm": LLMProviderName.OPENAI_COMPATIBLE.value}; data["provider"] = pd; changed = True
     if isinstance(pd, dict) and "stt" in pd:
         rs = pd.get("stt"); ns = _parse_stt_provider(str(rs)).value
         if rs != ns: pd["stt"] = ns; changed = True
-    if isinstance(pd, dict) and "peer_stt" not in pd: pd["peer_stt"] = STTProviderName.LOCAL_QWEN.value; changed = True
+    if isinstance(pd, dict) and "peer_stt" not in pd: pd["peer_stt"] = STTProviderName.NONE.value; changed = True
     if isinstance(pd, dict) and "peer_stt" in pd:
         rp = pd.get("peer_stt"); np_ = _parse_peer_stt_provider(str(rp)).value
         if rp != np_: pd["peer_stt"] = np_; changed = True
@@ -532,15 +532,15 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     raw_provider_data = data.get("provider")
     provider_data = raw_provider_data if isinstance(raw_provider_data, dict) else {}
     if raw_provider_data is None:
-        stt_provider_value = STTProviderName.LOCAL_QWEN.value
+        stt_provider_value = STTProviderName.NONE.value
     elif isinstance(raw_provider_data, dict):
-        stt_provider_value = provider_data.get("stt", STTProviderName.LOCAL_QWEN.value)
+        stt_provider_value = provider_data.get("stt", STTProviderName.NONE.value)
     else:
-        stt_provider_value = STTProviderName.LOCAL_QWEN.value
+        stt_provider_value = STTProviderName.NONE.value
     raw_peer_provider = (
-        provider_data.get("peer_stt", STTProviderName.LOCAL_QWEN.value)
+        provider_data.get("peer_stt", STTProviderName.NONE.value)
         if isinstance(raw_provider_data, dict)
-        else STTProviderName.LOCAL_QWEN.value
+        else STTProviderName.NONE.value
     )
 
     input_host_api_raw = (

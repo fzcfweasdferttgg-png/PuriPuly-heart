@@ -18,6 +18,7 @@ from puripuly_heart.app.wiring import (
 from puripuly_heart.config.audio_host_api import normalize_input_host_api
 from puripuly_heart.config.paths import default_vad_model_path
 from puripuly_heart.config.settings import AppSettings
+from puripuly_heart.domain.providers import STTProviderName
 from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.audio.desktop_pipeline import DesktopPeerPipeline
 from puripuly_heart.core.audio.desktop_source import DesktopLoopbackAudioSource
@@ -100,16 +101,21 @@ class HeadlessMicRunner:
             else None
         )
 
-        backend = create_stt_backend(self.settings, secrets=secrets)
-        stt = ManagedSTTProvider(
-            backend=backend,
-            sample_rate_hz=self.settings.audio.internal_sample_rate_hz,
-            stt_provider_name=self.settings.provider.stt,
-            clock=self.clock,
-            reset_deadline_s=STT_RESET_DEADLINE_S,
-            drain_timeout_s=self.settings.stt.drain_timeout_s,
-            bridging_ms=self.settings.audio.ring_buffer_ms,
-        )
+        stt = None
+        if self.settings.provider.stt != STTProviderName.NONE:
+            try:
+                backend = create_stt_backend(self.settings, secrets=secrets)
+                stt = ManagedSTTProvider(
+                    backend=backend,
+                    sample_rate_hz=self.settings.audio.internal_sample_rate_hz,
+                    stt_provider_name=self.settings.provider.stt,
+                    clock=self.clock,
+                    reset_deadline_s=STT_RESET_DEADLINE_S,
+                    drain_timeout_s=self.settings.stt.drain_timeout_s,
+                    bridging_ms=self.settings.audio.ring_buffer_ms,
+                )
+            except Exception as exc:
+                logger.warning("STT backend unavailable: %s", exc)
         peer_stt = None
         if self.settings.ui.peer_translation_enabled:
             try:
