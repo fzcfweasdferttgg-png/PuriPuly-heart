@@ -45,6 +45,13 @@ def _send_bye() -> None:
     _write_message({"status": "bye"})
 
 
+# INTENTIONAL FACTORY COMPOSITION — horizontal adapter dependency.
+# worker.py runs as a standalone subprocess; DI via app/services is impossible.
+# Lazy imports prevent loading all ML frameworks simultaneously.
+# This dependency is hidden behind the subprocess IPC boundary.
+# adapters/stt/* modules have no reverse dependency on this file.
+# When adding a new STT backend: add a branch here + update app/wiring.py.
+
 def _create_recognizer(data: dict[str, object]) -> object:
     provider_name: str = str(data.get("provider", "local_qwen"))
     model_dir_str: str = str(data["model_dir"])

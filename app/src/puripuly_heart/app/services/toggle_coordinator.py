@@ -18,12 +18,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from puripuly_heart.core.stt.local_stt_manager import LOCAL_STT_PROVIDERS
+from puripuly_heart.app.services.local_stt_manager import LOCAL_STT_PROVIDERS
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
     from puripuly_heart.core.pipeline.pipeline import Pipeline
-    from puripuly_heart.core.stt.local_stt_manager import LocalSTTManager
+    from puripuly_heart.app.services.local_stt_manager import LocalSTTManager
 
 logger = logging.getLogger(__name__)
 

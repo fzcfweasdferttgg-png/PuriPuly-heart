@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import sys
 import threading
 import traceback
 from collections.abc import Callable
@@ -42,7 +41,6 @@ from puripuly_heart.app.wiring import (
     resolve_peer_stt_config,
 )
 from puripuly_heart.app.headless_mic import run_audio_vad_loop
-from puripuly_heart.config.audio_host_api import normalize_input_host_api
 from puripuly_heart.config.paths import default_models_dir, default_vad_model_path
 from puripuly_heart.adapters.storage.settings_persistence import load_settings, save_settings
 from puripuly_heart.config.settings import (
@@ -58,18 +56,10 @@ from puripuly_heart.config.settings import (
 )
 from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.runtime.local_qwen_lifecycle import LOCAL_QWEN_IDLE_RELEASE_SECONDS
-from puripuly_heart.core.audio.desktop_pipeline import DesktopPeerPipeline
-from puripuly_heart.core.audio.desktop_source import DesktopLoopbackAudioSource
-from puripuly_heart.core.audio.diagnostics import compute_audio_frame_metrics
 from puripuly_heart.core.audio.gate import VrcMicAudioGate
 from puripuly_heart.core.audio.source import (
-    AudioSource,
-    MicrophoneTestRouteObservation,
-    SelfMicCaptureChannelDecision,
     SoundDeviceAudioSource,
     determine_self_mic_capture_channels,
-    observe_microphone_test_route,
-    resolve_sounddevice_input_device,
 )
 from puripuly_heart.ports.model_discovery import ModelDiscovery
 from puripuly_heart.ports.ui import ClipboardWatcherRuntime
@@ -77,10 +67,10 @@ from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.core.clipboard.watcher import create_clipboard_watcher
 from puripuly_heart.core.clock import SystemClock
 from puripuly_heart.core.verification.api_key_verifier import ApiKeyVerifier
-from puripuly_heart.core.services.provider_manager import ProviderManager
-from puripuly_heart.core.services.pipeline_lifecycle import PipelineLifecycleManager
-from puripuly_heart.core.services.toggle_coordinator import ToggleCoordinator
-from puripuly_heart.core.stt.local_stt_manager import LOCAL_STT_PROVIDERS, LocalSTTManager
+from puripuly_heart.app.services.provider_manager import ProviderManager
+from puripuly_heart.app.services.pipeline_lifecycle import PipelineLifecycleManager
+from puripuly_heart.app.services.toggle_coordinator import ToggleCoordinator
+from puripuly_heart.app.services.local_stt_manager import LOCAL_STT_PROVIDERS, LocalSTTManager
 from puripuly_heart.core.pipeline.pipeline import Pipeline
 from puripuly_heart.adapters.overlay.sink import OverlayEventAdapter
 from puripuly_heart.config.prompts import render_dual_translation_prompt_template, render_translation_prompt_template, warm_prompt_cache
@@ -92,16 +82,11 @@ from puripuly_heart.core.osc.receiver import (
 )
 from puripuly_heart.adapters.overlay.bridge import OverlayBridge
 from puripuly_heart.core.overlay.presenter import OverlayPresenter
-from puripuly_heart.core.overlay.process import OverlayProcessManager
-from puripuly_heart.core.runtime.peer_channel import PeerChannelRuntime, PeerRuntimeConfig
+from puripuly_heart.app.services.overlay_process import OverlayProcessManager
+from puripuly_heart.core.runtime.peer_channel import PeerChannelRuntime
 from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
-from puripuly_heart.core.stt.controller import (
-    FinalTranscriptSuppressedNotification,
-    ManagedSTTProvider,
-)
-from puripuly_heart.core.vad.bundled import SILERO_VAD_VERSION, ensure_silero_vad_onnx
-from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
-from puripuly_heart.core.vad.silero import SileroVadOnnx
+from puripuly_heart.core.stt.controller import ManagedSTTProvider
+from puripuly_heart.core.vad.bundled import ensure_silero_vad_onnx
 from puripuly_heart.app.services.ui_bridge import UIEventBridge
 from puripuly_heart.domain.i18n import get_locale, set_locale, t
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration

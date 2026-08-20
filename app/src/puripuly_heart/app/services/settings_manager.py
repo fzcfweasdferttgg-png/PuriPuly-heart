@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from puripuly_heart.adapters.storage.providers_persistence import load_providers  # re-exported for ui/ callers
 from puripuly_heart.adapters.storage.settings_persistence import load_settings, save_settings
 from puripuly_heart.config.settings import (
     new_settings_for_first_run,

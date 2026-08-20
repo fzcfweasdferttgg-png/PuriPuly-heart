@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Peer-event dispatcher for overlay presentation state.
 
-Extracted from OverlayPresentationState to reduce the god-object surface.
 Handles the 4 peer-event apply methods: active update, finalized update,
 translation update, and utterance closed.
 """

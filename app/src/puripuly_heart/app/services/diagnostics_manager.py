@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from typing import TYPE_CHECKING
 
 from puripuly_heart.domain.providers import STTProviderName
-from puripuly_heart.core.stt.controller import FinalTranscriptSuppressedNotification
-from puripuly_heart.core.runtime_logging import SessionLoggingMode
+from puripuly_heart.domain.events import FinalTranscriptSuppressedNotification
+from puripuly_heart.app.services.diagnostics_service import (
+    is_detailed_audio_diag_enabled as _is_detailed_audio_diag_enabled_impl,
+    is_debug_audio_fault_allowed as _is_debug_audio_fault_allowed_impl,
+)
 
 if TYPE_CHECKING:
     from puripuly_heart.core.audio.source import AudioSource
@@ -27,10 +29,10 @@ class DiagnosticsManagerMixin:
         return self._debug_stt_fault_profile
 
     def _debug_audio_fault_allowed(self) -> bool:
-        return bool(getattr(self.app, "debug_ui_preview", False))
+        return _is_debug_audio_fault_allowed_impl(getattr(self.app, "debug_ui_preview", False))
 
     def _detailed_audio_diag_enabled(self) -> bool:
-        return self.runtime_logging.mode is SessionLoggingMode.DETAILED
+        return _is_detailed_audio_diag_enabled_impl(self.runtime_logging)
 
     async def _on_self_terminal_failure(self, exc: Exception) -> None:
         self._stt_desired = False

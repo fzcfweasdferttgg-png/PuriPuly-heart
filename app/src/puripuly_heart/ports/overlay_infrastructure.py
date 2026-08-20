@@ -13,7 +13,7 @@ class OverlayInfrastructureProtocol(Protocol):
     """Infrastructure operations needed by OverlayProcessManager.
 
     Implementations live in adapters/overlay/infrastructure.py.
-    Injected into core/overlay/process.py through DI.
+    Injected into app/services/overlay_process.py through DI.
     """
 
     def write_manifest(self, manifest_dict: dict[str, Any]) -> Path:

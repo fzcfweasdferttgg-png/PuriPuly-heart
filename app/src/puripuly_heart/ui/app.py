@@ -10,7 +10,8 @@ import logging
 
 import flet as ft
 
-from puripuly_heart.adapters.storage.settings_persistence import load_settings
+from puripuly_heart.app.services.settings_manager import load_settings
+from puripuly_heart.app.wiring import create_settings_draft_service
 from puripuly_heart.config.settings import new_settings_for_first_run
 from puripuly_heart.ui.app_debug import AppDebugPreviewMixin
 from puripuly_heart.ui.app_navigation import AppNavigationMixin
@@ -143,7 +144,10 @@ class TranslatorApp(
         # Set locale BEFORE creating SettingsView so t() returns translated labels
         if _initial_settings is not None:
             set_locale(_initial_settings.ui.locale)
-        self.view_settings = SettingsView(initial_settings=_initial_settings)
+        self.view_settings = SettingsView(
+            initial_settings=_initial_settings,
+            draft_service=create_settings_draft_service(),
+        )
         self.view_logs = LogsView()
         self.view_about = AboutView()
         self.view_settings.set_overlay_runtime_state(self.overlay_state)

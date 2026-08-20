@@ -5,6 +5,10 @@ import logging
 import os
 from pathlib import Path
 
+# Cross-adapter import — infrastructure bootstrapping, not business logic.
+# local_qwen_runtime is a Windows-specific DLL loader (ONNX + DirectML).
+# No port interface exists because PATH mutation is not a replaceable abstraction.
+
 from puripuly_heart.adapters.local_qwen_runtime import (
     ensure_local_qwen_windows_runtime,
 )

@@ -5,6 +5,7 @@ from enum import Enum
 from uuid import UUID
 
 from .models import ChannelId, Transcript
+from .providers import STTProviderName
 
 
 def _validate_channel(channel: str) -> None:
@@ -77,6 +78,14 @@ class STTSessionStateEvent:
 
     def __post_init__(self) -> None:
         _validate_channel(self.channel)
+
+
+@dataclass(frozen=True, slots=True)
+class FinalTranscriptSuppressedNotification:
+    """Domain event emitted when a final STT transcript is suppressed as hallucination."""
+    utterance_id: UUID
+    channel: ChannelId
+    stt_provider_name: STTProviderName
 
 
 STTEvent = STTPartialEvent | STTFinalEvent | STTErrorEvent | STTSessionStateEvent

@@ -677,7 +677,7 @@ class SettingsHelpersMixin:
     def _on_fallback_status_selected(self, value: str) -> None:
         if not self._settings:
             return
-        from puripuly_heart.adapters.storage.providers_persistence import load_providers
+        from puripuly_heart.app.services.settings_manager import load_providers
         from puripuly_heart.domain.providers import LLMProviderName
         # Commit current fallback fields before switching mode
         self._commit_fallback_fields_from_controls()

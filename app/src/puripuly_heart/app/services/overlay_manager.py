@@ -14,7 +14,7 @@ from puripuly_heart.config.settings import (
     OVERLAY_TARGET_STEAMVR,
     AppSettings,
 )
-from puripuly_heart.core.overlay.process import (
+from puripuly_heart.app.services.overlay_process import (
     DefaultOverlayProcessRunner,
     DesktopFletOverlayRunner,
     OverlayProcessRunner,

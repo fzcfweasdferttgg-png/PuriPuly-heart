@@ -40,7 +40,7 @@ from typing import AsyncIterator
 
 import numpy as np
 
-from puripuly_heart.core.audio.format import pcm16le_bytes_to_float32
+from puripuly_heart.domain.audio_format import pcm16le_bytes_to_float32
 from puripuly_heart.domain.stt_events import STTBackendTranscriptEvent, STTError
 from puripuly_heart.ports.stt import (
     STTBackend,

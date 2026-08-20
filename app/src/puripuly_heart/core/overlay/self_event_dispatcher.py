@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Self-event dispatcher for overlay presentation state.
 
-Extracted from OverlayPresentationState to reduce the god-object surface.
 Handles the 5 self-event apply methods: active update, active clear,
 finalized update, translation update, and utterance closed.
 """

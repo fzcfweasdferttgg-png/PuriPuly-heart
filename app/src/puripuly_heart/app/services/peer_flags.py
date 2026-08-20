@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING
 
 from puripuly_heart.domain.providers import STTProviderName
-from puripuly_heart.domain.overlay_contract import (
-    OverlayPeerConsumerContract,
-    build_overlay_peer_consumer_contract,
+from puripuly_heart.domain.overlay_contract import OverlayPeerConsumerContract
+from puripuly_heart.app.services.peer_flag_service import (
+    effective_integrated_context_enabled as _effective_integrated_context_enabled_impl,
+    effective_peer_overlay_enabled as _effective_peer_overlay_enabled_impl,
+    effective_peer_translation_enabled as _effective_peer_translation_enabled_impl,
+    peer_runtime_should_be_active as _peer_runtime_should_be_active_impl,
+    peer_translation_activation_requested as _peer_translation_activation_requested_impl,
+    peer_translation_eula_accepted as _peer_translation_eula_accepted_impl,
+    build_overlay_peer_consumer_contract_from_state as _build_overlay_peer_consumer_contract_impl,
 )
 
 if TYPE_CHECKING:
@@ -22,30 +27,26 @@ class PeerFlagsMixin:
         return self._effective_peer_translation_enabled_for(self.settings)
 
     def _effective_peer_translation_enabled_for(self, settings: AppSettings) -> bool:
-        return bool(
-            self._peer_translation_activation_requested_for(settings)
-            and self._effective_peer_overlay_enabled_for(settings)
-            and self.hub is not None
-            and getattr(self.hub, "peer_stt", None) is not None
+        return _effective_peer_translation_enabled_impl(
+            settings,
+            self.overlay_state,
+            hub_has_peer_stt=(self.hub is not None and getattr(self.hub, "peer_stt", None) is not None),
         )
 
     def _peer_translation_eula_accepted_for(self, settings: AppSettings) -> bool:
-        return bool(settings.ui.peer_translation_eula_accepted)
+        return _peer_translation_eula_accepted_impl(settings)
 
     def _peer_translation_activation_requested_for(self, settings: AppSettings) -> bool:
-        return bool(
-            settings.ui.peer_translation_enabled
-            and self._peer_translation_eula_accepted_for(settings)
-        )
+        return _peer_translation_activation_requested_impl(settings)
 
     def _effective_peer_overlay_enabled_for(self, settings: AppSettings) -> bool:
-        _ = settings
-        return self.overlay_state == "connected"
+        return _effective_peer_overlay_enabled_impl(self.overlay_state)
 
     def _effective_integrated_context_enabled_for(self, settings: AppSettings) -> bool:
-        return bool(
-            settings.ui.integrated_context_enabled
-            and self._effective_peer_translation_enabled_for(settings)
+        return _effective_integrated_context_enabled_impl(
+            settings,
+            self.overlay_state,
+            hub_has_peer_stt=(self.hub is not None and getattr(self.hub, "peer_stt", None) is not None),
         )
 
     def _sync_effective_hub_flags(self, settings: AppSettings | None = None) -> None:
@@ -62,26 +63,25 @@ class PeerFlagsMixin:
     def build_overlay_peer_consumer_contract(self) -> OverlayPeerConsumerContract | None:
         if self.settings is None:
             return None
-        return build_overlay_peer_consumer_contract(
-            overlay_intent_enabled=bool(self.settings.ui.overlay_enabled),
-            overlay_state=self.overlay_state,
-            overlay_failure_reason=self.failure_reason,
-            peer_intent_enabled=bool(self.settings.ui.peer_translation_enabled),
-            peer_effective_enabled=self._effective_peer_translation_enabled_for(self.settings),
+        return _build_overlay_peer_consumer_contract_impl(
+            self.settings,
+            self.overlay_state,
+            self.failure_reason,
+            self._effective_peer_translation_enabled_for(self.settings),
         )
 
     def _refresh_overlay_peer_consumers(self) -> None:
+        import contextlib
         refresh_contract = getattr(self, "refresh_overlay_peer_contract", None)
         if callable(refresh_contract):
             with contextlib.suppress(Exception):
                 refresh_contract()
 
     def _peer_runtime_should_be_active(self, settings: AppSettings) -> bool:
-        return bool(
-            self._peer_translation_activation_requested_for(settings)
-            and self._effective_peer_overlay_enabled_for(settings)
-            and self.hub is not None
-            and self._overlay_bridge is not None
+        return _peer_runtime_should_be_active_impl(
+            settings,
+            self.overlay_state,
+            self._overlay_bridge is not None,
         )
 
     async def set_peer_translation_enabled(self, enabled: bool) -> None:

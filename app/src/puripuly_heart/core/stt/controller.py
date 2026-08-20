@@ -27,7 +27,8 @@ AI-DRAIN-SEMANTICS: _draining set contains background drain tasks.
   If you add a new drain path, always add done_callback — otherwise task leaks in _draining.
 
 AI-IMPORT-GRAPH: This is the HUB of the STT package. All 4 extracted modules are leaves.
-  Circular dependency with stt_hallucination_filter.py is broken by TYPE_CHECKING + lazy import.
+  Circular dependency with stt_hallucination_filter.py resolved: FinalTranscriptSuppressedNotification
+  moved to domain/events.py, SuppressionCallback Protocol defined in ports/stt.py.
   AudioFaultProfile import is for public API type hints, not internal use.
 
 Key invariants:
@@ -62,11 +63,7 @@ from puripuly_heart.ports.stt import (
     STTBackend,
     STTBackendFloat32Session,
     STTBackendSession,
-)
-from puripuly_heart.ports.stt_leaf import (
-    AudioDiagnosticsProtocol,
-    PendingTrackerProtocol,
-    STTLogSinkProtocol,
+    SuppressionCallback,
 )
 from puripuly_heart.core.stt.stt_hallucination_filter import (
     handle_suppressed_final_transcript,
@@ -85,13 +82,6 @@ from puripuly_heart.domain.events import (
     STTSessionStateEvent,
 )
 from puripuly_heart.domain.models import ChannelId, Transcript
-
-
-@dataclass(frozen=True, slots=True)
-class FinalTranscriptSuppressedNotification:
-    utterance_id: UUID
-    channel: ChannelId
-    stt_provider_name: STTProviderName
 
 
 @dataclass(slots=True)
@@ -113,9 +103,7 @@ class ManagedSTTProvider:
     reset_retry_base_s: float = 60.0
     reset_retry_max_s: float = 300.0
     on_terminal_failure: Callable[[Exception], Awaitable[None] | None] | None = None
-    on_final_transcript_suppressed: (
-        Callable[[FinalTranscriptSuppressedNotification], Awaitable[None] | None] | None
-    ) = None
+    on_final_transcript_suppressed: SuppressionCallback | None = None
     runtime_logging: SessionRuntimeLoggingService | None = None
     stt_input_fault_profile_provider: Callable[[], AudioFaultProfile | str | None] | None = None
 

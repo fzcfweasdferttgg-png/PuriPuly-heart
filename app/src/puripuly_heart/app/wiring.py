@@ -403,3 +403,9 @@ def create_peer_stt_backend(
         resolved.source_language,
         data_dir=data_dir,
     )
+
+
+def create_settings_draft_service() -> "SettingsDraftService":
+    """Create a SettingsDraftService instance (composition root)."""
+    from puripuly_heart.core.services.settings_draft_service import SettingsDraftService
+    return SettingsDraftService()

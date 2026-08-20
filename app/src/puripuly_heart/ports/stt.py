@@ -4,6 +4,7 @@ from typing import AsyncIterator, Protocol, runtime_checkable
 
 from puripuly_heart.domain.samples import Samples
 from puripuly_heart.domain.stt_events import STTBackendTranscriptEvent
+from puripuly_heart.domain.events import FinalTranscriptSuppressedNotification
 
 
 class STTBackendSession(Protocol):
@@ -25,9 +26,17 @@ class STTBackend(Protocol):
     async def open_session(self) -> STTBackendSession: ...
 
 
+class SuppressionCallback(Protocol):
+    """Typed callback for suppressed final transcript notifications."""
+    async def __call__(
+        self, notification: FinalTranscriptSuppressedNotification
+    ) -> None: ...
+
+
 __all__ = [
     "STTBackend",
     "STTBackendFloat32Session",
     "STTBackendSession",
+    "SuppressionCallback",
     "STTBackendTranscriptEvent",
 ]

@@ -45,7 +45,6 @@ from puripuly_heart.ui.views.ui_section import UiSectionMixin
 from puripuly_heart.ui.views.osc_section import OscSectionMixin
 from puripuly_heart.ui.views.context_section import ContextSectionMixin
 from puripuly_heart.ui.views.secrets_section import SecretsSectionMixin
-from puripuly_heart.core.services.settings_draft_service import SettingsDraftService
 
 if TYPE_CHECKING:
     from puripuly_heart.ports.settings_draft import SettingsDraftServiceProtocol as SettingsDraftService
@@ -148,7 +147,9 @@ class SettingsView(
     def __init__(self, initial_settings: AppSettings | None = None, draft_service: SettingsDraftService | None = None, command_executor=None):
         super().__init__(expand=True, spacing=16)
         self._initial_settings = initial_settings
-        self._draft_service = draft_service or SettingsDraftService()
+        if draft_service is None:
+            raise RuntimeError("draft_service must be injected by composition root (app.wiring)")
+        self._draft_service = draft_service
         self._command_executor = command_executor
 
         # Callbacks (assigned by App)

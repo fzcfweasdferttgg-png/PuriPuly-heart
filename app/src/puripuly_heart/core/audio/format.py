@@ -12,6 +12,8 @@ Conversion functions:
 Called by audio/source.py, audio/desktop_source.py, audio/diagnostics.py,
 audio/streaming_resampler.py, audio/desktop_pipeline.py, vad/gating.py,
 inference/subprocess_backend.py, stt/controller.py.
+
+pcm16le_bytes_to_float32 re-exported from domain.audio_format.
 """
 
 from __future__ import annotations
@@ -65,9 +67,5 @@ def float32_to_pcm16le_bytes(samples: np.ndarray) -> bytes:
     return int16.tobytes()
 
 
-def pcm16le_bytes_to_float32(data: bytes) -> np.ndarray:
-    arr = np.frombuffer(data, dtype="<i2").astype(np.float32)
-    # Divide by 32768.0 (not 32767.0) — symmetric with int16 range [-32768, 32767].
-    # Result: max positive = 0.99997, max negative = -1.0.
-    # Not perfectly symmetric, but matches standard audio convention.
-    return arr / 32768.0
+# Re-export from domain — canonical location is domain.audio_format
+from puripuly_heart.domain.audio_format import pcm16le_bytes_to_float32

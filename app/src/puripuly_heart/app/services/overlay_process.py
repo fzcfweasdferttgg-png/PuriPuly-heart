@@ -16,8 +16,8 @@ from puripuly_heart import __version__
 from puripuly_heart.ports.overlay_infrastructure import OverlayInfrastructureProtocol
 from puripuly_heart.ports.overlay_process import OverlayManagedProcess, OverlayProcessRunner
 
-from . import openvr_vendor
-from .diagnostics import OverlayDiagnosticsRecorder, default_overlay_diagnostics_dir
+from puripuly_heart.core.overlay import openvr_vendor
+from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder, default_overlay_diagnostics_dir
 from puripuly_heart.domain.overlay_types import (
     OVERLAY_CONTRACT_VERSION,
     OverlayLaunchManifest,
@@ -60,6 +60,7 @@ _MIN_DESKTOP_WINDOW_HEIGHT = 160
 _INTERACTION_MODE_EVENT_MODES = {"edit", "pass_through"}
 _INTERACTION_MODE_EVENT_KEYS = {"event", "mode"}
 _RESET_TO_BOTTOM_CENTER_EVENT_KEYS = {"event"}
+_DEFAULT_DESKTOP_OVERLAY_MODULE = "puripuly_heart.ui.desktop_overlay"
 
 
 class OverlayPreparationError(Exception):
@@ -384,7 +385,7 @@ class DesktopFletOverlayRunner:
     frozen: bool | None = None
     python_executable: Path | None = None
     app_executable: Path | None = None
-    module_name: str = "puripuly_heart.ui.desktop_overlay"
+    module_name: str = _DEFAULT_DESKTOP_OVERLAY_MODULE
 
     def prepare(self, manifest: OverlayLaunchManifest) -> Path:
         _ = manifest

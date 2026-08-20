@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Protocol
 from uuid import UUID
 
@@ -19,8 +18,6 @@ from puripuly_heart.domain.overlay_events import (
     UtteranceClosed,
 )
 from puripuly_heart.domain.overlay_types import ActiveSelfOverlayMetadata
-
-logger = logging.getLogger(__name__)
 
 
 class OverlaySink(Protocol):
