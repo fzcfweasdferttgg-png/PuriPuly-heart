@@ -104,6 +104,8 @@ from puripuly_heart.app.services.provider_signatures import ProviderSignaturesMi
 from puripuly_heart.app.services.diagnostics_manager import DiagnosticsManagerMixin
 from puripuly_heart.app.services.peer_runtime_manager import PeerRuntimeManagerMixin
 from puripuly_heart.app.services.settings_manager import SettingsManagerMixin
+from puripuly_heart.app.services.signature_detector import SignatureChangeDetector
+from puripuly_heart.app.services.overlay_state_machine import OverlayStateMachine
 
 logger = logging.getLogger(__name__)
 
@@ -152,16 +154,12 @@ class GuiController(
     _debug_capture_fault_profile: str = field(init=False, default="none")
     _debug_stt_fault_profile: str = field(init=False, default="none")
     _toggle_coordinator: ToggleCoordinator | None = None
-    _last_stt_runtime_signature: tuple[object, ...] | None = None
-    _last_self_stt_runtime_signature: tuple[object, ...] | None = None
-    _last_peer_stt_runtime_signature: tuple[object, ...] | None = None
-    _last_peer_stt_desired_active: bool | None = None
-    _last_self_stt_provider_signature: tuple[object, ...] | None = None
-    _last_peer_stt_provider_signature: tuple[object, ...] | None = None
-    _last_llm_provider_signature: tuple[object, ...] | None = None
-    _last_microphone_test_audio_settings_signature: tuple[object, ...] | None = None
-    _last_peer_translation_enabled: bool | None = None
-    _last_peer_translation_activation_requested: bool | None = None
+    _signature_detector: SignatureChangeDetector = field(
+        default_factory=SignatureChangeDetector,
+    )
+    _overlay_state_machine: OverlayStateMachine = field(
+        default_factory=OverlayStateMachine,
+    )
     _ui_event_bridge: UIEventBridge | None = None
     _clipboard_watcher: ClipboardWatcherRuntime | None = field(init=False, default=None)
     _clipboard_loop: asyncio.AbstractEventLoop | None = field(init=False, default=None)
@@ -631,9 +629,9 @@ class GuiController(
             return
 
         prev_settings = self.settings
-        prev_self_provider_signature = self._last_self_stt_provider_signature
-        prev_peer_provider_signature = self._last_peer_stt_provider_signature
-        prev_llm_provider_signature = self._last_llm_provider_signature
+        prev_self_provider_signature = self._signature_detector.last_self_stt_provider_signature
+        prev_peer_provider_signature = self._signature_detector.last_peer_stt_provider_signature
+        prev_llm_provider_signature = self._signature_detector.last_llm_provider_signature
 
         if prev_settings is not None:
             if prev_self_provider_signature is None:
@@ -878,7 +876,7 @@ class GuiController(
             vad_model_resolver=lambda: ensure_silero_vad_onnx(target_path=_default_vad_model_path()),
             run_audio_loop=self._run_peer_audio_vad_loop,
         )
-        self._last_peer_translation_enabled = self.settings.ui.peer_translation_enabled
+        self._signature_detector.last_peer_translation_enabled = self.settings.ui.peer_translation_enabled
         await self._pipeline_manager.configure_vrc_receiver(
             enabled=self.settings.osc.vrc_mic_intercept,
             settings=self.settings,

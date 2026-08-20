@@ -189,3 +189,12 @@ class OscSectionMixin:
         self._vrc_mic_title.value = t("settings.vrc_mic_intercept")
         self._chatbox_source_title.value = t("settings.chatbox_include_source")
         self._clipboard_auto_translate_title.value = t("settings.clipboard_auto_translate")
+
+    def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
+        """Controls that need font/text updates on locale change."""
+        return (
+            self._chatbox_source_text,
+            self._clipboard_auto_translate_text,
+            self._microphone_test_text,
+            self._vrc_mic_text,
+        )

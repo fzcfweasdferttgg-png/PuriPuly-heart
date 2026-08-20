@@ -202,3 +202,11 @@ class AudioSectionMixin:
         self._loopback_audio_title.value = t("settings.section.loopback_audio")
         self._audio_settings.apply_locale()
         self._sync_general_audio_card_texts()
+
+    def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
+        """Controls that need font/text updates on locale change."""
+        return (
+            self._mic_audio_text,
+            self._audio_host_api_text,
+            self._loopback_audio_text,
+        )

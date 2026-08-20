@@ -416,3 +416,9 @@ class ContextSectionMixin:
         self._prompt_single_btn.content.value = t("settings.prompt_mode.single", default="Single")
         self._prompt_dual_btn.content.value = t("settings.prompt_mode.dual", default="Dual")
         self._integrated_context_label.value = t("settings.integrated_context")
+
+    def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
+        """Controls that need font/text updates on locale change."""
+        return (
+            self._integrated_context_button,
+        )

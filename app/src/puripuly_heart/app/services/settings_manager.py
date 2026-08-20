@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from puripuly_heart.adapters.storage.providers_persistence import load_providers  # re-exported for ui/ callers
 from puripuly_heart.adapters.storage.settings_persistence import load_settings, save_settings
+from puripuly_heart.app.services.settings_diff import SettingsDiff, compute_settings_diff
 from puripuly_heart.config.settings import (
     new_settings_for_first_run,
 )
@@ -43,11 +44,9 @@ class SettingsManagerMixin:
         await self.apply_settings(updated)
 
     async def apply_settings(self, settings: AppSettings) -> None:
-        def _effective_peer_language(language: str, peer_language: str) -> str:
-            return peer_language or language
-
+        # Phase 0: Pre-diff checks (mic test audio change)
         prev_microphone_test_audio_signature = (
-            self._last_microphone_test_audio_settings_signature
+            self._signature_detector.last_microphone_test_audio_settings_signature
             or self._microphone_test_audio_settings_signature(self.settings)
         )
         next_microphone_test_audio_signature = self._microphone_test_audio_settings_signature(
@@ -83,14 +82,16 @@ class SettingsManagerMixin:
             previous_settings_for_desktop,
             settings,
         )
+
+        # Phase 1: Compute diff (pure function — no side effects)
         prev_peer_translation_enabled = (
-            self._last_peer_translation_enabled
-            if self._last_peer_translation_enabled is not None
+            self._signature_detector.last_peer_translation_enabled
+            if self._signature_detector.last_peer_translation_enabled is not None
             else (self.settings.ui.peer_translation_enabled if self.settings is not None else False)
         )
         prev_peer_activation_requested = (
-            self._last_peer_translation_activation_requested
-            if self._last_peer_translation_activation_requested is not None
+            self._signature_detector.last_peer_translation_activation_requested
+            if self._signature_detector.last_peer_translation_activation_requested is not None
             else (
                 self._peer_translation_activation_requested_for(self.settings)
                 if self.settings is not None
@@ -98,61 +99,47 @@ class SettingsManagerMixin:
             )
         )
         prev_self_signature = (
-            self._last_self_stt_runtime_signature or self._last_stt_runtime_signature
+            self._signature_detector.last_self_stt_runtime_signature
+            or self._signature_detector.last_stt_runtime_signature
         )
-        prev_peer_signature = self._last_peer_stt_runtime_signature
-        # hub.source_language를 기준으로 비교 (settings 객체는 이미 수정되어 전달될 수 있음)
-        prev_source_lang = self.hub.source_language if self.hub else None
-        prev_target_lang = self.hub.target_language if self.hub else None
-        prev_peer_source_lang = (
-            getattr(self.hub, "peer_source_language", None) if self.hub else None
+        prev_peer_signature = self._signature_detector.last_peer_stt_runtime_signature
+
+        diff = compute_settings_diff(
+            prev=self.settings,
+            next_settings=settings,
+            hub_source_lang=self.hub.source_language if self.hub else None,
+            hub_target_lang=self.hub.target_language if self.hub else None,
+            hub_peer_source_lang=(
+                getattr(self.hub, "peer_source_language", None) if self.hub else None
+            ),
+            hub_peer_target_lang=(
+                getattr(self.hub, "peer_target_language", None) if self.hub else None
+            ),
+            hub_low_latency=self.hub.low_latency_mode if self.hub else None,
+            hub_second_target_lang=(
+                getattr(self.hub, "second_target_language", "") if self.hub else ""
+            ),
+            prev_self_signature=prev_self_signature,
+            prev_peer_signature=prev_peer_signature,
+            prev_peer_enabled=prev_peer_translation_enabled,
+            prev_peer_activation=prev_peer_activation_requested,
+            next_self_signature=self._build_self_stt_runtime_signature(settings),
+            next_peer_signature=self._build_peer_stt_runtime_signature(settings),
+            next_peer_activation=self._peer_translation_activation_requested_for(settings),
+            prev_overlay_target=prev_overlay_target,
+            next_overlay_target=next_overlay_target,
+            prev_overlay_enabled=prev_overlay_enabled,
+            prev_vrc_mic_sync=self._last_vrc_mic_sync_enabled,
+            prev_locale=prev_locale,
         )
-        prev_peer_target_lang = (
-            getattr(self.hub, "peer_target_language", None) if self.hub else None
-        )
-        prev_effective_peer_source = (
-            _effective_peer_language(prev_source_lang, prev_peer_source_lang)
-            if prev_source_lang is not None and prev_peer_source_lang is not None
-            else None
-        )
-        prev_effective_peer_target = (
-            _effective_peer_language(prev_target_lang, prev_peer_target_lang)
-            if prev_target_lang is not None and prev_peer_target_lang is not None
-            else None
-        )
-        prev_low_latency = self.hub.low_latency_mode if self.hub else None
-        source_language_changed = (
-            prev_source_lang is not None and prev_source_lang != settings.languages.source_language
-        )
-        target_language_changed = (
-            prev_target_lang is not None and prev_target_lang != settings.languages.target_language
-        )
-        second_target_language_changed = (
-            self.hub is not None
-            and getattr(self.hub, "second_target_language", "") != settings.languages.second_target_language
-        )
-        effective_peer_source_changed = (
-            prev_effective_peer_source is not None
-            and prev_effective_peer_source
-            != _effective_peer_language(
-                settings.languages.source_language,
-                settings.languages.peer_source_language,
-            )
-        )
-        effective_peer_target_changed = (
-            prev_effective_peer_target is not None
-            and prev_effective_peer_target
-            != _effective_peer_language(
-                settings.languages.target_language,
-                settings.languages.peer_target_language,
-            )
-        )
-        if source_language_changed or target_language_changed:
+
+        # Phase 2: Apply mutations (update state)
+        if diff.source_language_changed or diff.target_language_changed:
             presenter = self._overlay_presenter
             self.log_basic(
                 "[Settings] Applying languages: "
-                f"source={prev_source_lang}->{settings.languages.source_language} "
-                f"target={prev_target_lang}->{settings.languages.target_language}"
+                f"source={self.hub.source_language if self.hub else None}->{settings.languages.source_language} "
+                f"target={self.hub.target_language if self.hub else None}->{settings.languages.target_language}"
             )
             self.log_detailed(
                 "[Settings] Language apply detail: "
@@ -162,11 +149,9 @@ class SettingsManagerMixin:
                 "overlay_sink_matches_presenter="
                 f"{self.hub is not None and presenter is not None and getattr(self.hub, 'overlay_sink', None) is presenter}"
             )
-        prev_llm_provider = self.settings.provider.llm if self.settings else None
-        prev_llm_model = self.settings.provider.openai_compatible.model if self.settings else None
-        prev_llm_base_url = self.settings.provider.openai_compatible.base_url if self.settings else None
+
         self.settings = settings
-        self._last_microphone_test_audio_settings_signature = next_microphone_test_audio_signature
+        self._signature_detector.last_microphone_test_audio_settings_signature = next_microphone_test_audio_signature
         self._sync_overlay_calibration_cache(settings)
         self._sync_desktop_overlay_interaction_mode_from_settings(settings)
         self.save_settings()
@@ -175,28 +160,17 @@ class SettingsManagerMixin:
         self._refresh_local_stt_runtime_state()
         self._clear_local_stt_pending_enable_if_provider_switched_away()
 
-        if (
-            prev_low_latency is not None
-            and prev_low_latency != settings.stt.low_latency_mode
-        ):
+        # Phase 3: Dispatch side effects based on diff
+        if diff.low_latency_changed:
             self.log_detailed(
                 "[Settings] Low latency detail: "
-                f"mode={prev_low_latency}->{settings.stt.low_latency_mode} rebuilding_llm_provider=True"
+                f"mode changing to {settings.stt.low_latency_mode} rebuilding_llm_provider=True"
             )
             await self._rebuild_llm_provider()
 
-        llm_provider_changed = (
-            prev_llm_provider is not None
-            and (
-                prev_llm_provider != settings.provider.llm
-                or prev_llm_model != settings.provider.openai_compatible.model
-                or prev_llm_base_url != settings.provider.openai_compatible.base_url
-            )
-        )
-        if llm_provider_changed:
+        if diff.llm_provider_changed:
             self.log_basic(
-                f"[Settings] LLM provider changed: {prev_llm_provider}->{settings.provider.llm} "
-                f"model={prev_llm_model}->{settings.provider.openai_compatible.model} rebuilding"
+                f"[Settings] LLM provider changed: rebuilding"
             )
             await self._rebuild_llm_provider()
 
@@ -234,9 +208,9 @@ class SettingsManagerMixin:
                 except Exception as exc:
                     self._log_error(f"Failed to clear language runtime state for {channel}: {exc}")
 
-            if source_language_changed or target_language_changed or second_target_language_changed:
+            if diff.source_language_changed or diff.target_language_changed or diff.second_target_language_changed:
                 await _clear_language_runtime_state("self")
-            if effective_peer_source_changed or effective_peer_target_changed or second_target_language_changed:
+            if diff.effective_peer_source_changed or diff.effective_peer_target_changed or diff.second_target_language_changed:
                 await _clear_language_runtime_state("peer")
 
         presenter = self._overlay_presenter
@@ -246,52 +220,39 @@ class SettingsManagerMixin:
                 show_peer_original=settings.overlay.show_peer_original,
             )
 
-        if prev_overlay_enabled != settings.ui.overlay_enabled:
+        if diff.overlay_enabled_changed:
             await self.set_overlay_enabled(settings.ui.overlay_enabled)
 
-        if self._last_vrc_mic_sync_enabled != settings.osc.vrc_mic_intercept:
+        if diff.vrc_mic_sync_changed:
             if self.vrc_mic_audio_gate is not None:
                 self.vrc_mic_audio_gate.set_enabled(settings.osc.vrc_mic_intercept)
             self.log_detailed(f"[Settings] VRC mic sync enabled: {settings.osc.vrc_mic_intercept}")
             await self._configure_vrc_mic_receiver(enabled=settings.osc.vrc_mic_intercept)
 
-        current_self_signature = self._build_self_stt_runtime_signature(settings)
-        current_peer_signature = self._build_peer_stt_runtime_signature(settings)
-        next_peer_activation_requested = self._peer_translation_activation_requested_for(settings)
-        should_restart_stt = (
-            prev_self_signature is not None and current_self_signature != prev_self_signature
-        )
-        should_refresh_peer = (
-            prev_peer_signature is None
-            or current_peer_signature != prev_peer_signature
-            or prev_peer_translation_enabled != settings.ui.peer_translation_enabled
-            or prev_peer_activation_requested != next_peer_activation_requested
-        )
-
         self._sync_signature_caches(settings)
 
-        if source_language_changed or target_language_changed:
+        if diff.source_language_changed or diff.target_language_changed:
             self.log_detailed(
                 "[Settings] Language runtime impact: "
-                f"should_restart_stt={should_restart_stt} "
-                f"should_refresh_peer={should_refresh_peer} "
+                f"should_restart_stt={diff.should_restart_stt} "
+                f"should_refresh_peer={diff.should_refresh_peer} "
                 f"prev_overlay_enabled={prev_overlay_enabled} "
                 f"next_overlay_enabled={settings.ui.overlay_enabled}"
             )
 
-        if should_refresh_peer and self.hub is not None:
+        if diff.should_refresh_peer and self.hub is not None:
             await self._refresh_peer_stt_runtime()
             self._sync_effective_hub_flags(settings)
 
-        if should_restart_stt:
+        if diff.should_restart_stt:
             await self._replace_runtime_stt_provider()
 
         any_language_changed = (
-            source_language_changed
-            or target_language_changed
-            or second_target_language_changed
-            or effective_peer_source_changed
-            or effective_peer_target_changed
+            diff.source_language_changed
+            or diff.target_language_changed
+            or diff.second_target_language_changed
+            or diff.effective_peer_source_changed
+            or diff.effective_peer_target_changed
         )
         if any_language_changed:
             view_settings = getattr(self.app, "view_settings", None)
@@ -303,7 +264,7 @@ class SettingsManagerMixin:
                         preserve_custom_vocab_draft=True,
                     )
 
-        if prev_locale != settings.ui.locale:
+        if diff.locale_changed:
             set_locale(settings.ui.locale)
             apply_locale = getattr(self.app, "apply_locale", None)
             if callable(apply_locale):

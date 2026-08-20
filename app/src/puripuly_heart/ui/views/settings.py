@@ -188,6 +188,10 @@ class SettingsView(
         self._desktop_overlay_captions_locked = False
         self._desktop_overlay_pending_locked: bool | None = None
         self._desktop_overlay_primary_action_kind: str | None = None
+        # Sync hooks — section mixins register callbacks during _build_*_widgets
+        # to participate in _sync_overlay_controls() and _update_api_visibility().
+        self._sync_hooks: list[Callable[[], None]] = []
+        self._visibility_hooks: list[Callable[[AppSettings], None]] = []
         self._desktop_overlay_pending_size_preset: str | None = None
         self._desktop_overlay_pending_position_reset = False
         self._overlay_calibration = OverlayCalibration()
@@ -197,6 +201,14 @@ class SettingsView(
 
         # Build UI components
         self._build_ui()
+
+    def _register_sync_hook(self, hook: Callable[[], None]) -> None:
+        """Register a callback to be called during _sync_overlay_controls()."""
+        self._sync_hooks.append(hook)
+
+    def _register_visibility_hook(self, hook: Callable[[AppSettings], None]) -> None:
+        """Register a callback to be called during _update_api_visibility()."""
+        self._visibility_hooks.append(hook)
 
     # --- Draft state delegates (backed by _draft_service) ---
     @property
@@ -764,6 +776,10 @@ class SettingsView(
             self._sync_peer_stt_backend_buttons(settings.provider.peer_stt_backend)
         _update_control_if_mounted(self._stt_backend_row)
         _update_control_if_mounted(self._peer_stt_backend_row)
+
+        # Execute section-specific visibility hooks
+        for hook in self._visibility_hooks:
+            hook(settings)
 
     # --- Event Handlers ---
     def _emit_settings_changed(self) -> None:

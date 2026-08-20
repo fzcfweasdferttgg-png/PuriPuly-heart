@@ -135,8 +135,8 @@ class PeerRuntimeManagerMixin:
         config = self._build_peer_runtime_config(self.settings)
         desired_active = self._peer_runtime_should_be_active(self.settings)
         if (
-            config.runtime_signature == self._last_peer_stt_runtime_signature
-            and desired_active == self._last_peer_stt_desired_active
+            config.runtime_signature == self._signature_detector.last_peer_stt_runtime_signature
+            and desired_active == self._signature_detector.last_peer_stt_desired_active
         ):
             return
         self.log_basic(
@@ -154,7 +154,7 @@ class PeerRuntimeManagerMixin:
         if desired_active and self._peer_runtime is not None:
             with contextlib.suppress(Exception):
                 await self._peer_runtime.warmup()
-        self._last_peer_stt_runtime_signature = config.runtime_signature
-        self._last_peer_stt_desired_active = desired_active
+        self._signature_detector.last_peer_stt_runtime_signature = config.runtime_signature
+        self._signature_detector.last_peer_stt_desired_active = desired_active
         self._sync_effective_hub_flags(self.settings)
         self.log_basic("[Settings] Peer STT provider replacement completed")

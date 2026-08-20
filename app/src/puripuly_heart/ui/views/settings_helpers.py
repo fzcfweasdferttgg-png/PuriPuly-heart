@@ -245,32 +245,34 @@ class SettingsHelpersMixin:
         text_control.size = size
 
     def _iter_locale_sensitive_clickable_text_controls(self) -> tuple[ft.Container, ...]:
-        return (
-            self._integrated_context_button,
-            self._stt_text,
-            self._peer_stt_text,
-            self._llm_text,
-            self._ui_text,
-            self._chatbox_source_text,
-            self._clipboard_auto_translate_text,
-            self._microphone_test_text,
-            self._vrc_mic_text,
-            self._mic_audio_text,
-            self._audio_host_api_text,
-            self._loopback_audio_text,
-            self._low_latency_text,
-            self._overlay_translation_button,
-            self._overlay_peer_original_button,
-            self._overlay_target_button,
-            self._overlay_anchor_button,
-            self._overlay_text_scale_text,
-            self._desktop_overlay_size_button,
-            self._desktop_overlay_lock_button,
-            self._overlay_vr_reset_button,
-            self._overlay_desktop_reset_button,
-            self._desktop_overlay_primary_action,
-            self._desktop_overlay_view_logs_action,
-        )
+        """Aggregate locale-sensitive controls from all section mixins.
+
+        Each section mixin defines _locale_sensitive_controls() returning its
+        own controls.  Since all mixins share one class via MRO, we call each
+        mixin's implementation explicitly by class name.
+        """
+        from puripuly_heart.ui.views.stt_section import SttSectionMixin
+        from puripuly_heart.ui.views.llm_section import LlmSectionMixin
+        from puripuly_heart.ui.views.ui_section import UiSectionMixin
+        from puripuly_heart.ui.views.osc_section import OscSectionMixin
+        from puripuly_heart.ui.views.audio_section import AudioSectionMixin
+        from puripuly_heart.ui.views.context_section import ContextSectionMixin
+        from puripuly_heart.ui.views.overlay_section import OverlaySectionMixin
+        from puripuly_heart.ui.views.calibration_section import CalibrationSectionMixin
+
+        controls: list[ft.Container] = []
+        for mixin_cls in (
+            ContextSectionMixin,
+            SttSectionMixin,
+            LlmSectionMixin,
+            UiSectionMixin,
+            OscSectionMixin,
+            AudioSectionMixin,
+            OverlaySectionMixin,
+            CalibrationSectionMixin,
+        ):
+            controls.extend(mixin_cls._locale_sensitive_controls(self))
+        return tuple(controls)
 
     def _sync_clickable_text_control_fonts(self, font_family: str | None) -> None:
         for control in self._iter_locale_sensitive_clickable_text_controls():

@@ -100,8 +100,8 @@ class PeerFlagsMixin:
 
         if enabled and not self._peer_translation_eula_accepted_for(self.settings):
             self.settings.ui.peer_translation_enabled = False
-            self._last_peer_translation_enabled = False
-            self._last_peer_translation_activation_requested = False
+            self._signature_detector.last_peer_translation_enabled = False
+            self._signature_detector.last_peer_translation_activation_requested = False
             self._sync_effective_hub_flags(self.settings)
             self._refresh_overlay_peer_consumers()
             self.log_basic("[Peer] Toggle ignored: eula_accepted=False")
@@ -116,8 +116,8 @@ class PeerFlagsMixin:
         if enabled and not self.settings.ui.overlay_enabled:
             self.settings.ui.overlay_enabled = True
         self.settings.ui.peer_translation_enabled = enabled
-        self._last_peer_translation_enabled = enabled
-        self._last_peer_translation_activation_requested = (
+        self._signature_detector.last_peer_translation_enabled = enabled
+        self._signature_detector.last_peer_translation_activation_requested = (
             self._peer_translation_activation_requested_for(self.settings)
         )
         self._clear_local_stt_pending_enable_if_provider_switched_away()

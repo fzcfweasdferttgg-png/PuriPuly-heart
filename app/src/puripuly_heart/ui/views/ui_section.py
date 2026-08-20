@@ -392,3 +392,10 @@ class UiSectionMixin:
         self._peer_hangover_field.label = t("settings.vad.peer_hangover_ms")
         self._peer_pre_roll_field.label = t("settings.vad.peer_pre_roll_ms")
         self._low_latency_title.value = t("settings.low_latency_mode")
+
+    def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
+        """Controls that need font/text updates on locale change."""
+        return (
+            self._ui_text,
+            self._low_latency_text,
+        )

@@ -39,17 +39,15 @@ if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
     from puripuly_heart.domain.overlay_contract import OverlayPeerConsumerContract
 
-_OVERLAY_DISTANCE_MIN = 0.5
-_OVERLAY_DISTANCE_MAX = 2.0
-_OVERLAY_DISTANCE_DIVISIONS = 30
-_OVERLAY_OFFSET_STEP = 0.05
-_DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP = 0.1
-_OVERLAY_TEXT_SCALE_PRESETS = (
-    ("large", 1.2),
-    ("normal", 1.0),
-    ("small", 0.8),
+from puripuly_heart.ui.views.overlay_constants import (
+    _OVERLAY_DISTANCE_MIN,
+    _OVERLAY_DISTANCE_MAX,
+    _OVERLAY_DISTANCE_DIVISIONS,
+    _OVERLAY_OFFSET_STEP,
+    _DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP,
+    _OVERLAY_TEXT_SCALE_PRESETS,
+    _DESKTOP_OVERLAY_REOPEN_FAILURE_REASONS,
 )
-_DESKTOP_OVERLAY_REOPEN_FAILURE_REASONS = frozenset({"window_configuration_failed"})
 
 
 # ATTRIBUTE OWNERSHIP — _build_overlay_widgets creates ~30 controls:
@@ -713,16 +711,31 @@ class OverlaySectionMixin:
         self._sync_overlay_controls()
 
     def _sync_overlay_controls(self) -> None:
+        """Central sync method — updates ALL overlay control visibility and states."""
+        self._sync_overlay_value_texts()
+        self._sync_overlay_target_control()
+        self._sync_overlay_target_specific_visibility()
+        self._sync_desktop_overlay_main_controls()
+        self._sync_desktop_overlay_status_control()
+        self._sync_overlay_disabled_states()
+        self._sync_calibration_disabled_states()
+        self._sync_context_disabled_states()
+
+        # Execute registered sync hooks from section mixins
+        for hook in self._sync_hooks:
+            hook()
+
+        if self.page:
+            self.update()
+
+    def _sync_overlay_value_texts(self) -> None:
+        """Update overlay translation/peer-original button value texts."""
         overlay_translation_enabled = bool(
             self._settings and self._settings.overlay.show_translation
         )
         overlay_peer_original_enabled = bool(
             self._settings and self._settings.overlay.show_peer_original
         )
-        integrated_context_enabled = bool(
-            self._settings and self._settings.ui.integrated_context_enabled
-        )
-
         self._set_unit_card_value_text(
             self._overlay_translation_button,
             t("settings.option.on" if overlay_translation_enabled else "settings.option.off"),
@@ -731,23 +744,12 @@ class OverlaySectionMixin:
             self._overlay_peer_original_button,
             t("settings.option.on" if overlay_peer_original_enabled else "settings.option.off"),
         )
-        self._set_unit_card_value_text(
-            self._integrated_context_button,
-            t(
-                "settings.context.integrated"
-                if integrated_context_enabled
-                else "settings.context.local"
-            ),
-        )
-        self._sync_overlay_target_control()
-        self._sync_overlay_target_specific_visibility()
-        self._sync_desktop_overlay_main_controls()
-        self._sync_desktop_overlay_status_control()
 
+    def _sync_overlay_disabled_states(self) -> None:
+        """Update disabled state of overlay controls based on settings availability."""
         self._overlay_translation_button.disabled = self._settings is None
         self._overlay_peer_original_button.disabled = self._settings is None
         self._overlay_target_button.disabled = self._settings is None
-        self._overlay_anchor_button.disabled = self._settings is None
         self._overlay_distance_decrease_button.disabled = self._settings is None
         self._overlay_distance_increase_button.disabled = self._settings is None
         self._overlay_offset_x_decrease_button.disabled = self._settings is None
@@ -758,11 +760,26 @@ class OverlaySectionMixin:
         self._desktop_overlay_background_alpha_increase_button.disabled = self._settings is None
         self._overlay_vr_reset_button.disabled = self._settings is None
         self._overlay_desktop_reset_button.disabled = self._settings is None
+
+    def _sync_calibration_disabled_states(self) -> None:
+        """Update disabled state of calibration controls."""
+        self._overlay_anchor_button.disabled = self._settings is None
+
+    def _sync_context_disabled_states(self) -> None:
+        """Update disabled state of context controls."""
+        integrated_context_enabled = bool(
+            self._settings and self._settings.ui.integrated_context_enabled
+        )
+        self._set_unit_card_value_text(
+            self._integrated_context_button,
+            t(
+                "settings.context.integrated"
+                if integrated_context_enabled
+                else "settings.context.local"
+            ),
+        )
         self._integrated_context_button.disabled = self._settings is None
         self._integrated_context_hint.value = ""
-
-        if self.page:
-            self.update()
 
     def set_overlay_runtime_state(
         self,
@@ -821,3 +838,18 @@ class OverlaySectionMixin:
         self._command_executor.execute(ChangeOverlayPeerOriginal(show=(value == "on")))
         self._sync_overlay_controls()
         self._emit_settings_changed()
+
+    def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
+        """Controls that need font/text updates on locale change."""
+        return (
+            self._overlay_translation_button,
+            self._overlay_peer_original_button,
+            self._overlay_target_button,
+            self._overlay_text_scale_text,
+            self._desktop_overlay_size_button,
+            self._desktop_overlay_lock_button,
+            self._overlay_vr_reset_button,
+            self._overlay_desktop_reset_button,
+            self._desktop_overlay_primary_action,
+            self._desktop_overlay_view_logs_action,
+        )

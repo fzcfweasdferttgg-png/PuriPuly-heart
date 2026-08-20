@@ -860,3 +860,9 @@ class LlmSectionMixin:
                 message = self._local_llm_extra_body_error_message(error_key, **error_kwargs)
                 self._local_llm_extra_body_error.value = message
                 self._local_llm_extra_body.error_text = message
+
+    def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
+        """Controls that need font/text updates on locale change."""
+        return (
+            self._llm_text,
+        )

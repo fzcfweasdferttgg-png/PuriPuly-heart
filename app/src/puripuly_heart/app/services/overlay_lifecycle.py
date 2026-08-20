@@ -11,6 +11,7 @@ from puripuly_heart.adapters.overlay.bridge import OverlayBridge
 from puripuly_heart.core.overlay.diagnostics import OverlayDiagnosticsRecorder
 from puripuly_heart.core.overlay.presenter import OverlayPresenter
 from puripuly_heart.app.services.overlay_process import OverlayProcessManager
+from puripuly_heart.app.services.overlay_state_machine import OverlayStateMachine
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -20,34 +21,42 @@ logger = logging.getLogger(__name__)
 OVERLAY_STARTUP_TIMEOUT_MS = 3000
 OVERLAY_SHUTDOWN_GRACE_S = 0.05
 DESKTOP_INTERACTION_MODE_EDIT = "edit"
-_OVERLAY_FAILURE_REASONS = frozenset(
-    {
-        "missing_executable",
-        "spawn_failed",
-        "manifest_invalid",
-        "contract_mismatch",
-        "bridge_auth_failed",
-        "startup_timeout",
-        "stale_overlay_build",
-        "vendored_openvr_dll_missing",
-        "packaged_openvr_dll_missing",
-        "openvr_dll_hash_mismatch",
-        "steamvr_not_installed",
-        "steamvr_not_running",
-        "hmd_not_found",
-        "openvr_init_failed",
-        "renderer_init_failed",
-        "runtime_disconnected",
-        "window_configuration_failed",
-        "runtime_control_invalid",
-        "runtime_crashed",
-        "unknown",
-    }
-)
 
 
 class OverlayLifecycleMixin:
     # State machine: off → starting → connected/failed → stopping → off
+    # Delegated to OverlayStateMachine for pure transition logic.
+
+    @property
+    def _overlay_sm(self) -> OverlayStateMachine:
+        """Access the overlay state machine (field on GuiController)."""
+        return self._overlay_state_machine
+
+    @property
+    def overlay_state(self) -> str:
+        return self._overlay_sm.state
+
+    @overlay_state.setter
+    def overlay_state(self, value: str) -> None:
+        # Direct state assignment — used during initialization only.
+        # For transitions, use _overlay_sm.transition() instead.
+        self._overlay_sm._state = value
+
+    @property
+    def failure_reason(self) -> str | None:
+        return self._overlay_sm.failure_reason
+
+    @failure_reason.setter
+    def failure_reason(self, value: str | None) -> None:
+        self._overlay_sm.failure_reason = value
+
+    @property
+    def auto_restart_scheduled(self) -> bool:
+        return self._overlay_sm.auto_restart_scheduled
+
+    @auto_restart_scheduled.setter
+    def auto_restart_scheduled(self, value: bool) -> None:
+        self._overlay_sm.auto_restart_scheduled = value
 
     async def _refresh_overlay_runtime_dependencies(self) -> None:
         if self.settings is None or self.hub is None:
@@ -71,8 +80,8 @@ class OverlayLifecycleMixin:
         self.settings.ui.overlay_enabled = bool(enabled)
         if not enabled:
             self.settings.ui.peer_translation_enabled = False
-            self._last_peer_translation_enabled = False
-            self._last_peer_translation_activation_requested = False
+            self._signature_detector.last_peer_translation_enabled = False
+            self._signature_detector.last_peer_translation_activation_requested = False
         self._refresh_overlay_peer_consumers()
 
         if enabled:
@@ -84,10 +93,7 @@ class OverlayLifecycleMixin:
         self.save_settings()
 
     def on_overlay_start_failed(self, failure_reason: str | None) -> None:
-        previous_state = self.overlay_state
-        self.overlay_state = "failed"
-        self.failure_reason = self._normalize_overlay_failure_reason(failure_reason)
-        self.auto_restart_scheduled = False
+        previous_state = self._overlay_sm.transition("failed", failure_reason=failure_reason)
         self._log_overlay_state_transition(previous_state, self.overlay_state)
         self._sync_effective_hub_flags()
         self._notify_overlay_state()
@@ -103,14 +109,12 @@ class OverlayLifecycleMixin:
             self._overlay_lock = asyncio.Lock()
 
         async with self._overlay_lock:
-            if self.overlay_state in {"starting", "connected"}:
+            if not self._overlay_sm.is_startable():
                 return
 
             await self._teardown_overlay_runtime(preserve_presenter_state=True)
             self._active_overlay_target = self._overlay_target_for_settings(self.settings)
-            previous_state = self.overlay_state
-            self.overlay_state = "starting"
-            self.auto_restart_scheduled = False
+            previous_state = self._overlay_sm.transition("start")
             self._log_overlay_state_transition(previous_state, self.overlay_state)
             self._notify_overlay_state()
             self._overlay_start_task = asyncio.create_task(self._run_overlay_start())
@@ -298,9 +302,7 @@ class OverlayLifecycleMixin:
             if not has_runtime and self.overlay_state == "off":
                 return
 
-            previous_state = self.overlay_state
-            self.overlay_state = "stopping"
-            self.auto_restart_scheduled = False
+            previous_state = self._overlay_sm.transition("stop")
             self._log_overlay_state_transition(previous_state, self.overlay_state)
             self._notify_overlay_state()
 
@@ -308,10 +310,9 @@ class OverlayLifecycleMixin:
                 self._overlay_manager.mark_shutdown_requested()
             await self._emit_overlay_shutdown()
             await self._teardown_overlay_runtime(preserve_presenter_state=False)
-            previous_state = self.overlay_state
-            self.overlay_state = "off"
+            previous_state = self._overlay_sm.transition("done")
             if not preserve_failure_reason:
-                self.failure_reason = None
+                self._overlay_sm.clear_failure_reason()
             self._log_overlay_state_transition(previous_state, self.overlay_state)
             self._sync_effective_hub_flags()
             await self._refresh_overlay_runtime_dependencies()
@@ -387,18 +388,13 @@ class OverlayLifecycleMixin:
             self._set_desktop_overlay_interaction_mode(DESKTOP_INTERACTION_MODE_EDIT)
 
     def _mark_overlay_connected(self) -> None:
-        previous_state = self.overlay_state
-        self.overlay_state = "connected"
-        self.failure_reason = None
-        self.auto_restart_scheduled = False
+        previous_state = self._overlay_sm.transition("connected")
         self._log_overlay_state_transition(previous_state, self.overlay_state)
         self._sync_effective_hub_flags()
         self._notify_overlay_state()
 
     def _normalize_overlay_failure_reason(self, failure_reason: str | None) -> str:
-        if isinstance(failure_reason, str) and failure_reason in _OVERLAY_FAILURE_REASONS:
-            return failure_reason
-        return "unknown"
+        return OverlayStateMachine._normalize_failure_reason(failure_reason)
 
     def _notify_overlay_state(self) -> None:
         bridge = self._ui_event_bridge

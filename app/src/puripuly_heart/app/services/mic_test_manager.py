@@ -196,8 +196,8 @@ class MicTestManagerMixin:
     ) -> bool:
         if self.settings is None:
             return False
-        if self._last_microphone_test_audio_settings_signature is None:
-            self._last_microphone_test_audio_settings_signature = (
+        if self._signature_detector.last_microphone_test_audio_settings_signature is None:
+            self._signature_detector.last_microphone_test_audio_settings_signature = (
                 self._microphone_test_audio_settings_signature(self.settings)
             )
         async with self._get_microphone_test_lifecycle_lock():

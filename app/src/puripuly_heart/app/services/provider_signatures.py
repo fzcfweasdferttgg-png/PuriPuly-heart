@@ -51,17 +51,18 @@ class ProviderSignaturesMixin:
 
     def _sync_signature_caches(self, settings: AppSettings) -> None:
         current_self_signature = self._build_self_stt_runtime_signature(settings)
-        self._last_stt_runtime_signature = current_self_signature
-        self._last_self_stt_runtime_signature = current_self_signature
-        self._last_peer_stt_runtime_signature = self._build_peer_stt_runtime_signature(settings)
-        self._last_self_stt_provider_signature = self._build_self_stt_provider_signature(settings)
-        self._last_peer_stt_provider_signature = self._build_peer_stt_provider_signature(settings)
-        self._last_llm_provider_signature = self._build_llm_provider_signature(settings)
-        self._last_microphone_test_audio_settings_signature = (
+        det = self._signature_detector
+        det.last_stt_runtime_signature = current_self_signature
+        det.last_self_stt_runtime_signature = current_self_signature
+        det.last_peer_stt_runtime_signature = self._build_peer_stt_runtime_signature(settings)
+        det.last_self_stt_provider_signature = self._build_self_stt_provider_signature(settings)
+        det.last_peer_stt_provider_signature = self._build_peer_stt_provider_signature(settings)
+        det.last_llm_provider_signature = self._build_llm_provider_signature(settings)
+        det.last_microphone_test_audio_settings_signature = (
             self._microphone_test_audio_settings_signature(settings)
         )
-        self._last_peer_translation_enabled = settings.ui.peer_translation_enabled
-        self._last_peer_translation_activation_requested = (
+        det.last_peer_translation_enabled = settings.ui.peer_translation_enabled
+        det.last_peer_translation_activation_requested = (
             self._peer_translation_activation_requested_for(settings)
         )
 

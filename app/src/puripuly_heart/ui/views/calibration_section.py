@@ -21,7 +21,7 @@ from puripuly_heart.ui.theme import (
     COLOR_ON_BACKGROUND,
 )
 
-from .overlay_section import (
+from .overlay_constants import (
     _OVERLAY_DISTANCE_MAX,
     _OVERLAY_DISTANCE_MIN,
     _OVERLAY_OFFSET_STEP,
@@ -391,4 +391,10 @@ class CalibrationSectionMixin:
         self._overlay_vr_reset_title.value = t("settings.overlay.position_reset.vr.title")
         self._set_unit_card_value_text(
             self._overlay_vr_reset_button, t("settings.overlay.position_reset.action.vr")
+        )
+
+    def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
+        """Controls that need font/text updates on locale change."""
+        return (
+            self._overlay_anchor_button,
         )
