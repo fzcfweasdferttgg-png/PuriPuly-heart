@@ -1,7 +1,7 @@
 """Encapsulates signature state for settings change detection.
 
 Tracks previous signatures to determine what changed between apply_settings
-calls. Used by ProviderSignaturesMixin (writes), SettingsManagerMixin (reads),
+calls. Used by SettingsManagerMixin (writes and reads),
 PeerRuntimeManagerMixin, MicTestManagerMixin, PeerFlagsMixin, and
 OverlayLifecycleMixin.
 """

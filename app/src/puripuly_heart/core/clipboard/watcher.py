@@ -13,7 +13,7 @@ Architecture:
 All Win32 API calls use ctypes with explicit argtypes/restype declarations
 in _configure_win32_api() to avoid silent type mismatches.
 
-Called by clipboard_manager.py (direct) and settings_manager.py (via mixin)
+Called by clipboard_service.py (direct) and settings_manager.py (via mixin)
 in the UI layer.
 """
 

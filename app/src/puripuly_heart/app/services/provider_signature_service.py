@@ -1,4 +1,4 @@
-"""Provider signature computation — pure functions extracted from ProviderSignaturesMixin.
+"""Provider signature computation — pure functions used by SettingsManagerMixin.
 
 Stateless, testable functions for computing provider signatures used to detect
 when providers need rebuilding. No side effects, no state.

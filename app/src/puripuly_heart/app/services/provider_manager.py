@@ -66,6 +66,10 @@ class ProviderManager:
         if self.hub is None or self.settings is None:
             return
 
+        # Save current providers for rollback
+        old_llm = self.hub.llm
+        old_fallback_llm = self.hub.fallback_llm
+
         await self.hub.set_llm(None)
 
         llm = None
@@ -98,6 +102,21 @@ class ProviderManager:
                 logger.warning("[LLM] Failed to create fallback provider: %s", exc)
         else:
             logger.warning("[LLM] Skipping fallback — secret store unavailable")
+
+        # Rollback if main LLM rebuild failed — restore previous providers
+        if llm is None and llm_error is not None:
+            logger.warning(
+                "[LLM] Rebuild failed (%s) — rolling back to previous provider",
+                llm_error,
+            )
+            await self.hub.set_llm(old_llm)
+            await self.hub.set_fallback_llm(old_fallback_llm)
+            if self.on_llm_rebuilt is not None:
+                self.on_llm_rebuilt(old_llm)
+            message = f"LLM provider rebuild failed, rolled back: {llm_error}"
+            if self.on_error is not None:
+                self.on_error(message)
+            return
 
         # Set final providers and sync TranslationService
         await self.hub.set_llm(llm)

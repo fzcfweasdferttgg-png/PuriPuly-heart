@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import logging
 import threading
 import traceback
@@ -31,18 +32,16 @@ from typing import Any
 import flet as ft
 
 from puripuly_heart.app.wiring import (
-    build_peer_stt_provider_signature,
     create_llm_provider,
     create_fallback_llm_provider,
     create_osc_sink,
     create_peer_stt_backend,
     create_secret_store,
     create_stt_backend,
-    resolve_peer_stt_config,
 )
 from puripuly_heart.app.headless_mic import run_audio_vad_loop
 from puripuly_heart.config.paths import default_models_dir, default_vad_model_path
-from puripuly_heart.adapters.storage.settings_persistence import load_settings, save_settings
+from puripuly_heart.adapters.storage.settings_persistence import save_settings
 from puripuly_heart.config.settings import (
     DESKTOP_FLET_MIN_HEIGHT,
     DESKTOP_FLET_MIN_WIDTH,
@@ -52,7 +51,6 @@ from puripuly_heart.config.settings import (
     AppSettings,
     LLMProviderName,
     STTProviderName,
-    new_settings_for_first_run,
 )
 from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
 from puripuly_heart.core.runtime.local_qwen_lifecycle import LOCAL_QWEN_IDLE_RELEASE_SECONDS
@@ -62,9 +60,7 @@ from puripuly_heart.core.audio.source import (
     determine_self_mic_capture_channels,
 )
 from puripuly_heart.ports.model_discovery import ModelDiscovery
-from puripuly_heart.ports.ui import ClipboardWatcherRuntime
 from puripuly_heart.ports.osc import OscSink
-from puripuly_heart.core.clipboard.watcher import create_clipboard_watcher
 from puripuly_heart.core.clock import SystemClock
 from puripuly_heart.core.verification.api_key_verifier import ApiKeyVerifier
 from puripuly_heart.app.services.provider_manager import ProviderManager
@@ -94,18 +90,15 @@ from puripuly_heart.domain.overlay_contract import (
     OverlayPeerConsumerContract,
     build_overlay_peer_consumer_contract,
 )
-from puripuly_heart.app.services.overlay_manager import DESKTOP_INTERACTION_MODE_EDIT, OverlayManagerMixin
-from puripuly_heart.app.services.clipboard_manager import ClipboardManagerMixin
-from puripuly_heart.app.services.mic_test_manager import MicTestManagerMixin
-from puripuly_heart.app.services.peer_flags import PeerFlagsMixin
-from puripuly_heart.app.services.overlay_lifecycle import OverlayLifecycleMixin
-from puripuly_heart.app.services.calibration_manager import CalibrationManagerMixin
-from puripuly_heart.app.services.provider_signatures import ProviderSignaturesMixin
-from puripuly_heart.app.services.diagnostics_manager import DiagnosticsManagerMixin
-from puripuly_heart.app.services.peer_runtime_manager import PeerRuntimeManagerMixin
-from puripuly_heart.app.services.settings_manager import SettingsManagerMixin
+from puripuly_heart.app.services.overlay_service import OverlayService, DESKTOP_INTERACTION_MODE_EDIT
+from puripuly_heart.app.services.clipboard_service import ClipboardService
+from puripuly_heart.app.services.mic_test_service import MicTestService
+from puripuly_heart.app.services.peer_toggle_coordinator import PeerToggleCoordinator as PeerToggleCoordinatorSvc
+from puripuly_heart.app.services.calibration_service import CalibrationService
+from puripuly_heart.app.services.diagnostics_service_runtime import DiagnosticsService
+from puripuly_heart.app.services.peer_runtime_service import PeerRuntimeService, build_peer_runtime_config
+from puripuly_heart.app.services.settings_service import SettingsService
 from puripuly_heart.app.services.signature_detector import SignatureChangeDetector
-from puripuly_heart.app.services.overlay_state_machine import OverlayStateMachine
 
 logger = logging.getLogger(__name__)
 
@@ -114,109 +107,114 @@ STT_RESET_DEADLINE_S = 300.0
 
 
 @dataclass(slots=True)
-class GuiController(
-    OverlayManagerMixin,
-    ClipboardManagerMixin,
-    MicTestManagerMixin,
-    PeerFlagsMixin,
-    OverlayLifecycleMixin,
-    CalibrationManagerMixin,
-    ProviderSignaturesMixin,
-    DiagnosticsManagerMixin,
-    PeerRuntimeManagerMixin,
-    SettingsManagerMixin,
-):
+class GuiController:
     page: ft.Page
     app: object
     config_path: Path
 
     settings: AppSettings | None = None
     clock: SystemClock = SystemClock()
+    _settings_service: SettingsService | None = None
 
     _pipeline_manager: PipelineLifecycleManager | None = None
     model_discovery: ModelDiscovery | None = None
     _api_key_verifier: ApiKeyVerifier | None = None
     _provider_manager: ProviderManager | None = None
     _peer_runtime: PeerChannelRuntime | None = None
+    _peer_runtime_service: PeerRuntimeService | None = None
+    _diagnostics_service: DiagnosticsService | None = None
 
     _bridge_task: asyncio.Task[None] | None = None
-    _microphone_test_meter_level: float = field(init=False, default=0.0)
-    _microphone_test_task: asyncio.Task[None] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _microphone_test_lifecycle_lock: asyncio.Lock | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _debug_capture_fault_profile: str = field(init=False, default="none")
-    _debug_stt_fault_profile: str = field(init=False, default="none")
+    _mic_test_service: MicTestService | None = None
     _toggle_coordinator: ToggleCoordinator | None = None
+    _peer_toggle_coordinator: PeerToggleCoordinatorSvc | None = None
     _signature_detector: SignatureChangeDetector = field(
         default_factory=SignatureChangeDetector,
     )
-    _overlay_state_machine: OverlayStateMachine = field(
-        default_factory=OverlayStateMachine,
-    )
+    _overlay_service: OverlayService | None = None
     _ui_event_bridge: UIEventBridge | None = None
-    _clipboard_watcher: ClipboardWatcherRuntime | None = field(init=False, default=None)
-    _clipboard_loop: asyncio.AbstractEventLoop | None = field(init=False, default=None)
-    _clipboard_watcher_lock: asyncio.Lock | None = field(init=False, default=None)
-    _manual_typing_active: bool = field(init=False, default=False)
-    _manual_typing_last_activity_at: float = field(init=False, default=0.0)
-    _manual_typing_idle_task: object | None = field(init=False, default=None, repr=False)
-    _manual_submit_typing_generation: int = field(init=False, default=0)
-    _manual_submit_typing_reasons: set[str] = field(init=False, default_factory=set)
+    _clipboard_service: ClipboardService | None = None
     _local_stt_manager: LocalSTTManager | None = field(init=False, default=None)
-    _overlay_bridge: OverlayBridge | None = None
-    _overlay_presenter: OverlayPresenter | None = None
-    _overlay_manager: OverlayProcessManager | None = None
-    _overlay_start_task: asyncio.Task[None] | None = None
-    _overlay_monitor_task: asyncio.Task[None] | None = None
-    _overlay_lock: asyncio.Lock | None = None
-    _active_overlay_target: str | None = field(init=False, default=None)
-    _desktop_renderer_events: asyncio.Queue[dict[str, object]] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _desktop_renderer_events_task: asyncio.Task[None] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _desktop_bounds_persist_task: asyncio.Task[None] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _pending_desktop_bounds: dict[str, int | float] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _desktop_suppressed_bounds_signatures: set[tuple[float, float, float, float]] = field(
-        init=False,
-        default_factory=set,
-        repr=False,
-    )
     _runtime_logging: SessionRuntimeLoggingService | None = field(init=False, default=None)
-    _local_qwen_hallucination_detection_count: int = field(init=False, default=0)
-    _local_qwen_hallucination_modal_shown: bool = field(init=False, default=False)
 
-    overlay_state: str = "off"
-    failure_reason: str | None = None
-    auto_restart_scheduled: bool = False
-    desktop_overlay_interaction_mode: str = field(
-        init=False,
-        default=DESKTOP_INTERACTION_MODE_EDIT,
-    )
-    overlay_calibration: OverlayCalibration = field(default_factory=OverlayCalibration)
-    _overlay_calibration_draft: OverlayCalibration | None = None
+    _calibration_service: CalibrationService | None = None
     log_handler_factory: Callable[[Any], logging.Handler] | None = field(default=None)
 
+    @property
+    def overlay_calibration(self) -> OverlayCalibration:
+        if self._calibration_service is not None:
+            return self._calibration_service.overlay_calibration
+        return OverlayCalibration()
+
+    @overlay_calibration.setter
+    def overlay_calibration(self, value: OverlayCalibration) -> None:
+        if self._calibration_service is not None:
+            self._calibration_service.overlay_calibration = value
+
+    # --- OverlayService property delegations ---
+
+    @property
+    def overlay_state(self) -> str:
+        if self._overlay_service is not None:
+            return self._overlay_service.overlay_state
+        return "off"
+
+    @overlay_state.setter
+    def overlay_state(self, value: str) -> None:
+        if self._overlay_service is not None:
+            self._overlay_service.overlay_state = value
+
+    @property
+    def failure_reason(self) -> str | None:
+        if self._overlay_service is not None:
+            return self._overlay_service.failure_reason
+        return None
+
+    @failure_reason.setter
+    def failure_reason(self, value: str | None) -> None:
+        if self._overlay_service is not None:
+            self._overlay_service.failure_reason = value
+
+    @property
+    def auto_restart_scheduled(self) -> bool:
+        if self._overlay_service is not None:
+            return self._overlay_service.auto_restart_scheduled
+        return False
+
+    @auto_restart_scheduled.setter
+    def auto_restart_scheduled(self, value: bool) -> None:
+        if self._overlay_service is not None:
+            self._overlay_service.auto_restart_scheduled = value
+
+    @property
+    def desktop_overlay_captions_locked(self) -> bool:
+        if self._overlay_service is not None:
+            return self._overlay_service.desktop_overlay_captions_locked
+        return False
+
+    @property
+    def desktop_overlay_interaction_mode(self) -> str:
+        if self._overlay_service is not None:
+            return self._overlay_service.desktop_overlay_interaction_mode
+        return DESKTOP_INTERACTION_MODE_EDIT
+
+    @property
+    def _overlay_bridge(self) -> OverlayBridge | None:
+        if self._overlay_service is not None:
+            return self._overlay_service._overlay_bridge
+        return None
+
+    @property
+    def _overlay_presenter(self) -> OverlayPresenter | None:
+        if self._overlay_service is not None:
+            return self._overlay_service._overlay_presenter
+        return None
+
+    @property
+    def _overlay_manager(self) -> OverlayProcessManager | None:
+        if self._overlay_service is not None:
+            return self._overlay_service._overlay_manager
+        return None
 
     @property
     def effective_context_mode(self) -> str:
@@ -296,12 +294,80 @@ class GuiController(
             return self._local_stt_manager._pending_enable_after_install
         return False
 
+    # --- DiagnosticsService delegation ---
+
+    @property
+    def debug_capture_fault_profile(self) -> str:
+        return self._diagnostics_service.debug_capture_fault_profile
+
+    @property
+    def debug_stt_fault_profile(self) -> str:
+        return self._diagnostics_service.debug_stt_fault_profile
+
+    def _debug_audio_fault_allowed(self) -> bool:
+        return self._diagnostics_service.debug_audio_fault_allowed()
+
+    def _detailed_audio_diag_enabled(self) -> bool:
+        return self._diagnostics_service.detailed_audio_diag_enabled()
+
+    async def _on_self_terminal_failure(self, exc: Exception) -> None:
+        await self._diagnostics_service.on_self_terminal_failure(exc)
+
+    def _on_final_transcript_suppressed(self, notification) -> None:
+        self._diagnostics_service.on_final_transcript_suppressed(notification)
+
+    def _wrap_diagnostic_audio_source(self, source, *, channel_label: str):
+        return self._diagnostics_service.wrap_diagnostic_audio_source(source, channel_label=channel_label)
+
+    def _schedule_audio_environment_snapshot(self) -> None:
+        run_task = getattr(self.page, "run_task", None)
+        self._diagnostics_service.schedule_audio_environment_snapshot(page_run_task=run_task)
+
+    async def _log_audio_environment_snapshot_async(self) -> None:
+        await self._diagnostics_service._log_audio_environment_snapshot_async()
+
+    def cycle_debug_capture_fault_profile(self) -> str:
+        return self._diagnostics_service.cycle_debug_capture_fault_profile()
+
+    def cycle_debug_stt_fault_profile(self) -> str:
+        return self._diagnostics_service.cycle_debug_stt_fault_profile()
+
+    def clear_debug_audio_fault_profiles(self) -> None:
+        self._diagnostics_service.clear_debug_audio_fault_profiles()
+
     async def start(self) -> None:
-        self.settings = self._load_or_init_settings(self.config_path)
+        self._settings_service = SettingsService(
+            _config_path=self.config_path,
+            _hub_provider=lambda: self.hub,
+            _signature_detector_provider=lambda: self._signature_detector,
+            _log_basic=lambda msg: self.log_basic(msg),
+            _log_detailed=lambda msg: self.log_detailed(msg),
+            _log_error=lambda msg: self._log_error(msg),
+            _mic_test_audio_signature=lambda s: MicTestService._microphone_test_audio_settings_signature(s),
+            _peer_activation_requested=lambda s: self._peer_translation_activation_requested_for(s),
+            _build_peer_runtime_config=lambda s: build_peer_runtime_config(s),
+        )
+        self.settings = self._settings_service.load_or_init_settings(self.config_path)
         self.settings.ui.overlay_enabled = False
         self.settings.ui.peer_translation_enabled = False
-        self._sync_overlay_calibration_cache(self.settings)
-        self._overlay_calibration_draft = None
+        self._calibration_service = CalibrationService(
+            _save_settings=lambda: self.save_settings(),
+            _log_detailed=lambda msg: self.log_detailed(msg),
+        )
+        self._calibration_service.sync_from_settings(self.settings)
+
+        # DiagnosticsService — owns audio diagnostics state
+        self._diagnostics_service = DiagnosticsService(
+            is_debug_ui_preview=lambda: getattr(self.app, "debug_ui_preview", False),
+            show_hallucination_dialog=getattr(self.app, "show_local_qwen_hallucination_dialog", None),
+            set_stt_desired=lambda v: setattr(self._toggle_coordinator, "stt_desired", v) if self._toggle_coordinator else None,
+            set_dash_stt_enabled=lambda v: (dash := getattr(self.app, "view_dashboard", None)) and dash.set_stt_enabled(v),
+            log_basic=lambda msg: self.log_basic(msg),
+            log_detailed=lambda msg, exc=None: self.log_detailed(msg, exception=exc),
+            log_error=lambda msg: self._log_error(msg),
+            runtime_logging=self.runtime_logging,
+        )
+
         set_locale(self.settings.ui.locale)
         self._sync_ui_from_settings()
         with contextlib.suppress(Exception):
@@ -366,6 +432,41 @@ class GuiController(
         )
         self._ui_event_bridge = bridge
         self._bridge_task = asyncio.create_task(bridge.run())
+
+        # ClipboardService — clipboard watcher + manual-typing state machine
+        import inspect as _inspect
+
+        async def _submit_text_and_wait(text: str, source: str) -> None:
+            if self.hub is None:
+                return
+            utterance_id = await self.hub.submit_text(text, source=source)
+            runtime = getattr(self.hub, "self_runtime", None)
+            tasks = getattr(runtime, "translation_tasks", None)
+            task = tasks.get(utterance_id) if isinstance(tasks, dict) else None
+            if isinstance(task, asyncio.Task):
+                await asyncio.gather(task, return_exceptions=True)
+            elif _inspect.isawaitable(task):
+                await task
+
+        def _set_osc_typing(reason: str, active: bool) -> None:
+            osc = self.osc
+            if osc is None:
+                return
+            set_reason = getattr(osc, "set_typing_reason", None)
+            if callable(set_reason):
+                set_reason(reason, active)
+                return
+            osc.send_typing(active)
+
+        self._clipboard_service = ClipboardService(
+            _submit_text_and_wait=_submit_text_and_wait,
+            _set_osc_typing=_set_osc_typing,
+            _clock=self.clock,
+            _log_error=lambda msg: self._log_error(msg),
+            _settings_provider=lambda: self.settings,
+            _page_run_task=getattr(self.page, "run_task", None),
+        )
+
         await self._sync_clipboard_watcher()
 
 
@@ -378,7 +479,7 @@ class GuiController(
         await self.set_stt_enabled(False)
         await self._configure_vrc_mic_receiver(enabled=False)
         await self._reset_manual_typing_state()
-        await self._shutdown_overlay_runtime(preserve_failure_reason=True)
+        await self.shutdown_overlay_runtime(preserve_failure_reason=True)
         if self._peer_runtime is not None:
             with contextlib.suppress(Exception):
                 await self._peer_runtime.close()
@@ -398,6 +499,28 @@ class GuiController(
             with contextlib.suppress(Exception):
                 self._runtime_logging.close()
             self._runtime_logging = None
+
+    # --- ClipboardService delegation ---
+
+    async def _sync_clipboard_watcher(self) -> None:
+        if self._clipboard_service is not None:
+            await self._clipboard_service.sync_clipboard_watcher()
+
+    async def _stop_clipboard_watcher(self) -> None:
+        if self._clipboard_service is not None:
+            await self._clipboard_service.stop_clipboard_watcher()
+
+    def note_manual_input_activity(self, has_text: bool) -> None:
+        if self._clipboard_service is not None:
+            self._clipboard_service.note_manual_input_activity(has_text)
+
+    async def submit_text(self, text: str) -> None:
+        if self._clipboard_service is not None:
+            await self._clipboard_service.submit_text(text)
+
+    async def _reset_manual_typing_state(self) -> None:
+        if self._clipboard_service is not None:
+            await self._clipboard_service.reset_manual_typing_state()
 
 
     async def set_translation_enabled(self, enabled: bool) -> bool:
@@ -866,6 +989,46 @@ class GuiController(
             rebuild_stt_provider=self._rebuild_stt_provider,
         )
 
+        # OverlayService — unified overlay lifecycle + desktop overlay management
+        self._overlay_service = OverlayService(
+            _settings_provider=lambda: self.settings,
+            _hub_provider=lambda: self.hub,
+            _clock=self.clock,
+            _runtime_logging_mode_provider=lambda: self.runtime_logging_mode,
+            _log_basic=lambda msg: self.log_basic(msg),
+            _log_detailed=lambda msg, level=logging.INFO, exc=None: self.log_detailed(msg, level=level, exception=exc),
+            _save_settings=lambda: self.save_settings(),
+            _apply_settings=lambda s: self.apply_settings(s),
+            _sync_effective_hub_flags=lambda s: self._sync_effective_hub_flags(s),
+            _refresh_overlay_peer_consumers=lambda: self._refresh_overlay_peer_consumers(),
+            _refresh_peer_stt_runtime=lambda: self._refresh_peer_stt_runtime(),
+            _ui_event_bridge_provider=lambda: self._ui_event_bridge,
+            _calibration_service_provider=lambda: self._calibration_service,
+            _overlay_calibration_provider=lambda: self.overlay_calibration,
+            _runtime_logging_provider=lambda: self.runtime_logging,
+            _signature_detector_provider=lambda: self._signature_detector,
+        )
+
+        # PeerToggleCoordinator — peer translation flag computation and toggle orchestration
+        self._peer_toggle_coordinator = PeerToggleCoordinatorSvc(
+            _settings_provider=lambda: self.settings,
+            _hub_provider=lambda: self.hub,
+            _overlay_state_provider=lambda: self.overlay_state,
+            _overlay_bridge_provider=lambda: self._overlay_bridge,
+            _failure_reason_provider=lambda: self.failure_reason,
+            _signature_detector_provider=lambda: self._signature_detector,
+            _log_basic=lambda msg: self.log_basic(msg),
+            _log_detailed=lambda msg: self.log_detailed(msg),
+            _ensure_peer_local_stt_ready=self._ensure_peer_local_stt_ready,
+            _begin_overlay_start=self.begin_overlay_start,
+            _refresh_overlay_runtime_dependencies=self.refresh_overlay_runtime_dependencies,
+            _save_settings=lambda: self.save_settings(),
+            _enqueue_peer_translation_disclosure=self._enqueue_peer_translation_disclosure,
+            _clear_local_stt_pending_enable=lambda: self._clear_local_stt_pending_enable_if_provider_switched_away(),
+            _sync_local_stt_notice=lambda: self._sync_local_stt_notice(),
+            _refresh_overlay_peer_contract=lambda: self.refresh_overlay_peer_contract(),
+        )
+
         from puripuly_heart.config.paths import default_vad_model_path as _default_vad_model_path
         self._peer_runtime = PeerChannelRuntime(
             hub=hub,
@@ -876,12 +1039,267 @@ class GuiController(
             vad_model_resolver=lambda: ensure_silero_vad_onnx(target_path=_default_vad_model_path()),
             run_audio_loop=self._run_peer_audio_vad_loop,
         )
+        self._peer_runtime_service = PeerRuntimeService(
+            _peer_runtime=self._peer_runtime,
+            _config_path=self.config_path,
+            _clock=self.clock,
+            _runtime_logging=self.runtime_logging,
+            _signature_detector=self._signature_detector,
+            _log_basic=lambda msg: self.log_basic(msg),
+            _log_detailed=lambda msg: self.log_detailed(msg),
+            _detailed_audio_diag_enabled=lambda: self._detailed_audio_diag_enabled(),
+            _debug_audio_fault_allowed=lambda: self._debug_audio_fault_allowed(),
+            _debug_stt_fault_profile_provider=lambda: self._diagnostics_service.debug_stt_fault_profile if self._diagnostics_service else "none",
+            _on_final_transcript_suppressed=self._on_final_transcript_suppressed,
+            _wrap_diagnostic_audio_source=self._wrap_diagnostic_audio_source,
+            _ensure_peer_local_stt_ready=self._ensure_peer_local_stt_ready,
+            _sync_effective_hub_flags=lambda s: self._sync_effective_hub_flags(s),
+            _peer_runtime_should_be_active=lambda s: self._peer_runtime_should_be_active(s),
+            _settings_provider=lambda: self.settings,
+            _hub_provider=lambda: self.hub,
+        )
+
+        # MicTestService — microphone test session lifecycle
+        self._mic_test_service = MicTestService(
+            _settings_provider=lambda: self.settings,
+            _clock=self.clock,
+            _log_basic=lambda msg: self.log_basic(msg),
+            _log_error=lambda msg: self._log_error(msg),
+            _set_stt_enabled=lambda enabled: self.set_stt_enabled(enabled),
+            _is_stt_active_or_desired=lambda: (
+                self._stt_desired
+                or self._local_stt_pending_enable_after_install
+                or self._mic_task is not None
+                or self._audio_source is not None
+            ),
+            _last_mic_loop_close_exception_provider=lambda: self._last_mic_loop_close_exception,
+            _signature_detector_provider=lambda: self._signature_detector,
+        )
+
         self._signature_detector.last_peer_translation_enabled = self.settings.ui.peer_translation_enabled
         await self._pipeline_manager.configure_vrc_receiver(
             enabled=self.settings.osc.vrc_mic_intercept,
             settings=self.settings,
         )
 
+    # --- PeerRuntimeService delegation ---
+
+    def _build_peer_runtime_config(self, settings):
+        return build_peer_runtime_config(settings)
+
+    def _enqueue_peer_translation_disclosure(self) -> None:
+        if self._peer_runtime_service is not None:
+            self._peer_runtime_service.enqueue_peer_translation_disclosure()
+
+    def _create_peer_stt_provider_from_runtime_config(self, config, on_terminal_failure):
+        return self._peer_runtime_service.create_peer_stt_provider_from_runtime_config(config, on_terminal_failure)
+
+    def _create_peer_audio_source_from_runtime_config(self, config):
+        return self._peer_runtime_service.create_peer_audio_source_from_runtime_config(config)
+
+    def _create_peer_vad_from_runtime_config(self, config, model_path):
+        return self._peer_runtime_service.create_peer_vad_from_runtime_config(config, model_path)
+
+    async def _run_peer_audio_vad_loop(self, **kwargs):
+        await self._peer_runtime_service.run_peer_audio_vad_loop(**kwargs)
+
+    async def _refresh_peer_stt_runtime(self) -> None:
+        if self._peer_runtime_service is not None:
+            await self._peer_runtime_service.refresh_peer_stt_runtime()
+
+    # --- OverlayService delegation ---
+
+    async def set_overlay_enabled(self, enabled: bool) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.set_overlay_enabled(enabled)
+
+    def on_overlay_start_failed(self, failure_reason: str | None) -> None:
+        if self._overlay_service is not None:
+            self._overlay_service.on_overlay_start_failed(failure_reason)
+
+    def on_overlay_runtime_disconnected(self) -> None:
+        if self._overlay_service is not None:
+            self._overlay_service.on_overlay_runtime_disconnected()
+
+    def on_overlay_runtime_crashed(self) -> None:
+        if self._overlay_service is not None:
+            self._overlay_service.on_overlay_runtime_crashed()
+
+    async def begin_overlay_start(self) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.begin_overlay_start()
+
+    async def shutdown_overlay_runtime(self, *, preserve_failure_reason: bool) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.shutdown_overlay_runtime(
+                preserve_failure_reason=preserve_failure_reason,
+            )
+
+    async def refresh_overlay_runtime_dependencies(self) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.refresh_overlay_runtime_dependencies()
+
+    def overlay_target_for_settings(self, settings: AppSettings | None = None) -> str:
+        if self._overlay_service is not None:
+            return self._overlay_service.overlay_target_for_settings(settings)
+        return OVERLAY_TARGET_STEAMVR
+
+    def overlay_runtime_is_active(self) -> bool:
+        if self._overlay_service is not None:
+            return self._overlay_service.overlay_runtime_is_active()
+        return False
+
+    def previous_overlay_target_for_apply(self) -> str:
+        if self._overlay_service is not None:
+            return self._overlay_service.previous_overlay_target_for_apply()
+        return self.overlay_target_for_settings(self.settings)
+
+    def build_initial_desktop_runtime_controls(
+        self,
+        settings: AppSettings,
+    ) -> list[dict[str, object]]:
+        if self._overlay_service is not None:
+            return self._overlay_service.build_initial_desktop_runtime_controls(settings)
+        return []
+
+    async def set_desktop_overlay_captions_locked(self, locked: bool) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.set_desktop_overlay_captions_locked(locked)
+
+    async def set_desktop_overlay_size_preset(self, size_preset: str) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.set_desktop_overlay_size_preset(size_preset)
+
+    async def reset_desktop_overlay_position(self) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.reset_desktop_overlay_position()
+
+    async def broadcast_desktop_runtime_control_payloads(
+        self,
+        payloads: list[dict[str, object]],
+    ) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.broadcast_desktop_runtime_control_payloads(payloads)
+
+    def prepare_desktop_runtime_settings_update(
+        self,
+        previous_settings: AppSettings | None,
+        next_settings: AppSettings,
+    ) -> list[dict[str, object]]:
+        if self._overlay_service is not None:
+            return self._overlay_service.prepare_desktop_runtime_settings_update(
+                previous_settings, next_settings,
+            )
+        return []
+
+    def sync_desktop_overlay_interaction_mode_from_settings(
+        self,
+        settings: AppSettings,
+    ) -> None:
+        if self._overlay_service is not None:
+            self._overlay_service.sync_desktop_overlay_interaction_mode_from_settings(settings)
+
+    async def emit_overlay_runtime_logging_mode_update(self) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.emit_overlay_runtime_logging_mode_update()
+
+    def schedule_overlay_runtime_logging_mode_update(self) -> None:
+        if self._overlay_service is not None:
+            self._overlay_service.schedule_overlay_runtime_logging_mode_update()
+
+    async def cancel_desktop_renderer_event_task(self) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.cancel_desktop_renderer_event_task()
+
+    async def cancel_desktop_bounds_persistence(self) -> None:
+        if self._overlay_service is not None:
+            await self._overlay_service.cancel_desktop_bounds_persistence()
+
+    # --- MicTestService delegation ---
+
+    @property
+    def microphone_test_meter_level(self) -> float:
+        if self._mic_test_service is not None:
+            return self._mic_test_service.microphone_test_meter_level
+        return 0.0
+
+    @property
+    def microphone_test_active(self) -> bool:
+        if self._mic_test_service is not None:
+            return self._mic_test_service.microphone_test_active
+        return False
+
+    async def start_microphone_test(self, *, meter_callback=None, level_log_interval_s=1.0) -> bool:
+        if self._mic_test_service is not None:
+            return await self._mic_test_service.start_microphone_test(
+                meter_callback=meter_callback,
+                level_log_interval_s=level_log_interval_s,
+            )
+        return False
+
+    async def stop_microphone_test(self) -> None:
+        if self._mic_test_service is not None:
+            await self._mic_test_service.stop_microphone_test()
+
+    async def stop_microphone_test_for_audio_settings_change(self) -> None:
+        if self._mic_test_service is not None:
+            await self._mic_test_service.stop_microphone_test_for_audio_settings_change()
+
+    async def run_microphone_test_capture(self, *, meter_callback=None, level_log_interval_s=1.0) -> None:
+        if self._mic_test_service is not None:
+            await self._mic_test_service.run_microphone_test_capture(
+                meter_callback=meter_callback,
+                level_log_interval_s=level_log_interval_s,
+            )
+
+    @staticmethod
+    def _microphone_test_audio_settings_signature(settings):
+        return MicTestService._microphone_test_audio_settings_signature(settings)
+
+    # --- PeerToggleCoordinator delegation ---
+
+    @property
+    def effective_peer_translation_enabled(self) -> bool:
+        if self._peer_toggle_coordinator is not None:
+            return self._peer_toggle_coordinator.effective_peer_translation_enabled
+        return False
+
+    def _effective_peer_translation_enabled_for(self, settings):
+        return self._peer_toggle_coordinator._effective_peer_translation_enabled_for(settings)
+
+    def _peer_translation_eula_accepted_for(self, settings):
+        return self._peer_toggle_coordinator._peer_translation_eula_accepted_for(settings)
+
+    def _peer_translation_activation_requested_for(self, settings):
+        return self._peer_toggle_coordinator._peer_translation_activation_requested_for(settings)
+
+    def _effective_peer_overlay_enabled_for(self, settings):
+        return self._peer_toggle_coordinator._effective_peer_overlay_enabled_for(settings)
+
+    def _effective_integrated_context_enabled_for(self, settings):
+        return self._peer_toggle_coordinator._effective_integrated_context_enabled_for(settings)
+
+    def _sync_effective_hub_flags(self, settings=None):
+        if self._peer_toggle_coordinator is not None:
+            self._peer_toggle_coordinator.sync_effective_hub_flags(settings)
+
+    def build_overlay_peer_consumer_contract(self):
+        if self._peer_toggle_coordinator is not None:
+            return self._peer_toggle_coordinator.build_overlay_peer_consumer_contract()
+        return None
+
+    def _refresh_overlay_peer_consumers(self):
+        if self._peer_toggle_coordinator is not None:
+            self._peer_toggle_coordinator.refresh_overlay_peer_consumers()
+
+    def _peer_runtime_should_be_active(self, settings):
+        if self._peer_toggle_coordinator is not None:
+            return self._peer_toggle_coordinator.peer_runtime_should_be_active(settings)
+        return False
+
+    async def set_peer_translation_enabled(self, enabled: bool) -> None:
+        if self._peer_toggle_coordinator is not None:
+            await self._peer_toggle_coordinator.set_peer_translation_enabled(enabled)
 
     async def _start_mic_loop(self) -> None:
         """Start microphone capture — delegates to PipelineLifecycleManager."""
@@ -934,34 +1352,7 @@ class GuiController(
             set_logging_mode = getattr(manager, "set_logging_mode", None)
             if callable(set_logging_mode):
                 set_logging_mode(self.runtime_logging.mode)
-        self._schedule_overlay_runtime_logging_mode_update()
-
-
-    def _schedule_overlay_runtime_logging_mode_update(self) -> None:
-        bridge = self._overlay_bridge
-        if bridge is None:
-            return
-
-        run_task = getattr(self.page, "run_task", None)
-        if callable(run_task):
-            try:
-                run_task(self._emit_overlay_runtime_logging_mode_update)
-                return
-            except Exception as exc:
-                self.log_detailed(
-                    "[Overlay] Failed to schedule logging mode update via page.run_task",
-                    level=logging.WARNING,
-                    exception=exc,
-                )
-                return
-
-        try:
-            asyncio.get_running_loop().create_task(self._emit_overlay_runtime_logging_mode_update())
-        except RuntimeError:
-            self.log_detailed(
-                "[Overlay] Skipping logging mode update; no running loop and page.run_task unavailable",
-                level=logging.WARNING,
-            )
+        self.schedule_overlay_runtime_logging_mode_update()
 
     def log_basic(self, message: str, *, level: int = logging.INFO) -> None:
         try:
@@ -1227,10 +1618,10 @@ class GuiController(
                 self._queue_mutation(_task)
 
     def on_overlay_state_changed(self, *, state: str, failure_reason: str | None = None) -> None:
-        previous_state = getattr(self, "_overlay_state", "unknown")
+        previous_state = self.overlay_state
         self.log_basic(f"[Overlay] State changed: {previous_state} -> {state}")
-        self._overlay_state = state
-        self._overlay_failure_reason = failure_reason
+        self.overlay_state = state
+        self.failure_reason = failure_reason
         self._sync_settings_overlay_runtime_state()
         self.refresh_overlay_peer_contract()
 
@@ -1262,10 +1653,10 @@ class GuiController(
         overlay_target = None
         if self.settings is not None:
             overlay_target = getattr(self.settings.overlay, "target", None)
-        desktop_locked = bool(getattr(self, "desktop_overlay_captions_locked", False))
+        desktop_locked = self.desktop_overlay_captions_locked
         set_state(
-            getattr(self, "_overlay_state", "off"),
-            failure_reason=getattr(self, "_overlay_failure_reason", None),
+            self.overlay_state,
+            failure_reason=self.failure_reason,
             overlay_target=overlay_target,
             desktop_captions_locked=desktop_locked,
         )
@@ -1386,10 +1777,379 @@ class GuiController(
             self.save_settings()
 
     def _on_start_microphone_test_async(self) -> None:
-        self.start_microphone_test()
+        async def _task():
+            await self.start_microphone_test()
+        self.page.run_task(_task)
 
     def _on_stop_microphone_test_async(self) -> None:
-        self.stop_microphone_test()
+        async def _task():
+            await self.stop_microphone_test()
+        self.page.run_task(_task)
+
+    # --- CalibrationService delegation (replaces CalibrationManagerMixin) ---
+
+    def begin_overlay_calibration(self) -> OverlayCalibration:
+        return self._calibration_service.begin_overlay_calibration()
+
+    def set_overlay_calibration_field(
+        self, field_name: str, value: object
+    ) -> OverlayCalibration:
+        return self._calibration_service.set_overlay_calibration_field(
+            field_name, value
+        )
+
+    def apply_overlay_calibration(self) -> OverlayCalibration:
+        return self._calibration_service.apply_overlay_calibration(self.settings)
+
+    def cancel_overlay_calibration(self) -> OverlayCalibration:
+        return self._calibration_service.cancel_overlay_calibration()
+
+    def _sync_overlay_calibration_cache(
+        self, settings: AppSettings | None = None
+    ) -> None:
+        if self._calibration_service is not None:
+            self._calibration_service.sync_from_settings(settings or self.settings)
+
+    async def _emit_overlay_calibration_update(self) -> None:
+        if self._calibration_service is not None:
+            await self._calibration_service._emit_calibration_update()
+
+    def _schedule_overlay_calibration_emit(self) -> None:
+        if self._calibration_service is not None:
+            self._calibration_service.set_overlay_presenter(self._overlay_presenter)
+            self._calibration_service._schedule_calibration_emit()
+
+    # --- SettingsService delegation (extracted from SettingsManagerMixin) ---
+
+    def _stt_provider_applies_custom_vocabulary(self, settings):
+        return self._settings_service.stt_provider_applies_custom_vocabulary(settings)
+
+    def _llm_provider_requires_secret(self, provider):
+        return self._settings_service.llm_provider_requires_secret(provider)
+
+    def _selected_stt_provider(self):
+        return self._settings_service.selected_stt_provider(self.settings)
+
+    def _stt_runtime_custom_vocabulary_signature(self, settings):
+        return self._settings_service.stt_runtime_custom_vocabulary_signature(settings)
+
+    def _build_self_stt_runtime_signature(self, settings):
+        return self._settings_service.build_self_stt_runtime_signature(settings)
+
+    def _build_self_stt_provider_signature(self, settings):
+        return self._settings_service.build_self_stt_provider_signature(settings)
+
+    def _build_peer_stt_runtime_signature(self, settings):
+        return self._settings_service.build_peer_stt_runtime_signature(settings)
+
+    def _build_peer_stt_provider_signature(self, settings):
+        return self._settings_service.build_peer_stt_provider_signature(settings)
+
+    def _build_llm_provider_signature(self, settings):
+        return self._settings_service.build_llm_provider_signature(settings)
+
+    def _sync_signature_caches(self, settings):
+        if self._settings_service is not None:
+            self._settings_service.sync_signature_caches(settings)
+
+    def _copy_provider_prompt_apply_fields(self, source, target):
+        self._settings_service.copy_provider_prompt_apply_fields(source, target)
+
+    def merge_settings_tab_apply_with_current_languages(self, pending):
+        return self._settings_service.merge_settings_tab_apply_with_current_languages(self.settings, pending)
+
+    def _load_or_init_settings(self, path):
+        return self._settings_service.load_or_init_settings(path)
+
+    def save_settings(self) -> None:
+        if self._settings_service is not None and self.settings is not None:
+            self._settings_service.save_settings_to_disk(self.config_path, self.settings)
+
+    # --- Settings UI sync (stays in GuiController — accesses self.app views) ---
+
+    def _sync_ui_from_settings(self) -> None:
+        settings = self.settings
+        if settings is None:
+            return
+        with contextlib.suppress(Exception):
+            dash = getattr(self.app, "view_dashboard", None)
+            if dash is not None:
+                dash.set_languages_from_codes(
+                    settings.languages.source_language,
+                    settings.languages.target_language,
+                    settings.languages.peer_source_language,
+                    settings.languages.peer_target_language,
+                    settings.languages.second_target_language,
+                )
+                dash.set_recent_languages(
+                    settings.languages.recent_source_languages,
+                    settings.languages.recent_target_languages,
+                )
+                dash.on_recent_languages_change = self._on_recent_languages_change
+        with contextlib.suppress(Exception):
+            view_settings = getattr(self.app, "view_settings", None)
+            if view_settings is not None:
+                view_settings.load_from_settings(settings, config_path=self.config_path)
+                view_settings.set_overlay_calibration(self.overlay_calibration)
+        self._refresh_overlay_peer_consumers()
+
+    def _on_recent_languages_change(self, source: list[str], target: list[str]) -> None:
+        if self.settings is None:
+            return
+        self.settings.languages.recent_source_languages = list(source)
+        self.settings.languages.recent_target_languages = list(target)
+        self.save_settings()
+
+    async def on_dashboard_language_change(
+        self,
+        *,
+        source_code: str,
+        target_code: str,
+        peer_source_code: str = "",
+        peer_target_code: str = "",
+        second_target_code: str = "",
+    ) -> None:
+        if self.settings is None:
+            return
+        updated = copy.deepcopy(self.settings)
+        updated.languages.source_language = source_code
+        updated.languages.target_language = target_code
+        updated.languages.second_target_language = second_target_code
+        updated.languages.peer_source_language = peer_source_code
+        updated.languages.peer_target_language = peer_target_code
+        await self.apply_settings(updated)
+
+    async def apply_settings(self, settings: AppSettings) -> None:
+        # Phase 0: Pre-diff checks (mic test audio change)
+        prev_microphone_test_audio_signature = (
+            self._signature_detector.last_microphone_test_audio_settings_signature
+            or self._microphone_test_audio_settings_signature(self.settings)
+        )
+        next_microphone_test_audio_signature = self._microphone_test_audio_settings_signature(
+            settings
+        )
+        if (
+            prev_microphone_test_audio_signature is not None
+            and prev_microphone_test_audio_signature != next_microphone_test_audio_signature
+        ):
+            await self.stop_microphone_test_for_audio_settings_change()
+
+        prev_locale = get_locale()
+        prev_overlay_enabled = (
+            self.settings.ui.overlay_enabled if self.settings is not None else False
+        )
+        previous_settings_for_desktop = (
+            copy.deepcopy(self.settings) if self.settings is not None else None
+        )
+        prev_overlay_target = self.previous_overlay_target_for_apply()
+        next_overlay_target = self.overlay_target_for_settings(settings)
+        if (
+            prev_overlay_target != next_overlay_target
+            and prev_overlay_enabled
+            and settings.ui.overlay_enabled
+            and self.overlay_runtime_is_active()
+        ):
+            self.log_basic(
+                "[Overlay] Target changed while running; stopping current overlay before switch"
+            )
+            settings = copy.deepcopy(settings)
+            settings.ui.overlay_enabled = False
+        desktop_runtime_controls = self.prepare_desktop_runtime_settings_update(
+            previous_settings_for_desktop,
+            settings,
+        )
+
+        # Phase 1: Compute diff (pure function — no side effects)
+        prev_peer_translation_enabled = (
+            self._signature_detector.last_peer_translation_enabled
+            if self._signature_detector.last_peer_translation_enabled is not None
+            else (self.settings.ui.peer_translation_enabled if self.settings is not None else False)
+        )
+        prev_peer_activation_requested = (
+            self._signature_detector.last_peer_translation_activation_requested
+            if self._signature_detector.last_peer_translation_activation_requested is not None
+            else (
+                self._peer_translation_activation_requested_for(self.settings)
+                if self.settings is not None
+                else False
+            )
+        )
+        prev_self_signature = (
+            self._signature_detector.last_self_stt_runtime_signature
+            or self._signature_detector.last_stt_runtime_signature
+        )
+        prev_peer_signature = self._signature_detector.last_peer_stt_runtime_signature
+
+        diff = self._settings_service.compute_diff(
+            prev_settings=self.settings,
+            next_settings=settings,
+            hub_source_lang=self.hub.source_language if self.hub else None,
+            hub_target_lang=self.hub.target_language if self.hub else None,
+            hub_peer_source_lang=(
+                getattr(self.hub, "peer_source_language", None) if self.hub else None
+            ),
+            hub_peer_target_lang=(
+                getattr(self.hub, "peer_target_language", None) if self.hub else None
+            ),
+            hub_low_latency=self.hub.low_latency_mode if self.hub else None,
+            hub_second_target_lang=(
+                getattr(self.hub, "second_target_language", "") if self.hub else ""
+            ),
+            prev_self_signature=prev_self_signature,
+            prev_peer_signature=prev_peer_signature,
+            prev_peer_enabled=prev_peer_translation_enabled,
+            prev_peer_activation=prev_peer_activation_requested,
+            next_self_signature=self._build_self_stt_runtime_signature(settings),
+            next_peer_signature=self._build_peer_stt_runtime_signature(settings),
+            next_peer_activation=self._peer_translation_activation_requested_for(settings),
+            prev_overlay_target=prev_overlay_target,
+            next_overlay_target=next_overlay_target,
+            prev_overlay_enabled=prev_overlay_enabled,
+            prev_vrc_mic_sync=self._last_vrc_mic_sync_enabled,
+            prev_locale=prev_locale,
+        )
+
+        # Phase 2: Apply mutations (update state)
+        if diff.source_language_changed or diff.target_language_changed:
+            presenter = self._overlay_presenter
+            self.log_basic(
+                "[Settings] Applying languages: "
+                f"source={self.hub.source_language if self.hub else None}->{settings.languages.source_language} "
+                f"target={self.hub.target_language if self.hub else None}->{settings.languages.target_language}"
+            )
+            self.log_detailed(
+                "[Settings] Language apply detail: "
+                f"overlay_state={self.overlay_state} "
+                f"presenter_attached={presenter is not None} "
+                f"bridge_attached={self._overlay_bridge is not None} "
+                "overlay_sink_matches_presenter="
+                f"{self.hub is not None and presenter is not None and getattr(self.hub, 'overlay_sink', None) is presenter}"
+            )
+
+        self.settings = settings
+        self._signature_detector.last_microphone_test_audio_settings_signature = next_microphone_test_audio_signature
+        self._sync_overlay_calibration_cache(settings)
+        self.sync_desktop_overlay_interaction_mode_from_settings(settings)
+        self.save_settings()
+        await self.broadcast_desktop_runtime_control_payloads(desktop_runtime_controls)
+        await self._sync_clipboard_watcher()
+        self._refresh_local_stt_runtime_state()
+        self._clear_local_stt_pending_enable_if_provider_switched_away()
+
+        # Phase 3: Dispatch side effects based on diff
+        if diff.low_latency_changed:
+            self.log_detailed(
+                "[Settings] Low latency detail: "
+                f"mode changing to {settings.stt.low_latency_mode} rebuilding_llm_provider=True"
+            )
+            await self._rebuild_llm_provider()
+
+        if diff.llm_provider_changed:
+            self.log_basic(
+                f"[Settings] LLM provider changed: rebuilding"
+            )
+            await self._rebuild_llm_provider()
+
+        if self.hub is not None:
+            self.hub.source_language = settings.languages.source_language
+            self.hub.target_language = settings.languages.target_language
+            self.hub.second_target_language = settings.languages.second_target_language
+            if self.hub.translation_service is not None:
+                ts = self.hub.translation_service
+                ts.source_language = settings.languages.source_language
+                ts.target_language = settings.languages.target_language
+                ts.second_target_language = settings.languages.second_target_language
+                ts.peer_source_language = settings.languages.peer_source_language
+                ts.peer_target_language = settings.languages.peer_target_language
+                ts.system_prompt = settings.system_prompt
+            self.hub.peer_source_language = settings.languages.peer_source_language
+            self.hub.peer_target_language = settings.languages.peer_target_language
+            self.hub.system_prompt = settings.system_prompt
+            self.hub.low_latency_mode = settings.stt.low_latency_mode
+            self.hub.low_latency_spec_retry_max = settings.stt.low_latency_spec_retry_max
+            self.hub.hangover_s = (
+                settings.stt.low_latency_vad_hangover_ms / 1000.0
+                if settings.stt.low_latency_mode
+                else DEFAULT_STABLE_VAD_HANGOVER_MS / 1000.0
+            )
+            self.hub.peer_hangover_s = settings.desktop_audio.vad_hangover_ms / 1000.0
+            self.hub.chatbox_include_source = settings.osc.chatbox_include_source
+            if self.hub.output_dispatcher is not None:
+                self.hub.output_dispatcher.chatbox_include_source = settings.osc.chatbox_include_source
+            self._sync_effective_hub_flags(settings)
+
+            async def _clear_language_runtime_state(channel: str) -> None:
+                try:
+                    await self.hub.clear_language_runtime_state(channel=channel)
+                except Exception as exc:
+                    self._log_error(f"Failed to clear language runtime state for {channel}: {exc}")
+
+            if diff.source_language_changed or diff.target_language_changed or diff.second_target_language_changed:
+                await _clear_language_runtime_state("self")
+            if diff.effective_peer_source_changed or diff.effective_peer_target_changed or diff.second_target_language_changed:
+                await _clear_language_runtime_state("peer")
+
+        presenter = self._overlay_presenter
+        if presenter is not None:
+            await presenter.update_display_preferences(
+                show_translation=settings.overlay.show_translation,
+                show_peer_original=settings.overlay.show_peer_original,
+            )
+
+        if diff.overlay_enabled_changed:
+            await self.set_overlay_enabled(settings.ui.overlay_enabled)
+
+        if diff.vrc_mic_sync_changed:
+            if self.vrc_mic_audio_gate is not None:
+                self.vrc_mic_audio_gate.set_enabled(settings.osc.vrc_mic_intercept)
+            self.log_detailed(f"[Settings] VRC mic sync enabled: {settings.osc.vrc_mic_intercept}")
+            await self._configure_vrc_mic_receiver(enabled=settings.osc.vrc_mic_intercept)
+
+        self._sync_signature_caches(settings)
+
+        if diff.source_language_changed or diff.target_language_changed:
+            self.log_detailed(
+                "[Settings] Language runtime impact: "
+                f"should_restart_stt={diff.should_restart_stt} "
+                f"should_refresh_peer={diff.should_refresh_peer} "
+                f"prev_overlay_enabled={prev_overlay_enabled} "
+                f"next_overlay_enabled={settings.ui.overlay_enabled}"
+            )
+
+        if diff.should_refresh_peer and self.hub is not None:
+            await self._refresh_peer_stt_runtime()
+            self._sync_effective_hub_flags(settings)
+
+        if diff.should_restart_stt:
+            await self._replace_runtime_stt_provider()
+
+        any_language_changed = (
+            diff.source_language_changed
+            or diff.target_language_changed
+            or diff.second_target_language_changed
+            or diff.effective_peer_source_changed
+            or diff.effective_peer_target_changed
+        )
+        if any_language_changed:
+            view_settings = getattr(self.app, "view_settings", None)
+            if view_settings is not None:
+                with contextlib.suppress(Exception):
+                    view_settings.load_from_settings(
+                        settings,
+                        config_path=self.config_path,
+                        preserve_custom_vocab_draft=True,
+                    )
+
+        if diff.locale_changed:
+            set_locale(settings.ui.locale)
+            apply_locale = getattr(self.app, "apply_locale", None)
+            if callable(apply_locale):
+                try:
+                    apply_locale()
+                except Exception as exc:
+                    self._log_error(f"Failed to apply locale: {exc}")
+
+        self._refresh_overlay_peer_consumers()
 
     def _log_error(self, message: str) -> None:
         self.log_basic(message, level=logging.ERROR)
