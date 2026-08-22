@@ -144,11 +144,11 @@ class AudioSettings(ft.Column):
         self._current_host_api = val
         display = self._host_api_label_for(val)
         self._host_api_text.content.value = display
-        if self._host_api_text.page:
-            try:
+        try:
+            if self._host_api_text.page:
                 self._host_api_text.update()
-            except (AssertionError, RuntimeError):
-                pass
+        except (AssertionError, RuntimeError):
+            pass
 
     @property
     def microphone(self) -> str:
@@ -160,11 +160,11 @@ class AudioSettings(ft.Column):
         self._current_microphone = val
         display = val or self._default_option_label
         self._mic_text.content.value = display
-        if self._mic_text.page:
-            try:
+        try:
+            if self._mic_text.page:
                 self._mic_text.update()
-            except (AssertionError, RuntimeError):
-                pass
+        except (AssertionError, RuntimeError):
+            pass
 
     @property
     def desktop_output_device(self) -> str:
@@ -175,11 +175,11 @@ class AudioSettings(ft.Column):
         self._current_desktop_output_device = val
         display = val or self._default_option_label
         self._desktop_output_text.content.value = display
-        if self._desktop_output_text.page:
-            try:
+        try:
+            if self._desktop_output_text.page:
                 self._desktop_output_text.update()
-            except (AssertionError, RuntimeError):
-                pass
+        except (AssertionError, RuntimeError):
+            pass
 
     def _get_host_api_options(self) -> list[OptionItem]:
         """Get available host API options."""

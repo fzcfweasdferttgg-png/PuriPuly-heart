@@ -58,7 +58,10 @@ def _set_text_button_label(button: ft.TextButton, label: str) -> None:
 
 def _update_control_if_mounted(control: ft.Control) -> None:
     """Update a Flet control only while it is attached to a page."""
-    if getattr(control, "page", None) is None:
+    try:
+        if control.page is None:
+            return
+    except (AssertionError, RuntimeError):
         return
     try:
         control.update()
