@@ -21,7 +21,6 @@ from puripuly_heart.app.services.provider_signature_service import (
     build_self_stt_runtime_signature as _build_self_stt_runtime_signature_impl,
     copy_provider_prompt_apply_fields as _copy_provider_prompt_apply_fields_impl,
     llm_provider_requires_secret as _llm_provider_requires_secret_impl,
-    stt_provider_applies_custom_vocabulary as _stt_provider_applies_custom_vocabulary_impl,
 )
 from puripuly_heart.app.wiring import build_peer_stt_provider_signature
 from puripuly_heart.config.settings import new_settings_for_first_run
@@ -63,9 +62,6 @@ class SettingsService:
 
     # --- Provider signature methods (from ProviderSignaturesMixin) ---
 
-    def stt_provider_applies_custom_vocabulary(self, settings: AppSettings) -> bool:
-        return _stt_provider_applies_custom_vocabulary_impl(settings)
-
     def llm_provider_requires_secret(self, provider: object) -> bool:
         return _llm_provider_requires_secret_impl(provider)
 
@@ -73,10 +69,6 @@ class SettingsService:
         if settings is None:
             return None
         return settings.provider.stt
-
-    def stt_runtime_custom_vocabulary_signature(self, settings: AppSettings):
-        from puripuly_heart.app.services.provider_signature_service import stt_runtime_custom_vocabulary_signature
-        return stt_runtime_custom_vocabulary_signature(settings)
 
     def build_self_stt_runtime_signature(self, settings: AppSettings) -> tuple[object, ...]:
         return _build_self_stt_runtime_signature_impl(settings)

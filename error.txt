@@ -1,0 +1,673 @@
+16:00:58 [INFO] [Secrets] Loaded keys: oc=False backup=False fallback_llm=False local_llm=False
+16:00:58 [INFO] [JobObject] Created with KILL_ON_JOB_CLOSE, handle=1300
+16:00:58 [INFO] UI Event Bridge started
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] environment
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] hostapi index=0 name='MME' default_input=1 default_output=5
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] hostapi index=1 name='Windows DirectSound' default_input=7 default_output=11
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] hostapi index=2 name='Windows WASAPI' default_input=16 default_output=14
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] hostapi index=3 name='Windows WDM-KS' default_input=29 default_output=25
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=0 name='Переназначение звуковых устр. - Input' hostapi=0 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=1 name='Микрофон (Yanmai Q10B)' hostapi=0 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=2 name='Набор микрофонов (Pico Streamin' hostapi=0 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=3 name='Микрофон (PicoStreamingMicropho' hostapi=0 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=4 name='Переназначение звуковых устр. - Output' hostapi=0 max_input_channels=0 max_output_channels=2 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=5 name='Динамики (Realtek High Definiti' hostapi=0 max_input_channels=0 max_output_channels=8 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=6 name='Динамики (Pico Streaming Speake' hostapi=0 max_input_channels=0 max_output_channels=2 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=7 name='Первичный драйвер записи звука' hostapi=1 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=8 name='Микрофон (Yanmai Q10B)' hostapi=1 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=9 name='Набор микрофонов (Pico Streaming Speaker)' hostapi=1 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=10 name='Микрофон (PicoStreamingMicrophone)' hostapi=1 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=11 name='Первичный звуковой драйвер' hostapi=1 max_input_channels=0 max_output_channels=2 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=12 name='Динамики (Realtek High Definition Audio)' hostapi=1 max_input_channels=0 max_output_channels=8 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=13 name='Динамики (Pico Streaming Speaker)' hostapi=1 max_input_channels=0 max_output_channels=2 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=14 name='Динамики (Realtek High Definition Audio)' hostapi=2 max_input_channels=0 max_output_channels=2 default_samplerate=96000.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=15 name='Динамики (Pico Streaming Speaker)' hostapi=2 max_input_channels=0 max_output_channels=2 default_samplerate=48000.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=16 name='Микрофон (Yanmai Q10B)' hostapi=2 max_input_channels=2 max_output_channels=0 default_samplerate=48000.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=17 name='Набор микрофонов (Pico Streaming Speaker)' hostapi=2 max_input_channels=2 max_output_channels=0 default_samplerate=48000.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=18 name='Микрофон (PicoStreamingMicrophone)' hostapi=2 max_input_channels=2 max_output_channels=0 default_samplerate=48000.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=19 name='Microphone Array ()' hostapi=3 max_input_channels=2 max_output_channels=0 default_samplerate=48000.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=20 name='Speakers ()' hostapi=3 max_input_channels=0 max_output_channels=2 default_samplerate=48000.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=21 name='Output (AMD HD Audio DP out #1)' hostapi=3 max_input_channels=0 max_output_channels=2 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=22 name='Лин. вход (Realtek HD Audio Line input)' hostapi=3 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=23 name='Микрофон (Realtek HD Audio Mic input)' hostapi=3 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=24 name='Стерео микшер (Realtek HD Audio Stereo input)' hostapi=3 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=25 name='Speakers (Realtek HD Audio output)' hostapi=3 max_input_channels=0 max_output_channels=8 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=26 name='Headphones (Realtek HD Audio 2nd output)' hostapi=3 max_input_channels=0 max_output_channels=2 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=27 name='Микрофон ()' hostapi=3 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=28 name='Output ()' hostapi=3 max_input_channels=0 max_output_channels=2 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][SoundDevice] device index=29 name='Микрофон (Yanmai Q10B)' hostapi=3 max_input_channels=2 max_output_channels=0 default_samplerate=44100.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][Loopback] environment
+16:01:07 [INFO] [AudioDiag][Snapshot][Loopback] default name='Динамики (Realtek High Definition Audio) [Loopback]' index=19
+16:01:07 [INFO] [AudioDiag][Snapshot][Loopback] device index=19 name='Динамики (Realtek High Definition Audio) [Loopback]' channels=2 default_samplerate=96000.0 virtual_hint=False
+16:01:07 [INFO] [AudioDiag][Snapshot][Loopback] device index=20 name='Динамики (Pico Streaming Speaker) [Loopback]' channels=2 default_samplerate=48000.0 virtual_hint=False
+16:01:09 [INFO] [STT] Toggle request: enabled=True
+16:01:09 [INFO] [STT] Enabled with provider: local_qwen3_asr_gguf
+16:01:09 [INFO] [STT] State: DISCONNECTED -> CONNECTING
+16:01:09 [INFO] [STT] Opening new session (attempt 1/3)...
+16:01:09 [INFO] [InferenceWorker] Starting: provider=local_transcribecpp model_dir=C:\Users\tester\Desktop\portable-core-test\data\models\qwen3-asr-0.6b\gguf\q6_k provider_type=vulkan device=0
+16:01:09 [INFO] [Hub] STT state: channel=self state=CONNECTING
+16:01:09 [INFO] [JobObject] Assigned pid=6376 to job
+16:01:09 [INFO] [InferenceWorker] Worker ready, sending init...
+16:01:10 [INFO] [InferenceWorker] Worker initialized successfully
+16:01:10 [INFO] [STT] State: CONNECTING -> STREAMING
+16:01:10 [INFO] [STT] Session connected
+16:01:10 [INFO] [STT] Session ready (reset_deadline=300.0s)
+16:01:10 [INFO] [STT] Session pre-warmed
+16:01:10 [INFO] [MicLoop] host_api: saved='Windows WASAPI (Compatibility Mode)' actual='Windows WASAPI' wasapi_auto_convert=True
+16:01:10 [INFO] [MicLoop] device resolved: idx=16
+16:01:10 [INFO] [MicLoop] channels: preferred=2 internal=1 metadata_status=ok
+16:01:10 [INFO] [MicLoop] creating SoundDeviceAudioSource: device=16 samplerate=16000 channels=2 blocksize=8000
+16:01:10 [WARNING] [MicSource] stream failed: Error opening InputStream: Invalid sample rate [PaErrorCode -9997] — retrying with device default samplerate
+16:01:10 [WARNING] [MicSource] fallback also failed: Error starting stream: Unanticipated host error [PaErrorCode -9999]: 'AUDCLNT_E_UNSUPPORTED_FORMAT' [Windows WASAPI error -2004287480] — retrying without WASAPI settings
+16:01:11 [INFO] [Hub] STT state: channel=self state=STREAMING
+16:01:11 [INFO] [Detailed][OSC] send mode=immediate status=attempt chars=12 remaining_parts=0 text='PuriPuly ON!'
+16:01:11 [INFO] [Basic][OSC] send mode=immediate status=delivered chars=12 remaining_parts=0
+16:01:11 [ERROR] exception calling callback for <Future at 0x28c1be90 state=finished raised PortAudioError>
+Traceback (most recent call last):
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\core\audio\source.py", line 542, in __post_init__
+    stream = sd.InputStream(**stream_kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tester\Desktop\portable-core-test\python\Lib\site-packages\sounddevice.py", line 1457, in __init__
+    _StreamBase.__init__(self, kind='input', wrap_callback='array',
+  File "C:\Users\tester\Desktop\portable-core-test\python\Lib\site-packages\sounddevice.py", line 914, in __init__
+    _check(_lib.Pa_OpenStream(self._ptr, iparameters, oparameters,
+  File "C:\Users\tester\Desktop\portable-core-test\python\Lib\site-packages\sounddevice.py", line 2838, in _check
+    raise PortAudioError(errormsg, err)
+sounddevice.PortAudioError: Error opening InputStream: Invalid sample rate [PaErrorCode -9997]
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\core\audio\source.py", line 555, in __post_init__
+    stream.start()
+  File "C:\Users\tester\Desktop\portable-core-test\python\Lib\site-packages\sounddevice.py", line 1129, in start
+    _check(err, 'Error starting stream')
+  File "C:\Users\tester\Desktop\portable-core-test\python\Lib\site-packages\sounddevice.py", line 2836, in _check
+    raise PortAudioError(errormsg, err, hosterror_info)
+sounddevice.PortAudioError: Error starting stream: Unanticipated host error [PaErrorCode -9999]: 'AUDCLNT_E_UNSUPPORTED_FORMAT' [Windows WASAPI error -2004287480]
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "concurrent\futures\_base.py", line 340, in _invoke_callbacks
+  File "C:\Users\tester\Desktop\portable-core-test\python\Lib\site-packages\flet\core\page.py", line 895, in _on_completion
+    raise exception
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\app\services\gui_controller.py", line 1712, in _task
+    await self.set_stt_enabled(enabled)
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\app\services\gui_controller.py", line 541, in set_stt_enabled
+    await self._toggle_coordinator.set_stt_enabled(enabled)
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\app\services\toggle_coordinator.py", line 173, in set_stt_enabled
+    await self._ensure_stt_switch()
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\app\services\toggle_coordinator.py", line 178, in _ensure_stt_switch
+    await self._stt_switch_task
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\app\services\toggle_coordinator.py", line 266, in _run_stt_switch
+    await self.start_mic_loop(self.settings)
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\app\services\pipeline_lifecycle.py", line 306, in start_mic_loop
+    source = SoundDeviceAudioSource(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 17, in __init__
+  File "C:\Users\tester\Desktop\portable-core-test\app\src\puripuly_heart\core\audio\source.py", line 566, in __post_init__
+    stream.start()
+  File "C:\Users\tester\Desktop\portable-core-test\python\Lib\site-packages\sounddevice.py", line 1129, in start
+    _check(err, 'Error starting stream')
+  File "C:\Users\tester\Desktop\portable-core-test\python\Lib\site-packages\sounddevice.py", line 2836, in _check
+    raise PortAudioError(errormsg, err, hosterror_info)
+sounddevice.PortAudioError: Error starting stream: Unanticipated host error [PaErrorCode -9999]: 'AUDCLNT_E_UNSUPPORTED_FORMAT' [Windows WASAPI error -2004287480]
+16:01:12 [INFO] [Peer] Toggle request: enabled=True
+16:01:12 [INFO] [Peer] Toggle detail: overlay_enabled=False overlay_state=off peer_stt_available=False eula_accepted=True
+16:01:12 [INFO] [InferenceWorker] Starting: provider=local_transcribecpp model_dir=C:\Users\tester\Desktop\portable-core-test\data\models\qwen3-asr-0.6b\gguf\q6_k provider_type=vulkan device=0
+16:01:12 [INFO] [JobObject] Assigned pid=15084 to job
+16:01:13 [INFO] [InferenceWorker] Worker ready, sending init...
+16:01:13 [INFO] [InferenceWorker] Worker initialized successfully
+16:01:13 [INFO] [InferenceWorker] Killing worker: pid=15084 provider=local_transcribecpp provider_type=vulkan
+16:01:13 [INFO] [Overlay] State transition: off -> starting
+16:01:13 [INFO] [Overlay] State detail: presenter_attached=False bridge_attached=False manager_state=None
+16:01:13 [INFO] [Overlay] State changed: starting -> starting
+16:01:13 [INFO] [Hub] OSC disclosure enqueue: channel=peer text_len=63
+16:01:13 [INFO] [Detailed][OSC] send mode=queued status=attempt chars=63 remaining_parts=0 text='Перевод собеседника включён.\nАудио вокруг может быть захвачено.'
+16:01:13 [INFO] [Basic][OSC] send mode=queued status=delivered chars=63 remaining_parts=0
+16:01:13 [INFO] [Settings] Saved: backup.enabled=False mode=openai_compatible oc.base_url= oc.model= llm.base_url= llm.model= stt=local_qwen3_asr_gguf stt_quant=q6_k peer_stt=local_qwen3_asr_gguf peer_stt_quant=q6_k llm=none
+16:01:13 [INFO] [Overlay][Start] target=desktop overlay_instance_id=overlay-692acd4d1a9c6dbf logging_mode=detailed peer_presentation_refresh_burst=False self_presentation_refresh_burst=False
+16:01:13 [INFO] [DesktopOverlay][Launch] target=desktop locked=False interaction_mode=edit size_preset=medium x=238.0 y=678.0 width=1344 height=336 text_scale=1.0 background_alpha=0.6 outline_width=None
+16:01:13 [INFO] server listening on 127.0.0.1:59657
+16:01:14 [INFO] connection open
+16:01:14 [INFO] [OverlayBridge] Overlay authenticated: overlay_instance_id=overlay-692acd4d1a9c6dbf connection_id=conn-28c01430 revision=0 authenticated_connections=1
+16:01:14 [INFO] [DesktopOverlay][Detail] logging_mode mode=detailed
+16:01:14 [INFO] [DesktopOverlay][Detail] render revision=0 blocks=0 interaction_mode=edit surface_visible=True line_count=0 content_kind=drag_area_with_empty_lock_action window=1344x336 background_alpha=0.6
+16:01:14 [INFO] [OverlayProcess] Ready: overlay_instance_id=overlay-692acd4d1a9c6dbf phase=startup manifest_path=C:\Users\tester\AppData\Local\Temp\puripuly-overlay-hz45_1nu.json
+16:01:14 [INFO] [Overlay] State transition: starting -> connected
+16:01:14 [INFO] [Overlay] State detail: presenter_attached=True bridge_attached=True manager_state=connected
+16:01:14 [INFO] [Overlay] State changed: connected -> connected
+16:01:14 [INFO] [Settings] Peer STT provider replacement: provider=STTProviderName.LOCAL_QWEN3_ASR_GGUF peer_stt_compute=gpu desired_active=True
+16:01:14 [INFO] [InferenceWorker] Starting: provider=local_transcribecpp model_dir=C:\Users\tester\Desktop\portable-core-test\data\models\qwen3-asr-0.6b\gguf\q6_k provider_type=vulkan device=0
+16:01:14 [INFO] [JobObject] Assigned pid=8168 to job
+16:01:14 [INFO] [InferenceWorker] Worker ready, sending init...
+16:01:15 [INFO] [DesktopOverlay][Detail] interaction_mode edit->pass_through
+16:01:15 [INFO] [DesktopOverlay][Detail] render revision=0 blocks=0 interaction_mode=pass_through surface_visible=False line_count=0 content_kind=transparent_host window=1344x336 background_alpha=0.0
+16:01:15 [INFO] [DesktopOverlay][Detail] render_transition revision=0 content_kind drag_area_with_empty_lock_action->transparent_host surface_visible True->False slot_count 0->0 line_count 0->0 window 1344x336->1344x336 background_alpha 0.600->0.000
+16:01:15 [INFO] [InferenceWorker] Worker initialized successfully
+16:01:15 [INFO] [InferenceWorker] Killing worker: pid=8168 provider=local_transcribecpp provider_type=vulkan
+16:01:16 [INFO] [PeerChannel] _start_generation: generation=1
+16:01:16 [INFO] [PeerChannel] _start_generation: STT created, creating source+VAD
+16:01:16 [INFO] [AudioDiag][Loopback][peer] requested_device='' resolved_device_name='Динамики (Realtek High Definition Audio) [Loopback]' resolved_device_index=19 resolved_channels=2 actual_sample_rate_hz=96000 used_default_fallback=False
+16:01:16 [INFO] [PeerChannel] _start_generation: source+VAD created, replacing provider
+16:01:16 [INFO] [PeerChannel] _start_generation: RUNNING, loop task created
+16:01:16 [INFO] [STT] State: DISCONNECTED -> CONNECTING
+16:01:16 [INFO] [STT] Opening new session (attempt 1/3)...
+16:01:16 [INFO] [InferenceWorker] Starting: provider=local_transcribecpp model_dir=C:\Users\tester\Desktop\portable-core-test\data\models\qwen3-asr-0.6b\gguf\q6_k provider_type=vulkan device=0
+16:01:16 [INFO] [Hub] STT state: channel=peer state=CONNECTING
+16:01:16 [INFO] [PeerChannel] loop starting: target_rate=16000 generation=1
+16:01:16 [INFO] [JobObject] Assigned pid=5644 to job
+16:01:16 [INFO] [InferenceWorker] Worker ready, sending init...
+16:01:17 [INFO] [InferenceWorker] Worker initialized successfully
+16:01:17 [INFO] [STT] State: CONNECTING -> STREAMING
+16:01:17 [INFO] [STT] Session connected
+16:01:17 [INFO] [STT] Session ready (reset_deadline=300.0s)
+16:01:17 [INFO] [STT] Session pre-warmed
+16:01:17 [INFO] [Settings] Peer STT provider replacement completed
+16:01:17 [INFO] [Hub] STT state: channel=peer state=STREAMING
+16:01:31 [INFO] [Settings] Microphone changed:  -> Микрофон (Yanmai Q10B)
+16:01:31 [INFO] [Settings] Saved: backup.enabled=False mode=openai_compatible oc.base_url= oc.model= llm.base_url= llm.model= stt=local_qwen3_asr_gguf stt_quant=q6_k peer_stt=local_qwen3_asr_gguf peer_stt_quant=q6_k llm=none
+16:01:31 [INFO] [STT] Replacing runtime provider detail: desired=True
+16:01:31 [INFO] [Settings] STT provider replacement: provider_type=gpu
+16:01:31 [INFO] [STT] State: STREAMING -> DRAINING
+16:01:31 [INFO] [STT] DRAIN: Starting drain (timeout=2.0s)...
+16:01:31 [INFO] [STT] DRAIN: Consumer task completed normally
+16:01:31 [INFO] [STT] DRAIN: Session closed
+16:01:31 [INFO] [STT] State: DRAINING -> DISCONNECTED
+16:01:31 [INFO] [InferenceWorker] Killing worker: pid=6376 provider=local_transcribecpp provider_type=vulkan
+16:01:31 [INFO] [Settings] STT provider replacement completed successfully
+16:01:32 [INFO] [STT] State: DISCONNECTED -> CONNECTING
+16:01:32 [INFO] [STT] Opening new session (attempt 1/3)...
+16:01:32 [INFO] [InferenceWorker] Starting: provider=local_transcribecpp model_dir=C:\Users\tester\Desktop\portable-core-test\data\models\qwen3-asr-0.6b\gguf\q6_k provider_type=vulkan device=0
+16:01:32 [INFO] [Hub] STT state: channel=self state=CONNECTING
+16:01:32 [INFO] [JobObject] Assigned pid=15768 to job
+16:01:32 [INFO] [InferenceWorker] Worker ready, sending init...
+16:01:33 [INFO] [InferenceWorker] Worker initialized successfully
+16:01:33 [INFO] [STT] State: CONNECTING -> STREAMING
+16:01:33 [INFO] [STT] Session connected
+16:01:33 [INFO] [STT] Session ready (reset_deadline=300.0s)
+16:01:33 [INFO] [STT] Session pre-warmed
+16:01:33 [INFO] [MicLoop] host_api: saved='Windows WASAPI (Compatibility Mode)' actual='Windows WASAPI' wasapi_auto_convert=True
+16:01:33 [INFO] [MicLoop] device resolved: idx=16
+16:01:33 [INFO] [MicLoop] channels: preferred=2 internal=1 metadata_status=ok
+16:01:33 [INFO] [MicLoop] creating SoundDeviceAudioSource: device=16 samplerate=16000 channels=2 blocksize=8000
+16:01:33 [WARNING] [MicSource] stream failed: Error opening InputStream: Invalid sample rate [PaErrorCode -9997] — retrying with device default samplerate
+16:01:33 [INFO] [MicSource] stream started with device default samplerate=48000
+16:01:33 [INFO] [MicLoop] audio source ready: actual_samplerate=48000 channels=2
+16:01:33 [INFO] [Hub] STT state: channel=self state=STREAMING
+16:01:34 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-109.0 peak_db=-98.3 zero_ratio=0.217 channel_rms_db=(-109.0, -109.0) channel_peak_db=(-98.3, -98.3) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:35 [INFO] [VAD][self] SpeechStart: id=6c521e3b, prob=0.44
+16:01:35 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-43.8 peak_db=-30.2 zero_ratio=0.000 channel_rms_db=(-43.8, -43.8) channel_peak_db=(-30.2, -30.2) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:36 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-35.9 peak_db=-25.6 zero_ratio=0.000 channel_rms_db=(-35.9, -35.9) channel_peak_db=(-25.6, -25.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:37 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-102.9 peak_db=-92.4 zero_ratio=0.107 channel_rms_db=(-102.9, -102.9) channel_peak_db=(-92.4, -92.4) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:37 [INFO] [VAD][self] SpeechEnd: id=6c521e3b, trailing_silence_ms=512
+16:01:37 [INFO] [STT] Speech end handling for id=6c521e3b (trailing_silence_ms=512)
+16:01:37 [INFO] [AudioDiag][STTInput][self] utterance_id=6c521e3b chunk_count=88 audio_ms=3284.0 rms_db=-40.5 peak_db=-21.7 zero_ratio=0.054 finalize=True
+16:01:37 [INFO] [InferenceWorker] Decode start: audio_ms=3284
+16:01:38 [INFO] [InferenceWorker] Decode done: elapsed_ms=110
+16:01:38 [INFO] [InferenceWorker] Transcript: 'А чё ты не работаешь, чё тебе не нравится'
+16:01:38 [INFO] [Pipeline][self] STT final: 'А чё ты не работаешь, чё тебе не нравится'
+16:01:38 [INFO] [Hub] active_self_secondary merge_id=0dc844cb source=blank active_len=41 secondary_len=0 spec_text_len=0 spec_translation_len=0 cached_secondary_len=0 reuse_mode=None resume_pending=False resume_confirmed=False
+16:01:38 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_first_visible entry=self:0dc844cb-9307-4e29-9295-b07520b2ce71 channel=self publishable=False ever_visible=True ever_visible_with_translation=False retained_hidden=False block_variant=active_self primary_len=41 secondary_len=0
+16:01:38 [INFO] [OverlayPresenter] Snapshot publish: revision=1 block_count=1 bridge_attached=True update_ids=[] scopes=[]
+16:01:38 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=1 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:01:38 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=SelfActiveUpdate channel=self utterance_id=0dc844cb-9307-4e29-9295-b07520b2ce71 update_id=None elapsed_ms=0
+16:01:38 [INFO] [Metric] post_end_grace_start id=0dc844cb wait_ms=400
+16:01:38 [INFO] [Metric] final_phase id=0dc844cb phase=post_end vad_id=6c521e3b
+16:01:38 [INFO] [Metric] commit_deferred id=0dc844cb reason=post_end_grace hold_ms=0
+16:01:38 [INFO] [DesktopOverlay][Detail] snapshot_update revision=1 blocks=1 rows=[idx=0 id=self:0dc844cb-9307-4e29-9295-b07520b2ce71 occupant_key=self:0dc844cb-9307-4e29-9295-b07520b2ce71 appearance_seq=1 channel=self variant=active_self primary_len=41 secondary_len=0 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:01:38 [INFO] [DesktopOverlay][Detail] render_width revision=1 slot=0 key=self:0dc844cb-9307-4e29-9295-b07520b2ce71/self:0dc844cb-9307-4e29-9295-b07520b2ce71/1 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=0.0 floor_hit=False line_count=1 primary_len=41 secondary_len=0
+16:01:38 [INFO] [DesktopOverlay][Detail] render revision=1 blocks=1 interaction_mode=pass_through surface_visible=True line_count=1 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:01:38 [INFO] [DesktopOverlay][Detail] render_transition revision=1 content_kind transparent_host->caption_surface surface_visible False->True slot_count 0->1 line_count 0->1 window 1344x336->1344x336 background_alpha 0.000->0.600
+16:01:38 [INFO] [Metric] post_end_grace_timeout id=0dc844cb wait_ms=400
+16:01:38 [INFO] [Detailed][Latency] channel=self utterance_id=0dc844cb stage=speech_end elapsed_ms=0
+16:01:38 [INFO] [Detailed][Latency] channel=self utterance_id=0dc844cb stage=stt_final elapsed_ms=110
+16:01:38 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_updated entry=self:0dc844cb-9307-4e29-9295-b07520b2ce71 channel=self publishable=True ever_visible=True ever_visible_with_translation=False retained_hidden=False block_variant=finalized primary_len=41 secondary_len=0
+16:01:38 [INFO] [OverlayPresenter] Snapshot publish: revision=2 block_count=1 bridge_attached=True update_ids=[] scopes=[]
+16:01:38 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=2 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:01:38 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=SelfTranscriptFinal channel=self utterance_id=0dc844cb-9307-4e29-9295-b07520b2ce71 update_id=None elapsed_ms=2
+16:01:38 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_no_visible_change disposition=rendered_signature_unchanged block_count=1
+16:01:38 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=UtteranceClosed channel=self utterance_id=0dc844cb-9307-4e29-9295-b07520b2ce71 update_id=None elapsed_ms=0
+16:01:38 [INFO] [Hub] OSC enqueue preview: channel=self text='А чё ты не работаешь, чё тебе не нравится'
+16:01:38 [INFO] [Detailed][Latency] channel=self utterance_id=0dc844cb stage=self_chatbox_enqueue elapsed_ms=500
+16:01:38 [INFO] [Basic][Latency] channel=self e2e_ms=1000
+16:01:38 [INFO] [Detailed][LatencyBreakdown] channel=self e2e_ms=1000 speech_end_to_stt_final_ms=110 stt_final_to_final_output_ms=390 dominant_stage=normal
+16:01:38 [INFO] [Hub] OSC enqueue preview: channel=self text='А чё ты не работаешь, чё тебе не нравится'
+16:01:38 [INFO] [Detailed][OSC] send mode=queued status=attempt chars=41 remaining_parts=0 text='А чё ты не работаешь, чё тебе не нравится'
+16:01:38 [INFO] [Basic][OSC] send mode=queued status=delivered chars=41 remaining_parts=0
+16:01:38 [INFO] [Hub] Translation skipped (stage=final, channel=self, publish_chatbox=True): llm unavailable
+16:01:38 [INFO] [Hub] OSC enqueue preview: channel=self text='А чё ты не работаешь, чё тебе не нравится'
+16:01:38 [INFO] [Hub] OSC enqueue preview: channel=self text='А чё ты не работаешь, чё тебе не нравится'
+16:01:38 [INFO] [Detailed][OSC] send mode=queued status=attempt chars=41 remaining_parts=0 text='А чё ты не работаешь, чё тебе не нравится'
+16:01:38 [INFO] [Basic][OSC] send mode=queued status=delivered chars=41 remaining_parts=0
+16:01:38 [INFO] [DesktopOverlay][Detail] snapshot_update revision=2 blocks=1 rows=[idx=0 id=self:0dc844cb-9307-4e29-9295-b07520b2ce71 occupant_key=self:0dc844cb-9307-4e29-9295-b07520b2ce71 appearance_seq=1 channel=self variant=finalized primary_len=41 secondary_len=0 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:01:38 [INFO] [DesktopOverlay][Detail] render_width revision=2 slot=0 key=self:0dc844cb-9307-4e29-9295-b07520b2ce71/self:0dc844cb-9307-4e29-9295-b07520b2ce71/1 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=1344.0 floor_hit=False line_count=1 primary_len=41 secondary_len=0
+16:01:38 [INFO] [DesktopOverlay][Detail] render revision=2 blocks=1 interaction_mode=pass_through surface_visible=True line_count=1 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:01:38 [INFO] [DesktopOverlay][Detail] render_transition revision=2 content_kind caption_surface->caption_surface surface_visible True->True slot_count 1->1 line_count 1->1 window 1344x336->1344x336 background_alpha 0.600->0.600
+16:01:39 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-102.9 peak_db=-89.9 zero_ratio=0.115 channel_rms_db=(-102.9, -102.9) channel_peak_db=(-89.9, -89.9) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:40 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-40.2 peak_db=-18.6 zero_ratio=0.001 channel_rms_db=(-40.2, -40.2) channel_peak_db=(-18.6, -18.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:40 [INFO] [VAD][self] SpeechStart: id=9bec8803, prob=0.98
+16:01:41 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-36.0 peak_db=-22.4 zero_ratio=0.000 channel_rms_db=(-36.0, -36.0) channel_peak_db=(-22.4, -22.4) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:42 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-96.6 peak_db=-86.8 zero_ratio=0.050 channel_rms_db=(-96.6, -96.6) channel_peak_db=(-86.8, -86.8) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:42 [INFO] [VAD][self] SpeechEnd: id=9bec8803, trailing_silence_ms=512
+16:01:42 [INFO] [STT] Speech end handling for id=9bec8803 (trailing_silence_ms=512)
+16:01:42 [INFO] [AudioDiag][STTInput][self] utterance_id=9bec8803 chunk_count=70 audio_ms=2708.0 rms_db=-36.8 peak_db=-17.9 zero_ratio=0.010 finalize=True
+16:01:42 [INFO] [InferenceWorker] Decode start: audio_ms=2708
+16:01:42 [INFO] [InferenceWorker] Decode done: elapsed_ms=63
+16:01:42 [INFO] [InferenceWorker] Transcript: 'А тебе все нравится, работаешь'
+16:01:42 [INFO] [Pipeline][self] STT final: 'А тебе все нравится, работаешь'
+16:01:42 [INFO] [Hub] active_self_secondary merge_id=03746be0 source=blank active_len=30 secondary_len=0 spec_text_len=0 spec_translation_len=0 cached_secondary_len=0 reuse_mode=None resume_pending=False resume_confirmed=False
+16:01:42 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_first_visible entry=self:03746be0-08b5-47dc-87dc-bb1935c020cb channel=self publishable=False ever_visible=True ever_visible_with_translation=False retained_hidden=False block_variant=active_self primary_len=30 secondary_len=0
+16:01:42 [INFO] [OverlayPresenter] Snapshot publish: revision=3 block_count=2 bridge_attached=True update_ids=[] scopes=[]
+16:01:42 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=3 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:01:42 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=SelfActiveUpdate channel=self utterance_id=03746be0-08b5-47dc-87dc-bb1935c020cb update_id=None elapsed_ms=0
+16:01:42 [INFO] [Metric] post_end_grace_start id=03746be0 wait_ms=400
+16:01:42 [INFO] [Metric] final_phase id=03746be0 phase=post_end vad_id=9bec8803
+16:01:42 [INFO] [Metric] commit_deferred id=03746be0 reason=post_end_grace hold_ms=0
+16:01:42 [INFO] [DesktopOverlay][Detail] snapshot_update revision=3 blocks=2 rows=[idx=0 id=self:0dc844cb-9307-4e29-9295-b07520b2ce71 occupant_key=self:0dc844cb-9307-4e29-9295-b07520b2ce71 appearance_seq=1 channel=self variant=finalized primary_len=41 secondary_len=0 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none; idx=1 id=self:03746be0-08b5-47dc-87dc-bb1935c020cb occupant_key=self:03746be0-08b5-47dc-87dc-bb1935c020cb appearance_seq=4 channel=self variant=active_self primary_len=30 secondary_len=0 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:01:42 [INFO] [DesktopOverlay][Detail] render_width revision=3 slot=0 key=self:0dc844cb-9307-4e29-9295-b07520b2ce71/self:0dc844cb-9307-4e29-9295-b07520b2ce71/1 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=1344.0 floor_hit=False line_count=1 primary_len=41 secondary_len=0
+16:01:42 [INFO] [DesktopOverlay][Detail] render_width revision=3 slot=1 key=self:03746be0-08b5-47dc-87dc-bb1935c020cb/self:03746be0-08b5-47dc-87dc-bb1935c020cb/4 raw_card_width=1161.1 applied_card_width=1161.1 raw_text_width=1117.1 applied_text_width=1117.1 previous_floor=0.0 floor_hit=False line_count=1 primary_len=30 secondary_len=0
+16:01:42 [INFO] [DesktopOverlay][Detail] render revision=3 blocks=2 interaction_mode=pass_through surface_visible=True line_count=2 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:01:42 [INFO] [DesktopOverlay][Detail] render_transition revision=3 content_kind caption_surface->caption_surface surface_visible True->True slot_count 1->2 line_count 1->2 window 1344x336->1344x336 background_alpha 0.600->0.600
+16:01:43 [INFO] [Metric] post_end_grace_timeout id=03746be0 wait_ms=400
+16:01:43 [INFO] [Detailed][Latency] channel=self utterance_id=03746be0 stage=speech_end elapsed_ms=0
+16:01:43 [INFO] [Detailed][Latency] channel=self utterance_id=03746be0 stage=stt_final elapsed_ms=63
+16:01:43 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_updated entry=self:03746be0-08b5-47dc-87dc-bb1935c020cb channel=self publishable=True ever_visible=True ever_visible_with_translation=False retained_hidden=False block_variant=finalized primary_len=30 secondary_len=0
+16:01:43 [INFO] [OverlayPresenter] Snapshot publish: revision=4 block_count=2 bridge_attached=True update_ids=[] scopes=[]
+16:01:43 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=4 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:01:43 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=SelfTranscriptFinal channel=self utterance_id=03746be0-08b5-47dc-87dc-bb1935c020cb update_id=None elapsed_ms=2
+16:01:43 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_no_visible_change disposition=rendered_signature_unchanged block_count=2
+16:01:43 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=UtteranceClosed channel=self utterance_id=03746be0-08b5-47dc-87dc-bb1935c020cb update_id=None elapsed_ms=0
+16:01:43 [INFO] [Hub] OSC enqueue preview: channel=self text='А тебе все нравится, работаешь'
+16:01:43 [INFO] [Detailed][Latency] channel=self utterance_id=03746be0 stage=self_chatbox_enqueue elapsed_ms=500
+16:01:43 [INFO] [Basic][Latency] channel=self e2e_ms=1000
+16:01:43 [INFO] [Detailed][LatencyBreakdown] channel=self e2e_ms=1000 speech_end_to_stt_final_ms=63 stt_final_to_final_output_ms=437 dominant_stage=normal
+16:01:43 [INFO] [Hub] OSC enqueue preview: channel=self text='А тебе все нравится, работаешь'
+16:01:43 [INFO] [Detailed][OSC] send mode=queued status=attempt chars=30 remaining_parts=0 text='А тебе все нравится, работаешь'
+16:01:43 [INFO] [Basic][OSC] send mode=queued status=delivered chars=30 remaining_parts=0
+16:01:43 [INFO] [Hub] Translation skipped (stage=final, channel=self, publish_chatbox=True): llm unavailable
+16:01:43 [INFO] [Hub] OSC enqueue preview: channel=self text='А тебе все нравится, работаешь'
+16:01:43 [INFO] [Hub] OSC enqueue preview: channel=self text='А тебе все нравится, работаешь'
+16:01:43 [INFO] [Detailed][OSC] send mode=queued status=attempt chars=30 remaining_parts=0 text='А тебе все нравится, работаешь'
+16:01:43 [INFO] [Basic][OSC] send mode=queued status=delivered chars=30 remaining_parts=0
+16:01:43 [INFO] [Detailed][DisplayCard] dashboard_primary_applied utterance_id=03746be0-08b5-47dc-87dc-bb1935c020cb channel=self update_id=none origin_wall_clock_ms=None transcript_kind=final source_text_len=30 primary_text_len=30 showing_status=False primary_update_issued=True flet_update_elapsed_us=147
+16:01:43 [INFO] [DesktopOverlay][Detail] snapshot_update revision=4 blocks=2 rows=[idx=0 id=self:0dc844cb-9307-4e29-9295-b07520b2ce71 occupant_key=self:0dc844cb-9307-4e29-9295-b07520b2ce71 appearance_seq=1 channel=self variant=finalized primary_len=41 secondary_len=0 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none; idx=1 id=self:03746be0-08b5-47dc-87dc-bb1935c020cb occupant_key=self:03746be0-08b5-47dc-87dc-bb1935c020cb appearance_seq=4 channel=self variant=finalized primary_len=30 secondary_len=0 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:01:43 [INFO] [DesktopOverlay][Detail] render_width revision=4 slot=0 key=self:0dc844cb-9307-4e29-9295-b07520b2ce71/self:0dc844cb-9307-4e29-9295-b07520b2ce71/1 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=1344.0 floor_hit=False line_count=1 primary_len=41 secondary_len=0
+16:01:43 [INFO] [DesktopOverlay][Detail] render_width revision=4 slot=1 key=self:03746be0-08b5-47dc-87dc-bb1935c020cb/self:03746be0-08b5-47dc-87dc-bb1935c020cb/4 raw_card_width=1161.1 applied_card_width=1161.1 raw_text_width=1117.1 applied_text_width=1117.1 previous_floor=1161.1 floor_hit=False line_count=1 primary_len=30 secondary_len=0
+16:01:43 [INFO] [DesktopOverlay][Detail] render revision=4 blocks=2 interaction_mode=pass_through surface_visible=True line_count=2 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:01:43 [INFO] [DesktopOverlay][Detail] render_transition revision=4 content_kind caption_surface->caption_surface surface_visible True->True slot_count 2->2 line_count 2->2 window 1344x336->1344x336 background_alpha 0.600->0.600
+16:01:43 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-64.3 peak_db=-49.5 zero_ratio=0.022 channel_rms_db=(-64.3, -64.3) channel_peak_db=(-49.5, -49.5) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:44 [INFO] Desktop peer audio format: source_rate=96000Hz source_channels=2 -> target_rate=16000Hz
+16:01:44 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:01:44 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-51.2 peak_db=-39.7 zero_ratio=0.167
+16:01:44 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-95.4 peak_db=-86.6 zero_ratio=0.044 channel_rms_db=(-95.4, -95.4) channel_peak_db=(-86.6, -86.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:45 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-52.9 peak_db=-41.7 zero_ratio=0.000 channel_rms_db=(-51.2, -55.9) channel_peak_db=(-41.7, -46.4) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:45 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-50.8 peak_db=-41.2 zero_ratio=0.000
+16:01:45 [INFO] [VAD][TEST] Peer candidate start: id=15d678c5, prob=0.42
+16:01:45 [INFO] [VAD][TEST] Peer candidate dropped: id=15d678c5, buffered_chunks=1
+16:01:46 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-77.8 peak_db=-58.7 zero_ratio=0.016 channel_rms_db=(-77.8, -77.8) channel_peak_db=(-58.7, -58.7) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:46 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-59.5 peak_db=-48.0 zero_ratio=0.001 channel_rms_db=(-58.3, -61.1) channel_peak_db=(-48.0, -51.9) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:46 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-56.7 peak_db=-45.8 zero_ratio=0.002
+16:01:46 [INFO] [OverlayPresenter] Snapshot publish: revision=5 block_count=1 bridge_attached=True update_ids=[] scopes=[]
+16:01:46 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=5 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:01:46 [INFO] [DesktopOverlay][Detail] snapshot_update revision=5 blocks=1 rows=[idx=0 id=self:03746be0-08b5-47dc-87dc-bb1935c020cb occupant_key=self:03746be0-08b5-47dc-87dc-bb1935c020cb appearance_seq=4 channel=self variant=finalized primary_len=30 secondary_len=0 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:01:46 [INFO] [DesktopOverlay][Detail] render_width revision=5 slot=0 key=self:03746be0-08b5-47dc-87dc-bb1935c020cb/self:03746be0-08b5-47dc-87dc-bb1935c020cb/4 raw_card_width=1161.1 applied_card_width=1161.1 raw_text_width=1117.1 applied_text_width=1117.1 previous_floor=1161.1 floor_hit=False line_count=1 primary_len=30 secondary_len=0
+16:01:46 [INFO] [DesktopOverlay][Detail] render revision=5 blocks=1 interaction_mode=pass_through surface_visible=True line_count=1 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:01:46 [INFO] [DesktopOverlay][Detail] render_transition revision=5 content_kind caption_surface->caption_surface surface_visible True->True slot_count 2->1 line_count 2->1 window 1344x336->1344x336 background_alpha 0.600->0.600
+16:01:47 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-51.9 peak_db=-42.3 zero_ratio=0.000 channel_rms_db=(-49.5, -58.1) channel_peak_db=(-42.3, -48.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:47 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-106.2 peak_db=-93.2 zero_ratio=0.212 channel_rms_db=(-106.2, -106.2) channel_peak_db=(-93.2, -93.2) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:47 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-51.7 peak_db=-41.8 zero_ratio=0.002
+16:01:48 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-39.4 peak_db=-27.2 zero_ratio=0.001 channel_rms_db=(-38.1, -41.2) channel_peak_db=(-27.2, -32.9) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:48 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-40.8 peak_db=-31.7 zero_ratio=0.000
+16:01:48 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-90.9 peak_db=-78.7 zero_ratio=0.045 channel_rms_db=(-90.9, -90.9) channel_peak_db=(-78.7, -78.7) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:49 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-42.7 peak_db=-32.5 zero_ratio=0.000 channel_rms_db=(-40.8, -46.4) channel_peak_db=(-32.5, -36.9) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:49 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-44.7 peak_db=-34.3 zero_ratio=0.002
+16:01:49 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-98.4 peak_db=-88.9 zero_ratio=0.050 channel_rms_db=(-98.4, -98.4) channel_peak_db=(-88.9, -88.9) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:50 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-41.7 peak_db=-30.6 zero_ratio=0.000 channel_rms_db=(-39.3, -47.0) channel_peak_db=(-30.6, -38.3) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:50 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-44.3 peak_db=-35.4 zero_ratio=0.000
+16:01:50 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-94.4 peak_db=-86.2 zero_ratio=0.041 channel_rms_db=(-94.4, -94.4) channel_peak_db=(-86.2, -86.2) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:51 [INFO] [OverlayPresenter] Snapshot publish: revision=6 block_count=0 bridge_attached=True update_ids=[] scopes=[]
+16:01:51 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=6 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:01:51 [INFO] [DesktopOverlay][Detail] snapshot_update revision=6 blocks=0 rows=[]
+16:01:51 [INFO] [DesktopOverlay][Detail] render revision=6 blocks=0 interaction_mode=pass_through surface_visible=False line_count=0 content_kind=transparent_host window=1344x336 background_alpha=0.0
+16:01:51 [INFO] [DesktopOverlay][Detail] render_transition revision=6 content_kind caption_surface->transparent_host surface_visible True->False slot_count 1->0 line_count 1->0 window 1344x336->1344x336 background_alpha 0.600->0.000
+16:01:51 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-46.3 peak_db=-34.6 zero_ratio=0.000 channel_rms_db=(-44.1, -51.0) channel_peak_db=(-34.6, -41.7) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:51 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-43.9 peak_db=-34.4 zero_ratio=0.000
+16:01:51 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-107.5 zero_ratio=0.783 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-107.5, -107.5) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:52 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-48.7 peak_db=-38.7 zero_ratio=0.000 channel_rms_db=(-47.7, -50.0) channel_peak_db=(-38.7, -42.1) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:52 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-45.6 peak_db=-36.2 zero_ratio=0.000
+16:01:53 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-61.6 peak_db=-42.0 zero_ratio=0.008 channel_rms_db=(-61.6, -61.6) channel_peak_db=(-42.0, -42.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:53 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-41.3 peak_db=-31.6 zero_ratio=0.000 channel_rms_db=(-40.0, -43.3) channel_peak_db=(-31.6, -34.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:53 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-39.2 peak_db=-28.7 zero_ratio=0.000
+16:01:54 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-96.6 peak_db=-86.2 zero_ratio=0.062 channel_rms_db=(-96.6, -96.6) channel_peak_db=(-86.2, -86.2) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:54 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-38.1 peak_db=-29.9 zero_ratio=0.000 channel_rms_db=(-37.4, -39.1) channel_peak_db=(-29.9, -30.4) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:54 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-37.7 peak_db=-29.8 zero_ratio=0.000
+16:01:54 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-42.1 peak_db=-32.2 zero_ratio=0.000
+16:01:55 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-39.5 peak_db=-30.3 zero_ratio=0.000 channel_rms_db=(-40.8, -38.6) channel_peak_db=(-32.4, -30.3) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:55 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-108.7 peak_db=-98.2 zero_ratio=0.230 channel_rms_db=(-108.7, -108.7) channel_peak_db=(-98.2, -98.2) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:55 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-42.9 peak_db=-33.7 zero_ratio=0.000
+16:01:56 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-37.5 peak_db=-30.0 zero_ratio=0.000 channel_rms_db=(-40.6, -35.8) channel_peak_db=(-32.1, -30.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:56 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:56 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-48.3 peak_db=-39.8 zero_ratio=0.000
+16:01:57 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-41.9 peak_db=-33.5 zero_ratio=0.000 channel_rms_db=(-42.2, -41.6) channel_peak_db=(-33.5, -34.9) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:57 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-43.0 peak_db=-34.0 zero_ratio=0.000
+16:01:57 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:58 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-38.6 peak_db=-31.2 zero_ratio=0.000 channel_rms_db=(-42.6, -36.6) channel_peak_db=(-35.0, -31.2) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:58 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-39.7 peak_db=-29.7 zero_ratio=0.000
+16:01:58 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:01:59 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-36.2 peak_db=-28.4 zero_ratio=0.000 channel_rms_db=(-34.7, -38.7) channel_peak_db=(-28.4, -32.1) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:01:59 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-46.9 peak_db=-37.7 zero_ratio=0.000
+16:02:00 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-97.6 peak_db=-86.8 zero_ratio=0.065 channel_rms_db=(-97.6, -97.6) channel_peak_db=(-86.8, -86.8) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:00 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-48.8 peak_db=-38.2 zero_ratio=0.000 channel_rms_db=(-48.5, -49.0) channel_peak_db=(-38.2, -40.8) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:00 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-47.0 peak_db=-39.2 zero_ratio=0.000
+16:02:01 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-102.8 peak_db=-92.3 zero_ratio=0.125 channel_rms_db=(-102.8, -102.8) channel_peak_db=(-92.3, -92.3) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:01 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-47.7 peak_db=-39.0 zero_ratio=0.000 channel_rms_db=(-46.6, -49.2) channel_peak_db=(-39.0, -40.7) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:01 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-47.6 peak_db=-40.2 zero_ratio=0.000
+16:02:02 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-48.9 peak_db=-39.4 zero_ratio=0.000 channel_rms_db=(-48.3, -49.7) channel_peak_db=(-39.4, -40.7) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:02 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-80.7 peak_db=-67.4 zero_ratio=0.024 channel_rms_db=(-80.7, -80.7) channel_peak_db=(-67.4, -67.4) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:02 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-43.4 peak_db=-31.8 zero_ratio=0.000
+16:02:03 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-36.4 peak_db=-27.9 zero_ratio=0.000 channel_rms_db=(-34.9, -38.8) channel_peak_db=(-27.9, -30.8) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:03 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:03 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-43.3 peak_db=-33.5 zero_ratio=0.000
+16:02:04 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-41.2 peak_db=-32.0 zero_ratio=0.000 channel_rms_db=(-40.3, -42.4) channel_peak_db=(-32.0, -34.2) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:04 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-40.2 peak_db=-30.8 zero_ratio=0.000
+16:02:04 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-101.5 peak_db=-90.0 zero_ratio=0.107 channel_rms_db=(-101.5, -101.5) channel_peak_db=(-90.0, -90.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:04 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-41.3 peak_db=-32.2 zero_ratio=0.000
+16:02:05 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-40.4 peak_db=-28.1 zero_ratio=0.000 channel_rms_db=(-39.0, -42.5) channel_peak_db=(-28.1, -34.5) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:05 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-38.5 peak_db=-30.7 zero_ratio=0.000
+16:02:05 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-96.6 peak_db=-85.5 zero_ratio=0.072 channel_rms_db=(-96.6, -96.6) channel_peak_db=(-85.5, -85.5) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:06 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-45.5 peak_db=-37.6 zero_ratio=0.000 channel_rms_db=(-47.1, -44.3) channel_peak_db=(-41.0, -37.6) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:06 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-44.4 peak_db=-34.9 zero_ratio=0.000
+16:02:07 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-103.7 peak_db=-92.6 zero_ratio=0.150 channel_rms_db=(-103.7, -103.7) channel_peak_db=(-92.6, -92.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:07 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-47.0 peak_db=-38.9 zero_ratio=0.000 channel_rms_db=(-47.2, -46.9) channel_peak_db=(-40.5, -38.9) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:07 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-45.5 peak_db=-35.5 zero_ratio=0.000
+16:02:08 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-69.4 peak_db=-45.5 zero_ratio=0.039 channel_rms_db=(-69.4, -69.4) channel_peak_db=(-45.5, -45.5) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:08 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:08 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:08 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-34.4 peak_db=-23.0 zero_ratio=0.233
+16:02:08 [INFO] [VAD][TEST] Peer candidate start: id=640cbf32, prob=0.88
+16:02:08 [INFO] [VAD][TEST] Peer candidate committed: id=640cbf32, buffered_chunks=3
+16:02:08 [INFO] [VAD][peer] SpeechStart: id=640cbf32, prob=0.88
+16:02:08 [INFO] [AudioDiag][VAD][peer] event=SpeechStart utterance_id=640cbf32 prob=0.878 threshold=0.4 pre_roll_ms=500.0 rms_db=-37.3 peak_db=-24.7
+16:02:09 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-38.1 peak_db=-29.1 zero_ratio=0.000
+16:02:09 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-35.7 peak_db=-25.5 zero_ratio=0.000 channel_rms_db=(-35.3, -36.3) channel_peak_db=(-25.5, -26.6) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:09 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-93.2 peak_db=-84.3 zero_ratio=0.039 channel_rms_db=(-93.2, -93.2) channel_peak_db=(-84.3, -84.3) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:10 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-34.9 peak_db=-22.7 zero_ratio=0.000
+16:02:10 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-48.5 peak_db=-38.5 zero_ratio=0.000 channel_rms_db=(-46.3, -53.0) channel_peak_db=(-38.5, -45.3) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:10 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-97.3 peak_db=-87.0 zero_ratio=0.069 channel_rms_db=(-97.3, -97.3) channel_peak_db=(-87.0, -87.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:11 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-38.9 peak_db=-27.6 zero_ratio=0.000
+16:02:11 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-42.1 peak_db=-33.7 zero_ratio=0.000 channel_rms_db=(-41.6, -42.7) channel_peak_db=(-33.7, -33.9) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:11 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-111.6 peak_db=-102.2 zero_ratio=0.376 channel_rms_db=(-111.6, -111.6) channel_peak_db=(-102.2, -102.2) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:12 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-46.6 peak_db=-38.6 zero_ratio=0.000
+16:02:12 [INFO] [VAD][peer] SpeechEnd: id=640cbf32, trailing_silence_ms=512
+16:02:12 [INFO] [AudioDiag][VAD][peer] event=SpeechEnd utterance_id=640cbf32 reason=silence trailing_silence_ms=512 speech_audio_ms=3424.0 chunk_count=107
+16:02:12 [INFO] [Detailed][Latency] channel=peer utterance_id=640cbf32 stage=speech_end elapsed_ms=0
+16:02:12 [INFO] [STT] Speech end handling for id=640cbf32 (trailing_silence_ms=512)
+16:02:12 [INFO] [AudioDiag][STTInput][peer] utterance_id=640cbf32 chunk_count=108 audio_ms=3924.0 rms_db=-37.6 peak_db=-20.4 zero_ratio=0.111 finalize=True
+16:02:12 [INFO] [InferenceWorker] Decode start: audio_ms=3924
+16:02:12 [INFO] [InferenceWorker] Decode done: elapsed_ms=94
+16:02:12 [INFO] [InferenceWorker] Transcript: 'Критер вести за съем и все остальное'
+16:02:12 [INFO] [Pipeline][peer] STT final: 'Критер вести за съем и все остальное'
+16:02:12 [INFO] [Detailed][Latency] channel=peer utterance_id=8dafaf6f stage=speech_end elapsed_ms=0
+16:02:12 [INFO] [Detailed][Latency] channel=peer utterance_id=8dafaf6f stage=stt_final elapsed_ms=94
+16:02:12 [INFO] [Hub] Translation skipped (stage=final, channel=peer, publish_chatbox=False): llm unavailable
+16:02:12 [INFO] [Detailed][Latency] channel=peer utterance_id=8dafaf6f stage=peer_overlay_first_emit elapsed_ms=94
+16:02:12 [INFO] [Basic][Latency] channel=peer e2e_ms=594
+16:02:12 [INFO] [Detailed][LatencyBreakdown] channel=peer e2e_ms=594 speech_end_to_stt_final_ms=94 stt_final_to_final_output_ms=0 dominant_stage=normal
+16:02:12 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_first_visible entry=peer:8dafaf6f-756c-43fd-8091-c95fbf5131e1 channel=peer publishable=True ever_visible=True ever_visible_with_translation=False retained_hidden=False block_variant=finalized primary_len=0 secondary_len=36
+16:02:12 [INFO] [OverlayPresenter] Snapshot publish: revision=7 block_count=1 bridge_attached=True update_ids=[] scopes=[]
+16:02:12 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=7 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:02:12 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=PeerTranscriptFinal channel=peer utterance_id=8dafaf6f-756c-43fd-8091-c95fbf5131e1 update_id=None elapsed_ms=0
+16:02:12 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_no_visible_change disposition=rendered_signature_unchanged block_count=1
+16:02:12 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=UtteranceClosed channel=peer utterance_id=8dafaf6f-756c-43fd-8091-c95fbf5131e1 update_id=None elapsed_ms=0
+16:02:12 [INFO] [Detailed][DisplayCard] dashboard_primary_applied utterance_id=8dafaf6f-756c-43fd-8091-c95fbf5131e1 channel=peer update_id=none origin_wall_clock_ms=None transcript_kind=final source_text_len=36 primary_text_len=49 showing_status=False primary_update_issued=True flet_update_elapsed_us=135
+16:02:12 [INFO] [DesktopOverlay][Detail] snapshot_update revision=7 blocks=1 rows=[idx=0 id=peer:8dafaf6f-756c-43fd-8091-c95fbf5131e1 occupant_key=peer:8dafaf6f-756c-43fd-8091-c95fbf5131e1 appearance_seq=7 channel=peer variant=finalized primary_len=0 secondary_len=36 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:02:12 [INFO] [DesktopOverlay][Detail] render_width revision=7 slot=0 key=peer:8dafaf6f-756c-43fd-8091-c95fbf5131e1/peer:8dafaf6f-756c-43fd-8091-c95fbf5131e1/7 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=0.0 floor_hit=False line_count=1 primary_len=36 secondary_len=0
+16:02:12 [INFO] [DesktopOverlay][Detail] render revision=7 blocks=1 interaction_mode=pass_through surface_visible=True line_count=1 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:02:12 [INFO] [DesktopOverlay][Detail] render_transition revision=7 content_kind transparent_host->caption_surface surface_visible False->True slot_count 0->1 line_count 0->1 window 1344x336->1344x336 background_alpha 0.000->0.600
+16:02:12 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-42.7 peak_db=-35.8 zero_ratio=0.000 channel_rms_db=(-42.9, -42.6) channel_peak_db=(-35.8, -36.2) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:12 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:13 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-41.0 peak_db=-31.5 zero_ratio=0.000
+16:02:13 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-41.1 peak_db=-31.9 zero_ratio=0.000 channel_rms_db=(-40.1, -42.2) channel_peak_db=(-31.9, -34.6) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:14 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-87.1 peak_db=-68.9 zero_ratio=0.547 channel_rms_db=(-87.1, -87.1) channel_peak_db=(-68.9, -68.9) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:14 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-39.9 peak_db=-31.5 zero_ratio=0.000
+16:02:14 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-39.5 peak_db=-30.1 zero_ratio=0.000 channel_rms_db=(-38.7, -40.6) channel_peak_db=(-30.1, -31.4) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:15 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-40.1 peak_db=-32.3 zero_ratio=0.000
+16:02:15 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-111.4 zero_ratio=0.930 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-111.4, -111.4) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:15 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-38.8 peak_db=-29.8 zero_ratio=0.000 channel_rms_db=(-39.2, -38.5) channel_peak_db=(-29.8, -30.2) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:16 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-40.6 peak_db=-31.5 zero_ratio=0.000
+16:02:16 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-35.2 peak_db=-26.7 zero_ratio=0.000 channel_rms_db=(-33.2, -39.0) channel_peak_db=(-26.7, -28.9) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:16 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-66.4 peak_db=-40.3 zero_ratio=0.038 channel_rms_db=(-66.4, -66.4) channel_peak_db=(-40.3, -40.3) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:16 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:17 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:17 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:17 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-74.4 peak_db=-55.6 zero_ratio=0.015 channel_rms_db=(-74.4, -74.4) channel_peak_db=(-55.6, -55.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:18 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-61.0 peak_db=-42.6 zero_ratio=0.922
+16:02:18 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-43.7 peak_db=-36.6 zero_ratio=0.000
+16:02:18 [INFO] [VAD][TEST] Peer candidate start: id=03710146, prob=0.86
+16:02:18 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-45.1 peak_db=-35.7 zero_ratio=0.000 channel_rms_db=(-45.1, -45.1) channel_peak_db=(-35.7, -35.7) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:18 [INFO] [VAD][TEST] Peer candidate committed: id=03710146, buffered_chunks=3
+16:02:18 [INFO] [VAD][peer] SpeechStart: id=03710146, prob=0.86
+16:02:18 [INFO] [AudioDiag][VAD][peer] event=SpeechStart utterance_id=03710146 prob=0.860 threshold=0.4 pre_roll_ms=500.0 rms_db=-33.8 peak_db=-25.7
+16:02:18 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-93.0 peak_db=-83.1 zero_ratio=0.036 channel_rms_db=(-93.0, -93.0) channel_peak_db=(-83.1, -83.1) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:19 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-46.0 peak_db=-35.7 zero_ratio=0.000
+16:02:19 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-45.9 peak_db=-34.6 zero_ratio=0.000 channel_rms_db=(-45.9, -45.9) channel_peak_db=(-34.6, -34.6) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:19 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-97.7 peak_db=-86.9 zero_ratio=0.062 channel_rms_db=(-97.7, -97.7) channel_peak_db=(-86.9, -86.9) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:20 [INFO] [OverlayPresenter] Snapshot publish: revision=8 block_count=0 bridge_attached=True update_ids=[] scopes=[]
+16:02:20 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=8 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:02:20 [INFO] [DesktopOverlay][Detail] snapshot_update revision=8 blocks=0 rows=[]
+16:02:20 [INFO] [DesktopOverlay][Detail] render revision=8 blocks=0 interaction_mode=pass_through surface_visible=False line_count=0 content_kind=transparent_host window=1344x336 background_alpha=0.0
+16:02:20 [INFO] [DesktopOverlay][Detail] render_transition revision=8 content_kind caption_surface->transparent_host surface_visible True->False slot_count 1->0 line_count 1->0 window 1344x336->1344x336 background_alpha 0.600->0.000
+16:02:20 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-38.5 peak_db=-30.5 zero_ratio=0.000
+16:02:20 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-43.3 peak_db=-35.0 zero_ratio=0.000 channel_rms_db=(-43.3, -43.3) channel_peak_db=(-35.0, -35.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:21 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-85.4 peak_db=-66.3 zero_ratio=0.021 channel_rms_db=(-85.4, -85.4) channel_peak_db=(-66.3, -66.3) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:21 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-43.5 peak_db=-33.5 zero_ratio=0.000
+16:02:21 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-35.0 peak_db=-25.2 zero_ratio=0.000 channel_rms_db=(-35.0, -35.0) channel_peak_db=(-25.2, -25.2) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:22 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-96.7 peak_db=-85.8 zero_ratio=0.061 channel_rms_db=(-96.7, -96.7) channel_peak_db=(-85.8, -85.8) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:22 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-76.3 peak_db=-68.4 zero_ratio=0.000 channel_rms_db=(-76.3, -76.3) channel_peak_db=(-68.4, -68.4) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:22 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-74.0 peak_db=-66.9 zero_ratio=0.002
+16:02:23 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-43.3 peak_db=-36.1 zero_ratio=0.000 channel_rms_db=(-43.3, -43.3) channel_peak_db=(-36.1, -36.1) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:23 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-44.1 peak_db=-36.2 zero_ratio=0.000
+16:02:23 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-68.3 peak_db=-54.8 zero_ratio=0.004 channel_rms_db=(-68.3, -68.3) channel_peak_db=(-54.8, -54.8) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:24 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-43.4 peak_db=-31.6 zero_ratio=0.000 channel_rms_db=(-43.4, -43.4) channel_peak_db=(-31.6, -31.6) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:24 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-43.2 peak_db=-34.6 zero_ratio=0.000
+16:02:24 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-105.2 peak_db=-95.5 zero_ratio=0.127 channel_rms_db=(-105.2, -105.2) channel_peak_db=(-95.5, -95.5) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:25 [INFO] [VAD][peer] SpeechEnd: id=03710146, reason=max_duration, speech_audio_ms=7008.0
+16:02:25 [INFO] [AudioDiag][VAD][peer] event=SpeechEnd utterance_id=03710146 reason=max_duration trailing_silence_ms=0 speech_audio_ms=7008.0 chunk_count=219
+16:02:25 [INFO] [Detailed][Latency] channel=peer utterance_id=03710146 stage=speech_end elapsed_ms=0
+16:02:25 [INFO] [STT] Speech end handling for id=03710146 (trailing_silence_ms=0)
+16:02:25 [INFO] [AudioDiag][STTInput][peer] utterance_id=03710146 chunk_count=220 audio_ms=7508.0 rms_db=-40.3 peak_db=-23.8 zero_ratio=0.060 finalize=True
+16:02:25 [INFO] [InferenceWorker] Decode start: audio_ms=7508
+16:02:25 [INFO] [VAD][TEST] Peer candidate start: id=e091a1a7, prob=1.00
+16:02:25 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-38.6 peak_db=-29.7 zero_ratio=0.000 channel_rms_db=(-38.6, -38.6) channel_peak_db=(-29.7, -29.7) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:25 [INFO] [VAD][TEST] Peer candidate committed: id=e091a1a7, buffered_chunks=3
+16:02:25 [INFO] [VAD][peer] SpeechStart: id=e091a1a7, prob=1.00
+16:02:25 [INFO] [AudioDiag][VAD][peer] event=SpeechStart utterance_id=e091a1a7 prob=1.000 threshold=0.4 pre_roll_ms=500.0 rms_db=-66.0 peak_db=-56.6
+16:02:25 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-34.2 peak_db=-25.5 zero_ratio=0.000
+16:02:25 [INFO] [InferenceWorker] Decode done: elapsed_ms=203
+16:02:25 [INFO] [InferenceWorker] Transcript: 'Несколько врагов встретил еще одно чудовище, которого звали Локил. Очень хотелось подчинить его, но он был слишком предан.'
+16:02:25 [INFO] [Pipeline][peer] STT final: 'Несколько врагов встретил еще одно чудовище, которого звали Локил. Очень хотелось подчинить его, но он был слишком предан.'
+16:02:25 [INFO] [Detailed][Latency] channel=peer utterance_id=657950dd stage=speech_end elapsed_ms=0
+16:02:25 [INFO] [Detailed][Latency] channel=peer utterance_id=657950dd stage=stt_final elapsed_ms=219
+16:02:25 [INFO] [Hub] Translation skipped (stage=final, channel=peer, publish_chatbox=False): llm unavailable
+16:02:25 [INFO] [Detailed][Latency] channel=peer utterance_id=657950dd stage=peer_overlay_first_emit elapsed_ms=219
+16:02:25 [INFO] [Basic][Latency] channel=peer e2e_ms=719
+16:02:25 [INFO] [Detailed][LatencyBreakdown] channel=peer e2e_ms=719 speech_end_to_stt_final_ms=219 stt_final_to_final_output_ms=0 dominant_stage=normal
+16:02:25 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_first_visible entry=peer:657950dd-107f-4a9e-85af-531b100ea4e5 channel=peer publishable=True ever_visible=True ever_visible_with_translation=False retained_hidden=False block_variant=finalized primary_len=0 secondary_len=122
+16:02:25 [INFO] [OverlayPresenter] Snapshot publish: revision=9 block_count=1 bridge_attached=True update_ids=[] scopes=[]
+16:02:25 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=9 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:02:25 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=PeerTranscriptFinal channel=peer utterance_id=657950dd-107f-4a9e-85af-531b100ea4e5 update_id=None elapsed_ms=0
+16:02:25 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_no_visible_change disposition=rendered_signature_unchanged block_count=1
+16:02:25 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=UtteranceClosed channel=peer utterance_id=657950dd-107f-4a9e-85af-531b100ea4e5 update_id=None elapsed_ms=0
+16:02:25 [INFO] [Detailed][DisplayCard] dashboard_primary_applied utterance_id=657950dd-107f-4a9e-85af-531b100ea4e5 channel=peer update_id=none origin_wall_clock_ms=None transcript_kind=final source_text_len=122 primary_text_len=135 showing_status=False primary_update_issued=True flet_update_elapsed_us=103
+16:02:25 [INFO] [DesktopOverlay][Detail] snapshot_update revision=9 blocks=1 rows=[idx=0 id=peer:657950dd-107f-4a9e-85af-531b100ea4e5 occupant_key=peer:657950dd-107f-4a9e-85af-531b100ea4e5 appearance_seq=9 channel=peer variant=finalized primary_len=0 secondary_len=122 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:02:25 [INFO] [DesktopOverlay][Detail] render_width revision=9 slot=0 key=peer:657950dd-107f-4a9e-85af-531b100ea4e5/peer:657950dd-107f-4a9e-85af-531b100ea4e5/9 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=0.0 floor_hit=False line_count=1 primary_len=122 secondary_len=0
+16:02:25 [INFO] [DesktopOverlay][Detail] render revision=9 blocks=1 interaction_mode=pass_through surface_visible=True line_count=1 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:02:25 [INFO] [DesktopOverlay][Detail] render_transition revision=9 content_kind transparent_host->caption_surface surface_visible False->True slot_count 0->1 line_count 0->1 window 1344x336->1344x336 background_alpha 0.000->0.600
+16:02:25 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-91.6 peak_db=-79.1 zero_ratio=0.040 channel_rms_db=(-91.6, -91.6) channel_peak_db=(-79.1, -79.1) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:26 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-71.1 peak_db=-63.8 zero_ratio=0.003 channel_rms_db=(-71.1, -71.1) channel_peak_db=(-63.8, -63.8) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:26 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-42.5 peak_db=-31.6 zero_ratio=0.000
+16:02:26 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-92.0 peak_db=-81.0 zero_ratio=0.045 channel_rms_db=(-92.0, -92.0) channel_peak_db=(-81.0, -81.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:27 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-46.4 peak_db=-38.6 zero_ratio=0.000 channel_rms_db=(-46.4, -46.4) channel_peak_db=(-38.6, -38.6) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:27 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-40.6 peak_db=-30.6 zero_ratio=0.000
+16:02:28 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-99.4 peak_db=-85.0 zero_ratio=0.153 channel_rms_db=(-99.4, -99.4) channel_peak_db=(-85.0, -85.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:28 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-55.0 peak_db=-41.0 zero_ratio=0.000
+16:02:28 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-37.4 peak_db=-31.1 zero_ratio=0.000 channel_rms_db=(-37.4, -37.4) channel_peak_db=(-31.1, -31.1) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:28 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-52.9 peak_db=-41.9 zero_ratio=0.000
+16:02:29 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-100.7 peak_db=-90.4 zero_ratio=0.119 channel_rms_db=(-100.7, -100.7) channel_peak_db=(-90.4, -90.4) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:29 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-45.3 peak_db=-34.5 zero_ratio=0.001 channel_rms_db=(-45.3, -45.3) channel_peak_db=(-34.5, -34.5) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:29 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-44.0 peak_db=-35.3 zero_ratio=0.000
+16:02:30 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-40.8 peak_db=-31.3 zero_ratio=0.001 channel_rms_db=(-40.8, -40.8) channel_peak_db=(-31.3, -31.3) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:30 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-88.7 peak_db=-76.6 zero_ratio=0.052 channel_rms_db=(-88.7, -88.7) channel_peak_db=(-76.6, -76.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:30 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-49.1 peak_db=-41.1 zero_ratio=0.000
+16:02:31 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-37.2 peak_db=-29.5 zero_ratio=0.000 channel_rms_db=(-37.2, -37.2) channel_peak_db=(-29.5, -29.5) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:31 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-32.0 peak_db=-23.7 zero_ratio=0.000
+16:02:31 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-109.5 peak_db=-98.6 zero_ratio=0.325 channel_rms_db=(-109.5, -109.5) channel_peak_db=(-98.6, -98.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:32 [INFO] [VAD][peer] SpeechEnd: id=e091a1a7, reason=max_duration, speech_audio_ms=7008.0
+16:02:32 [INFO] [AudioDiag][VAD][peer] event=SpeechEnd utterance_id=e091a1a7 reason=max_duration trailing_silence_ms=0 speech_audio_ms=7008.0 chunk_count=219
+16:02:32 [INFO] [Detailed][Latency] channel=peer utterance_id=e091a1a7 stage=speech_end elapsed_ms=0
+16:02:32 [INFO] [STT] Speech end handling for id=e091a1a7 (trailing_silence_ms=0)
+16:02:32 [INFO] [AudioDiag][STTInput][peer] utterance_id=e091a1a7 chunk_count=220 audio_ms=7508.0 rms_db=-40.3 peak_db=-23.7 zero_ratio=0.000 finalize=True
+16:02:32 [INFO] [InferenceWorker] Decode start: audio_ms=7508
+16:02:32 [INFO] [VAD][TEST] Peer candidate start: id=968db245, prob=1.00
+16:02:32 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-40.5 peak_db=-29.7 zero_ratio=0.000 channel_rms_db=(-40.5, -40.5) channel_peak_db=(-29.7, -29.7) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:32 [INFO] [VAD][TEST] Peer candidate committed: id=968db245, buffered_chunks=3
+16:02:32 [INFO] [VAD][peer] SpeechStart: id=968db245, prob=1.00
+16:02:32 [INFO] [AudioDiag][VAD][peer] event=SpeechStart utterance_id=968db245 prob=1.000 threshold=0.4 pre_roll_ms=500.0 rms_db=-46.9 peak_db=-33.4
+16:02:32 [INFO] [InferenceWorker] Decode done: elapsed_ms=203
+16:02:32 [INFO] [InferenceWorker] Transcript: 'Предан клановал Кихар. В любом случае завербовал несколько вампиров, которых пушиュー в расход в будущих битвах. Мне удалось вытащить.'
+16:02:32 [INFO] [Pipeline][peer] STT final: 'Предан клановал Кихар. В любом случае завербовал несколько вампиров, которых пушиュー в расход в будущих битвах. Мне удалось вытащить.'
+16:02:32 [INFO] [Detailed][Latency] channel=peer utterance_id=43e08fe4 stage=speech_end elapsed_ms=0
+16:02:32 [INFO] [Detailed][Latency] channel=peer utterance_id=43e08fe4 stage=stt_final elapsed_ms=203
+16:02:32 [INFO] [Hub] Translation skipped (stage=final, channel=peer, publish_chatbox=False): llm unavailable
+16:02:32 [INFO] [Detailed][Latency] channel=peer utterance_id=43e08fe4 stage=peer_overlay_first_emit elapsed_ms=203
+16:02:32 [INFO] [Basic][Latency] channel=peer e2e_ms=703
+16:02:32 [INFO] [Detailed][LatencyBreakdown] channel=peer e2e_ms=703 speech_end_to_stt_final_ms=203 stt_final_to_final_output_ms=0 dominant_stage=normal
+16:02:32 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_first_visible entry=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c channel=peer publishable=True ever_visible=True ever_visible_with_translation=False retained_hidden=False block_variant=finalized primary_len=0 secondary_len=132
+16:02:32 [INFO] [OverlayPresenter] Snapshot publish: revision=10 block_count=2 bridge_attached=True update_ids=[] scopes=[]
+16:02:32 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=10 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:02:32 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=PeerTranscriptFinal channel=peer utterance_id=43e08fe4-b7bf-422b-b433-4734a5350e4c update_id=None elapsed_ms=0
+16:02:32 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_no_visible_change disposition=rendered_signature_unchanged block_count=2
+16:02:32 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=UtteranceClosed channel=peer utterance_id=43e08fe4-b7bf-422b-b433-4734a5350e4c update_id=None elapsed_ms=0
+16:02:32 [INFO] [Detailed][DisplayCard] dashboard_primary_applied utterance_id=43e08fe4-b7bf-422b-b433-4734a5350e4c channel=peer update_id=none origin_wall_clock_ms=None transcript_kind=final source_text_len=132 primary_text_len=145 showing_status=False primary_update_issued=True flet_update_elapsed_us=107
+16:02:32 [INFO] [DesktopOverlay][Detail] snapshot_update revision=10 blocks=2 rows=[idx=0 id=peer:657950dd-107f-4a9e-85af-531b100ea4e5 occupant_key=peer:657950dd-107f-4a9e-85af-531b100ea4e5 appearance_seq=9 channel=peer variant=finalized primary_len=0 secondary_len=122 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none; idx=1 id=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c occupant_key=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c appearance_seq=11 channel=peer variant=finalized primary_len=0 secondary_len=132 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:02:32 [INFO] [DesktopOverlay][Detail] render_width revision=10 slot=0 key=peer:657950dd-107f-4a9e-85af-531b100ea4e5/peer:657950dd-107f-4a9e-85af-531b100ea4e5/9 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=1344.0 floor_hit=False line_count=1 primary_len=122 secondary_len=0
+16:02:32 [INFO] [DesktopOverlay][Detail] render_width revision=10 slot=1 key=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c/peer:43e08fe4-b7bf-422b-b433-4734a5350e4c/11 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=0.0 floor_hit=False line_count=1 primary_len=132 secondary_len=0
+16:02:32 [INFO] [DesktopOverlay][Detail] render revision=10 blocks=2 interaction_mode=pass_through surface_visible=True line_count=2 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:02:32 [INFO] [DesktopOverlay][Detail] render_transition revision=10 content_kind caption_surface->caption_surface surface_visible True->True slot_count 1->2 line_count 1->2 window 1344x336->1344x336 background_alpha 0.600->0.600
+16:02:32 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-38.5 peak_db=-30.5 zero_ratio=0.000
+16:02:32 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-117.0 peak_db=-106.6 zero_ratio=0.517 channel_rms_db=(-117.0, -117.0) channel_peak_db=(-106.6, -106.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:33 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-43.3 peak_db=-34.5 zero_ratio=0.000 channel_rms_db=(-43.3, -43.3) channel_peak_db=(-34.5, -34.5) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:33 [INFO] [OverlayPresenter] Snapshot publish: revision=11 block_count=1 bridge_attached=True update_ids=[] scopes=[]
+16:02:33 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=11 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:02:33 [INFO] [DesktopOverlay][Detail] snapshot_update revision=11 blocks=1 rows=[idx=0 id=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c occupant_key=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c appearance_seq=11 channel=peer variant=finalized primary_len=0 secondary_len=132 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:02:33 [INFO] [DesktopOverlay][Detail] render_width revision=11 slot=0 key=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c/peer:43e08fe4-b7bf-422b-b433-4734a5350e4c/11 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=1344.0 floor_hit=False line_count=1 primary_len=132 secondary_len=0
+16:02:33 [INFO] [DesktopOverlay][Detail] render revision=11 blocks=1 interaction_mode=pass_through surface_visible=True line_count=1 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:02:33 [INFO] [DesktopOverlay][Detail] render_transition revision=11 content_kind caption_surface->caption_surface surface_visible True->True slot_count 2->1 line_count 2->1 window 1344x336->1344x336 background_alpha 0.600->0.600
+16:02:33 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-43.3 peak_db=-32.6 zero_ratio=0.002
+16:02:33 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-115.9 zero_ratio=0.956 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-115.9, -115.9) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:34 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-47.8 peak_db=-35.2 zero_ratio=0.001 channel_rms_db=(-47.8, -47.8) channel_peak_db=(-35.2, -35.2) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:34 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-35.8 peak_db=-25.1 zero_ratio=0.000
+16:02:35 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:35 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-37.4 peak_db=-28.5 zero_ratio=0.000 channel_rms_db=(-37.4, -37.4) channel_peak_db=(-28.5, -28.5) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:35 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-62.4 peak_db=-50.9 zero_ratio=0.002
+16:02:36 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:36 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-38.1 peak_db=-29.2 zero_ratio=0.000 channel_rms_db=(-38.1, -38.1) channel_peak_db=(-29.2, -29.2) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:36 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-43.0 peak_db=-31.7 zero_ratio=0.000
+16:02:37 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:37 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:37 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-98.6 peak_db=-88.8 zero_ratio=0.053 channel_rms_db=(-98.6, -98.6) channel_peak_db=(-88.8, -88.8) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:37 [INFO] [VAD][peer] SpeechEnd: id=968db245, trailing_silence_ms=512
+16:02:37 [INFO] [AudioDiag][VAD][peer] event=SpeechEnd utterance_id=968db245 reason=silence trailing_silence_ms=512 speech_audio_ms=5312.0 chunk_count=166
+16:02:37 [INFO] [Detailed][Latency] channel=peer utterance_id=968db245 stage=speech_end elapsed_ms=0
+16:02:37 [INFO] [STT] Speech end handling for id=968db245 (trailing_silence_ms=512)
+16:02:37 [INFO] [AudioDiag][STTInput][peer] utterance_id=968db245 chunk_count=167 audio_ms=5812.0 rms_db=-41.1 peak_db=-24.4 zero_ratio=0.096 finalize=True
+16:02:37 [INFO] [InferenceWorker] Decode start: audio_ms=5812
+16:02:37 [INFO] [InferenceWorker] Decode done: elapsed_ms=172
+16:02:37 [INFO] [InferenceWorker] Transcript: 'Вытащите из крепа таинственную девушку. Она дочь Харкона, главы клана Волких.'
+16:02:37 [INFO] [Pipeline][peer] STT final: 'Вытащите из крепа таинственную девушку. Она дочь Харкона, главы клана Волких.'
+16:02:37 [INFO] [Detailed][Latency] channel=peer utterance_id=0bf16607 stage=speech_end elapsed_ms=0
+16:02:37 [INFO] [Detailed][Latency] channel=peer utterance_id=0bf16607 stage=stt_final elapsed_ms=172
+16:02:37 [INFO] [Hub] Translation skipped (stage=final, channel=peer, publish_chatbox=False): llm unavailable
+16:02:37 [INFO] [Detailed][Latency] channel=peer utterance_id=0bf16607 stage=peer_overlay_first_emit elapsed_ms=172
+16:02:37 [INFO] [Basic][Latency] channel=peer e2e_ms=672
+16:02:37 [INFO] [Detailed][LatencyBreakdown] channel=peer e2e_ms=672 speech_end_to_stt_final_ms=172 stt_final_to_final_output_ms=0 dominant_stage=normal
+16:02:37 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_first_visible entry=peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b channel=peer publishable=True ever_visible=True ever_visible_with_translation=False retained_hidden=False block_variant=finalized primary_len=0 secondary_len=77
+16:02:37 [INFO] [OverlayPresenter] Snapshot publish: revision=12 block_count=2 bridge_attached=True update_ids=[] scopes=[]
+16:02:37 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=12 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:02:37 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=PeerTranscriptFinal channel=peer utterance_id=0bf16607-fd8a-4b38-8e5c-9ff5972cde6b update_id=None elapsed_ms=0
+16:02:37 [INFO] [OverlayPresenter][Decision] decision=overlay_turn_no_visible_change disposition=rendered_signature_unchanged block_count=2
+16:02:37 [INFO] [Detailed][Hub] overlay_sink_emit_duration event_type=UtteranceClosed channel=peer utterance_id=0bf16607-fd8a-4b38-8e5c-9ff5972cde6b update_id=None elapsed_ms=0
+16:02:37 [INFO] [Detailed][DisplayCard] dashboard_primary_applied utterance_id=0bf16607-fd8a-4b38-8e5c-9ff5972cde6b channel=peer update_id=none origin_wall_clock_ms=None transcript_kind=final source_text_len=77 primary_text_len=90 showing_status=False primary_update_issued=True flet_update_elapsed_us=89
+16:02:37 [INFO] [DesktopOverlay][Detail] snapshot_update revision=12 blocks=2 rows=[idx=0 id=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c occupant_key=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c appearance_seq=11 channel=peer variant=finalized primary_len=0 secondary_len=132 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none; idx=1 id=peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b occupant_key=peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b appearance_seq=13 channel=peer variant=finalized primary_len=0 secondary_len=77 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:02:37 [INFO] [DesktopOverlay][Detail] render_width revision=12 slot=0 key=peer:43e08fe4-b7bf-422b-b433-4734a5350e4c/peer:43e08fe4-b7bf-422b-b433-4734a5350e4c/11 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=1344.0 floor_hit=False line_count=1 primary_len=132 secondary_len=0
+16:02:37 [INFO] [DesktopOverlay][Detail] render_width revision=12 slot=1 key=peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b/peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b/13 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=0.0 floor_hit=False line_count=1 primary_len=77 secondary_len=0
+16:02:37 [INFO] [DesktopOverlay][Detail] render revision=12 blocks=2 interaction_mode=pass_through surface_visible=True line_count=2 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:02:37 [INFO] [DesktopOverlay][Detail] render_transition revision=12 content_kind caption_surface->caption_surface surface_visible True->True slot_count 1->2 line_count 1->2 window 1344x336->1344x336 background_alpha 0.600->0.600
+16:02:37 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:38 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:38 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-95.9 peak_db=-85.6 zero_ratio=0.049 channel_rms_db=(-95.9, -95.9) channel_peak_db=(-85.6, -85.6) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:38 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:39 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:39 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-96.5 peak_db=-87.9 zero_ratio=0.038 channel_rms_db=(-96.5, -96.5) channel_peak_db=(-87.9, -87.9) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:39 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:40 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:40 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:40 [INFO] [OverlayPresenter] Snapshot publish: revision=13 block_count=1 bridge_attached=True update_ids=[] scopes=[]
+16:02:40 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=13 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:02:40 [INFO] [DesktopOverlay][Detail] snapshot_update revision=13 blocks=1 rows=[idx=0 id=peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b occupant_key=peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b appearance_seq=13 channel=peer variant=finalized primary_len=0 secondary_len=77 secondary_enabled=True update_id=none origin_wall_clock_ms=none session_scope=none]
+16:02:40 [INFO] [DesktopOverlay][Detail] render_width revision=13 slot=0 key=peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b/peer:0bf16607-fd8a-4b38-8e5c-9ff5972cde6b/13 raw_card_width=1344.0 applied_card_width=1344.0 raw_text_width=1300.0 applied_text_width=1300.0 previous_floor=1344.0 floor_hit=False line_count=1 primary_len=77 secondary_len=0
+16:02:40 [INFO] [DesktopOverlay][Detail] render revision=13 blocks=1 interaction_mode=pass_through surface_visible=True line_count=1 content_kind=caption_surface window=1344x336 background_alpha=0.6
+16:02:40 [INFO] [DesktopOverlay][Detail] render_transition revision=13 content_kind caption_surface->caption_surface surface_visible True->True slot_count 2->1 line_count 2->1 window 1344x336->1344x336 background_alpha 0.600->0.600
+16:02:40 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:40 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-96.4 peak_db=-85.1 zero_ratio=0.049 channel_rms_db=(-96.4, -96.4) channel_peak_db=(-85.1, -85.1) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:41 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:41 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:42 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-88.8 peak_db=-73.2 zero_ratio=0.026 channel_rms_db=(-88.8, -88.8) channel_peak_db=(-73.2, -73.2) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:42 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:42 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:43 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:43 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-94.3 peak_db=-86.4 zero_ratio=0.045 channel_rms_db=(-94.3, -94.3) channel_peak_db=(-86.4, -86.4) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:43 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:44 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:44 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:44 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-92.1 peak_db=-79.5 zero_ratio=0.108 channel_rms_db=(-92.1, -92.1) channel_peak_db=(-79.5, -79.5) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:45 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:45 [INFO] [AudioDiag][Capture][peer] rate_hz=96000 channels=2 fault_profile=none samples=2048 audio_ms=10.7 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000 channel_rms_db=(-120.0, -120.0) channel_peak_db=(-120.0, -120.0) actual_sample_rate_hz=96000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=2 resolved_device_index=19 resolved_device_name=Динамики (Realtek High Definition Audio) [Loopback] used_default_fallback=False
+16:02:45 [INFO] [AudioDiag][Capture][self] rate_hz=48000 channels=2 fault_profile=none samples=16000 audio_ms=166.7 rms_db=-59.6 peak_db=-39.4 zero_ratio=0.001 channel_rms_db=(-59.6, -59.6) channel_peak_db=(-39.4, -39.4) actual_sample_rate_hz=48000 callback_statuses=0 last_callback_status=None queue_drops=0 resolved_channels=None resolved_device_index=None resolved_device_name=None used_default_fallback=None
+16:02:45 [INFO] [OverlayPresenter] Snapshot publish: revision=14 block_count=0 bridge_attached=True update_ids=[] scopes=[]
+16:02:45 [INFO] [OverlayBridge][Broadcast] stage=finish overlay_instance_id=overlay-692acd4d1a9c6dbf type=snapshot revision=14 authenticated=1 stale=0 elapsed_ms=0 update_ids=[]
+16:02:45 [INFO] [DesktopOverlay][Detail] snapshot_update revision=14 blocks=0 rows=[]
+16:02:45 [INFO] [DesktopOverlay][Detail] render revision=14 blocks=0 interaction_mode=pass_through surface_visible=False line_count=0 content_kind=transparent_host window=1344x336 background_alpha=0.0
+16:02:45 [INFO] [DesktopOverlay][Detail] render_transition revision=14 content_kind caption_surface->transparent_host surface_visible True->False slot_count 1->0 line_count 1->0 window 1344x336->1344x336 background_alpha 0.600->0.000
+16:02:46 [INFO] [AudioDiag][PeerPipeline] source_rate=96000 source_channels=2 target_rate=16000 samples=514 audio_ms=32.1 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:46 [INFO] [STT] Toggle request: enabled=False
+16:02:46 [INFO] [AudioDiag][VADInput][peer] source_rate=16000 source_channels=1 target_rate=16000 samples=515 audio_ms=32.2 rms_db=-120.0 peak_db=-120.0 zero_ratio=1.000
+16:02:46 [INFO] [Peer] Toggle request: enabled=False
+16:02:46 [INFO] [Peer] Toggle detail: overlay_enabled=True overlay_state=connected peer_stt_available=True eula_accepted=True
+16:02:46 [INFO] [Settings] Peer STT provider replacement: provider=STTProviderName.LOCAL_QWEN3_ASR_GGUF peer_stt_compute=gpu desired_active=False
+16:02:46 [INFO] [PeerChannel] loop cancelled: generation=1
+16:02:46 [INFO] [STT] State: STREAMING -> DRAINING
+16:02:46 [INFO] [STT] DRAIN: Starting drain (timeout=2.0s)...
+16:02:46 [INFO] [STT] DRAIN: Consumer task completed normally
+16:02:46 [INFO] [STT] DRAIN: Session closed
+16:02:46 [INFO] [STT] State: DRAINING -> DISCONNECTED
+16:02:46 [INFO] [InferenceWorker] Killing worker: pid=5644 provider=local_transcribecpp provider_type=vulkan
+16:02:46 [INFO] [Settings] Peer STT provider replacement completed
+16:02:46 [INFO] [Settings] Saved: backup.enabled=False mode=openai_compatible oc.base_url= oc.model= llm.base_url= llm.model= stt=local_qwen3_asr_gguf stt_quant=q6_k peer_stt=local_qwen3_asr_gguf peer_stt_quant=q6_k llm=none
+16:02:46 [INFO] [Overlay] Toggle request: enabled=False
+16:02:46 [INFO] [Overlay] Toggle detail: current_state=connected has_bridge=True has_manager=True
+16:02:46 [INFO] [Overlay] Shutdown requested
+16:02:46 [INFO] [Overlay] Shutdown detail: preserve_failure_reason=True state=connected has_bridge=True has_manager=True presenter_attached=True
+16:02:46 [INFO] [Overlay] State transition: connected -> stopping
+16:02:46 [INFO] [Overlay] State detail: presenter_attached=True bridge_attached=True manager_state=connected
+16:02:46 [INFO] [Overlay] State changed: stopping -> stopping
+16:02:46 [WARNING] [OverlayBridge] No connected overlay clients — snapshot dropped (overlay process may not be running)
+16:02:46 [WARNING] [OverlayEmitter] overlay_sink is None — overlay events will be dropped. Overlay process may not have started.
+16:02:46 [INFO] server closing
+16:02:46 [INFO] server closed
+16:02:46 [INFO] [Overlay] State transition: stopping -> off
+16:02:46 [INFO] [Overlay] State detail: presenter_attached=False bridge_attached=False manager_state=None
+16:02:46 [INFO] [Overlay] State changed: off -> off
+16:02:46 [INFO] [Settings] Saved: backup.enabled=False mode=openai_compatible oc.base_url= oc.model= llm.base_url= llm.model= stt=local_qwen3_asr_gguf stt_quant=q6_k peer_stt=local_qwen3_asr_gguf peer_stt_quant=q6_k llm=none

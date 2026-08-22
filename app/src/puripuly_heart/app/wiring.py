@@ -26,7 +26,6 @@ from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.ports.osc import OscSink
 from puripuly_heart.ports.secrets import SecretStore
 from puripuly_heart.ports.stt import STTBackend
-from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
 from puripuly_heart.adapters.llm.local_openai import LocalOpenAICompatibleLLMProvider
 from puripuly_heart.adapters.llm.openai_compatible import OpenAICompatibleLLMProvider
 
@@ -172,6 +171,8 @@ def create_llm_provider(
     secrets: SecretStore,
     runtime_logging: SessionRuntimeLoggingService | None = None,
 ) -> LLMProvider:
+    if settings.provider.llm == LLMProviderName.NONE:
+        raise ValueError("LLM provider is disabled (NONE)")
     if settings.provider.llm == LLMProviderName.LOCAL_LLM:
         api_key = (secrets.get("local_llm_api_key") or "").strip()
         logger.info(
@@ -232,7 +233,7 @@ def create_fallback_llm_provider(
     runtime_logging: SessionRuntimeLoggingService | None = None,
 ) -> LLMProvider | None:
     bt = settings.backup_translation
-    if not bt.enabled:
+    if not bt.enabled or bt.mode == LLMProviderName.NONE:
         return None
     if bt.mode == LLMProviderName.LOCAL_LLM:
         local = bt.local_llm
@@ -305,7 +306,6 @@ def _create_subprocess_stt_backend(
     quant: str,
     language: str,
     *,
-    hotwords: tuple[str, ...] = (),
     data_dir: Path,
 ) -> STTBackend:
     from puripuly_heart.adapters.inference.subprocess_backend import SubprocessSTTBackend
@@ -337,8 +337,6 @@ def _create_subprocess_stt_backend(
     }
     if language_hint is not None:
         kwargs["language_hint"] = language_hint
-    if hotwords:
-        kwargs["hotwords"] = hotwords
     return SubprocessSTTBackend(**kwargs)
 
 
@@ -348,7 +346,6 @@ def create_stt_backend(
     secrets: SecretStore,
     diagnostics_enabled: Callable[[], bool] | None = None,
 ) -> STTBackend:
-    effective_terms = get_effective_custom_terms(settings.stt.custom_terms, settings.stt.custom_vocabulary_enabled, settings.languages.source_language)
     from puripuly_heart.config.paths import default_models_dir
     data_dir = default_models_dir()
 
@@ -357,7 +354,6 @@ def create_stt_backend(
         settings.provider.stt_compute,
         settings.provider.stt_quant,
         settings.languages.source_language,
-        hotwords=tuple(effective_terms),
         data_dir=data_dir,
     )
 

@@ -535,16 +535,37 @@ class SoundDeviceAudioSource(AudioSource):
                 auto_convert=self.wasapi_auto_convert,
             )
 
-        stream = sd.InputStream(**stream_kwargs)
+        logger.debug("[MicSource] opening stream: device=%s samplerate=%s channels=%s blocksize=%s wasapi=%s",
+                     self.device, stream_kwargs.get("samplerate"), self.channels, stream_kwargs.get("blocksize"),
+                     "exclusive" if self.wasapi_exclusive else "auto_convert" if self.wasapi_auto_convert else "off")
         try:
+            stream = sd.InputStream(**stream_kwargs)
             stream.start()
             actual_sample_rate_hz = int(stream.samplerate)
-        except Exception:
+            logger.debug("[MicSource] stream started: actual_samplerate=%d", actual_sample_rate_hz)
+        except sd.PortAudioError as exc:
+            logger.warning("[MicSource] stream failed: %s — retrying with device default samplerate", exc)
             with contextlib.suppress(Exception):
                 stream.stop()
             with contextlib.suppress(Exception):
                 stream.close()
-            raise
+            try:
+                stream_kwargs["samplerate"] = None
+                stream = sd.InputStream(**stream_kwargs)
+                stream.start()
+                actual_sample_rate_hz = int(stream.samplerate)
+                logger.info("[MicSource] stream started with device default samplerate=%d", actual_sample_rate_hz)
+            except sd.PortAudioError as exc2:
+                logger.warning("[MicSource] fallback also failed: %s — retrying without WASAPI settings", exc2)
+                with contextlib.suppress(Exception):
+                    stream.stop()
+                with contextlib.suppress(Exception):
+                    stream.close()
+                stream_kwargs.pop("extra_settings", None)
+                stream = sd.InputStream(**stream_kwargs)
+                stream.start()
+                actual_sample_rate_hz = int(stream.samplerate)
+                logger.info("[MicSource] stream started without WASAPI: samplerate=%d", actual_sample_rate_hz)
 
         self._stream = stream
         self._opened_channels = self.channels
@@ -665,10 +686,23 @@ def resolve_sounddevice_input_device(*, host_api: str = "", device: str = "") ->
     """
     host_api = (host_api or "").strip()
     device = (device or "").strip()
-    if not host_api and not device:
-        return None
+    logger.debug("[AudioDevice] resolve: host_api=%r device=%r", host_api, device)
 
     import sounddevice as sd  # type: ignore
+
+    if not host_api and not device:
+        default_input = sd.default.device[0]
+        if isinstance(default_input, int) and default_input >= 0:
+            dev_name = str(sd.query_devices()[default_input].get("name", ""))
+            logger.debug("[AudioDevice] no host_api/device — using system default: idx=%d name=%r", default_input, dev_name)
+            return default_input
+        devices = sd.query_devices()
+        for idx, info in enumerate(devices):
+            if int(info.get("max_input_channels", 0) or 0) > 0:
+                logger.debug("[AudioDevice] fallback — first input device: idx=%d name=%r", idx, str(info.get("name", "")))
+                return idx
+        logger.warning("[AudioDevice] no input device found at all")
+        return None
 
     hostapis = sd.query_hostapis()
     devices = sd.query_devices()
@@ -679,7 +713,10 @@ def resolve_sounddevice_input_device(*, host_api: str = "", device: str = "") ->
             name = str(item.get("name", "") or "")
             if name.lower() == host_api.lower():
                 hostapi_index = idx
+                logger.debug("[AudioDevice] hostapi matched: idx=%d name=%r", idx, name)
                 break
+        if hostapi_index is None:
+            logger.warning("[AudioDevice] hostapi not found: %r (available: %s)", host_api, [str(h.get("name","")) for h in hostapis])
 
     # Priority 1: numeric device index
     if device:
@@ -690,12 +727,14 @@ def resolve_sounddevice_input_device(*, host_api: str = "", device: str = "") ->
                 if hostapi_value is None:
                     hostapi_value = -1
                 if hostapi_index is None or int(hostapi_value) == hostapi_index:
+                    logger.debug("[AudioDevice] numeric device: idx=%d name=%r", idx, str(devices[idx].get("name", "")))
                     return idx
 
     # Priority 2: hostapi default (no explicit device)
     if hostapi_index is not None and not device:
         default_input = hostapis[hostapi_index].get("default_input_device")
         if isinstance(default_input, int) and default_input >= 0:
+            logger.debug("[AudioDevice] hostapi default: idx=%d name=%r", default_input, str(devices[default_input].get("name", "")))
             return default_input
 
     # Priority 3: iterate + filter by hostapi + name
@@ -711,6 +750,7 @@ def resolve_sounddevice_input_device(*, host_api: str = "", device: str = "") ->
             name = str(info.get("name", "") or "")
             if name.lower() != device.lower():
                 continue
+        logger.debug("[AudioDevice] name match: idx=%d name=%r", idx, str(info.get("name", "")))
         return idx
 
     return None

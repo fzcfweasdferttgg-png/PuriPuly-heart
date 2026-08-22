@@ -30,17 +30,8 @@ if TYPE_CHECKING:
 class PresenterEntryMgmtMixin:
     """Entry lifecycle management: creation, expiration, tombstoning, visibility.
 
-    __slots__ — fields owned by this mixin, previously on OverlayPresenter dataclass.
-    Initialized in OverlayPresenter.__post_init__ (not here — mixin has no __init__).
+    Fields are declared on OverlayPresenter dataclass (init=False).
     """
-
-    __slots__ = (
-        '_terminal_registry',
-        '_scene_terminal_keys',
-        '_expiration_tasks',
-        '_appearance_seq',
-    )
-
 
     def _entry_key(self, channel: str | None, utterance_id: UUID | None) -> tuple[str, UUID]:
         if channel not in ("self", "peer"):

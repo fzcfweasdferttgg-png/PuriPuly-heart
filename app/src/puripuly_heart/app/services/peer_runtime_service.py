@@ -153,7 +153,7 @@ class PeerRuntimeService:
             f"actual_sample_rate_hz={getattr(raw_source, 'actual_sample_rate_hz', None)} "
             f"used_default_fallback={getattr(raw_source, 'used_default_fallback', None)}"
         )
-        wrapped_source = self._wrap_diagnostic_audio_source(raw_source, "peer") if self._wrap_diagnostic_audio_source else raw_source
+        wrapped_source = self._wrap_diagnostic_audio_source(raw_source, channel_label="peer") if self._wrap_diagnostic_audio_source else raw_source
         return DesktopPeerPipeline(
             source=wrapped_source,
             target_sample_rate_hz=config.backend.sample_rate_hz,

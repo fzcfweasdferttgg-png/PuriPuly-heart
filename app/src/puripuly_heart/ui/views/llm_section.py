@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 
 _TRANSLATION_MODEL_LABEL_KEYS = {
+    TranslationModel.NONE: "provider.none",
     TranslationModel.LOCAL_LLM: "provider.local_llms",
     TranslationModel.OPENAI_COMPATIBLE: "provider.openai_compatible",
 }
@@ -450,6 +451,7 @@ class LlmSectionMixin:
         if not self.page:
             return
         model_sections = (
+            (TranslationModel.NONE, None),
             (TranslationModel.LOCAL_LLM, None),
             (TranslationModel.OPENAI_COMPATIBLE, None),
         )

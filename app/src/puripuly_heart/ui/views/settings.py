@@ -238,8 +238,7 @@ class SettingsView(
     # --- Card Wrapper (About page pattern) ---
     def _build_prompt_tab(self) -> list[ft.Control]:
         persona_card = self._build_prompt_widgets()
-        row7 = self._build_vocabulary_widgets()
-        return [row7, persona_card]
+        return [persona_card]
 
     def _build_overlay_tab(self) -> list[ft.Control]:
         # === Section H: Overlay Cards ===

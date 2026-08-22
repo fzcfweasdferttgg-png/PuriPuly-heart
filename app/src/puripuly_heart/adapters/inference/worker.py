@@ -60,8 +60,6 @@ def _create_recognizer(data: dict[str, object]) -> object:
     num_threads: int = int(data.get("num_threads", 3))
     feature_dim: int = int(data.get("feature_dim", 128))
     language_hint = data.get("language_hint")
-    raw_hotwords = data.get("hotwords")
-    hotwords = tuple(raw_hotwords) if isinstance(raw_hotwords, list) else ()
 
     from pathlib import Path
 
@@ -85,7 +83,6 @@ def _create_recognizer(data: dict[str, object]) -> object:
             recognizer=recognizer,
             sample_rate_hz=LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ,
             language_hint=str(language_hint) if language_hint else None,
-            hotwords=hotwords,
         )
 
     if provider_name == "local_gigaam_rnnt":
@@ -106,7 +103,6 @@ def _create_recognizer(data: dict[str, object]) -> object:
             recognizer=recognizer,
             sample_rate_hz=GIGAAM_RECOGNIZER_SAMPLE_RATE_HZ,
             language_hint=str(language_hint) if language_hint else None,
-            hotwords=hotwords,
         )
 
     if provider_name == "local_parakeet_tdt":
@@ -127,7 +123,6 @@ def _create_recognizer(data: dict[str, object]) -> object:
             recognizer=recognizer,
             sample_rate_hz=PARAKEET_TDT_SAMPLE_RATE_HZ,
             language_hint=str(language_hint) if language_hint else None,
-            hotwords=hotwords,
         )
 
     if provider_name == "local_transcribecpp":
@@ -163,19 +158,17 @@ def _create_recognizer(data: dict[str, object]) -> object:
 
 
 class _RecognizerHandle:
-    __slots__ = ("recognizer", "sample_rate_hz", "language_hint", "hotwords")
+    __slots__ = ("recognizer", "sample_rate_hz", "language_hint")
 
     def __init__(
         self,
         recognizer: object,
         sample_rate_hz: int,
         language_hint: str | None,
-        hotwords: tuple[str, ...],
     ) -> None:
         self.recognizer = recognizer
         self.sample_rate_hz = sample_rate_hz
         self.language_hint = language_hint
-        self.hotwords = hotwords
 
     def decode(self, samples_f32: np.ndarray) -> str:
         samples = np.asarray(samples_f32, dtype=np.float32).reshape(-1).copy()
@@ -184,8 +177,6 @@ class _RecognizerHandle:
         if callable(set_option):
             if self.language_hint:
                 set_option("language", self.language_hint)
-            if self.hotwords:
-                set_option("hotwords", ",".join(self.hotwords))
         np.clip(samples, -1.0, 1.0, out=samples)
         stream.accept_waveform(self.sample_rate_hz, samples)
         self.recognizer.decode_stream(stream)

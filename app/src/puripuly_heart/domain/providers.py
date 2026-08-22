@@ -16,5 +16,6 @@ class STTProviderName(str, Enum):
 
 
 class LLMProviderName(str, Enum):
+    NONE = "none"
     LOCAL_LLM = "local_llm"
     OPENAI_COMPATIBLE = "openai_compatible"

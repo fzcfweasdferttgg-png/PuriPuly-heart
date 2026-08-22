@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from puripuly_heart.config.settings.enums import TranslationModel
 from puripuly_heart.domain.providers import LLMProviderName, STTProviderName
 from puripuly_heart.domain.settings_commands import (
     ChangeAudioDevice,
@@ -31,7 +32,6 @@ from puripuly_heart.domain.settings_commands import (
     ChangeCalibrationField,
     ChangeChatboxSource,
     ChangeClipboardAutoTranslate,
-    ChangeCustomVocabulary,
     ChangeFallbackLocalLLMField,
     ChangeFallbackOpenAIField,
     ChangeHangover,
@@ -153,7 +153,6 @@ class SettingsCommandExecutor:
                 ChangeChatboxSource: cls._apply_chatbox_source,
                 ChangeIntegratedContext: cls._apply_integrated_context,
                 ChangeAudioDevice: cls._apply_audio_device,
-                ChangeCustomVocabulary: cls._apply_custom_vocabulary,
                 ChangeOverlayTarget: cls._apply_overlay_target,
                 ChangeOverlayDesktopSize: cls._apply_overlay_desktop_size,
                 ChangeOverlayDesktopBackgroundAlpha: cls._apply_overlay_desktop_background_alpha,
@@ -230,11 +229,6 @@ class SettingsCommandExecutor:
         self._settings.audio.input_host_api = cmd.host_api
         self._settings.audio.input_device = cmd.input_device
         self._settings.desktop_audio.output_device = cmd.desktop_output_device
-        return CommandResult(success=True, settings=self._settings)
-
-    def _apply_custom_vocabulary(self, cmd: ChangeCustomVocabulary) -> CommandResult:
-        self._settings.stt.custom_terms = cmd.terms
-        self._settings.stt.custom_vocabulary_enabled = cmd.enabled
         return CommandResult(success=True, settings=self._settings)
 
     def _apply_overlay_target(self, cmd: ChangeOverlayTarget) -> CommandResult:
@@ -424,6 +418,7 @@ class SettingsCommandExecutor:
             return CommandResult(success=False, error="No draft service for translation selection")
         draft = draft_svc._ensure_provider_settings_draft()
         draft.provider.llm = LLMProviderName(cmd.provider)
+        draft.translation.model = TranslationModel(cmd.provider)
         assert self._materialize_fn is not None, "materialize_fn must be injected"
         self._materialize_fn(draft)
         draft_svc.has_provider_changes = True

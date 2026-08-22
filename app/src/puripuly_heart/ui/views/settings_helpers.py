@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import re
 from typing import TYPE_CHECKING
 
 import flet as ft
@@ -45,7 +44,6 @@ _CJK_START = 0x3000
 _CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
 _CENTER_RIGHT_ALIGNMENT = ft.alignment.Alignment(1, 0)
 _SETTINGS_SUBTAB_ORDER = ("api", "general", "prompt", "overlay")
-_CUSTOM_VOCAB_DELIMITER_RE = re.compile(r"\s+")
 
 
 # ── Module-level helpers ──────────────────────────────────────────────────
@@ -126,7 +124,6 @@ def _setting_action_text_size(text: str) -> int:
 #   _emit_runtime_basic/detailed (logging)
 #   _sync_general_audio_card_texts (audio section display)
 #   _sync_prompt_tab_copy (prompt tab label sync)
-#   _sync_custom_vocabulary_editor_from_settings (vocab editor sync)
 #   _on_fallback_status_click/selected (backup translation mode toggle)
 #
 # MRO POSITION: SettingsHelpersMixin is FIRST in the class hierarchy of SettingsView.
@@ -589,48 +586,11 @@ class SettingsHelpersMixin:
             provider=provider_label(self._active_prompt_key()),
         )
 
-    def _custom_vocabulary_description_copy(self) -> str:
-        return t("settings.custom_vocabulary.description")
-
-    def _apply_custom_vocabulary_tag_editor_locale(self) -> None:
-        self._custom_vocab_tag_editor.set_placeholder(
-            t("settings.custom_vocabulary.add_placeholder")
-        )
-        self._custom_vocab_tag_editor.set_add_label(t("settings.custom_vocabulary.add_action"))
-        self._custom_vocab_tag_editor.set_empty_text(t("settings.custom_vocabulary.empty"))
-        self._custom_vocab_tag_editor.set_remove_label_template(
-            t("settings.custom_vocabulary.remove_hint")
-        )
-
     def _sync_prompt_tab_copy(self) -> None:
         self._prompt_for_text.value = self._prompt_provider_copy()
-        self._custom_vocab_description_text.value = self._custom_vocabulary_description_copy()
-        self._apply_custom_vocabulary_tag_editor_locale()
         if self.page:
-            for control in (self._prompt_for_text, self._custom_vocab_description_text):
-                with contextlib.suppress(Exception):
-                    control.update()
-
-    def _sync_custom_vocabulary_editor_from_settings(self) -> None:
-        if not self._settings:
-            self._custom_vocab_tag_editor.set_terms([])
-            self._custom_vocab_tag_editor.clear_input()
-            return
-
-        source_language = self._current_source_language()
-        self._custom_vocab_tag_editor.set_terms(
-            list(self._settings.stt.custom_terms.get(source_language, []))
-        )
-        self._custom_vocab_tag_editor.clear_input()
-
-    def _normalize_custom_vocabulary_submitted_terms(self, raw_terms: list[str]) -> list[str]:
-        terms: list[str] = []
-        for raw_term in raw_terms:
-            for part in _CUSTOM_VOCAB_DELIMITER_RE.split(str(raw_term)):
-                normalized = part.strip()
-                if normalized:
-                    terms.append(normalized)
-        return terms
+            with contextlib.suppress(Exception):
+                self._prompt_for_text.update()
 
     def _on_stub_click(self, e) -> None:
         if not self.page:

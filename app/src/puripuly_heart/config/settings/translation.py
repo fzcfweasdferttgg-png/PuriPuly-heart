@@ -17,8 +17,8 @@ from .enums import (
 
 @dataclass(slots=True)
 class TranslationSettings:
-    model: TranslationModel = TranslationModel.OPENAI_COMPATIBLE
-    connection: TranslationConnection = TranslationConnection.OPENAI_COMPATIBLE
+    model: TranslationModel = TranslationModel.NONE
+    connection: TranslationConnection = TranslationConnection.NONE
     connection_history: dict[str, TranslationConnection] = field(
         default_factory=lambda: _default_translation_connection_history()
     )
@@ -43,7 +43,7 @@ class TranslationSettings:
 
 
 def _default_translation_connection_history() -> dict[str, TranslationConnection]:
-    return {TranslationModel.OPENAI_COMPATIBLE.value: TranslationConnection.OPENAI_COMPATIBLE}
+    return {}
 
 
 def _normalize_translation_settings(
@@ -52,7 +52,7 @@ def _normalize_translation_settings(
     connection: TranslationConnection | None,
     history: object = None,
 ) -> TranslationSettings:
-    normalized_model = model or TranslationModel.OPENAI_COMPATIBLE
+    normalized_model = model or TranslationModel.NONE
     normalized_history = _parse_translation_connection_history(history)
     if connection not in _supported_translation_connections(normalized_model):
         connection = _default_translation_connection(normalized_model)
@@ -80,11 +80,9 @@ def _translation_settings_to_dict(settings: TranslationSettings) -> dict[str, An
 
 def _default_translation_settings_dict() -> dict[str, Any]:
     return {
-        "model": TranslationModel.OPENAI_COMPATIBLE.value,
-        "connection": TranslationConnection.OPENAI_COMPATIBLE.value,
-        "connection_history": {
-            TranslationModel.OPENAI_COMPATIBLE.value: TranslationConnection.OPENAI_COMPATIBLE.value,
-        },
+        "model": TranslationModel.NONE.value,
+        "connection": TranslationConnection.NONE.value,
+        "connection_history": {},
     }
 
 

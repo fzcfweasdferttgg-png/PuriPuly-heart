@@ -86,7 +86,6 @@ class SubprocessSTTBackend(STTBackend):
     num_threads: int = 3
     feature_dim: int = 128
     language_hint: str | None = None
-    hotwords: tuple[str, ...] = ()
     job_handle: int | None = None
 
     _proc: subprocess.Popen | None = field(init=False, default=None, repr=False)
@@ -166,8 +165,6 @@ class SubprocessSTTBackend(STTBackend):
         }
         if self.language_hint is not None:
             init_cmd["language_hint"] = self.language_hint
-        if self.hotwords:
-            init_cmd["hotwords"] = list(self.hotwords)
 
         await self._write_command(init_cmd)
 

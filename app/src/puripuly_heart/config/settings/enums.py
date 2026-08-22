@@ -10,11 +10,13 @@ class LocalLLMBackend(str, Enum):
 
 
 class TranslationModel(str, Enum):
+    NONE = "none"
     LOCAL_LLM = "local_llm"
     OPENAI_COMPATIBLE = "openai_compatible"
 
 
 class TranslationConnection(str, Enum):
+    NONE = "none"
     LOCAL = "local"
     OPENAI_COMPATIBLE = "openai_compatible"
 
@@ -37,7 +39,7 @@ def _parse_llm_provider(value: object) -> LLMProviderName:
             return LLMProviderName(normalized)
         except ValueError:
             pass
-    return LLMProviderName.OPENAI_COMPATIBLE
+    return LLMProviderName.NONE
 
 
 def _parse_local_llm_backend(value: object) -> LocalLLMBackend:
@@ -90,6 +92,7 @@ def _parse_translation_connection_history(value: object) -> dict[str, Translatio
 
 
 TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnection, ...]] = {
+    TranslationModel.NONE: (TranslationConnection.NONE,),
     TranslationModel.LOCAL_LLM: (TranslationConnection.LOCAL,),
     TranslationModel.OPENAI_COMPATIBLE: (TranslationConnection.OPENAI_COMPATIBLE,),
 }

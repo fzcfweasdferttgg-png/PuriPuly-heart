@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 
 from puripuly_heart.app.wiring import build_peer_stt_provider_signature
 from puripuly_heart.domain.providers import LLMProviderName, STTProviderName
-from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
 from puripuly_heart.app.services.local_stt_manager import LOCAL_STT_PROVIDERS as _LOCAL_STT_PROVIDERS
 
 if TYPE_CHECKING:
@@ -23,48 +22,13 @@ def canonical_json_signature(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def stt_provider_applies_custom_vocabulary(settings: AppSettings) -> bool:
-    return settings.provider.stt in (
-        STTProviderName.LOCAL_QWEN,
-        STTProviderName.LOCAL_QWEN_17B,
-    )
-
-
 def llm_provider_requires_secret(provider: LLMProviderName) -> bool:
     return provider in (
         LLMProviderName.OPENAI_COMPATIBLE,
     )
 
 
-def stt_runtime_custom_vocabulary_signature(
-    settings: AppSettings,
-) -> tuple[bool, tuple[str, ...]]:
-    if not stt_provider_applies_custom_vocabulary(settings):
-        return False, ()
-    if settings.provider.stt in (STTProviderName.LOCAL_QWEN, STTProviderName.LOCAL_QWEN_17B):
-        from puripuly_heart.core.stt.custom_vocab import get_effective_local_qwen_hotwords
-        return (
-            settings.stt.custom_vocabulary_enabled,
-            tuple(
-                get_effective_local_qwen_hotwords(
-                    settings.stt.custom_terms,
-                    settings.stt.custom_vocabulary_enabled,
-                    settings.languages.source_language,
-                )
-            ),
-        )
-    return (
-        settings.stt.custom_vocabulary_enabled,
-        tuple(get_effective_custom_terms(
-            settings.stt.custom_terms,
-            settings.stt.custom_vocabulary_enabled,
-            settings.languages.source_language,
-        )),
-    )
-
-
 def build_self_stt_runtime_signature(settings: AppSettings) -> tuple[object, ...]:
-    custom_vocab_enabled, custom_terms = stt_runtime_custom_vocabulary_signature(settings)
     return (
         settings.languages.source_language,
         settings.audio.input_host_api,
@@ -78,8 +42,6 @@ def build_self_stt_runtime_signature(settings: AppSettings) -> tuple[object, ...
         settings.audio.ring_buffer_ms,
         settings.audio.internal_sample_rate_hz,
         settings.audio.internal_channels,
-        custom_vocab_enabled,
-        custom_terms,
     )
 
 

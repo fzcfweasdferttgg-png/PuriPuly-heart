@@ -37,6 +37,7 @@ _VALID_TRANSITIONS: dict[tuple[str, str], str] = {
     ("off", "start"): "starting",
     ("starting", "connected"): "connected",
     ("starting", "failed"): "failed",
+    ("starting", "stop"): "stopping",
     ("connected", "disconnect"): "failed",
     ("connected", "crash"): "failed",
     ("connected", "stop"): "stopping",

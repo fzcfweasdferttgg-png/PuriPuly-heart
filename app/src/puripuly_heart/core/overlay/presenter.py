@@ -63,7 +63,7 @@ SleepFn = Callable[[float], Awaitable[None]]
 
 
 @dataclass(slots=True)
-class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMixin, PresenterRefreshBurstMixin):
+class OverlayPresenter(PresenterLoggingMixin, PresenterEntryMgmtMixin, PresenterRefreshBurstMixin):
     calibration: OverlayCalibration
     clock: Clock
     bridge: OverlayPresentationTransport | None = None
@@ -89,19 +89,18 @@ class OverlayPresenter(OverlaySink, PresenterLoggingMixin, PresenterEntryMgmtMix
         init=False,
         default_factory=asyncio.Lock,
     )
+    # PresenterEntryMgmtMixin fields
+    _terminal_registry: OrderedDict = field(init=False, default_factory=OrderedDict)
+    _scene_terminal_keys: set = field(init=False, default_factory=set)
+    _expiration_tasks: dict = field(init=False, default_factory=dict)
+    _appearance_seq: int = field(init=False, default=0)
+    # PresenterRefreshBurstMixin fields
+    _peer_presentation_refresh_burst_task: asyncio.Task | None = field(init=False, default=None)
+    _self_presentation_refresh_burst_task: asyncio.Task | None = field(init=False, default=None)
+    _self_presentation_refresh_burst_cancel_reasons: dict = field(init=False, default_factory=dict)
+    _self_presentation_refresh_burst_cancel_cleanup_counts: dict = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Fields owned by mixins (defined in mixin __slots__, not dataclass fields).
-        # Initialized here because mixins have no __init__.
-        self._terminal_registry = OrderedDict()
-        self._scene_terminal_keys = set()
-        self._expiration_tasks = {}
-        self._appearance_seq = 0
-        self._peer_presentation_refresh_burst_task = None
-        self._self_presentation_refresh_burst_task = None
-        self._self_presentation_refresh_burst_cancel_reasons = {}
-        self._self_presentation_refresh_burst_cancel_cleanup_counts = {}
-        # Existing initialization
         self._presentation_state = OverlayPresentationState()
         self._presentation_state.generate_snapshot(
             revision=0,

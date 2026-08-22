@@ -47,16 +47,8 @@ if TYPE_CHECKING:
 class PresenterRefreshBurstMixin:
     """Peer and self presentation refresh burst lifecycle management.
 
-    __slots__ — fields owned by this mixin, previously on OverlayPresenter dataclass.
-    Initialized in OverlayPresenter.__post_init__ (not here — mixin has no __init__).
+    Fields are declared on OverlayPresenter dataclass (init=False).
     """
-
-    __slots__ = (
-        '_peer_presentation_refresh_burst_task',
-        '_self_presentation_refresh_burst_task',
-        '_self_presentation_refresh_burst_cancel_reasons',
-        '_self_presentation_refresh_burst_cancel_cleanup_counts',
-    )
 
     def _self_presentation_refresh_key_for_event(
         self,

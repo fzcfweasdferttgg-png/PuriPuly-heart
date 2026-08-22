@@ -4,7 +4,6 @@ SETTINGS_SCHEMA_VERSION = 30
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 STT_RESET_DEADLINE_S = 300.0
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
-MAX_CUSTOM_VOCAB_TERMS = 100
 OVERLAY_TARGET_STEAMVR = "steamvr"
 OVERLAY_TARGET_DESKTOP = "desktop"
 OVERLAY_TARGET_VALUES = frozenset({OVERLAY_TARGET_STEAMVR, OVERLAY_TARGET_DESKTOP})
@@ -31,12 +30,6 @@ DESKTOP_FLET_SIZE_PRESETS: dict[str, tuple[int, int]] = {
 }
 DESKTOP_FLET_DEFAULT_WIDTH = DESKTOP_FLET_SIZE_PRESETS[DESKTOP_FLET_DEFAULT_SIZE_PRESET][0]
 DESKTOP_FLET_DEFAULT_HEIGHT = DESKTOP_FLET_SIZE_PRESETS[DESKTOP_FLET_DEFAULT_SIZE_PRESET][1]
-DEFAULT_CUSTOM_VOCAB_TERMS: dict[str, tuple[str, ...]] = {
-    "ko": ("아이리", "시나노"),
-    "en": ("airi", "shinano"),
-    "zh-CN": ("airi", "shinano"),
-    "ja": ("airi", "shinano"),
-}
 
 # Re-exported from domain — canonical source of truth.
 from puripuly_heart.domain.settings_validation import (  # noqa: E402

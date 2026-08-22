@@ -4,10 +4,8 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from puripuly_heart.config.settings import MAX_CUSTOM_VOCAB_TERMS
-from puripuly_heart.domain.settings_commands import ChangeIntegratedContext, ChangeCustomVocabulary
+from puripuly_heart.domain.settings_commands import ChangeIntegratedContext
 from puripuly_heart.ui.components.settings import (
-    CustomVocabularyTagEditor,
     OptionItem,
     PromptEditor,
     SettingsModal,
@@ -29,12 +27,10 @@ if TYPE_CHECKING:
     from puripuly_heart.ui.components.settings import SettingsUnitCard
 
 
-# ATTRIBUTE OWNERSHIP — three widget builders:
+# ATTRIBUTE OWNERSHIP — two widget builders:
 #   _build_integrated_context_unit_card: _integrated_context_label/button/hint/card
 #   _build_prompt_widgets: _prompt_editor, _prompt_mode, _prompt_single/dual_btn,
 #     _prompt_mode_row, _persona_title, _prompt_for_text, _reset_prompt_btn
-#   _build_vocabulary_widgets: _custom_vocab_title, _custom_vocab_description_text,
-#     _custom_vocab_tag_editor
 #
 # DRAFT PATTERN: _on_prompt_change → _stage_prompt_draft (settings.py)
 # stages prompt text in _provider_settings_draft without triggering apply.
@@ -62,7 +58,6 @@ class ContextSectionMixin:
         else:
             self._prompt_editor.load_default_prompt(emit_change=False)
             settings.system_prompt = self._prompt_editor.value
-        self._sync_custom_vocabulary_editor_from_settings()
         self._sync_prompt_tab_copy()
 
     # ------------------------------------------------------------------
@@ -205,43 +200,6 @@ class ContextSectionMixin:
         return persona_card
 
     # ------------------------------------------------------------------
-    # Vocabulary widgets
-    # ------------------------------------------------------------------
-
-    def _build_vocabulary_widgets(self) -> ft.Control:
-        self._custom_vocab_title = ft.Text(
-            t("settings.section.custom_vocabulary"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        self._custom_vocab_description_text = ft.Text(
-            t("settings.custom_vocabulary.description"),
-            size=16,
-            color=COLOR_NEUTRAL,
-        )
-        self._custom_vocab_tag_editor = CustomVocabularyTagEditor(
-            on_add_terms=self._on_custom_vocabulary_add_terms,
-            on_remove_term=self._on_custom_vocabulary_remove_term,
-        )
-        self._apply_custom_vocabulary_tag_editor_locale()
-        row7 = SharedCardWrapper(
-            ft.Column(
-                [
-                    self._custom_vocab_title,
-                    ft.Container(height=6),
-                    self._custom_vocab_description_text,
-                    ft.Container(height=12),
-                    self._custom_vocab_tag_editor,
-                ],
-                spacing=0,
-            ),
-            height=None,
-            expand=False,
-        )
-        return row7
-
-    # ------------------------------------------------------------------
     # Prompt editing
     # ------------------------------------------------------------------
 
@@ -304,105 +262,6 @@ class ContextSectionMixin:
         self._prompt_dual_btn.content.weight = ft.FontWeight.BOLD if not is_single else ft.FontWeight.NORMAL
 
     # ------------------------------------------------------------------
-    # Custom vocabulary
-    # ------------------------------------------------------------------
-
-    def _show_custom_vocabulary_limit_snackbar(self) -> None:
-        if self.show_snackbar:
-            self.show_snackbar(
-                t(
-                    "snackbar.custom_vocabulary_limit",
-                    max_terms=MAX_CUSTOM_VOCAB_TERMS,
-                ),
-                ft.Colors.ORANGE_700,
-            )
-
-    def _set_custom_vocabulary_terms_for_current_language(self, next_terms: list[str]) -> None:
-        if not self._settings:
-            return
-
-        source_language = self._current_source_language()
-        updated_terms = dict(self._settings.stt.custom_terms)
-        current_terms = list(updated_terms.get(source_language, []))
-        applied_terms = list(next_terms)
-        updated_terms[source_language] = applied_terms
-        next_enabled = any(bool(terms) for terms in updated_terms.values())
-
-        if (
-            current_terms == applied_terms
-            and self._settings.stt.custom_vocabulary_enabled == next_enabled
-        ):
-            return
-
-        self._command_executor.execute(ChangeCustomVocabulary(
-            terms=updated_terms,
-            enabled=next_enabled,
-        ))
-        self._custom_vocab_tag_editor.set_terms(applied_terms)
-        self._emit_runtime_detailed(
-            f"[Settings] Custom vocabulary applied: language={source_language}, terms={len(applied_terms)}"
-        )
-        self._emit_settings_changed()
-
-    def _on_custom_vocabulary_add_terms(self, raw_terms: list[str]) -> None:
-        if not self._settings:
-            return
-
-        raw_values = [str(term) for term in raw_terms]
-        if any(value != "" for value in raw_values):
-            self._custom_vocab_tag_editor.clear_input()
-        submitted_terms = self._normalize_custom_vocabulary_submitted_terms(raw_values)
-        if not submitted_terms:
-            return
-
-        source_language = self._current_source_language()
-        current_terms = list(self._settings.stt.custom_terms.get(source_language, []))
-        next_terms = list(current_terms)
-        seen_terms = set(current_terms)
-        unique_requested_count = len(current_terms)
-        cap_exceeded = False
-
-        for term in submitted_terms:
-            if term in seen_terms:
-                continue
-            seen_terms.add(term)
-            unique_requested_count += 1
-            if len(next_terms) >= MAX_CUSTOM_VOCAB_TERMS:
-                cap_exceeded = True
-                continue
-            next_terms.append(term)
-
-        updated_terms = dict(self._settings.stt.custom_terms)
-        updated_terms[source_language] = list(next_terms)
-        next_enabled = any(bool(terms) for terms in updated_terms.values())
-        will_change = (
-            current_terms != next_terms
-            or self._settings.stt.custom_vocabulary_enabled != next_enabled
-        )
-        if cap_exceeded:
-            if will_change:
-                self._emit_runtime_detailed(
-                    "[Settings] Custom vocabulary capped: "
-                    f"language={source_language}, requested={unique_requested_count}, "
-                    f"applied={MAX_CUSTOM_VOCAB_TERMS}"
-                )
-            self._show_custom_vocabulary_limit_snackbar()
-
-        self._set_custom_vocabulary_terms_for_current_language(next_terms)
-
-    def _on_custom_vocabulary_remove_term(self, term: str) -> None:
-        if not self._settings:
-            return
-
-        source_language = self._current_source_language()
-        current_terms = list(self._settings.stt.custom_terms.get(source_language, []))
-        try:
-            current_terms.remove(term)
-        except ValueError:
-            return
-        self._set_custom_vocabulary_terms_for_current_language(current_terms)
-
-    # ------------------------------------------------------------------
     # Locale helpers
     # ------------------------------------------------------------------
 
@@ -410,7 +269,6 @@ class ContextSectionMixin:
         if not hasattr(self, '_persona_title'):
             return
         self._persona_title.value = t("settings.section.persona")
-        self._custom_vocab_title.value = t("settings.section.custom_vocabulary")
         _set_text_button_label(self._reset_prompt_btn, t("settings.reset_prompt"))
         self._sync_prompt_tab_copy()
         self._prompt_single_btn.content.value = t("settings.prompt_mode.single", default="Single")

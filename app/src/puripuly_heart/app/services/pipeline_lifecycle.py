@@ -258,50 +258,62 @@ class PipelineLifecycleManager:
         ensure_silero_vad_onnx(target_path=vad_model_path)
 
         vad = VadGating(
-            vad_model=SileroVadOnnx(str(vad_model_path)),
-            sample_rate=settings.audio.internal_sample_rate_hz,
-            speech_start_min_frames=1,
-            speech_end_min_frames=1,
-            chunk_samples=settings.audio.ring_buffer_ms * settings.audio.internal_sample_rate_hz // 1000,
-            hangover_s=(
-                settings.stt.low_latency_vad_hangover_ms / 1000.0
+            engine=SileroVadOnnx(vad_model_path),
+            sample_rate_hz=settings.audio.internal_sample_rate_hz,
+            start_debounce_chunks=1,
+            start_commit_chunks=1,
+            hangover_ms=(
+                settings.stt.low_latency_vad_hangover_ms
                 if settings.stt.low_latency_mode
-                else self.default_vad_hangover_ms / 1000.0
+                else self.default_vad_hangover_ms
             ),
-            diagnostics_enabled=diag_enabled,
+            diagnostics_enabled=lambda: diag_enabled,
         )
 
         from puripuly_heart.core.audio.source import normalize_input_host_api
-        normalize_input_host_api(settings.audio.input_host_api)
+        host_api_profile = normalize_input_host_api(settings.audio.input_host_api)
+        logger.info("[MicLoop] host_api: saved=%r actual=%r wasapi_auto_convert=%s",
+                    host_api_profile.saved_value, host_api_profile.actual_host_api, host_api_profile.wasapi_auto_convert)
 
         device_info = resolve_sounddevice_input_device(
-            preferred_device_index=settings.audio.input_device_index,
-            preferred_device_name=settings.audio.input_device_name,
+            host_api=host_api_profile.actual_host_api,
+            device=settings.audio.input_device,
         )
         if device_info is None:
+            logger.error("[MicLoop] no microphone found (host_api=%r device=%r)", host_api_profile.actual_host_api, settings.audio.input_device)
+            if self.on_error is not None:
+                self.on_error("No microphone found — STT disabled")
+            return
+        logger.info("[MicLoop] device resolved: idx=%d", device_info)
+
+        channels_decision = determine_self_mic_capture_channels(
+            device_idx=device_info,
+            internal_channels=settings.audio.internal_channels,
+        )
+        logger.info("[MicLoop] channels: preferred=%d internal=%d metadata_status=%s",
+                    channels_decision.preferred_capture_channels, channels_decision.internal_channels,
+                    channels_decision.metadata.metadata_status)
+        if channels_decision.preferred_capture_channels <= 0:
+            logger.error("[MicLoop] no usable channels (preferred=%d)", channels_decision.preferred_capture_channels)
             if self.on_error is not None:
                 self.on_error("No microphone found — STT disabled")
             return
 
-        channels_decision = determine_self_mic_capture_channels(
-            device_info=device_info,
-            requested_channels=settings.audio.input_channels,
-        )
-        if channels_decision is SelfMicCaptureChannelDecision.SKIP_DEVICE:
-            if self.on_error is not None:
-                self.on_error("Microphone not suitable — STT disabled")
-            return
-
+        logger.info("[MicLoop] creating SoundDeviceAudioSource: device=%d samplerate=%d channels=%d blocksize=%d",
+                    device_info, settings.audio.internal_sample_rate_hz,
+                    channels_decision.preferred_capture_channels,
+                    settings.audio.ring_buffer_ms * settings.audio.internal_sample_rate_hz // 1000)
         source = SoundDeviceAudioSource(
-            device_info=device_info,
-            sample_rate=settings.audio.internal_sample_rate_hz,
-            channels=channels_decision.resolved_channels,
-            blocksize_samples=settings.audio.ring_buffer_ms * settings.audio.internal_sample_rate_hz // 1000,
+            device=device_info,
+            sample_rate_hz=settings.audio.internal_sample_rate_hz,
+            channels=channels_decision.preferred_capture_channels,
+            blocksize=settings.audio.ring_buffer_ms * settings.audio.internal_sample_rate_hz // 1000,
         )
+
+        logger.info("[MicLoop] audio source ready: actual_samplerate=%d channels=%d", source.actual_sample_rate_hz, source.channels)
 
         if self.diagnostic_wrapper is not None:
-            source = self.diagnostic_wrapper(source, "self")
-
+            source = self.diagnostic_wrapper(source, channel_label="self")
         self._audio_source = source
         self._vad = vad
 
@@ -311,10 +323,24 @@ class PipelineLifecycleManager:
                 source=source,
                 vad=vad,
                 sink=sink,
-                clock=self.clock,
-                is_detailed_diag_enabled=diag_enabled,
+                target_sample_rate_hz=settings.audio.internal_sample_rate_hz,
+                is_detailed_enabled=lambda: diag_enabled,
+                log_detailed=self.log_detailed,
             )
         )
+        self._mic_task.add_done_callback(self._on_mic_task_done)
+
+    def _on_mic_task_done(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            logger.error("[MicLoop] mic task failed: %s", exc, exc_info=exc)
+            if self.on_error is not None:
+                self.on_error(f"Mic loop error: {exc}")
 
     async def stop_mic_loop(self) -> None:
         if self._mic_task is not None:

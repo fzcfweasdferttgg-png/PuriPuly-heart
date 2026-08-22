@@ -109,7 +109,7 @@ class ProviderSettings:
     peer_stt_backend: str = "onnx"
     stt_quant: str = ""
     peer_stt_quant: str = ""
-    llm: LLMProviderName = LLMProviderName.OPENAI_COMPATIBLE
+    llm: LLMProviderName = LLMProviderName.NONE
     openai_compatible: OpenAICompatibleSettings = field(default_factory=OpenAICompatibleSettings)
 
     def validate(self) -> None:
@@ -211,6 +211,8 @@ class BackupTranslationSettings:
         if not isinstance(self.mode, LLMProviderName):
             raise ValueError("invalid backup translation mode")
         if not self.enabled:
+            return
+        if self.mode == LLMProviderName.NONE:
             return
         if self.mode == LLMProviderName.OPENAI_COMPATIBLE:
             if not self.openai_compatible.base_url.strip():

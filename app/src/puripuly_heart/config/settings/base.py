@@ -14,9 +14,7 @@ from puripuly_heart.config.vad_defaults import DEFAULT_LOW_LATENCY_VAD_HANGOVER_
 from puripuly_heart.domain.overlay_calibration import OverlayCalibration
 
 from .constants import (
-    DEFAULT_CUSTOM_VOCAB_TERMS,
     DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS,
-    MAX_CUSTOM_VOCAB_TERMS,
     SETTINGS_SCHEMA_VERSION,
     STT_INTERNAL_SAMPLE_RATE_HZ,
 )
@@ -55,7 +53,7 @@ from .overlay import (
     _parse_overlay_target,
 )
 from .simple import ApiKeyVerificationSettings, LLMSettings, OSCSettings, UiSettings
-from .stt import STTSettings, _default_custom_terms
+from .stt import STTSettings
 from .translation import (
     TranslationSettings,
     _default_translation_connection_history,
@@ -148,36 +146,6 @@ def _normalize_internal_sample_rate_hz(value: object) -> int:
     if normalized == 8000:
         return STT_INTERNAL_SAMPLE_RATE_HZ
     return normalized
-
-
-def _parse_custom_terms(value: object) -> dict[str, list[str]]:
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError("custom_terms must be a dict[str, list[str]]")
-
-    out: dict[str, list[str]] = {}
-    for language, terms in value.items():
-        if not isinstance(language, str):
-            raise ValueError("custom_terms keys must be strings")
-        if not isinstance(terms, list):
-            raise ValueError("custom_terms values must be lists of strings")
-
-        normalized_terms: list[str] = []
-        seen_terms: set[str] = set()
-        for term in terms:
-            if not isinstance(term, str):
-                raise ValueError("custom_terms values must be lists of strings")
-            normalized_term = term.strip()
-            if not normalized_term or normalized_term in seen_terms:
-                continue
-            if len(normalized_terms) >= MAX_CUSTOM_VOCAB_TERMS:
-                break
-            seen_terms.add(normalized_term)
-            normalized_terms.append(normalized_term)
-
-        out[language] = normalized_terms
-    return out
 
 
 def _shared_default_prompt() -> str:
@@ -276,6 +244,11 @@ def _derive_translation_settings_from_runtime_values(
     *, provider_llm: LLMProviderName, history: object = None,
 ) -> TranslationSettings:
     normalized_history = _parse_translation_connection_history(history)
+    if provider_llm == LLMProviderName.NONE:
+        return _normalize_translation_settings(
+            model=TranslationModel.NONE, connection=TranslationConnection.NONE,
+            history=normalized_history,
+        )
     if provider_llm == LLMProviderName.LOCAL_LLM:
         return _normalize_translation_settings(
             model=TranslationModel.LOCAL_LLM, connection=TranslationConnection.LOCAL,
@@ -304,13 +277,16 @@ def materialize_translation_settings(settings: AppSettings) -> AppSettings:
         history=settings.translation.connection_history,
     )
     model = settings.translation.model
+    if model == TranslationModel.NONE:
+        settings.provider.llm = LLMProviderName.NONE
+        return settings
     if model == TranslationModel.LOCAL_LLM:
         settings.provider.llm = LLMProviderName.LOCAL_LLM
         return settings
     if model == TranslationModel.OPENAI_COMPATIBLE:
         settings.provider.llm = LLMProviderName.OPENAI_COMPATIBLE
         return settings
-    settings.provider.llm = LLMProviderName.OPENAI_COMPATIBLE
+    settings.provider.llm = LLMProviderName.NONE
     return settings
 
 
@@ -339,6 +315,9 @@ def _apply_materialized_translation_to_data(
         connection=_parse_translation_connection(translation.connection),
         history=translation.connection_history,
     )
+    if translation.model == TranslationModel.NONE:
+        changed |= _set_mapping_value(provider_data, "llm", LLMProviderName.NONE.value)
+        return changed
     if translation.model == TranslationModel.LOCAL_LLM:
         changed |= _set_mapping_value(provider_data, "llm", LLMProviderName.LOCAL_LLM.value)
         return changed
@@ -406,8 +385,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "low_latency_mode": settings.stt.low_latency_mode,
             "low_latency_vad_hangover_ms": settings.stt.low_latency_vad_hangover_ms,
             "low_latency_spec_retry_max": settings.stt.low_latency_spec_retry_max,
-            "custom_vocabulary_enabled": settings.stt.custom_vocabulary_enabled,
-            "custom_terms": _parse_custom_terms(settings.stt.custom_terms),
         },
         "local_llm": {
             "backend": settings.local_llm.backend.value,
@@ -468,9 +445,9 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     if _normalize_local_llm_data(data): changed = True
     stt = data.get("stt")
     if not isinstance(stt, dict): stt = {}; data["stt"] = stt; changed = True
-    if "custom_terms" not in stt: stt["custom_terms"] = _default_custom_terms(); changed = True
-    if "custom_vocabulary_enabled" not in stt:
-        stt["custom_vocabulary_enabled"] = any(bool(t) for t in _parse_custom_terms(stt.get("custom_terms")).values()); changed = True
+    # Remove legacy custom vocabulary keys (dead feature)
+    if "custom_terms" in stt: del stt["custom_terms"]; changed = True
+    if "custom_vocabulary_enabled" in stt: del stt["custom_vocabulary_enabled"]; changed = True
     rpd = data.get("provider"); pd = rpd if isinstance(rpd, dict) else {}
     if rpd is None: pd = {}; data["provider"] = pd; changed = True
     elif not isinstance(rpd, dict): pd = {"stt": STTProviderName.NONE.value, "llm": LLMProviderName.OPENAI_COMPATIBLE.value}; data["provider"] = pd; changed = True
@@ -486,7 +463,7 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     if _translation_data_has_valid_model(td):
         nts = _normalize_translation_settings(model=_parse_translation_model(td.get("model")), connection=_parse_translation_connection(td.get("connection")), history=th)
     else:
-        nts = _derive_translation_settings_from_runtime_values(provider_llm=_parse_llm_provider(pd.get("llm", LLMProviderName.OPENAI_COMPATIBLE.value)), history=th)
+        nts = _derive_translation_settings_from_runtime_values(provider_llm=_parse_llm_provider(pd.get("llm", LLMProviderName.NONE.value)), history=th)
     ntd = _translation_settings_to_dict(nts)
     if data.get("translation") != ntd: data["translation"] = ntd; changed = True
     if _apply_materialized_translation_to_data(data, nts): changed = True
@@ -552,11 +529,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     vad_threshold_raw = stt_data.get("vad_speech_threshold")
     legacy_system_prompt = str(data.get("system_prompt", ""))
     settings_version = _coerce_int(data.get("settings_version"), SETTINGS_SCHEMA_VERSION)
-    parsed_custom_terms = _parse_custom_terms(stt_data.get("custom_terms", _default_custom_terms()))
-    if "custom_vocabulary_enabled" in stt_data:
-        custom_vocabulary_enabled = bool(stt_data.get("custom_vocabulary_enabled"))
-    else:
-        custom_vocabulary_enabled = any(bool(terms) for terms in parsed_custom_terms.values())
 
     local_llm_raw = data.get("local_llm") if isinstance(data.get("local_llm"), dict) else {}
 
@@ -571,7 +543,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             peer_stt_backend=str(provider_data.get("peer_stt_backend", "onnx")),
             stt_quant=_normalize_quant(provider_data.get("stt_quant")),
             peer_stt_quant=_normalize_quant(provider_data.get("peer_stt_quant")),
-            llm=_parse_llm_provider(provider_data.get("llm", LLMProviderName.OPENAI_COMPATIBLE.value)),
+            llm=_parse_llm_provider(provider_data.get("llm", LLMProviderName.NONE.value)),
             openai_compatible=_parse_openai_compatible_settings(
                 data.get("openai_compatible") if isinstance(data.get("openai_compatible"), dict) else {}
             ),
@@ -677,8 +649,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                 )
             ),
             low_latency_spec_retry_max=int(stt_data.get("low_latency_spec_retry_max", 10)),
-            custom_vocabulary_enabled=custom_vocabulary_enabled,
-            custom_terms=parsed_custom_terms,
         ),
         local_llm=LocalLLMSettings(
             backend=_parse_local_llm_backend(local_llm_raw.get("backend")),

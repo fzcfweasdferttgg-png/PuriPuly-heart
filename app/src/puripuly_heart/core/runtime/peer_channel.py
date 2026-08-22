@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
@@ -143,6 +146,7 @@ class PeerChannelRuntime:
         # Resource creation lifecycle: STT → source → VAD → loop.
         # Each step checks _is_superseded to bail early if a newer
         # generation was requested while we were creating resources.
+        logger.info("[PeerChannel] _start_generation: generation=%d", generation)
         try:
             stt = self._stt_factory(
                 config,
@@ -157,24 +161,29 @@ class PeerChannelRuntime:
             return
 
         if self._is_superseded(generation):
+            logger.info("[PeerChannel] _start_generation: superseded after STT creation")
             await self._close_if_possible(stt)
             return
+        logger.info("[PeerChannel] _start_generation: STT created, creating source+VAD")
 
         source = None
         try:
             source = self._source_factory(config)
             model_path = self._vad_model_resolver()
             vad = self._vad_factory(config, model_path)
-        except Exception:
+        except Exception as exc:
+            logger.error("[PeerChannel] _start_generation: source/VAD creation failed: %s", exc, exc_info=exc)
             await self._close_if_possible(source)
             await self._close_if_possible(stt)
             await self._mark_faulted_if_current(generation, detach_provider=True)
             return
 
         if self._is_superseded(generation):
+            logger.info("[PeerChannel] _start_generation: superseded after source/VAD creation")
             await self._close_if_possible(source)
             await self._close_if_possible(stt)
             return
+        logger.info("[PeerChannel] _start_generation: source+VAD created, replacing provider")
 
         loop_to_cancel = None
         source_to_close = None
@@ -216,6 +225,7 @@ class PeerChannelRuntime:
         )
         async with self._lock:
             if self._is_superseded(generation):
+                logger.info("[PeerChannel] _start_generation: superseded before lock, cancelling loop")
                 loop_task.cancel()
             else:
                 self._stt = stt
@@ -224,6 +234,7 @@ class PeerChannelRuntime:
                 self._loop_task = loop_task
                 self._signature = config.runtime_signature
                 self._state = PeerChannelRuntimeState.RUNNING
+                logger.info("[PeerChannel] _start_generation: RUNNING, loop task created")
 
         if self._is_superseded(generation):
             await asyncio.gather(loop_task, return_exceptions=True)
@@ -238,6 +249,7 @@ class PeerChannelRuntime:
         target_sample_rate_hz: int,
         generation: int,
     ) -> None:
+        logger.info("[PeerChannel] loop starting: target_rate=%d generation=%d", target_sample_rate_hz, generation)
         try:
             await self._run_audio_loop(
                 source=source,
@@ -246,12 +258,16 @@ class PeerChannelRuntime:
                 target_sample_rate_hz=target_sample_rate_hz,
             )
         except asyncio.CancelledError:
+            logger.info("[PeerChannel] loop cancelled: generation=%d", generation)
             raise
         except Exception as exc:
+            logger.error("[PeerChannel] loop failed: %s", exc, exc_info=exc)
             await self._on_runtime_failure(exc, generation=generation)
+        else:
+            logger.info("[PeerChannel] loop exited normally: generation=%d", generation)
 
     async def _on_runtime_failure(self, exc: Exception, *, generation: int) -> None:
-        _ = exc
+        logger.error("[PeerChannel] runtime failure: %s", exc, exc_info=exc)
         await self._mark_faulted_if_current(generation, detach_provider=True)
 
     async def _on_terminal_stt_failure(
@@ -260,7 +276,7 @@ class PeerChannelRuntime:
         *,
         generation: int | None = None,
     ) -> None:
-        _ = exc
+        logger.error("[PeerChannel] terminal STT failure: %s", exc, exc_info=exc)
         target_generation = self._generation if generation is None else generation
         async with self._lock:
             if self._is_superseded(target_generation):

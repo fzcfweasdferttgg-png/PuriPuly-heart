@@ -4,7 +4,6 @@ from puripuly_heart.config.settings.base import (
     _coerce_int,
     _enum_to_value,
     _migrate_settings_dict,
-    _parse_custom_terms,
     _normalize_internal_sample_rate_hz,
     _shared_default_prompt,
     detect_system_locale,
@@ -16,7 +15,6 @@ from puripuly_heart.config.settings.base import (
     to_dict,
 )
 from puripuly_heart.config.settings.constants import (
-    DEFAULT_CUSTOM_VOCAB_TERMS,
     DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS,
     DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
     DESKTOP_FLET_DEFAULT_HEIGHT,
@@ -36,7 +34,6 @@ from puripuly_heart.config.settings.constants import (
     DESKTOP_FLET_SIZE_PRESETS,
     LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS,
     LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS,
-    MAX_CUSTOM_VOCAB_TERMS,
     OVERLAY_TARGET_DESKTOP,
     OVERLAY_TARGET_STEAMVR,
     OVERLAY_TARGET_VALUES,

@@ -136,6 +136,8 @@ class GuiController:
     _clipboard_service: ClipboardService | None = None
     _local_stt_manager: LocalSTTManager | None = field(init=False, default=None)
     _runtime_logging: SessionRuntimeLoggingService | None = field(init=False, default=None)
+    _mutation_queue: list = field(init=False, default_factory=list)
+    _mutation_worker_active: bool = field(init=False, default=False)
 
     _calibration_service: CalibrationService | None = None
     log_handler_factory: Callable[[Any], logging.Handler] | None = field(default=None)
@@ -913,7 +915,7 @@ class GuiController:
                     on_final_transcript_suppressed=self._on_final_transcript_suppressed,
                     runtime_logging=self.runtime_logging,
                     stt_input_fault_profile_provider=lambda: (
-                        self._debug_stt_fault_profile if self._debug_audio_fault_allowed() else "none"
+                        self._diagnostics_service.debug_stt_fault_profile if self._debug_audio_fault_allowed() else "none"
                     ),
                 )
             except Exception as exc:
@@ -948,7 +950,7 @@ class GuiController:
             on_stt_rebuilt=self._on_provider_manager_stt_rebuilt,
             on_error=self._log_error,
             debug_stt_fault_profile_provider=lambda: (
-                self._debug_stt_fault_profile if self._debug_audio_fault_allowed() else "none"
+                self._diagnostics_service.debug_stt_fault_profile if self._debug_audio_fault_allowed() else "none"
             ),
             detailed_audio_diag_enabled_provider=lambda: self._detailed_audio_diag_enabled,
             on_terminal_failure=self._on_self_terminal_failure,
@@ -1265,18 +1267,28 @@ class GuiController:
         return False
 
     def _effective_peer_translation_enabled_for(self, settings):
+        if self._peer_toggle_coordinator is None:
+            return False
         return self._peer_toggle_coordinator._effective_peer_translation_enabled_for(settings)
 
     def _peer_translation_eula_accepted_for(self, settings):
+        if self._peer_toggle_coordinator is None:
+            return False
         return self._peer_toggle_coordinator._peer_translation_eula_accepted_for(settings)
 
     def _peer_translation_activation_requested_for(self, settings):
+        if self._peer_toggle_coordinator is None:
+            return False
         return self._peer_toggle_coordinator._peer_translation_activation_requested_for(settings)
 
     def _effective_peer_overlay_enabled_for(self, settings):
+        if self._peer_toggle_coordinator is None:
+            return False
         return self._peer_toggle_coordinator._effective_peer_overlay_enabled_for(settings)
 
     def _effective_integrated_context_enabled_for(self, settings):
+        if self._peer_toggle_coordinator is None:
+            return False
         return self._peer_toggle_coordinator._effective_integrated_context_enabled_for(settings)
 
     def _sync_effective_hub_flags(self, settings=None):
@@ -1407,12 +1419,8 @@ class GuiController:
     # Sequential FIFO queue for settings changes.
     # Prevents race conditions when user rapidly toggles settings.
     def _queue_mutation(self, task_factory) -> None:
-        queue = getattr(self, "_mutation_queue", None)
-        if queue is None:
-            queue = []
-            self._mutation_queue = queue
-        queue.append(task_factory)
-        if getattr(self, "_mutation_worker_active", False):
+        self._mutation_queue.append(task_factory)
+        if self._mutation_worker_active:
             return
         self._mutation_worker_active = True
 
@@ -1749,12 +1757,14 @@ class GuiController:
                 show_snackbar = getattr(view_dashboard, "show_snackbar", None)
                 if callable(show_snackbar):
                     show_snackbar(warning)
-        self.page.run_task(lambda: self.on_dashboard_language_change(
-            source_code, target_code,
-            peer_source_code=peer_source_code,
-            peer_target_code=peer_target_code,
-            second_target_code=second_target_code,
-        ))
+        async def _task():
+            await self.on_dashboard_language_change(
+                source_code, target_code,
+                peer_source_code=peer_source_code,
+                peer_target_code=peer_target_code,
+                second_target_code=second_target_code,
+            )
+        self.page.run_task(_task)
 
     def _on_manual_submit_async(self, _source, text: str) -> None:
         async def _task():
@@ -1821,17 +1831,11 @@ class GuiController:
 
     # --- SettingsService delegation (extracted from SettingsManagerMixin) ---
 
-    def _stt_provider_applies_custom_vocabulary(self, settings):
-        return self._settings_service.stt_provider_applies_custom_vocabulary(settings)
-
     def _llm_provider_requires_secret(self, provider):
         return self._settings_service.llm_provider_requires_secret(provider)
 
     def _selected_stt_provider(self):
         return self._settings_service.selected_stt_provider(self.settings)
-
-    def _stt_runtime_custom_vocabulary_signature(self, settings):
-        return self._settings_service.stt_runtime_custom_vocabulary_signature(settings)
 
     def _build_self_stt_runtime_signature(self, settings):
         return self._settings_service.build_self_stt_runtime_signature(settings)
@@ -2119,6 +2123,7 @@ class GuiController:
         if diff.should_refresh_peer and self.hub is not None:
             await self._refresh_peer_stt_runtime()
             self._sync_effective_hub_flags(settings)
+            self._refresh_overlay_peer_consumers()
 
         if diff.should_restart_stt:
             await self._replace_runtime_stt_provider()

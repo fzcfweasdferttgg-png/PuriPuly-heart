@@ -175,19 +175,6 @@ class ChangeAudioDevice:
 
 
 @dataclass(frozen=True)
-class ChangeCustomVocabulary:
-    """Update custom vocabulary terms and enable/disable flag.
-
-    Modifies:
-        settings.stt.custom_terms
-        settings.stt.custom_vocabulary_enabled
-    """
-
-    terms: dict[str, list[str]]  # language → list of terms
-    enabled: bool
-
-
-@dataclass(frozen=True)
 class ChangeSTTCompute:
     """Change STT compute target (GPU vs CPU) for a channel.
 
@@ -466,7 +453,6 @@ SettingsChange = (
     | ChangeChatboxSource
     | ChangeIntegratedContext
     | ChangeAudioDevice
-    | ChangeCustomVocabulary
     | ChangeSTTCompute
     | ChangeSTTProvider
     | ChangePeerSTTProvider

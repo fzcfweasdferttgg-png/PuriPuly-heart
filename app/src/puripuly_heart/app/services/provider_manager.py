@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
 from puripuly_heart.core.stt.controller import ManagedSTTProvider
-from puripuly_heart.domain.providers import STTProviderName
+from puripuly_heart.domain.providers import LLMProviderName, STTProviderName
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -75,15 +75,18 @@ class ProviderManager:
         llm = None
         llm_error: Exception | None = None
         secrets = None
-        try:
-            secrets = self.create_secret_store(config_path=self.config_path)
-            llm = self.create_llm_provider(
-                self.settings,
-                secrets=secrets,
-                runtime_logging=self.runtime_logging,
-            )
-        except Exception as exc:
-            llm_error = exc
+        if self.settings.provider.llm == LLMProviderName.NONE:
+            logger.info("[LLM] Provider is NONE — skipping LLM provider creation")
+        else:
+            try:
+                secrets = self.create_secret_store(config_path=self.config_path)
+                llm = self.create_llm_provider(
+                    self.settings,
+                    secrets=secrets,
+                    runtime_logging=self.runtime_logging,
+                )
+            except Exception as exc:
+                llm_error = exc
 
         if self.hub is None:
             return
