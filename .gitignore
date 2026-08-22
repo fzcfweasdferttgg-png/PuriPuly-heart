@@ -10,3 +10,4 @@ core/old/
 docs/*.md
 app/settings.json
 clean-cache.bat
+error.txt  
