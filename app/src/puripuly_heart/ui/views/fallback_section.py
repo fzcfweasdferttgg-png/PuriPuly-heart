@@ -291,7 +291,7 @@ class FallbackSectionMixin:
             return
         self._fallback_api_key.apply_locale()
         self._fallback_openai_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
-        self._fallback_openai_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
+        self._fallback_openai_test_btn.content.value = t("settings.local_llm.test_connection", default="Test connection")
         self._fallback_openai_provider.label = t("settings.openai_compatible.provider", default="Provider")
         self._fallback_openai_base_url.label = t("settings.openai_compatible.base_url", default="Base URL")
         self._fallback_openai_model.label = t("settings.openai_compatible.model", default="Model")

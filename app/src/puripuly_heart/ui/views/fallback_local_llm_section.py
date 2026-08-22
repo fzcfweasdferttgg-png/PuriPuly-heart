@@ -334,7 +334,7 @@ class FallbackLocalLlmSectionMixin:
             return
         self._fallback_local_llm_api_key.apply_locale()
         self._fallback_local_llm_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
-        self._fallback_local_llm_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
+        self._fallback_local_llm_test_btn.content.value = t("settings.local_llm.test_connection", default="Test connection")
         self._fallback_local_llm_base_url.label = t("settings.local_llm.base_url", default="Base URL")
         self._fallback_local_llm_model.label = t("settings.local_llm.model", default="Model")
         self._fallback_local_llm_extra_body.label = t("settings.local_llm.extra_body", default="Extra Body")

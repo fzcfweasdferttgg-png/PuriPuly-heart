@@ -195,7 +195,6 @@ def open_warm_document_dialog(
         content=glow_factory(modal_content),
         content_padding=0,
         bgcolor=ft.Colors.TRANSPARENT,
-        surface_tint_color=ft.Colors.TRANSPARENT,
     )
     page.show_dialog(dialog)
     return WarmDocumentDialogResult(

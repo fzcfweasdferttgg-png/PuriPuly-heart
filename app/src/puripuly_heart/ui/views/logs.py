@@ -27,7 +27,6 @@ from puripuly_heart.ui.theme import (
 MAX_LOG_ENTRIES = 4000
 CLEANUP_BATCH = 500
 MAX_CONVERSATION_RECORDS = 1000
-_UPDATE_INTERVAL = 0.2  # 200ms throttling
 _BASIC_MODE = "basic"
 _DETAILED_MODE = "detailed"
 
@@ -304,15 +303,9 @@ class LogsView(ft.Column):
         self.controls = [card]
 
     def append_log(self, record: str):
-        """Append a log entry with throttled updates."""
+        """Append a log entry and flush to UI."""
         self._model.append(record)
-
-        # Throttled update
-        now = time.time()
-        if now - self._last_update >= _UPDATE_INTERVAL:
-            self._flush_logs()
-        else:
-            self._pending_update = True
+        self._flush_logs()
 
     def append_log_threadsafe(self, record: str) -> None:
         """Append a log entry from any thread without mutating Flet state off-loop."""
@@ -398,6 +391,12 @@ class LogsView(ft.Column):
     def _buffer_pending_log(self, record: str) -> None:
         self._model.append(record)
         self._pending_update = True
+        # Force flush from background thread
+        try:
+            if self.page:
+                self._flush_logs()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _flush_logs(self):
         """Flush pending logs to the UI."""
@@ -409,6 +408,12 @@ class LogsView(ft.Column):
             self._last_cleanup_count = self._model.cleanup_count
             self._last_update = time.time()
             self._pending_update = False
+            # Don't return — still update the UI
+            try:
+                if self.page:
+                    self._log_text.update()
+            except (AssertionError, RuntimeError):
+                pass
             return
 
         cleanup_changed = self._model.cleanup_count != self._last_cleanup_count
@@ -458,16 +463,19 @@ class LogsView(ft.Column):
     def _on_conversation_button_click(self, _e: ft.ControlEvent | object) -> None:
         self._showing_conversation = not self._showing_conversation
         if self._conversation_button is not None:
-            self._conversation_button.text = self._conversation_button_label()
+            self._conversation_button.content.value = self._conversation_button_label()
         if self._showing_conversation:
             self._render_conversation_text()
         else:
             self._rebuild_visible_text()
-        if self.page:
-            try:
+        # Flush any pending logs
+        if self._pending_update:
+            self._flush_logs()
+        try:
+            if self.page:
                 self.update()
-            except (AssertionError, RuntimeError):
-                pass
+        except (AssertionError, RuntimeError):
+            pass
 
     def apply_locale(self) -> None:
         """Refresh UI text when locale changes."""
@@ -475,13 +483,13 @@ class LogsView(ft.Column):
         if self._title_text:
             self._title_text.value = t("logs.title")
         if self._folder_button:
-            self._folder_button.text = t("logs.open_folder")
+            self._folder_button.content.value = t("logs.open_folder")
             self._folder_button.style = self._get_button_style(font_family)
         if self._mode_button:
-            self._mode_button.text = self._mode_button_label()
+            self._mode_button.content.value = self._mode_button_label()
             self._mode_button.style = self._get_button_style(font_family)
         if self._conversation_button:
-            self._conversation_button.text = self._conversation_button_label()
+            self._conversation_button.content.value = self._conversation_button_label()
             self._conversation_button.style = self._get_button_style(font_family)
         if self._showing_conversation and self._log_text is not None:
             self._render_conversation_text()
@@ -499,7 +507,10 @@ class LogsView(ft.Column):
     def set_runtime_logging_mode(self, mode: str) -> None:
         self._runtime_logging_mode = self._normalize_mode(mode)
         if self._mode_button is not None:
-            self._mode_button.text = self._mode_button_label()
+            self._mode_button.content.value = self._mode_button_label()
+        # Flush any pending logs
+        if self._pending_update:
+            self._flush_logs()
         try:
             if self.page:
                 self.update()

@@ -429,5 +429,7 @@
   "settings.translation_connection.openai_compatible.description": "Connect to any OpenAI-compatible API provider (DeepSeek, Groq, Cerebras, Qwen, Ollama, vLLM, etc.)",
   "settings.backup_translation.connection": "Yedek çeviri ayarları",
   "provider.none": "Devre dışı",
-  "provider.none.description": "Özellik devre dışı"
+  "provider.none.description": "Özellik devre dışı",
+  "title_bar.about": "Hakkında",
+  "about.fork_notice": "Bu resmi olmayan bir fork'tur. Orijinal yazarın bu sürümle hiçbir ilgisi yoktur."
 }

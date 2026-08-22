@@ -426,5 +426,7 @@
   "settings.translation_connection.openai_compatible.description": "连接到任何 OpenAI 兼容 API 提供商",
   "settings.backup_translation.connection": "备用翻译设置",
   "provider.none": "已禁用",
-  "provider.none.description": "功能已禁用"
+  "provider.none.description": "功能已禁用",
+  "title_bar.about": "关于",
+  "about.fork_notice": "这是一个非官方分支。原作者与此版本无关。"
 }

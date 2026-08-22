@@ -429,5 +429,7 @@
   "settings.translation_connection.openai_compatible.description": "Connect to any OpenAI-compatible API provider (DeepSeek, Groq, Cerebras, Qwen, Ollama, vLLM, etc.)",
   "settings.backup_translation.connection": "Tartalék fordítási beállítások",
   "provider.none": "Letiltva",
-  "provider.none.description": "Funkció letiltva"
+  "provider.none.description": "Funkció letiltva",
+  "title_bar.about": "Névjegy",
+  "about.fork_notice": "Ez egy nem hivatalos fork. Az eredeti szerzőnek nincs köze ehhez a verzióhoz."
 }

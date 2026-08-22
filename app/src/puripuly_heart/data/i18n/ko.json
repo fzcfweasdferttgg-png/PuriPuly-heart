@@ -426,5 +426,7 @@
   "settings.translation_connection.openai_compatible.description": "OpenAI 호환 API 공급자에 연결",
   "settings.backup_translation.connection": "백업 번역 설정",
   "provider.none": "비활성화",
-  "provider.none.description": "기능 비활성화됨"
+  "provider.none.description": "기능 비활성화됨",
+  "title_bar.about": "정보",
+  "about.fork_notice": "이것은 비공식 포크입니다. 원작자는 이 버전과 관련이 없습니다."
 }

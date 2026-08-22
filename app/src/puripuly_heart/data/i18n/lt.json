@@ -430,5 +430,7 @@
   "settings.translation_connection.openai_compatible.description": "Connect to any OpenAI-compatible API provider (DeepSeek, Groq, Cerebras, Qwen, Ollama, vLLM, etc.)",
   "settings.backup_translation.connection": "Atsarginio vertimo nustatymai",
   "provider.none": "Išjungta",
-  "provider.none.description": "Funkcija išjungta"
+  "provider.none.description": "Funkcija išjungta",
+  "title_bar.about": "Apie",
+  "about.fork_notice": "Tai yra neoficialus fork. Originalus autorius neturi jokio ryšio su šia versija."
 }

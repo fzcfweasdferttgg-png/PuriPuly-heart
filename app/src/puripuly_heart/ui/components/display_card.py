@@ -193,6 +193,7 @@ class DisplayCard(ft.Container):
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             shadow=get_card_shadow(),
         )
+        self._sync_display()
 
     def _handle_submit(self, e):
         text = e.control.value.strip()
@@ -316,13 +317,27 @@ class DisplayCard(ft.Container):
         self._secondary_value = None
         self._secondary_font_family = None
         self._debug_prefix = None
+        self._notice_value = None
+        self._notice_tone = None
+        self._notice_text.value = ""
+        self._notice_chip.visible = False
         self._sync_display()
 
     def set_notice(self, text: str | None, tone: str | None = None) -> None:
         self._notice_value = text or None
         self._notice_tone = tone if self._notice_value else None
-        self._notice_text.value = ""
-        self._notice_chip.visible = False
+        if self._notice_value:
+            self._notice_text.value = self._notice_value
+            self._notice_chip.visible = True
+            tone_colors = {
+                "warning": COLOR_WARNING,
+                "error": ft.Colors.RED_400,
+                "info": ft.Colors.BLUE_400,
+            }
+            self._notice_chip.bgcolor = tone_colors.get(self._notice_tone, COLOR_WARNING)
+        else:
+            self._notice_text.value = ""
+            self._notice_chip.visible = False
         self._sync_display()
 
     def clear_input(self):

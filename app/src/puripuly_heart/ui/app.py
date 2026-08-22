@@ -209,6 +209,7 @@ class TranslatorApp(
         self.page.title = t("app.title")
         self.page.theme = get_app_theme(font_family=font_for_language(get_locale()))
         self.title_bar.set_title(t("app.title"))
+        self.title_bar.apply_locale()
         self.view_dashboard.apply_locale()
         self.view_settings.apply_locale()
         self.controller.refresh_overlay_peer_contract()
@@ -316,19 +317,26 @@ class TranslatorApp(
         """Open About in a separate window via subprocess."""
         import subprocess
         import sys
+        from puripuly_heart.domain.i18n import get_locale
         from puripuly_heart.ui.fonts import assets_dir
 
-        about_script = '''
+        current_locale = get_locale()
+        about_script = f'''
 import flet as ft
+from puripuly_heart.domain.i18n import set_locale
 from puripuly_heart.ui.views.about import AboutView
+from puripuly_heart.ui.theme import COLOR_BACKGROUND, get_app_theme
+
+set_locale("{current_locale}")
 
 async def main(page: ft.Page):
     page.title = "About — PuriPuly Heart"
-    page.window.width = 700
-    page.window.height = 600
+    page.window.width = 900
+    page.window.height = 700
     page.window.resizable = True
-    page.bgcolor = "#1a1a2e"
-    page.padding = 16
+    page.bgcolor = COLOR_BACKGROUND
+    page.padding = 24
+    page.theme = get_app_theme()
     page.add(AboutView())
     page.update()
 

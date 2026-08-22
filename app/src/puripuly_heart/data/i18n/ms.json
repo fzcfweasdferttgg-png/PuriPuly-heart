@@ -429,5 +429,7 @@
   "settings.translation_connection.openai_compatible.description": "Connect to any OpenAI-compatible API provider (DeepSeek, Groq, Cerebras, Qwen, Ollama, vLLM, etc.)",
   "settings.backup_translation.connection": "Tetapan terjemahan sandaran",
   "provider.none": "Dinyahaktifkan",
-  "provider.none.description": "Ciri dinyahaktifkan"
+  "provider.none.description": "Ciri dinyahaktifkan",
+  "title_bar.about": "Tentang",
+  "about.fork_notice": "Ini adalah fork tidak rasmi. Penulis asal tiada kaitan dengan versi ini."
 }

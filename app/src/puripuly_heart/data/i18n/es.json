@@ -429,5 +429,7 @@
   "settings.translation_connection.openai_compatible.description": "Conéctese a cualquier proveedor API compatible con OpenAI",
   "settings.backup_translation.connection": "Configuración de traducción de respaldo",
   "provider.none": "Desactivado",
-  "provider.none.description": "Función desactivada"
+  "provider.none.description": "Función desactivada",
+  "title_bar.about": "Acerca de",
+  "about.fork_notice": "Este es un fork no oficial. El autor original no tiene relación con esta versión."
 }

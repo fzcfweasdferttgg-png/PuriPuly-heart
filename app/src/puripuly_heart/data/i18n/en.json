@@ -426,5 +426,7 @@
   "settings.backup_translation": "Backup Translation",
   "option.disabled": "Disabled",
   "settings.backup_api_key": "API Key",
-  "settings.backup_translation.connection": "Backup Translation Settings"
+  "settings.backup_translation.connection": "Backup Translation Settings",
+  "title_bar.about": "About",
+  "about.fork_notice": "This is an unofficial fork. The original author has no relation to this version."
 }

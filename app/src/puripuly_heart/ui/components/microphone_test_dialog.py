@@ -152,7 +152,6 @@ class MicrophoneTestDialog:
             content=create_glow_stack(modal_content),
             content_padding=0,
             bgcolor=ft.Colors.TRANSPARENT,
-            surface_tint_color=ft.Colors.TRANSPARENT,
             semantics_label=t("settings.microphone_test"),
             on_dismiss=self._handle_dismiss,
         )

@@ -485,7 +485,8 @@ class OverlayService:
                 self._overlay_manager.mark_shutdown_requested()
             await self._emit_overlay_shutdown()
             await self._teardown_overlay_runtime(preserve_presenter_state=False)
-            previous_state = self._sm.transition("done")
+            if self.overlay_state != "off":
+                previous_state = self._sm.transition("done")
             if not preserve_failure_reason:
                 self._sm.clear_failure_reason()
             self._log_overlay_state_transition(previous_state, self.overlay_state)

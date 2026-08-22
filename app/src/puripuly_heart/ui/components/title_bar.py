@@ -1,10 +1,12 @@
 import flet as ft
 
+from puripuly_heart.domain.i18n import t
 from puripuly_heart.ui.theme import (
     COLOR_BACKGROUND,
     COLOR_DIVIDER,
     COLOR_NEUTRAL,
     COLOR_NEUTRAL_DARK,
+    COLOR_PRIMARY,
 )
 
 
@@ -24,12 +26,14 @@ class TitleBar(ft.Container):
         )
 
         self._about_btn = ft.Container(
-            content=ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color=COLOR_NEUTRAL),
-            width=40,
-            height=40,
-            alignment=ft.Alignment.CENTER,
+            content=ft.Text(
+                t("title_bar.about"),
+                size=13,
+                color=COLOR_NEUTRAL,
+            ),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
             on_click=self._about,
-            on_hover=self._on_btn_hover,
+            on_hover=self._on_about_hover,
         )
 
         minimize_btn = ft.Container(
@@ -95,6 +99,18 @@ class TitleBar(ft.Container):
     def _about(self, _):
         if self._on_about_click is not None:
             self._on_about_click()
+
+    def _on_about_hover(self, e):
+        text = e.control.content
+        text.color = COLOR_PRIMARY if e.data == "true" else COLOR_NEUTRAL
+        try:
+            text.update()
+        except (AssertionError, RuntimeError):
+            pass
+
+    def apply_locale(self) -> None:
+        """Update translated text when locale changes."""
+        self._about_btn.content.value = t("title_bar.about")
 
     def _minimize(self, _):
         self._page.window.minimized = True

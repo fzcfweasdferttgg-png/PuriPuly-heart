@@ -429,5 +429,7 @@
   "settings.translation_connection.openai_compatible.description": "Connect to any OpenAI-compatible API provider (DeepSeek, Groq, Cerebras, Qwen, Ollama, vLLM, etc.)",
   "settings.backup_translation.connection": "Nastavenie záložného prekladu",
   "provider.none": "Zakázané",
-  "provider.none.description": "Funkcia zakázaná"
+  "provider.none.description": "Funkcia zakázaná",
+  "title_bar.about": "O aplikácii",
+  "about.fork_notice": "Toto je neoficiálny fork. Pôvodný autor nemá žiadny vzťah k tejto verzii."
 }

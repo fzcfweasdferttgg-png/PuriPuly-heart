@@ -120,7 +120,6 @@ class LanguageModal:
             content=create_glow_stack(modal_content),
             content_padding=0,
             bgcolor=ft.Colors.TRANSPARENT,
-            surface_tint_color=ft.Colors.TRANSPARENT,
         )
 
         self._page.show_dialog(self._dialog)

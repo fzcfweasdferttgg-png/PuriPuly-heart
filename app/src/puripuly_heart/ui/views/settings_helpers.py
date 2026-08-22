@@ -53,7 +53,7 @@ def _make_text_button(label: str, **kwargs) -> ft.TextButton:
 
 
 def _set_text_button_label(button: ft.TextButton, label: str) -> None:
-    button.text = label
+    button.content = label
 
 
 def _update_control_if_mounted(control: ft.Control) -> None:

@@ -516,5 +516,7 @@
   "settings.backup_translation": "Резервный перевод",
   "option.disabled": "Отключено",
   "settings.backup_api_key": "API ключ",
-  "settings.backup_translation.connection": "Настройки резервного перевода"
+  "settings.backup_translation.connection": "Настройки резервного перевода",
+  "title_bar.about": "О программе",
+  "about.fork_notice": "Это неофициальный форк. Автор оригинала не имеет отношения к этой версии."
 }

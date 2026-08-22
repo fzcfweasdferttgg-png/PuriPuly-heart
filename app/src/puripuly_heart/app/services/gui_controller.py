@@ -1759,7 +1759,7 @@ class GuiController:
                     show_snackbar(warning)
         async def _task():
             await self.on_dashboard_language_change(
-                source_code, target_code,
+                source_code=source_code, target_code=target_code,
                 peer_source_code=peer_source_code,
                 peer_target_code=peer_target_code,
                 second_target_code=second_target_code,

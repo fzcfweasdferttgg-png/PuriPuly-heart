@@ -840,8 +840,8 @@ class LlmSectionMixin:
         self._local_llm_base_url.label = t("settings.local_llm.base_url")
         self._local_llm_model.label = t("settings.local_llm.model")
         self._local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
-        self._local_llm_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
-        self._openai_compatible_test_btn.text = t("settings.local_llm.test_connection", default="Test connection")
+        self._local_llm_test_btn.content.value = t("settings.local_llm.test_connection", default="Test connection")
+        self._openai_compatible_test_btn.content.value = t("settings.local_llm.test_connection", default="Test connection")
         self._local_llm_api_key.apply_locale()
         local_llm_api_key_description = t("settings.local_llm.api_key.description")
         self._local_llm_api_key_helper.value = local_llm_api_key_description

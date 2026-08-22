@@ -429,5 +429,7 @@
   "settings.translation_connection.openai_compatible.description": "Connect to any OpenAI-compatible API provider (DeepSeek, Groq, Cerebras, Qwen, Ollama, vLLM, etc.)",
   "settings.backup_translation.connection": "Cài đặt dịch thuật dự phòng",
   "provider.none": "Vô hiệu hóa",
-  "provider.none.description": "Tính năng bị vô hiệu hóa"
+  "provider.none.description": "Tính năng bị vô hiệu hóa",
+  "title_bar.about": "Giới thiệu",
+  "about.fork_notice": "Đây là một fork không chính thức. Tác giả gốc không liên quan đến phiên bản này."
 }

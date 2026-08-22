@@ -429,5 +429,7 @@
   "settings.translation_connection.openai_compatible.description": "Connect to any OpenAI-compatible API provider (DeepSeek, Groq, Cerebras, Qwen, Ollama, vLLM, etc.)",
   "settings.backup_translation.connection": "Ustawienia tłumaczenia zapasowego",
   "provider.none": "Wyłączone",
-  "provider.none.description": "Funkcja wyłączona"
+  "provider.none.description": "Funkcja wyłączona",
+  "title_bar.about": "O programie",
+  "about.fork_notice": "To jest nieoficjalny fork. Oryginalny autor nie ma nic wspólnego z tą wersją."
 }
