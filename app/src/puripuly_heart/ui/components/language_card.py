@@ -76,42 +76,42 @@ class _LanguageRow(ft.Container):
             overflow=ft.TextOverflow.ELLIPSIS,
         )
         self._arrow_icon = ft.Icon(
-            name=ft.Icons.ARROW_RIGHT_ALT,
+            icon=ft.Icons.ARROW_RIGHT_ALT,
             size=34 + _ARROW_SIZE_DELTA,
             color=COLOR_SECONDARY,
         )
 
         caption = ft.Container(
             content=self._label_text,
-            alignment=ft.alignment.top_left,
-            padding=ft.padding.only(left=12),
+            alignment=ft.Alignment.TOP_LEFT,
+            padding=ft.Padding.only(left=12),
         )
         self._arrow = ft.Container(
             content=self._arrow_icon,
-            padding=ft.padding.symmetric(horizontal=6, vertical=8),
+            padding=ft.Padding.symmetric(horizontal=6, vertical=8),
             border_radius=14,
             on_click=lambda _: self._on_swap_click() if self._on_swap_click else None,
             on_hover=self._on_arrow_hover,
         )
         self._source_btn = ft.Container(
             content=self._source_text,
-            padding=ft.padding.symmetric(horizontal=12, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=10),
             border_radius=14,
             bgcolor=ft.Colors.TRANSPARENT,
             on_hover=self._on_source_hover,
             on_click=lambda _: self._on_source_click(),
             expand=True,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
         self._target_btn = ft.Container(
             content=self._target_text,
-            padding=ft.padding.symmetric(horizontal=12, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=10),
             border_radius=14,
             bgcolor=ft.Colors.TRANSPARENT,
             on_hover=self._on_target_hover,
             on_click=lambda _: self._on_target_click(),
             expand=True,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
 
         pair = ft.Container(
@@ -121,7 +121,7 @@ class _LanguageRow(ft.Container):
                 alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
 
         row_content = ft.Column(
@@ -132,25 +132,37 @@ class _LanguageRow(ft.Container):
 
         super().__init__(
             content=row_content,
-            padding=ft.padding.symmetric(vertical=4),
+            padding=ft.Padding.symmetric(vertical=4),
         )
 
     def _on_source_hover(self, e):
         self._source_text.color = COLOR_PRIMARY if e.data == "true" else COLOR_NEUTRAL_DARK
-        self._source_text.update()
+        try:
+            self._source_text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_target_hover(self, e):
         self._target_text.color = COLOR_PRIMARY if e.data == "true" else COLOR_NEUTRAL_DARK
-        self._target_text.update()
+        try:
+            self._target_text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_arrow_hover(self, e):
         self._arrow_icon.color = COLOR_PRIMARY if e.data == "true" else COLOR_SECONDARY
-        self._arrow_icon.update()
+        try:
+            self._arrow_icon.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def set_label(self, label: str) -> None:
         self._label_text.value = label
-        if self._label_text.page is not None:
-            self._label_text.update()
+        try:
+            if self._label_text.page is not None:
+                self._label_text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def set_languages(self, source: str, target: str, *, size: int | None = None) -> None:
         resolved_size = size if size is not None else _row_text_size(source, target)
@@ -160,12 +172,21 @@ class _LanguageRow(ft.Container):
         self._source_text.value = source
         self._target_text.value = target
 
-        if self._source_text.page is not None:
-            self._source_text.update()
-        if self._target_text.page is not None:
-            self._target_text.update()
-        if self._arrow_icon.page is not None:
-            self._arrow_icon.update()
+        try:
+            if self._source_text.page is not None:
+                self._source_text.update()
+        except (AssertionError, RuntimeError):
+            pass
+        try:
+            if self._target_text.page is not None:
+                self._target_text.update()
+        except (AssertionError, RuntimeError):
+            pass
+        try:
+            if self._arrow_icon.page is not None:
+                self._arrow_icon.update()
+        except (AssertionError, RuntimeError):
+            pass
 
 
 class LanguageCard(ft.Container):
@@ -213,13 +234,13 @@ class LanguageCard(ft.Container):
         )
         self._second_target_btn = ft.Container(
             content=self._second_target_text,
-            padding=ft.padding.symmetric(horizontal=12, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=10),
             border_radius=14,
             bgcolor=ft.Colors.TRANSPARENT,
             on_click=lambda _: on_second_target_click() if on_second_target_click else None,
             on_hover=self._on_second_target_hover,
             expand=True,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
         _second_target_arrow_spacer = ft.Container(
             width=38 + 12,  # icon size + horizontal padding
@@ -228,8 +249,8 @@ class LanguageCard(ft.Container):
         _second_target_spacer = ft.Container(expand=True)
         _second_target_caption = ft.Container(
             content=self._second_target_label,
-            alignment=ft.alignment.top_left,
-            padding=ft.padding.only(left=12),
+            alignment=ft.Alignment.TOP_LEFT,
+            padding=ft.Padding.only(left=12),
         )
         _second_target_pair = ft.Container(
             content=ft.Row(
@@ -238,7 +259,7 @@ class LanguageCard(ft.Container):
                 alignment=ft.MainAxisAlignment.START,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            alignment=ft.alignment.center_left,
+            alignment=ft.Alignment.CENTER_LEFT,
         )
         _second_target_content = ft.Column(
             [_second_target_caption, _second_target_pair],
@@ -247,7 +268,7 @@ class LanguageCard(ft.Container):
         )
         self._second_target_row = ft.Container(
             content=_second_target_content,
-            padding=ft.padding.symmetric(vertical=4),
+            padding=ft.Padding.symmetric(vertical=4),
             visible=False,
         )
 
@@ -259,7 +280,7 @@ class LanguageCard(ft.Container):
                     alignment=ft.MainAxisAlignment.CENTER,
                 ),
                 expand=True,
-                alignment=ft.alignment.center,
+                alignment=ft.Alignment.CENTER,
                 padding=12,
             )
         )
@@ -268,7 +289,7 @@ class LanguageCard(ft.Container):
             content=content_with_glow,
             bgcolor=COLOR_SURFACE,
             border_radius=16,
-            border=ft.border.all(1, ft.Colors.with_opacity(0.4, ft.Colors.WHITE)),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.4, ft.Colors.WHITE)),
             expand=True,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             shadow=get_card_shadow(),
@@ -276,14 +297,20 @@ class LanguageCard(ft.Container):
 
     def _on_second_target_hover(self, e):
         self._second_target_text.color = COLOR_PRIMARY if e.data == "true" else COLOR_NEUTRAL_DARK
-        self._second_target_text.update()
+        try:
+            self._second_target_text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def set_row_labels(self, self_label: str, peer_label: str, second_target_label: str = "") -> None:
         self._self_row.set_label(self_label)
         self._peer_row.set_label(peer_label)
         self._second_target_label.value = second_target_label
-        if self._second_target_label.page is not None:
-            self._second_target_label.update()
+        try:
+            if self._second_target_label.page is not None:
+                self._second_target_label.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def set_languages(
         self,
@@ -299,15 +326,24 @@ class LanguageCard(ft.Container):
         self._self_row.set_languages(self_source, self_target, size=unified_size)
         self._peer_row.set_languages(peer_source, peer_target, size=unified_size)
         self._second_target_text.size = unified_size
-        if self._second_target_text.page is not None:
-            self._second_target_text.update()
+        try:
+            if self._second_target_text.page is not None:
+                self._second_target_text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def set_second_target_visible(self, visible: bool) -> None:
         self._second_target_row.visible = visible
-        if self._second_target_row.page is not None:
-            self._second_target_row.update()
+        try:
+            if self._second_target_row.page is not None:
+                self._second_target_row.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def set_second_target_name(self, name: str) -> None:
         self._second_target_text.value = name
-        if self._second_target_text.page is not None:
-            self._second_target_text.update()
+        try:
+            if self._second_target_text.page is not None:
+                self._second_target_text.update()
+        except (AssertionError, RuntimeError):
+            pass

@@ -169,7 +169,10 @@ class UiSectionMixin:
     # ------------------------------------------------------------------
 
     def _on_ui_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = [OptionItem(value=code, label=native_locale_label(code)) for code in available_locales()]
         current = self._settings.ui.locale if self._settings else "en"
@@ -191,8 +194,11 @@ class UiSectionMixin:
 
         # Update text
         self._ui_text.content.value = locale_label(value)
-        if self.page:
-            self._ui_text.update()
+        try:
+            if self.page:
+                self._ui_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._emit_settings_changed()
 
     # ------------------------------------------------------------------
@@ -328,8 +334,11 @@ class UiSectionMixin:
             if new_value
             else "settings.clipboard_auto_translate.off"
         )
-        if self.page:
-            self._clipboard_auto_translate_text.update()
+        try:
+            if self.page:
+                self._clipboard_auto_translate_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._emit_settings_changed()
 
     # ------------------------------------------------------------------
@@ -337,7 +346,10 @@ class UiSectionMixin:
     # ------------------------------------------------------------------
 
     def _on_low_latency_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = [
             OptionItem(
@@ -374,8 +386,11 @@ class UiSectionMixin:
 
         # Update text
         self._low_latency_text.content.value = t("toggle.on" if new_value else "toggle.off")
-        if self.page:
-            self._low_latency_text.update()
+        try:
+            if self.page:
+                self._low_latency_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._emit_settings_changed()
 
     # --- Locale ---

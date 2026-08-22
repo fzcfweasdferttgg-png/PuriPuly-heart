@@ -41,15 +41,15 @@ logger = logging.getLogger(__name__)
 # ── Module constants (used only by helpers) ──────────────────────────────
 
 _CJK_START = 0x3000
-_CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
-_CENTER_RIGHT_ALIGNMENT = ft.alignment.Alignment(1, 0)
+_CENTER_ALIGNMENT = ft.Alignment(0, 0)
+_CENTER_RIGHT_ALIGNMENT = ft.Alignment(1, 0)
 _SETTINGS_SUBTAB_ORDER = ("api", "general", "prompt", "overlay")
 
 
 # ── Module-level helpers ──────────────────────────────────────────────────
 
 def _make_text_button(label: str, **kwargs) -> ft.TextButton:
-    return ft.TextButton(text=label, **kwargs)
+    return ft.TextButton(content=label, **kwargs)
 
 
 def _set_text_button_label(button: ft.TextButton, label: str) -> None:
@@ -62,7 +62,7 @@ def _update_control_if_mounted(control: ft.Control) -> None:
         return
     try:
         control.update()
-    except AssertionError as exc:
+    except (AssertionError, RuntimeError) as exc:
         if "Control must be added" not in str(exc):
             raise
 
@@ -81,7 +81,7 @@ def _make_overlay_anchor_dropdown(value: str, on_change) -> ft.Dropdown:
         border_radius=10,
         border_color=COLOR_DIVIDER,
         focused_border_color=COLOR_PRIMARY,
-        on_change=on_change,
+        on_select=on_change,
     )
 
 
@@ -175,9 +175,9 @@ class SettingsHelpersMixin:
         return ft.Container(
             content=ft.Text(label, size=14, color=COLOR_ON_BACKGROUND),
             bgcolor=COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_DIVIDER),
+            border=ft.Border.all(1, COLOR_DIVIDER),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=on_click,
         )
 
@@ -298,7 +298,10 @@ class SettingsHelpersMixin:
         if text_control.color == next_color:
             return
         text_control.color = next_color
-        container.update()
+        try:
+            container.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _make_overlay_step_hover_handler(self, text_control: ft.Text):
         def _on_hover(e: ft.ControlEvent) -> None:
@@ -306,8 +309,10 @@ class SettingsHelpersMixin:
             if text_control.color == next_color:
                 return
             text_control.color = next_color
-            if text_control.page is not None:
+            try:
                 text_control.update()
+            except (AssertionError, RuntimeError):
+                pass
 
         return _on_hover
 
@@ -350,11 +355,11 @@ class SettingsHelpersMixin:
     ) -> tuple[ft.Stack, ft.Container, ft.Container, ft.Text, ft.Text]:
         decrease_visual, decrease_glyph = self._build_overlay_step_visual_lane(
             decrease_text,
-            alignment=ft.alignment.center_right,
+            alignment=ft.Alignment.CENTER_RIGHT,
         )
         increase_visual, increase_glyph = self._build_overlay_step_visual_lane(
             increase_text,
-            alignment=ft.alignment.center_left,
+            alignment=ft.Alignment.CENTER_LEFT,
         )
         decrease_lane = self._build_overlay_step_hit_lane(
             on_decrease,
@@ -370,7 +375,7 @@ class SettingsHelpersMixin:
                 ft.Container(
                     content=value_text,
                     width=84,
-                    alignment=ft.alignment.center,
+                    alignment=ft.Alignment.CENTER,
                 ),
                 increase_visual,
             ],
@@ -385,7 +390,7 @@ class SettingsHelpersMixin:
                 ft.Container(
                     content=visual_row,
                     expand=True,
-                    alignment=ft.alignment.center,
+                    alignment=ft.Alignment.CENTER,
                 ),
             ],
             spacing=0,
@@ -403,7 +408,7 @@ class SettingsHelpersMixin:
             ],
             fit=ft.StackFit.EXPAND,
             expand=True,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
         return stack, decrease_lane, increase_lane, decrease_glyph, increase_glyph
 
@@ -588,12 +593,18 @@ class SettingsHelpersMixin:
 
     def _sync_prompt_tab_copy(self) -> None:
         self._prompt_for_text.value = self._prompt_provider_copy()
-        if self.page:
-            with contextlib.suppress(Exception):
-                self._prompt_for_text.update()
+        try:
+            if self.page:
+                with contextlib.suppress(Exception):
+                    self._prompt_for_text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_stub_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         modal = SettingsModal(
             self.page,
@@ -605,7 +616,10 @@ class SettingsHelpersMixin:
         modal.open("stub")
 
     def _on_fallback_status_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         from puripuly_heart.domain.providers import LLMProviderName
         display_settings = self._build_settings_with_provider_draft()

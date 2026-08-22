@@ -67,7 +67,7 @@ class MicrophoneTestDialog:
         self._close_notified = False
         self._dialog = self._build_dialog()
         self._is_open = True
-        self._page.open(self._dialog)
+        self._page.show_dialog(self._dialog)
 
     # Two close paths: programmatic close(notify=False) vs Flet on_dismiss.
     # _close_notified guard ensures on_close callback fires at most once
@@ -85,9 +85,7 @@ class MicrophoneTestDialog:
         else:
             self._close_notified = True
         if was_open:
-            close = getattr(self._page, "close", None)
-            if callable(close):
-                close(dialog)
+            self._page.pop_dialog()
 
     def reset(self) -> None:
         self._level = 0.0
@@ -128,15 +126,15 @@ class MicrophoneTestDialog:
             padding=28,
             bgcolor=COLOR_SURFACE,
             border_radius=30,
-            border=ft.border.all(1, ft.Colors.with_opacity(0.35, COLOR_DIVIDER)),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.35, COLOR_DIVIDER)),
             shadow=get_card_shadow(),
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
             content=ft.Column(
                 controls=[
                     ft.Container(
                         width=_CONTENT_SIZE,
                         content=self._level_text,
-                        alignment=ft.alignment.center,
+                        alignment=ft.Alignment.CENTER,
                         bgcolor=ft.Colors.TRANSPARENT,
                         expand=True,
                     ),
@@ -180,7 +178,7 @@ class MicrophoneTestDialog:
             return
         try:
             self._level_text.update()
-        except AssertionError as exc:
+        except (AssertionError, RuntimeError) as exc:
             if "Control must be added" not in str(exc):
                 raise
 

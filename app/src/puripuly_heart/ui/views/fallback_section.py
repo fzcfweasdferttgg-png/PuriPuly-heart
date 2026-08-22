@@ -70,7 +70,7 @@ class FallbackSectionMixin:
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_fallback_provider_change,
+            on_select=self._on_fallback_provider_change,
         )
         self._fallback_openai_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url"),
@@ -108,7 +108,7 @@ class FallbackSectionMixin:
             on_click=self._fetch_fallback_models,
         )
         self._fallback_openai_test_btn = ft.TextButton(
-            text=t("settings.local_llm.test_connection", default="Test connection"),
+            content=ft.Text(t("settings.local_llm.test_connection", default="Test connection")),
             on_click=self._test_fallback_openai_connection,
         )
         async def _verify_with_base_url(provider: str, key: str, **kwargs: object):

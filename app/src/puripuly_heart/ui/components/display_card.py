@@ -110,7 +110,7 @@ class DisplayCard(ft.Container):
             visible=False,
             bgcolor=COLOR_WARNING,
             border_radius=999,
-            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=6),
         )
 
         self._input_field = ft.TextField(
@@ -145,8 +145,8 @@ class DisplayCard(ft.Container):
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.START,
             ),
-            alignment=ft.alignment.top_left,
-            padding=ft.padding.only(left=8),
+            alignment=ft.Alignment.TOP_LEFT,
+            padding=ft.Padding.only(left=8),
             expand=True,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
@@ -154,13 +154,13 @@ class DisplayCard(ft.Container):
             [
                 ft.Container(
                     content=ft.Divider(height=1, color=ft.Colors.with_opacity(0.2, COLOR_NEUTRAL)),
-                    padding=ft.padding.only(bottom=4),
+                    padding=ft.Padding.only(bottom=4),
                 ),
                 ft.Row(
                     [
                         ft.Container(
                             content=ft.Text("•", size=36, color="#FFADAC"),
-                            padding=ft.padding.only(right=8),
+                            padding=ft.Padding.only(right=8),
                         ),
                         self._input_field,
                     ],
@@ -188,7 +188,7 @@ class DisplayCard(ft.Container):
             content=content_with_glow,
             bgcolor=COLOR_SURFACE,
             border_radius=16,
-            border=ft.border.all(1, ft.Colors.with_opacity(0.4, ft.Colors.WHITE)),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.4, ft.Colors.WHITE)),
             expand=True,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             shadow=get_card_shadow(),
@@ -199,7 +199,10 @@ class DisplayCard(ft.Container):
         if text:
             self._on_submit(text)
             e.control.value = ""
-            e.control.update()
+            try:
+                e.control.update()
+            except (AssertionError, RuntimeError):
+                pass
             e.control.focus()
 
     def _handle_input_focus(self, _e) -> None:
@@ -325,15 +328,21 @@ class DisplayCard(ft.Container):
     def clear_input(self):
         """Clear the input field."""
         self._input_field.value = ""
-        self._input_field.update()
+        try:
+            self._input_field.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def set_input_font(self, font_family: str | None) -> None:
         # Force strict system fallback if None (to break theme inheritance)
         final_font = font_family if font_family else ""
         self._input_field.text_style = ft.TextStyle(font_family=final_font)
         # Hint style is now managed separately by apply_locale (using UI font)
-        if self._input_field.page is not None:
-            self._input_field.update()
+        try:
+            if self._input_field.page is not None:
+                self._input_field.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def apply_locale(
         self,
@@ -352,8 +361,12 @@ class DisplayCard(ft.Container):
 
         if input_font_family is not None:
             self.set_input_font(input_font_family)
-        elif self._input_field.page is not None:
-            self._input_field.update()
+        else:
+            try:
+                if self._input_field.page is not None:
+                    self._input_field.update()
+            except (AssertionError, RuntimeError):
+                pass
         if self._showing_status:
             self._primary_value = _status_label(self._status)
             self._primary_font_family = display_font_family
@@ -486,16 +499,30 @@ class DisplayCard(ft.Container):
         self._display_secondary.color = text_color
         self._display_secondary.font_family = self._secondary_font_family
 
-        primary_update_issued = self._display_primary.page is not None
-        secondary_update_issued = self._display_secondary.page is not None
+        primary_update_issued = False
+        secondary_update_issued = False
+        try:
+            primary_update_issued = self._display_primary.page is not None
+        except (AssertionError, RuntimeError):
+            pass
+        try:
+            secondary_update_issued = self._display_secondary.page is not None
+        except (AssertionError, RuntimeError):
+            pass
 
         flet_update_elapsed_us: int | None = None
         start_ns = time.perf_counter_ns() if measure_flet_update else 0
 
-        if self._display_primary.page is not None:
-            self._display_primary.update()
-        if self._display_secondary.page is not None:
-            self._display_secondary.update()
+        try:
+            if self._display_primary.page is not None:
+                self._display_primary.update()
+        except (AssertionError, RuntimeError):
+            pass
+        try:
+            if self._display_secondary.page is not None:
+                self._display_secondary.update()
+        except (AssertionError, RuntimeError):
+            pass
 
         if measure_flet_update:
             flet_update_elapsed_us = max(0, (time.perf_counter_ns() - start_ns) // 1000)

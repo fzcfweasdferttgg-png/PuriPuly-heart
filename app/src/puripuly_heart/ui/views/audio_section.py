@@ -131,7 +131,10 @@ class AudioSectionMixin:
         self._emit_settings_changed()
 
     def _on_mic_host_api_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = self._audio_settings._get_host_api_options()
         modal = SettingsModal(
@@ -147,13 +150,23 @@ class AudioSectionMixin:
         self._audio_settings.host_api = value
         self._audio_settings.microphone = ""
         self._sync_general_audio_card_texts()
-        if self.page:
-            self._mic_audio_text.update()
-            self._audio_host_api_text.update()
+        try:
+            if self.page:
+                self._mic_audio_text.update()
+        except (AssertionError, RuntimeError):
+            pass
+        try:
+            if self.page:
+                self._audio_host_api_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._on_audio_change()
 
     def _on_mic_audio_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = self._audio_settings._get_microphone_options()
         modal = SettingsModal(
@@ -168,12 +181,18 @@ class AudioSectionMixin:
     def _on_mic_audio_selected(self, value: str) -> None:
         self._audio_settings.microphone = value
         self._sync_general_audio_card_texts()
-        if self.page:
-            self._mic_audio_text.update()
+        try:
+            if self.page:
+                self._mic_audio_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._on_audio_change()
 
     def _on_loopback_audio_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = self._audio_settings._get_desktop_output_options()
         modal = SettingsModal(
@@ -188,8 +207,11 @@ class AudioSectionMixin:
     def _on_loopback_audio_selected(self, value: str) -> None:
         self._audio_settings.desktop_output_device = value
         self._sync_general_audio_card_texts()
-        if self.page:
-            self._loopback_audio_text.update()
+        try:
+            if self.page:
+                self._loopback_audio_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._on_audio_change()
 
     # --- Locale ---

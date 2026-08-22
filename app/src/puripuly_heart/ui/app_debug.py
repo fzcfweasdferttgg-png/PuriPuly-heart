@@ -71,7 +71,7 @@ class AppDebugPreviewMixin:
                 close_github_star_prompt_snackbar(self.page, snackbar)
 
         snackbar = build_github_star_prompt_snackbar(_open_repository)
-        self.page.open(snackbar)
+        self.page.show_dialog(snackbar)
 
     def _debug_preview_noop(self) -> None:
         return None

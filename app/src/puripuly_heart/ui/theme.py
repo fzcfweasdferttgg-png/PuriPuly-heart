@@ -32,7 +32,6 @@ def get_app_theme(font_family: str | None = None) -> ft.Theme:
             primary=COLOR_PRIMARY,
             error=COLOR_ERROR,
             outline=COLOR_DIVIDER,
-            background=COLOR_BACKGROUND,
             secondary=COLOR_SECONDARY,
             tertiary=COLOR_TERTIARY,
         ),

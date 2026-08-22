@@ -200,7 +200,12 @@ class SettingsView(
         self._overlay_peer_contract: OverlayPeerConsumerContract | None = None
 
         # Build UI components
-        self._build_ui()
+        try:
+            self._build_ui()
+        except Exception as exc:
+            import traceback
+            logger.error("[SettingsView] _build_ui failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
     def _register_sync_hook(self, hook: Callable[[], None]) -> None:
         """Register a callback to be called during _sync_overlay_controls()."""
@@ -237,25 +242,43 @@ class SettingsView(
 
     # --- Card Wrapper (About page pattern) ---
     def _build_prompt_tab(self) -> list[ft.Control]:
-        persona_card = self._build_prompt_widgets()
+        import traceback
+        try:
+            persona_card = self._build_prompt_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_prompt_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
         return [persona_card]
 
     def _build_overlay_tab(self) -> list[ft.Control]:
+        import traceback
         # === Section H: Overlay Cards ===
-        target_card, translation_card, peer_original_card = self._build_overlay_toggle_widgets()
+        try:
+            target_card, translation_card, peer_original_card = self._build_overlay_toggle_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_overlay_toggle_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
         # === Section I: Overlay Calibration ===
-        (
-            anchor_card,
-            distance_card,
-            offset_x_card,
-            offset_y_card,
-            text_scale_card,
-            vr_reset_card,
-        ) = self._build_overlay_calibration_widgets()
+        try:
+            (
+                anchor_card,
+                distance_card,
+                offset_x_card,
+                offset_y_card,
+                text_scale_card,
+                vr_reset_card,
+            ) = self._build_overlay_calibration_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_overlay_calibration_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
         # === Section J: Desktop Overlay ===
-        size_card, lock_card, bg_alpha_card = self._build_desktop_overlay_widgets()
+        try:
+            size_card, lock_card, bg_alpha_card = self._build_desktop_overlay_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_desktop_overlay_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
         # === Section K: Overlay Row Layout (cross-cutting) ===
         overlay_row1 = ft.Container(
@@ -332,15 +355,40 @@ class SettingsView(
     # which _update_api_visibility controls.
 
     def _build_general_tab(self) -> list[ft.Control]:
+        import traceback
         # Delegated widget creation (each builder stores attrs on self for handlers)
-        ui_card = self._build_ui_language_widgets()
-        self._build_low_latency_widgets()  # stores _low_latency_card on self
-        host_api_card, mic_audio_card, loopback_audio_card = self._build_audio_widgets()
-        self_vad_card, peer_vad_card = self._build_vad_widgets()
-        chatbox_source_card, clipboard_auto_translate_card, vrc_mic_card, microphone_test_card = (
-            self._build_osc_widgets()
-        )
-        integrated_context_card = self._build_integrated_context_unit_card()
+        try:
+            ui_card = self._build_ui_language_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_ui_language_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
+        try:
+            self._build_low_latency_widgets()  # stores _low_latency_card on self
+        except Exception as exc:
+            logger.error("[SettingsView] _build_low_latency_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
+        try:
+            host_api_card, mic_audio_card, loopback_audio_card = self._build_audio_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_audio_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
+        try:
+            self_vad_card, peer_vad_card = self._build_vad_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_vad_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
+        try:
+            chatbox_source_card, clipboard_auto_translate_card, vrc_mic_card, microphone_test_card = (
+                self._build_osc_widgets()
+            )
+        except Exception as exc:
+            logger.error("[SettingsView] _build_osc_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
+        try:
+            integrated_context_card = self._build_integrated_context_unit_card()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_integrated_context_unit_card failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
         # Cross-cutting layout — stays in settings.py
         general_primary_row = ft.Container(
@@ -400,19 +448,32 @@ class SettingsView(
         Order constraint: MUST be called AFTER _build_general_tab() —
         uses _low_latency_card created in the General tab's Response Mode section.
         """
+        import traceback
         assert hasattr(self, '_low_latency_card'), (
             "_low_latency_card must exist before _build_api_tab — "
             "call _build_general_tab() first"
         )
 
         # === Section A: Self STT ===
-        stt_card = self._build_stt_widgets()
+        try:
+            stt_card = self._build_stt_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_stt_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
         # === Section B: Translation Provider ===
-        trans_card = self._build_llm_widgets()
+        try:
+            trans_card = self._build_llm_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_llm_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
         # === Section G: Peer STT ===
-        peer_stt_card = self._build_peer_stt_widgets()
+        try:
+            peer_stt_card = self._build_peer_stt_widgets()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_peer_stt_widgets failed: %s\n%s", exc, traceback.format_exc())
+            raise
         self._trans_compute_spacer = ft.Container(height=32, visible=False)
         row1 = ft.Container(
             content=ft.Column([
@@ -558,21 +619,42 @@ class SettingsView(
     # created by _build_prompt_widgets via ContextSectionMixin).
 
     def _build_ui(self) -> None:
-        general_rows = self._build_general_tab()
-        api_rows = self._build_api_tab()
+        import traceback
+        try:
+            general_rows = self._build_general_tab()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_general_tab failed: %s\n%s", exc, traceback.format_exc())
+            raise
+        try:
+            api_rows = self._build_api_tab()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_api_tab failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
-        prompt_rows = self._build_prompt_tab()
+        try:
+            prompt_rows = self._build_prompt_tab()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_prompt_tab failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
-        overlay_rows = self._build_overlay_tab()
+        try:
+            overlay_rows = self._build_overlay_tab()
+        except Exception as exc:
+            logger.error("[SettingsView] _build_overlay_tab failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
-        self._settings_subtab_shell = self._build_settings_subtab_shell(
-            {
-                "api": api_rows,
-                "general": general_rows,
-                "prompt": prompt_rows,
-                "overlay": overlay_rows,
-            }
-        )
+        try:
+            self._settings_subtab_shell = self._build_settings_subtab_shell(
+                {
+                    "api": api_rows,
+                    "general": general_rows,
+                    "prompt": prompt_rows,
+                    "overlay": overlay_rows,
+                }
+            )
+        except Exception as exc:
+            logger.error("[SettingsView] _build_settings_subtab_shell failed: %s\n%s", exc, traceback.format_exc())
+            raise
         self.controls = [self._settings_subtab_shell]
 
     def _build_locale_options(self) -> list[ft.dropdown.Option]:
@@ -697,8 +779,11 @@ class SettingsView(
         # Load secrets
         self._load_secrets(settings, config_path)
 
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass
     # CROSS-CUTTING VISIBILITY COORDINATOR — called from 7+ call sites across
     # stt_section.py, llm_section.py, settings_helpers.py, overlay_section.py.
     # Controls visibility of:
@@ -895,8 +980,11 @@ class SettingsView(
         self._audio_settings.apply_locale()
         self._prompt_editor.apply_locale()
 
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def refresh_prompt_if_empty(self) -> None:
         was_empty = not self._prompt_editor.value.strip()

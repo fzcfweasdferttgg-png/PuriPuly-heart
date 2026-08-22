@@ -16,7 +16,7 @@ from puripuly_heart.ui.theme import (
     COLOR_SURFACE,
 )
 
-_CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
+_CENTER_ALIGNMENT = ft.Alignment(0, 0)
 
 
 def _load_third_party_notices() -> str:
@@ -55,11 +55,11 @@ class AboutView(ft.Column):
                 controls=[
                     ft.Container(
                         content=self._build_credits_card(),
-                        expand=True,
+                        width=float("inf"),
                     ),
                     ft.Container(
                         content=self._build_inspired_by_card(),
-                        expand=True,
+                        width=float("inf"),
                     ),
                 ],
                 spacing=16,
@@ -134,7 +134,7 @@ class AboutView(ft.Column):
                     src=profile_path,
                     width=160,
                     height=160,
-                    fit=ft.ImageFit.COVER,
+                    fit=ft.BoxFit.COVER,
                     border_radius=100,
                 )
                 if profile_path
@@ -297,7 +297,7 @@ class AboutView(ft.Column):
                         selectable=True,
                     ),
                     width=float("inf"),
-                    border=ft.border.all(1, COLOR_DIVIDER),
+                    border=ft.Border.all(1, COLOR_DIVIDER),
                     border_radius=12,
                     padding=16,
                     bgcolor=COLOR_SURFACE,
@@ -322,27 +322,42 @@ class AboutView(ft.Column):
         """Handle hover on name link."""
         text = e.control.content
         text.color = COLOR_PRIMARY if e.data == "true" else COLOR_ON_BACKGROUND
-        text.update()
+        try:
+            text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_link_hover(self, e):
         """Handle hover on project links."""
         text = e.control.content
         text.color = COLOR_PRIMARY if e.data == "true" else COLOR_ON_BACKGROUND
-        text.update()
+        try:
+            text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_version_hover(self, e):
         """Handle hover on version link."""
         text = e.control.content
         text.color = COLOR_PRIMARY if e.data == "true" else COLOR_ON_BACKGROUND
-        text.update()
+        try:
+            text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_thanks_hover(self, e):
         """Handle hover on thanks text."""
         text = e.control.content
         text.color = COLOR_PRIMARY if e.data == "true" else COLOR_ON_BACKGROUND
-        text.update()
+        try:
+            text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def apply_locale(self) -> None:
         """Refresh UI text when locale changes."""
         self._build_ui()
-        self.update()
+        try:
+            self.update()
+        except (AssertionError, RuntimeError):
+            pass

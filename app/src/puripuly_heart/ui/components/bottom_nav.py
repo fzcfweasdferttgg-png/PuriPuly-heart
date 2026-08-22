@@ -38,7 +38,7 @@ class BottomNavBar(ft.Container):
             content=tabs_row,
             bgcolor=COLOR_BACKGROUND,
             height=80,
-            border=ft.border.only(top=ft.BorderSide(1, COLOR_DIVIDER)),
+            border=ft.Border.only(top=ft.BorderSide(1, COLOR_DIVIDER)),
         )
 
     def _build_tabs(self):
@@ -49,13 +49,13 @@ class BottomNavBar(ft.Container):
             is_selected = i == self._selected
             icon_color = COLOR_PRIMARY if is_selected else COLOR_NEUTRAL
 
-            icon = ft.Icon(name=icon_name, size=30, color=icon_color)
+            icon = ft.Icon(icon=icon_name, size=30, color=icon_color)
             self._icons.append(icon)
 
             container = ft.Container(
                 content=icon,
                 expand=True,
-                alignment=ft.alignment.center,
+                alignment=ft.Alignment.CENTER,
                 on_click=lambda _, idx=i: self._on_tab_click(idx),
                 on_hover=lambda e, idx=i: self._on_tab_hover(e, idx),
             )
@@ -63,9 +63,9 @@ class BottomNavBar(ft.Container):
 
         # Placeholder slot (reserved, disabled)
         placeholder = ft.Container(
-            content=ft.Icon(name=ft.Icons.HORIZONTAL_RULE, size=30, color=COLOR_DIVIDER),
+            content=ft.Icon(icon=ft.Icons.HORIZONTAL_RULE, size=30, color=COLOR_DIVIDER),
             expand=True,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
         self._tab_containers.append(placeholder)
 
@@ -90,10 +90,16 @@ class BottomNavBar(ft.Container):
         if index != self._selected:
             icon = self._icons[index]
             icon.color = COLOR_PRIMARY if e.data == "true" else COLOR_NEUTRAL
-            icon.update()
+            try:
+                icon.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def _update_visuals(self):
         """Update all tab visuals based on selection."""
         for i, icon in enumerate(self._icons):
             icon.color = COLOR_PRIMARY if i == self._selected else COLOR_NEUTRAL
-            icon.update()
+            try:
+                icon.update()
+            except (AssertionError, RuntimeError):
+                pass

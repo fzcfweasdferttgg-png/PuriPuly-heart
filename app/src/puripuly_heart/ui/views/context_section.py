@@ -133,7 +133,7 @@ class ContextSectionMixin:
             self._on_prompt_mode_dual,
         )
         self._prompt_single_btn.bgcolor = COLOR_PRIMARY
-        self._prompt_single_btn.border = ft.border.all(1, COLOR_PRIMARY)
+        self._prompt_single_btn.border = ft.Border.all(1, COLOR_PRIMARY)
         self._prompt_single_btn.content.color = ft.Colors.WHITE
         self._prompt_single_btn.content.weight = ft.FontWeight.BOLD
         self._prompt_mode_row = ft.Row(
@@ -221,8 +221,11 @@ class ContextSectionMixin:
         if self._prompt_mode != "single":
             self._prompt_mode = "single"
             self._sync_prompt_mode_buttons()
-            if self.page:
-                self._prompt_mode_row.update()
+            try:
+                if self.page:
+                    self._prompt_mode_row.update()
+            except (AssertionError, RuntimeError):
+                pass
         self._prompt_editor.load_default_prompt()
         self._on_prompt_commit(self._prompt_editor.value)
 
@@ -236,8 +239,11 @@ class ContextSectionMixin:
         self._prompt_mode = "single"
         self._sync_prompt_mode_buttons()
         self._prompt_editor.load_default_prompt(emit_change=False)
-        if self.page:
-            self._prompt_mode_row.update()
+        try:
+            if self.page:
+                self._prompt_mode_row.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_prompt_mode_dual(self, e) -> None:
         if self._prompt_mode == "dual":
@@ -247,17 +253,20 @@ class ContextSectionMixin:
         from puripuly_heart.config.prompts import get_dual_translation_prompt_template
         dual = get_dual_translation_prompt_template()
         self._prompt_editor.value = dual if dual else t("settings.prompt_mode.dual_not_found", default="Dual prompt template not found")
-        if self.page:
-            self._prompt_mode_row.update()
+        try:
+            if self.page:
+                self._prompt_mode_row.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _sync_prompt_mode_buttons(self) -> None:
         is_single = self._prompt_mode == "single"
         self._prompt_single_btn.bgcolor = COLOR_PRIMARY if is_single else COLOR_SURFACE
-        self._prompt_single_btn.border = ft.border.all(1, COLOR_PRIMARY if is_single else COLOR_DIVIDER)
+        self._prompt_single_btn.border = ft.Border.all(1, COLOR_PRIMARY if is_single else COLOR_DIVIDER)
         self._prompt_single_btn.content.color = ft.Colors.WHITE if is_single else COLOR_ON_BACKGROUND
         self._prompt_single_btn.content.weight = ft.FontWeight.BOLD if is_single else ft.FontWeight.NORMAL
         self._prompt_dual_btn.bgcolor = COLOR_PRIMARY if not is_single else COLOR_SURFACE
-        self._prompt_dual_btn.border = ft.border.all(1, COLOR_PRIMARY if not is_single else COLOR_DIVIDER)
+        self._prompt_dual_btn.border = ft.Border.all(1, COLOR_PRIMARY if not is_single else COLOR_DIVIDER)
         self._prompt_dual_btn.content.color = ft.Colors.WHITE if not is_single else COLOR_ON_BACKGROUND
         self._prompt_dual_btn.content.weight = ft.FontWeight.BOLD if not is_single else ft.FontWeight.NORMAL
 

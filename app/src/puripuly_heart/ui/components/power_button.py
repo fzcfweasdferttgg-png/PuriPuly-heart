@@ -31,7 +31,7 @@ class PowerButton(ft.Container):
         self._needs_key = False
         self._color_on = color_on if color_on is not None else COLOR_PRIMARY
 
-        self._icon_control = ft.Icon(name=icon, size=icon_size, color=COLOR_SECONDARY)
+        self._icon_control = ft.Icon(icon=icon, size=icon_size, color=COLOR_SECONDARY)
         self._label_control = ft.Text(
             label,
             size=label_size,
@@ -57,7 +57,7 @@ class PowerButton(ft.Container):
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=10,
                 ),
-                alignment=ft.alignment.center,
+                alignment=ft.Alignment.CENTER,
             )
         )
 
@@ -66,7 +66,7 @@ class PowerButton(ft.Container):
             bgcolor=COLOR_TRANS_TONAL,
             border_radius=16,
             expand=True,
-            # alignment=ft.alignment.center,  <-- REMOVED: This was crushing the stack
+            # alignment=ft.Alignment.CENTER,  <-- REMOVED: This was crushing the stack
             on_click=lambda _: self._on_click(),
             animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
             shadow=get_card_shadow(),
@@ -98,11 +98,15 @@ class PowerButton(ft.Container):
             self._icon_control.color = COLOR_SECONDARY
             self._label_control.color = COLOR_SECONDARY
 
-        if self.page is not None:
+        try:
             self.update()
+        except Exception:
+            pass
 
     def set_label(self, label: str) -> None:
         self._label = label
         self._label_control.value = label
-        if self._label_control.page is not None:
+        try:
             self._label_control.update()
+        except Exception:
+            pass

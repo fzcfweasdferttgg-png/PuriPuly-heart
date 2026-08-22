@@ -652,13 +652,19 @@ class OverlaySectionMixin:
         )
         if current == next_alpha:
             self._sync_desktop_overlay_main_controls()
-            if self.page:
-                self.update()
+            try:
+                if self.page:
+                    self.update()
+            except (AssertionError, RuntimeError):
+                pass
             return
         self._command_executor.execute(ChangeOverlayDesktopBackgroundAlpha(alpha=next_alpha))
         self._sync_desktop_overlay_main_controls()
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._emit_settings_changed()
 
     def _on_desktop_overlay_primary_action(self, e) -> None:
@@ -725,8 +731,11 @@ class OverlaySectionMixin:
         for hook in self._sync_hooks:
             hook()
 
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _sync_overlay_value_texts(self) -> None:
         """Update overlay translation/peer-original button value texts."""
@@ -810,8 +819,11 @@ class OverlaySectionMixin:
         self._overlay_calibration_draft = OverlayCalibration()
         self._sync_overlay_calibration_controls(self._overlay_calibration_draft)
 
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_overlay_translation_click(self, e) -> None:
         if not self._settings or self._overlay_translation_button.disabled:

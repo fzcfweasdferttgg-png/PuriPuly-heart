@@ -448,7 +448,10 @@ class LlmSectionMixin:
         self._on_openai_compatible_base_url_change_end(None)
 
     def _on_llm_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         model_sections = (
             (TranslationModel.NONE, None),
@@ -562,10 +565,13 @@ class LlmSectionMixin:
             self._draft_service.stage_prompt_draft(next_prompt)
         self._sync_prompt_tab_copy()
 
-        if self.page:
-            _update_control_if_mounted(self._llm_text)
-            _update_control_if_mounted(self._translation_connection_row)
-            _update_control_if_mounted(self._local_llm_connection_card)
+        try:
+            if self.page:
+                _update_control_if_mounted(self._llm_text)
+                _update_control_if_mounted(self._translation_connection_row)
+                _update_control_if_mounted(self._local_llm_connection_card)
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_llm_selected(self, value: str) -> None:
         if not self._settings:
@@ -661,7 +667,7 @@ class LlmSectionMixin:
             on_click=self._fetch_local_llm_models,
         )
         self._local_llm_test_btn = ft.TextButton(
-            text=t("settings.local_llm.test_connection", default="Test connection"),
+            content=ft.Text(t("settings.local_llm.test_connection", default="Test connection")),
             on_click=self._test_local_llm_connection,
         )
         self._local_llm_api_key = ApiKeyField(
@@ -759,7 +765,7 @@ class LlmSectionMixin:
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_openai_compatible_provider_change,
+            on_select=self._on_openai_compatible_provider_change,
         )
         self._openai_compatible_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url", default="Base URL"),
@@ -796,7 +802,7 @@ class LlmSectionMixin:
             on_click=self._fetch_models,
         )
         self._openai_compatible_test_btn = ft.TextButton(
-            text=t("settings.local_llm.test_connection", default="Test connection"),
+            content=ft.Text(t("settings.local_llm.test_connection", default="Test connection")),
             on_click=self._test_openai_compatible_connection,
         )
         self._translation_openai_card = self._wrap_card(

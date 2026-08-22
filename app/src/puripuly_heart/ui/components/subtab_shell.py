@@ -33,7 +33,6 @@ class _ScrollBody(ft.Column):
             spacing=16,
             scroll=ft.ScrollMode.AUTO,
             on_scroll=on_scroll,
-            on_scroll_interval=0,
             visible=False,
         )
         self.tab_key = tab_key
@@ -71,7 +70,7 @@ class _BottomDockedTextTab(ft.Container):
         super().__init__(
             content=self.label,
             expand=True,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
             on_click=lambda _e: self._on_select(self.tab_key),
             on_hover=self._handle_hover,
         )
@@ -100,8 +99,10 @@ class _BottomDockedTextTab(ft.Container):
         self._refresh()
 
     def _refresh(self) -> None:
-        if self.page is not None:
+        try:
             self.update()
+        except Exception:
+            pass
 
 
 class TextSubtabShell(ft.Column):
@@ -134,7 +135,7 @@ class TextSubtabShell(ft.Column):
         self.scroll_offsets = {tab.key: 0.0 for tab in tabs}
 
         self.title_region = (
-            ft.Container(content=title, padding=ft.padding.only(top=4, bottom=4))
+            ft.Container(content=title, padding=ft.Padding.only(top=4, bottom=4))
             if title is not None
             else None
         )
@@ -153,7 +154,7 @@ class TextSubtabShell(ft.Column):
             border_radius=None if self._is_bottom_docked else 24,
             height=64 if self._is_bottom_docked else None,
             padding=(
-                None if self._is_bottom_docked else ft.padding.symmetric(horizontal=8, vertical=8)
+                None if self._is_bottom_docked else ft.Padding.symmetric(horizontal=8, vertical=8)
             ),
         )
         self.body_by_key = {
@@ -169,7 +170,7 @@ class TextSubtabShell(ft.Column):
             ft.Container(
                 content=self.body_host,
                 expand=True,
-                padding=ft.padding.only(left=16, top=16, right=16),
+                padding=ft.Padding.only(left=16, top=16, right=16),
             )
             if self._is_bottom_docked
             else self.body_host
@@ -197,8 +198,8 @@ class TextSubtabShell(ft.Column):
 
     def _build_subtab_bar_border(self) -> ft.Border:
         if self._is_bottom_docked:
-            return ft.border.only(top=ft.BorderSide(1, COLOR_DIVIDER))
-        return ft.border.all(1, ft.Colors.with_opacity(0.8, COLOR_DIVIDER))
+            return ft.Border.only(top=ft.BorderSide(1, COLOR_DIVIDER))
+        return ft.Border.all(1, ft.Colors.with_opacity(0.8, COLOR_DIVIDER))
 
     def _build_subtab_row_controls(self) -> list[ft.Control]:
         if not self._is_bottom_docked:
@@ -217,13 +218,13 @@ class TextSubtabShell(ft.Column):
             hovered_text = COLOR_PRIMARY
             background = ft.Colors.TRANSPARENT
             shape = ft.RoundedRectangleBorder(radius=0)
-            padding = ft.padding.symmetric(horizontal=12, vertical=16)
+            padding = ft.Padding.symmetric(horizontal=12, vertical=16)
         else:
             default_text = COLOR_ON_PRIMARY_CONTAINER if active else COLOR_ON_BACKGROUND
             hovered_text = default_text
             background = COLOR_PRIMARY_CONTAINER if active else ft.Colors.TRANSPARENT
             shape = ft.RoundedRectangleBorder(radius=18)
-            padding = ft.padding.symmetric(horizontal=18, vertical=12)
+            padding = ft.Padding.symmetric(horizontal=18, vertical=12)
 
         return ft.ButtonStyle(
             color={
@@ -255,7 +256,7 @@ class TextSubtabShell(ft.Column):
                 on_select=self.select_tab,
             )
         return ft.TextButton(
-            text=label,
+            content=label,
             on_click=lambda _e, tab_key=key: self.select_tab(tab_key),
             expand=self._is_bottom_docked,
             style=self._button_style(active=key == self.active_key),
@@ -295,8 +296,11 @@ class TextSubtabShell(ft.Column):
         self.body_by_key[key].restore_scroll(self.scroll_offsets.get(key, 0.0))
         if self._on_tab_change is not None:
             self._on_tab_change(key)
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def record_scroll(self, key: str, e) -> None:
         if key not in self.scroll_offsets:

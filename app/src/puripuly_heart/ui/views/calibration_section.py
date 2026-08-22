@@ -292,8 +292,11 @@ class CalibrationSectionMixin:
             self._settings.overlay.calibration = calibration.copy()
         self._sync_overlay_calibration_controls(self._overlay_calibration)
 
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass
 
         if self.on_overlay_calibration_apply is None:
             self._emit_settings_changed()

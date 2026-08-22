@@ -89,7 +89,7 @@ class FallbackLocalLlmSectionMixin:
             on_click=self._fetch_fallback_local_llm_models,
         )
         self._fallback_local_llm_test_btn = ft.TextButton(
-            text=t("settings.local_llm.test_connection", default="Test connection"),
+            content=ft.Text(t("settings.local_llm.test_connection", default="Test connection")),
             on_click=self._test_fallback_local_llm_connection,
         )
 

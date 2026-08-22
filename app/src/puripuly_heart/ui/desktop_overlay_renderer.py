@@ -232,7 +232,7 @@ class DesktopOverlayRenderer:
                     await websocket.close()
 
             with contextlib.suppress(Exception):
-                await self.window.close()
+                await self.window.destroy()
 
             current_task = asyncio.current_task()
             pending_tasks = [

@@ -108,7 +108,7 @@ class LanguageModal:
             ),
             width=600,  # Larger width
             height=700,  # Larger height
-            padding=ft.padding.symmetric(horizontal=32, vertical=32),
+            padding=ft.Padding.symmetric(horizontal=32, vertical=32),
             bgcolor=COLOR_SURFACE,
             border_radius=28,
             shadow=get_card_shadow(),
@@ -123,7 +123,7 @@ class LanguageModal:
             surface_tint_color=ft.Colors.TRANSPARENT,
         )
 
-        self._page.open(self._dialog)
+        self._page.show_dialog(self._dialog)
 
     def _build_recent_grid(self, recent: list[str], current: str) -> ft.Control | None:
         """Build grid controls for recent languages (up to 6)."""
@@ -160,8 +160,8 @@ class LanguageModal:
                 ),
                 bgcolor=bg_color,
                 border_radius=16,
-                padding=ft.padding.symmetric(horizontal=8, vertical=16),  # Taller padding
-                alignment=ft.alignment.center,
+                padding=ft.Padding.symmetric(horizontal=8, vertical=16),  # Taller padding
+                alignment=ft.Alignment.CENTER,
                 on_click=lambda e, code=lang_code: self._select(code),
                 on_hover=self._on_chip_hover,
                 animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
@@ -206,8 +206,8 @@ class LanguageModal:
                 ),
                 bgcolor=bg_color,
                 border_radius=16,
-                padding=ft.padding.all(24),
-                alignment=ft.alignment.center,
+                padding=ft.Padding.all(24),
+                alignment=ft.Alignment.CENTER,
                 on_click=lambda e: self._select(""),
                 on_hover=self._on_item_hover,
                 animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
@@ -245,8 +245,8 @@ class LanguageModal:
                 ),
                 bgcolor=bg_color,
                 border_radius=16,
-                padding=ft.padding.all(24),  # Much Larger padding (approx 120-130px total height)
-                alignment=ft.alignment.center,
+                padding=ft.Padding.all(24),  # Much Larger padding (approx 120-130px total height)
+                alignment=ft.Alignment.CENTER,
                 on_click=lambda e, selected=code: self._select(selected),
                 on_hover=self._on_item_hover,
                 animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
@@ -259,7 +259,7 @@ class LanguageModal:
             controls=items,
             expand=True,
             spacing=16,  # Increased spacing
-            padding=ft.padding.only(right=8, bottom=12),
+            padding=ft.Padding.only(right=8, bottom=12),
         )
 
     def _on_chip_hover(self, e: ft.ControlEvent) -> None:
@@ -281,7 +281,10 @@ class LanguageModal:
             text_control.color = COLOR_NEUTRAL_DARK
             # container.bgcolor = COLOR_BACKGROUND # Keep original
 
-        container.update()
+        try:
+            container.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_item_hover(self, e: ft.ControlEvent) -> None:
         """Handle hover effect on list cards."""
@@ -300,11 +303,14 @@ class LanguageModal:
                 text_control.color = COLOR_NEUTRAL_DARK
                 # container.bgcolor = COLOR_BACKGROUND
 
-            container.update()
+            try:
+                container.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def _select(self, name: str) -> None:
         """Handle language selection."""
         logger.info("[LanguageModal] Selection requested: %s", name)
         if self._dialog:
-            self._page.close(self._dialog)
+            self._page.pop_dialog()
         self._on_select(name)

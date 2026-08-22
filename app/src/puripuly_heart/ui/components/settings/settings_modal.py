@@ -107,7 +107,7 @@ class SettingsModal:
                 border_color=COLOR_DIVIDER,
                 focused_border_color=COLOR_PRIMARY,
                 text_size=18,
-                content_padding=ft.padding.symmetric(horizontal=16, vertical=12),
+                content_padding=ft.Padding.symmetric(horizontal=16, vertical=12),
                 on_change=self._on_search_change,
                 autofocus=True,
             )
@@ -126,7 +126,7 @@ class SettingsModal:
             ),
             width=600,
             height=700,
-            padding=ft.padding.symmetric(horizontal=32, vertical=32),
+            padding=ft.Padding.symmetric(horizontal=32, vertical=32),
             bgcolor=COLOR_SURFACE,
             border_radius=28,
             shadow=get_card_shadow(),
@@ -138,17 +138,19 @@ class SettingsModal:
             content=create_glow_stack(modal_content),
             content_padding=0,
             bgcolor=ft.Colors.TRANSPARENT,
-            surface_tint_color=ft.Colors.TRANSPARENT,
         )
 
-        self._page.open(self._dialog)
+        self._page.show_dialog(self._dialog)
 
     def _on_search_change(self, e: ft.ControlEvent) -> None:
         """Filter options based on search text."""
         self._filter_text = (e.data or "").strip().lower()
         if self._option_list is not None:
             self._option_list.controls = self._build_items(self._current)
-            self._option_list.update()
+            try:
+                self._option_list.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def _build_option_list(self, current: str) -> ft.ListView:
         """Build scrollable list of options."""
@@ -157,7 +159,7 @@ class SettingsModal:
             controls=items,
             expand=True,
             spacing=12,
-            padding=ft.padding.only(right=8, bottom=12),
+            padding=ft.Padding.only(right=8, bottom=12),
         )
 
     def _build_items(self, current: str) -> list[ft.Control]:
@@ -181,7 +183,7 @@ class SettingsModal:
                 bg_color = COLOR_SURFACE
                 text_color = COLOR_NEUTRAL
                 desc_color = COLOR_ON_BACKGROUND
-                border = ft.border.all(1, ft.Colors.with_opacity(0.2, COLOR_PRIMARY))
+                border = ft.Border.all(1, ft.Colors.with_opacity(0.2, COLOR_PRIMARY))
             else:
                 bg_color = COLOR_PRIMARY if is_selected else COLOR_BACKGROUND
                 text_color = ft.Colors.WHITE if is_selected else COLOR_ON_BACKGROUND
@@ -238,8 +240,8 @@ class SettingsModal:
                 bgcolor=bg_color,
                 border_radius=16,
                 border=border,
-                padding=ft.padding.all(24),
-                alignment=ft.alignment.center,
+                padding=ft.Padding.all(24),
+                alignment=ft.Alignment.CENTER,
                 on_click=None if option.disabled else lambda e, val=option.value: self._select(val),
                 on_hover=None if option.disabled else self._on_item_hover,
                 animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
@@ -265,7 +267,7 @@ class SettingsModal:
         )
         return ft.Container(
             content=ft.Column(controls, spacing=0),
-            padding=ft.padding.symmetric(horizontal=4),
+            padding=ft.Padding.symmetric(horizontal=4),
         )
 
     def _on_item_hover(self, e: ft.ControlEvent) -> None:
@@ -298,10 +300,13 @@ class SettingsModal:
                 if desc_control:
                     desc_control.color = COLOR_NEUTRAL_DARK
 
-            container.update()
+            try:
+                container.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def _select(self, value: str) -> None:
         """Handle option selection."""
         if self._dialog:
-            self._page.close(self._dialog)
+            self._page.pop_dialog()
         self._on_select(value)

@@ -550,7 +550,7 @@ class GuiController:
             with contextlib.suppress(Exception):
                 show_snackbar(message, ft.Colors.ORANGE_700)
                 return
-        opener = getattr(self.page, "open", None)
+        opener = getattr(self.page, "show_dialog", None)
         if callable(opener):
             with contextlib.suppress(Exception):
                 opener(
@@ -559,7 +559,7 @@ class GuiController:
                         bgcolor=ft.Colors.ORANGE_700,
                         duration=4000,
                         behavior=ft.SnackBarBehavior.FLOATING,
-                        margin=ft.margin.only(bottom=90),
+                        margin=ft.Margin.only(bottom=90),
                         padding=20,
                     )
                 )

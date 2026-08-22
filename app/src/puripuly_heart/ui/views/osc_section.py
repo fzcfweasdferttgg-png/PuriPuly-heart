@@ -143,13 +143,19 @@ class OscSectionMixin:
         self._vrc_mic_text.content.value = t(
             "settings.vrc_mic.on" if new_value else "settings.vrc_mic.off"
         )
-        if self.page:
-            self._vrc_mic_text.update()
+        try:
+            if self.page:
+                self._vrc_mic_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._emit_settings_changed()
 
     def _on_chatbox_source_click(self, e) -> None:
         """Open chatbox source inclusion selection modal."""
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = [
             OptionItem(value="on", label=t("settings.chatbox_source.on")),
@@ -176,8 +182,11 @@ class OscSectionMixin:
         self._chatbox_source_text.content.value = t(
             "settings.chatbox_source.on" if new_value else "settings.chatbox_source.off"
         )
-        if self.page:
-            self._chatbox_source_text.update()
+        try:
+            if self.page:
+                self._chatbox_source_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self._emit_settings_changed()
 
     # --- Locale ---

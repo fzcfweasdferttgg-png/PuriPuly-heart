@@ -23,6 +23,7 @@ class PromptEditor(ft.Column):
         self._text_field = ft.TextField(
             multiline=True,
             min_lines=5,
+            expand=True,
             on_change=self._handle_change,
             on_blur=self._handle_blur,
             border_radius=12,
@@ -35,6 +36,7 @@ class PromptEditor(ft.Column):
         super().__init__(
             controls=[self._text_field],
             spacing=12,
+            expand=True,
         )
 
     @property
@@ -47,7 +49,10 @@ class PromptEditor(ft.Column):
         """Set prompt value."""
         self._text_field.value = val
         if self._text_field.page:
-            self._text_field.update()
+            try:
+                self._text_field.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def set_provider(self, provider_name: str) -> None:
         """Update the current provider."""
@@ -80,5 +85,8 @@ class PromptEditor(ft.Column):
 
     def apply_locale(self) -> None:
         """Update labels when locale changes."""
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass

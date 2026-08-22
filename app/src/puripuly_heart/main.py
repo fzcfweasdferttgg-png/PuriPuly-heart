@@ -216,7 +216,7 @@ def _run_flet_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
             debug_ui_preview=debug_ui_preview,
         )
 
-    ft.app(target=_target, assets_dir=str(assets_dir()))
+    ft.run(main=_target, assets_dir=str(assets_dir()))
     return 0
 
 

@@ -71,7 +71,7 @@ class ApiKeyField(ft.Row):
 
         self._current_status = "idle"
         self._status_icon = ft.Icon(
-            name=icons.HELP_OUTLINE_ROUNDED,
+            icon=icons.HELP_OUTLINE_ROUNDED,
             color=COLOR_NEUTRAL,
             size=36,
             tooltip=t("api_key.status.idle"),
@@ -97,7 +97,10 @@ class ApiKeyField(ft.Row):
         self._text_field.value = val
         self._dirty = False
         if self._text_field.page:
-            self._text_field.update()
+            try:
+                self._text_field.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def _get_key_hash(self, key: str) -> str:
         """Get SHA-256 hash of the key."""
@@ -112,8 +115,14 @@ class ApiKeyField(ft.Row):
             icons.VISIBILITY_OFF_ROUNDED if self._text_field.password else icons.VISIBILITY_ROUNDED
         )
         if self._text_field.page:
-            self._text_field.update()
-            self._reveal_button.update()
+            try:
+                self._text_field.update()
+            except (AssertionError, RuntimeError):
+                pass
+            try:
+                self._reveal_button.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def _handle_change(self, e) -> None:
         """Mark the field dirty after user edits."""
@@ -137,7 +146,10 @@ class ApiKeyField(ft.Row):
         self._status_icon.color = color
         self._status_icon.tooltip = t(tooltip_key)
         if self._status_icon.page:
-            self._status_icon.update()
+            try:
+                self._status_icon.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def _handle_blur(self, e) -> None:
         """Handle blur event - save and verify."""
@@ -171,8 +183,11 @@ class ApiKeyField(ft.Row):
         if self._is_verifying:
             return
 
-        if self.page:
-            self.page.run_task(self._run_verification)
+        try:
+            if self.page:
+                self.page.run_task(self._run_verification)
+        except (AssertionError, RuntimeError):
+            pass
 
     async def _run_verification(self) -> None:
         """Wrapper for run_task compatibility."""
@@ -232,17 +247,21 @@ class ApiKeyField(ft.Row):
         """Show a toast via App-level callback or fallback to page."""
         if self._show_snackbar_cb:
             self._show_snackbar_cb(message, bgcolor)
-        elif self.page:
-            self.page.open(
-                ft.SnackBar(
-                    ft.Text(message, size=18, color=ft.Colors.WHITE),
-                    bgcolor=bgcolor,
-                    duration=4000,
-                    behavior=ft.SnackBarBehavior.FLOATING,
-                    margin=ft.margin.only(bottom=90),
-                    padding=20,
-                )
-            )
+        else:
+            try:
+                if self.page:
+                    self.page.show_dialog(
+                        ft.SnackBar(
+                            ft.Text(message, size=18, color=ft.Colors.WHITE),
+                            bgcolor=bgcolor,
+                            duration=4000,
+                            behavior=ft.SnackBarBehavior.FLOATING,
+                            margin=ft.Margin.only(bottom=90),
+                            padding=20,
+                        )
+                    )
+            except (AssertionError, RuntimeError):
+                pass
 
     def _translate_error(self, msg: str) -> str:
         """Translate common error messages to user-friendly text."""
@@ -273,7 +292,10 @@ class ApiKeyField(ft.Row):
             }
             tooltip_key = tooltip_keys.get(self._current_status, "api_key.status.idle")
             self._status_icon.tooltip = t(tooltip_key)
-        if self.page:
-            self._text_field.update()
-            if self._show_status:
-                self._status_icon.update()
+        try:
+            if self.page:
+                self._text_field.update()
+                if self._show_status:
+                    self._status_icon.update()
+        except (AssertionError, RuntimeError):
+            pass

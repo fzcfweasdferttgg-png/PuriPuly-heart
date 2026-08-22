@@ -19,7 +19,7 @@ from puripuly_heart.domain.i18n import t
 from puripuly_heart.ui.theme import COLOR_ON_BACKGROUND, COLOR_PRIMARY
 
 logger = logging.getLogger(__name__)
-_CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
+_CENTER_ALIGNMENT = ft.Alignment.CENTER
 
 
 class AudioSettings(ft.Column):
@@ -129,7 +129,10 @@ class AudioSettings(ft.Column):
             text_control.color = COLOR_PRIMARY
         else:
             text_control.color = COLOR_ON_BACKGROUND
-        container.update()
+        try:
+            container.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     @property
     def host_api(self) -> str:
@@ -142,7 +145,10 @@ class AudioSettings(ft.Column):
         display = self._host_api_label_for(val)
         self._host_api_text.content.value = display
         if self._host_api_text.page:
-            self._host_api_text.update()
+            try:
+                self._host_api_text.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     @property
     def microphone(self) -> str:
@@ -155,7 +161,10 @@ class AudioSettings(ft.Column):
         display = val or self._default_option_label
         self._mic_text.content.value = display
         if self._mic_text.page:
-            self._mic_text.update()
+            try:
+                self._mic_text.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     @property
     def desktop_output_device(self) -> str:
@@ -167,7 +176,10 @@ class AudioSettings(ft.Column):
         display = val or self._default_option_label
         self._desktop_output_text.content.value = display
         if self._desktop_output_text.page:
-            self._desktop_output_text.update()
+            try:
+                self._desktop_output_text.update()
+            except (AssertionError, RuntimeError):
+                pass
 
     def _get_host_api_options(self) -> list[OptionItem]:
         """Get available host API options."""
@@ -276,7 +288,10 @@ class AudioSettings(ft.Column):
 
     def _on_host_api_click(self, e) -> None:
         """Open Host API selection modal."""
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = self._get_host_api_options()
         modal = SettingsModal(
@@ -297,7 +312,10 @@ class AudioSettings(ft.Column):
 
     def _on_mic_click(self, e) -> None:
         """Open Microphone selection modal."""
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = self._get_microphone_options()
         modal = SettingsModal(
@@ -316,7 +334,10 @@ class AudioSettings(ft.Column):
 
     def _on_desktop_output_click(self, e) -> None:
         """Open desktop loopback output selection modal."""
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = self._get_desktop_output_options()
         modal = SettingsModal(
@@ -349,5 +370,8 @@ class AudioSettings(ft.Column):
             self._current_desktop_output_device or self._default_option_label
         )
 
-        if self.page:
-            self.update()
+        try:
+            if self.page:
+                self.update()
+        except (AssertionError, RuntimeError):
+            pass

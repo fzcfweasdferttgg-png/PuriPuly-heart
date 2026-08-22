@@ -86,7 +86,10 @@ class SttSectionMixin:
         )
 
     def _on_stt_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         _VULKAN_PROVIDERS = {
             STTProviderName.LOCAL_GIGAAM_RNNT_GGUF,
@@ -181,7 +184,7 @@ class SttSectionMixin:
             if self.show_snackbar:
                 self.show_snackbar(message, ft.Colors.ORANGE_700)
             elif self.page:
-                self.page.open(
+                self.page.show_dialog(
                     ft.SnackBar(
                         ft.Text(
                             message,
@@ -190,16 +193,22 @@ class SttSectionMixin:
                         bgcolor=ft.Colors.ORANGE_700,
                         duration=4000,
                         behavior=ft.SnackBarBehavior.FLOATING,
-                        margin=ft.margin.only(bottom=90),
+                        margin=ft.Margin.only(bottom=90),
                         padding=20,
                     )
                 )
 
-        if self.page:
-            self._stt_text.update()
+        try:
+            if self.page:
+                self._stt_text.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _on_peer_stt_click(self, e) -> None:
-        if not self.page:
+        try:
+            if not self.page:
+                return
+        except (AssertionError, RuntimeError):
             return
         _VULKAN_PROVIDERS = {
             STTProviderName.LOCAL_GIGAAM_RNNT_GGUF,
@@ -266,8 +275,11 @@ class SttSectionMixin:
         # Build merged settings once and pass to _update_api_visibility to avoid redundant deepcopy
         merged = self._build_settings_with_provider_draft()
         self._update_api_visibility(merged)
-        if self.page:
-            self._peer_stt_text.update()
+        try:
+            if self.page:
+                self._peer_stt_text.update()
+        except (AssertionError, RuntimeError):
+            pass
         self.has_provider_changes = True
 
     def _is_local_stt(self, provider: STTProviderName) -> bool:
@@ -290,7 +302,7 @@ class SttSectionMixin:
             btn.visible = quant in available_quants
             is_active = quant == active_quant
             btn.bgcolor = COLOR_PRIMARY if is_active else COLOR_SURFACE
-            btn.border = ft.border.all(1, COLOR_PRIMARY if is_active else COLOR_DIVIDER)
+            btn.border = ft.Border.all(1, COLOR_PRIMARY if is_active else COLOR_DIVIDER)
             btn.content.color = ft.Colors.WHITE if is_active else COLOR_ON_BACKGROUND
             btn.content.weight = ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL
             _update_control_if_mounted(btn)
@@ -356,11 +368,11 @@ class SttSectionMixin:
     def _sync_stt_compute_buttons(self, compute: str) -> None:
         is_gpu = compute == "gpu"
         self._stt_compute_gpu_btn.bgcolor = COLOR_PRIMARY if is_gpu else COLOR_SURFACE
-        self._stt_compute_gpu_btn.border = ft.border.all(1, COLOR_PRIMARY if is_gpu else COLOR_DIVIDER)
+        self._stt_compute_gpu_btn.border = ft.Border.all(1, COLOR_PRIMARY if is_gpu else COLOR_DIVIDER)
         self._stt_compute_gpu_btn.content.color = ft.Colors.WHITE if is_gpu else COLOR_ON_BACKGROUND
         self._stt_compute_gpu_btn.content.weight = ft.FontWeight.BOLD if is_gpu else ft.FontWeight.NORMAL
         self._stt_compute_cpu_btn.bgcolor = COLOR_PRIMARY if not is_gpu else COLOR_SURFACE
-        self._stt_compute_cpu_btn.border = ft.border.all(1, COLOR_PRIMARY if not is_gpu else COLOR_DIVIDER)
+        self._stt_compute_cpu_btn.border = ft.Border.all(1, COLOR_PRIMARY if not is_gpu else COLOR_DIVIDER)
         self._stt_compute_cpu_btn.content.color = ft.Colors.WHITE if not is_gpu else COLOR_ON_BACKGROUND
         self._stt_compute_cpu_btn.content.weight = ft.FontWeight.BOLD if not is_gpu else ft.FontWeight.NORMAL
         _update_control_if_mounted(self._stt_compute_gpu_btn)
@@ -369,11 +381,11 @@ class SttSectionMixin:
     def _sync_peer_stt_compute_buttons(self, compute: str) -> None:
         is_gpu = compute == "gpu"
         self._peer_stt_compute_gpu_btn.bgcolor = COLOR_PRIMARY if is_gpu else COLOR_SURFACE
-        self._peer_stt_compute_gpu_btn.border = ft.border.all(1, COLOR_PRIMARY if is_gpu else COLOR_DIVIDER)
+        self._peer_stt_compute_gpu_btn.border = ft.Border.all(1, COLOR_PRIMARY if is_gpu else COLOR_DIVIDER)
         self._peer_stt_compute_gpu_btn.content.color = ft.Colors.WHITE if is_gpu else COLOR_ON_BACKGROUND
         self._peer_stt_compute_gpu_btn.content.weight = ft.FontWeight.BOLD if is_gpu else ft.FontWeight.NORMAL
         self._peer_stt_compute_cpu_btn.bgcolor = COLOR_PRIMARY if not is_gpu else COLOR_SURFACE
-        self._peer_stt_compute_cpu_btn.border = ft.border.all(1, COLOR_PRIMARY if not is_gpu else COLOR_DIVIDER)
+        self._peer_stt_compute_cpu_btn.border = ft.Border.all(1, COLOR_PRIMARY if not is_gpu else COLOR_DIVIDER)
         self._peer_stt_compute_cpu_btn.content.color = ft.Colors.WHITE if not is_gpu else COLOR_ON_BACKGROUND
         self._peer_stt_compute_cpu_btn.content.weight = ft.FontWeight.BOLD if not is_gpu else ft.FontWeight.NORMAL
         _update_control_if_mounted(self._peer_stt_compute_gpu_btn)
@@ -414,11 +426,11 @@ class SttSectionMixin:
     def _sync_stt_backend_buttons(self, backend: str) -> None:
         is_onnx = backend == "onnx"
         self._stt_backend_onnx_btn.bgcolor = COLOR_PRIMARY if is_onnx else COLOR_SURFACE
-        self._stt_backend_onnx_btn.border = ft.border.all(1, COLOR_PRIMARY if is_onnx else COLOR_DIVIDER)
+        self._stt_backend_onnx_btn.border = ft.Border.all(1, COLOR_PRIMARY if is_onnx else COLOR_DIVIDER)
         self._stt_backend_onnx_btn.content.color = ft.Colors.WHITE if is_onnx else COLOR_ON_BACKGROUND
         self._stt_backend_onnx_btn.content.weight = ft.FontWeight.BOLD if is_onnx else ft.FontWeight.NORMAL
         self._stt_backend_gguf_btn.bgcolor = COLOR_PRIMARY if not is_onnx else COLOR_SURFACE
-        self._stt_backend_gguf_btn.border = ft.border.all(1, COLOR_PRIMARY if not is_onnx else COLOR_DIVIDER)
+        self._stt_backend_gguf_btn.border = ft.Border.all(1, COLOR_PRIMARY if not is_onnx else COLOR_DIVIDER)
         self._stt_backend_gguf_btn.content.color = ft.Colors.WHITE if not is_onnx else COLOR_ON_BACKGROUND
         self._stt_backend_gguf_btn.content.weight = ft.FontWeight.BOLD if not is_onnx else ft.FontWeight.NORMAL
         _update_control_if_mounted(self._stt_backend_onnx_btn)
@@ -427,11 +439,11 @@ class SttSectionMixin:
     def _sync_peer_stt_backend_buttons(self, backend: str) -> None:
         is_onnx = backend == "onnx"
         self._peer_stt_backend_onnx_btn.bgcolor = COLOR_PRIMARY if is_onnx else COLOR_SURFACE
-        self._peer_stt_backend_onnx_btn.border = ft.border.all(1, COLOR_PRIMARY if is_onnx else COLOR_DIVIDER)
+        self._peer_stt_backend_onnx_btn.border = ft.Border.all(1, COLOR_PRIMARY if is_onnx else COLOR_DIVIDER)
         self._peer_stt_backend_onnx_btn.content.color = ft.Colors.WHITE if is_onnx else COLOR_ON_BACKGROUND
         self._peer_stt_backend_onnx_btn.content.weight = ft.FontWeight.BOLD if is_onnx else ft.FontWeight.NORMAL
         self._peer_stt_backend_gguf_btn.bgcolor = COLOR_PRIMARY if not is_onnx else COLOR_SURFACE
-        self._peer_stt_backend_gguf_btn.border = ft.border.all(1, COLOR_PRIMARY if not is_onnx else COLOR_DIVIDER)
+        self._peer_stt_backend_gguf_btn.border = ft.Border.all(1, COLOR_PRIMARY if not is_onnx else COLOR_DIVIDER)
         self._peer_stt_backend_gguf_btn.content.color = ft.Colors.WHITE if not is_onnx else COLOR_ON_BACKGROUND
         self._peer_stt_backend_gguf_btn.content.weight = ft.FontWeight.BOLD if not is_onnx else ft.FontWeight.NORMAL
         _update_control_if_mounted(self._peer_stt_backend_onnx_btn)
@@ -511,17 +523,17 @@ class SttSectionMixin:
         self._stt_compute_gpu_btn = ft.Container(
             content=ft.Text("GPU", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
             bgcolor=COLOR_PRIMARY,
-            border=ft.border.all(1, COLOR_PRIMARY),
+            border=ft.Border.all(1, COLOR_PRIMARY),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=self._on_stt_compute_gpu_click,
         )
         self._stt_compute_cpu_btn = ft.Container(
             content=ft.Text("CPU", size=14, color=COLOR_ON_BACKGROUND),
             bgcolor=COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_DIVIDER),
+            border=ft.Border.all(1, COLOR_DIVIDER),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=self._on_stt_compute_cpu_click,
         )
         self._stt_compute_row = ft.Row(
@@ -545,7 +557,7 @@ class SttSectionMixin:
             _btn.visible = _q in _init_available
             if _q == _init_active:
                 _btn.bgcolor = COLOR_PRIMARY
-                _btn.border = ft.border.all(1, COLOR_PRIMARY)
+                _btn.border = ft.Border.all(1, COLOR_PRIMARY)
                 _btn.content.color = ft.Colors.WHITE
                 _btn.content.weight = ft.FontWeight.BOLD
         self._stt_quant_row = ft.Row(
@@ -561,17 +573,17 @@ class SttSectionMixin:
         self._stt_backend_onnx_btn = ft.Container(
             content=ft.Text("DirectML", size=14, weight=ft.FontWeight.BOLD if _init_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if _init_is_onnx else COLOR_ON_BACKGROUND),
             bgcolor=COLOR_PRIMARY if _init_is_onnx else COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_PRIMARY if _init_is_onnx else COLOR_DIVIDER),
+            border=ft.Border.all(1, COLOR_PRIMARY if _init_is_onnx else COLOR_DIVIDER),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=self._on_stt_backend_onnx_click,
         )
         self._stt_backend_gguf_btn = ft.Container(
             content=ft.Text("Vulkan", size=14, weight=ft.FontWeight.BOLD if not _init_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if not _init_is_onnx else COLOR_ON_BACKGROUND),
             bgcolor=COLOR_PRIMARY if not _init_is_onnx else COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_PRIMARY if not _init_is_onnx else COLOR_DIVIDER),
+            border=ft.Border.all(1, COLOR_PRIMARY if not _init_is_onnx else COLOR_DIVIDER),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=self._on_stt_backend_gguf_click,
         )
         self._stt_backend_row = ft.Row(
@@ -616,17 +628,17 @@ class SttSectionMixin:
         self._peer_stt_compute_gpu_btn = ft.Container(
             content=ft.Text("GPU", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
             bgcolor=COLOR_PRIMARY,
-            border=ft.border.all(1, COLOR_PRIMARY),
+            border=ft.Border.all(1, COLOR_PRIMARY),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=self._on_peer_stt_compute_gpu_click,
         )
         self._peer_stt_compute_cpu_btn = ft.Container(
             content=ft.Text("CPU", size=14, color=COLOR_ON_BACKGROUND),
             bgcolor=COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_DIVIDER),
+            border=ft.Border.all(1, COLOR_DIVIDER),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=self._on_peer_stt_compute_cpu_click,
         )
         self._peer_stt_compute_row = ft.Row(
@@ -650,7 +662,7 @@ class SttSectionMixin:
             _btn.visible = _q in _init_peer_available
             if _q == _init_peer_active:
                 _btn.bgcolor = COLOR_PRIMARY
-                _btn.border = ft.border.all(1, COLOR_PRIMARY)
+                _btn.border = ft.Border.all(1, COLOR_PRIMARY)
                 _btn.content.color = ft.Colors.WHITE
                 _btn.content.weight = ft.FontWeight.BOLD
         self._peer_quant_row = ft.Row(
@@ -666,17 +678,17 @@ class SttSectionMixin:
         self._peer_stt_backend_onnx_btn = ft.Container(
             content=ft.Text("DirectML", size=14, weight=ft.FontWeight.BOLD if _init_peer_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if _init_peer_is_onnx else COLOR_ON_BACKGROUND),
             bgcolor=COLOR_PRIMARY if _init_peer_is_onnx else COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_PRIMARY if _init_peer_is_onnx else COLOR_DIVIDER),
+            border=ft.Border.all(1, COLOR_PRIMARY if _init_peer_is_onnx else COLOR_DIVIDER),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=self._on_peer_stt_backend_onnx_click,
         )
         self._peer_stt_backend_gguf_btn = ft.Container(
             content=ft.Text("Vulkan", size=14, weight=ft.FontWeight.BOLD if not _init_peer_is_onnx else ft.FontWeight.NORMAL, color=ft.Colors.WHITE if not _init_peer_is_onnx else COLOR_ON_BACKGROUND),
             bgcolor=COLOR_PRIMARY if not _init_peer_is_onnx else COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_PRIMARY if not _init_peer_is_onnx else COLOR_DIVIDER),
+            border=ft.Border.all(1, COLOR_PRIMARY if not _init_peer_is_onnx else COLOR_DIVIDER),
             border_radius=6,
-            padding=ft.padding.symmetric(horizontal=16, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             on_click=self._on_peer_stt_backend_gguf_click,
         )
         self._peer_stt_backend_row = ft.Row(

@@ -82,7 +82,12 @@ class TranslatorApp(
         # _build_layout creates view_* instances; _wire_callbacks assigns callbacks TO them.
         # Reversing this order = AttributeError on view_* during wiring.
         self._setup_page()
-        self._build_layout()
+        try:
+            self._build_layout()
+        except Exception as exc:
+            import traceback
+            logger.error("[UI] _build_layout failed: %s\n%s", exc, traceback.format_exc())
+            raise
 
         # VIEW CALLBACK ASSIGNMENTS — these bridge controller→mixin→view.
         # view_settings.show_snackbar goes to _AppUtilitiesMixin (not controller directly).
@@ -212,7 +217,10 @@ class TranslatorApp(
         apply_debug_locale = getattr(debug_preview_panel, "apply_locale", None)
         if callable(apply_debug_locale):
             apply_debug_locale()
-        self.page.update()
+        try:
+            self.page.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     # Tab key intercept — only active when Dashboard is the current view.
     # Shift/Ctrl/Alt/Tab are ignored (system shortcuts). Plain Tab on dashboard
@@ -303,16 +311,31 @@ class TranslatorApp(
         self.view_logs.set_runtime_logging_mode(self.controller.runtime_logging_mode)
 
     def _open_about_window(self) -> None:
-        """Open About in an independent window."""
-        about_page = ft.Page()
-        about_page.title = "About — PuriPuly Heart"
-        about_page.window.width = 700
-        about_page.window.height = 600
-        about_page.window.resizable = True
-        about_page.bgcolor = COLOR_BACKGROUND
-        about_page.padding = 16
-        about_page.add(AboutView())
-        about_page.update()
+        """Open About in a separate window via subprocess."""
+        import subprocess
+        import sys
+        from puripuly_heart.ui.fonts import assets_dir
+
+        about_script = '''
+import flet as ft
+from puripuly_heart.ui.views.about import AboutView
+
+async def main(page: ft.Page):
+    page.title = "About — PuriPuly Heart"
+    page.window.width = 700
+    page.window.height = 600
+    page.window.resizable = True
+    page.bgcolor = "#1a1a2e"
+    page.padding = 16
+    page.add(AboutView())
+    page.update()
+
+ft.app(target=main)
+'''
+        subprocess.Popen(
+            [sys.executable, "-c", about_script],
+            cwd=str(assets_dir().parent),
+        )
 
 
 # ENTRY POINT — main_gui is the ONLY public API of this module.
@@ -322,12 +345,17 @@ class TranslatorApp(
 # but if you make them concurrent, add a lock.
 async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False):
     import asyncio
+    import traceback
 
-    app = TranslatorApp(
-        page,
-        config_path=config_path,
-        debug_ui_preview=debug_ui_preview,
-    )
+    try:
+        app = TranslatorApp(
+            page,
+            config_path=config_path,
+            debug_ui_preview=debug_ui_preview,
+        )
+    except Exception as exc:
+        logger.error("[UI] TranslatorApp init failed: %s\n%s", exc, traceback.format_exc())
+        raise
     await app.controller.start()
 
     async def _on_close(_e):

@@ -66,7 +66,7 @@ def build_desktop_empty_lock_action(
         decoration=None,
     )
     return ft.TextButton(
-        text=label,
+        content=ft.Text(label),
         tooltip=label,
         on_click=on_click,
         width=_desktop_empty_lock_action_width(label, font_size),
@@ -83,7 +83,7 @@ def build_desktop_empty_lock_action(
             bgcolor=ft.Colors.TRANSPARENT,
             overlay_color=ft.Colors.TRANSPARENT,
             elevation=0,
-            padding=ft.padding.symmetric(
+            padding=ft.Padding.symmetric(
                 horizontal=_DESKTOP_EMPTY_LOCK_ACTION_HORIZONTAL_PADDING,
                 vertical=_DESKTOP_EMPTY_LOCK_ACTION_VERTICAL_PADDING,
             ),
@@ -105,7 +105,7 @@ def build_desktop_caption_surface(plan: DesktopCaptionPlan) -> Any:
             ft.Container(
                 bgcolor=plan.background_color,
                 border_radius=plan.border_radius,
-                alignment=ft.alignment.center,
+                alignment=ft.Alignment.CENTER,
                 left=0,
                 top=0,
                 right=0,
@@ -138,7 +138,7 @@ def build_desktop_caption_surface(plan: DesktopCaptionPlan) -> Any:
         height=plan.window_height,
         bgcolor=ft.Colors.TRANSPARENT,
         border_radius=plan.border_radius,
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.CENTER,
         visible=plan.surface_visible,
     )
 
@@ -152,7 +152,7 @@ def build_desktop_transparent_sizing_host(plan: DesktopCaptionPlan) -> Any:
         width=plan.window_width,
         height=plan.window_height,
         bgcolor=ft.Colors.TRANSPARENT,
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.CENTER,
     )
 
 
@@ -193,7 +193,7 @@ def _build_flet_caption_slot(ft: Any, plan: DesktopCaptionPlan, slot: DesktopCap
         alignment=(
             ft.Alignment(0, _DESKTOP_CAPTION_TEXT_STACK_ALIGNMENT_Y)
             if has_secondary_region
-            else ft.alignment.center
+            else ft.Alignment.CENTER
         ),
     )
     inner_card = ft.Container(
@@ -204,18 +204,18 @@ def _build_flet_caption_slot(ft: Any, plan: DesktopCaptionPlan, slot: DesktopCap
             ft.Colors.TRANSPARENT if plan.full_window_background_visible else plan.background_color
         ),
         border_radius=plan.border_radius,
-        padding=ft.padding.symmetric(
+        padding=ft.Padding.symmetric(
             horizontal=plan.padding_horizontal,
             vertical=plan.padding_vertical,
         ),
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.CENTER,
     )
     return ft.Container(
         content=inner_card,
         width=plan.window_width,
         height=plan.slot_height,
         bgcolor=ft.Colors.TRANSPARENT,
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.CENTER,
     )
 
 
@@ -249,9 +249,9 @@ def _caption_line_region_alignment(
 ) -> Any:
     if line.slot == "primary":
         if center_primary_region:
-            return ft.alignment.center
+            return ft.Alignment.CENTER
         return ft.Alignment(0, _DESKTOP_CAPTION_PRIMARY_REGION_ALIGNMENT_Y)
-    return ft.alignment.center
+    return ft.Alignment.CENTER
 
 
 def _slot_lines_with_reserved_regions(

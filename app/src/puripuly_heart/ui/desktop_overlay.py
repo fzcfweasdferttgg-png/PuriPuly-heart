@@ -104,8 +104,8 @@ async def _default_flet_app_runner(target: Callable[[Any], object]) -> None:
     import flet as ft
 
     with _patch_flet_view_hidden_launcher():
-        await ft.app_async(
-            target=target,
+        await ft.run_async(
+            main=target,
             view=ft.AppView.FLET_APP_HIDDEN,
             assets_dir=str(assets_dir()),
         )
@@ -152,7 +152,7 @@ async def _open_flet_view_hidden_without_startup_flash(
 def _default_preview_app_runner(target: Callable[[Any], object]) -> None:
     import flet as ft
 
-    ft.app(target=target)
+    ft.run(main=target)
 
 
 _REAL_DEFAULT_PREVIEW_APP_RUNNER = _default_preview_app_runner
@@ -299,12 +299,12 @@ class FletDesktopRendererWindow:
         if page is not None:
             window = page.window
             try:
-                window.close()
+                await window.destroy()
             except Exception:
                 destroy = getattr(window, "destroy", None)
                 if callable(destroy):
                     with contextlib.suppress(Exception):
-                        destroy()
+                        await destroy()
 
         task = self._app_task
         if task is not None and not task.done():
@@ -466,7 +466,10 @@ class FletDesktopRendererWindow:
             page.add(root)
             self._apply_interaction_window_chrome()
             self._reveal_window_if_supported()
-            page.update()
+            try:
+                page.update()
+            except (AssertionError, RuntimeError):
+                pass
             return
 
         raw_plan = build_desktop_caption_plan(
@@ -499,7 +502,7 @@ class FletDesktopRendererWindow:
                     ],
                     width=plan.window_width,
                     height=plan.window_height,
-                    alignment=ft.alignment.center,
+                    alignment=ft.Alignment.CENTER,
                 )
             else:
                 content_kind = "drag_area"
@@ -537,7 +540,7 @@ class FletDesktopRendererWindow:
             content=content,
             padding=0,
             bgcolor=ft.Colors.TRANSPARENT,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
 
         if hasattr(page, "clean"):
@@ -547,7 +550,10 @@ class FletDesktopRendererWindow:
         page.add(root)
         self._apply_interaction_window_chrome()
         self._reveal_window_if_supported()
-        page.update()
+        try:
+            page.update()
+        except (AssertionError, RuntimeError):
+            pass
 
     def _apply_interaction_window_chrome(self) -> None:
         page = self._page
@@ -580,7 +586,7 @@ class FletDesktopRendererWindow:
                 ],
                 width=preview_plan.window_width,
                 height=preview_plan.window_height,
-                alignment=ft.alignment.center,
+                alignment=ft.Alignment.CENTER,
             )
         return ft.Container(
             content=ft.Column(
@@ -594,7 +600,7 @@ class FletDesktopRendererWindow:
             ),
             padding=16,
             bgcolor="#101827",
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
 
     def _build_preview_controls(self, ft: Any) -> Any:
@@ -699,7 +705,7 @@ class FletDesktopRendererWindow:
                 controls=controls,
                 width=size_preset.window_width,
                 height=size_preset.window_height,
-                alignment=ft.alignment.center,
+                alignment=ft.Alignment.CENTER,
             )
         return ft.Container(
             content=content,
@@ -708,7 +714,7 @@ class FletDesktopRendererWindow:
             bgcolor=surface.bgcolor,
             padding=24,
             border_radius=20,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
 
     def _build_preview_busy_background(
@@ -750,7 +756,7 @@ class FletDesktopRendererWindow:
             ),
             width=size_preset.window_width,
             height=size_preset.window_height,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
         )
 
     def _select_preview(self, value: str, on_select: Callable[[str], None]) -> None:
@@ -1299,7 +1305,7 @@ async def _run_preview_async(
             raise
         await window.run_until_closed()
     finally:
-        await window.close()
+        await window.destroy()
     return _SUCCESS_EXIT_CODE
 
 
