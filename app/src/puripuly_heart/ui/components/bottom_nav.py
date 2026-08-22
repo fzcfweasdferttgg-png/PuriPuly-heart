@@ -21,8 +21,8 @@ class BottomNavBar(ft.Container):
             ft.Icons.GRID_VIEW,
             ft.Icons.SETTINGS,
             ft.Icons.ARTICLE,
-            ft.Icons.INFO_OUTLINE,
         ]
+        self._placeholder_index = 3
 
         self._icons: list[ft.Icon] = []
         self._tab_containers: list[ft.Container] = []
@@ -60,6 +60,14 @@ class BottomNavBar(ft.Container):
                 on_hover=lambda e, idx=i: self._on_tab_hover(e, idx),
             )
             self._tab_containers.append(container)
+
+        # Placeholder slot (reserved, disabled)
+        placeholder = ft.Container(
+            content=ft.Icon(name=ft.Icons.HORIZONTAL_RULE, size=30, color=COLOR_DIVIDER),
+            expand=True,
+            alignment=ft.alignment.center,
+        )
+        self._tab_containers.append(placeholder)
 
     def _build_tabs_with_dividers(self) -> list[ft.Control]:
         """Build tabs with vertical dividers between them."""

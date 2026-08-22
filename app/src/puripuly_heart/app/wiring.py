@@ -19,7 +19,7 @@ from puripuly_heart.core.clock import Clock
 from puripuly_heart.domain.peer_types import ResolvedPeerSTTConfig
 from puripuly_heart.ports.llm import LLMProvider
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
-from puripuly_heart.adapters.storage.secrets import EncryptedFileSecretStore
+from puripuly_heart.adapters.storage.secrets import PlainFileSecretStore, migrate_encrypted_to_plain
 from puripuly_heart.adapters.osc.chatbox_paginator import ChatboxPaginator
 from puripuly_heart.adapters.osc.udp_sender import VrchatOscUdpSender
 from puripuly_heart.ports.logging import SessionLogger
@@ -108,20 +108,6 @@ def get_or_create_job_handle() -> int | None:
         return None
 
 
-def _auto_passphrase(key_dir: Path) -> str:
-    """Generate or load a passphrase for the encrypted-file secret store."""
-    key_file = key_dir / ".secret_key"
-    if key_file.exists():
-        return key_file.read_text(encoding="utf-8").strip()
-
-    import secrets as _secrets
-
-    passphrase = _secrets.token_urlsafe(32)
-    key_file.parent.mkdir(parents=True, exist_ok=True)
-    key_file.write_text(passphrase, encoding="utf-8")
-    return passphrase
-
-
 def create_secret_store(
     *,
     config_path: Path,
@@ -133,9 +119,17 @@ def create_secret_store(
     else:
         secrets_dir = config_path.parent
 
-    passphrase = _auto_passphrase(secrets_dir)
     path = secrets_dir / "secrets.json"
-    return EncryptedFileSecretStore(path=path, passphrase=passphrase)
+
+    # One-shot migration from encrypted → plain JSON.
+    # Tries to read the old .secret_key; if missing (new install), passes empty string.
+    key_file = secrets_dir / ".secret_key"
+    old_passphrase = ""
+    if key_file.exists():
+        old_passphrase = key_file.read_text(encoding="utf-8").strip()
+    migrate_encrypted_to_plain(path, passphrase=old_passphrase)
+
+    return PlainFileSecretStore(path=path)
 
 
 def create_model_discovery() -> "ModelDiscovery":

@@ -11,8 +11,9 @@ from puripuly_heart.ui.theme import (
 class TitleBar(ft.Container):
     """Custom draggable title bar with window controls."""
 
-    def __init__(self, page: ft.Page):
+    def __init__(self, page: ft.Page, on_about_click=None):
         self._page = page
+        self._on_about_click = on_about_click
 
         self._title_text = ft.Text(
             "PuriPuly Heart",
@@ -20,6 +21,15 @@ class TitleBar(ft.Container):
             weight=ft.FontWeight.W_600,
             color=COLOR_NEUTRAL_DARK,
             font_family="NanumSquare",
+        )
+
+        self._about_btn = ft.Container(
+            content=ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color=COLOR_NEUTRAL),
+            width=40,
+            height=40,
+            alignment=ft.alignment.center,
+            on_click=self._about,
+            on_hover=self._on_btn_hover,
         )
 
         minimize_btn = ft.Container(
@@ -61,6 +71,7 @@ class TitleBar(ft.Container):
                     [
                         ft.Container(content=self._title_text, padding=ft.padding.only(left=16)),
                         ft.Container(expand=True),
+                        self._about_btn,
                     ],
                     expand=True,
                 ),
@@ -80,6 +91,10 @@ class TitleBar(ft.Container):
             border_radius=ft.border_radius.only(top_left=16, top_right=16),
             border=ft.border.only(bottom=ft.BorderSide(1, COLOR_DIVIDER)),
         )
+
+    def _about(self, _):
+        if self._on_about_click is not None:
+            self._on_about_click()
 
     def _minimize(self, _):
         self._page.window.minimized = True

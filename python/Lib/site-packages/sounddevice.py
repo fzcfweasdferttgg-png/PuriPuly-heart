@@ -48,13 +48,14 @@ Online documentation:
     https://python-sounddevice.readthedocs.io/
 
 """
-__version__ = '0.5.5'
+__version__ = '0.5.6'
 
 import atexit as _atexit
 import contextlib as _contextlib
 import os as _os
 import platform as _platform
 import sys as _sys
+import sysconfig as _sysconfig
 from ctypes.util import find_library as _find_library
 from _sounddevice import ffi as _ffi
 
@@ -75,7 +76,7 @@ except OSError:
     if _platform.system() == 'Darwin':
         _libname = 'libportaudio.dylib'
     elif _platform.system() == 'Windows':
-        if _platform.machine().lower() in ('arm64', 'aarch64'):
+        if 'arm64' in _sysconfig.get_platform() or 'aarch64' in _sysconfig.get_platform():
             _platform_suffix = 'arm64'
         else:
             _platform_suffix = _platform.architecture()[0]
@@ -2391,8 +2392,8 @@ class CoreAudioSettings:
             See the example below.  For additional information, see the
             `PortAudio documentation`__.
 
-            __ https://app.assembla.com/spaces/portaudio/git/source/
-               master/src/hostapi/coreaudio/notes.txt
+            __ https://github.com/PortAudio/portaudio/blob/master/
+               src/hostapi/coreaudio/notes.txt
         change_device_parameters : bool, optional
             If ``True``, allows PortAudio to change things like the
             device's frame size, which allows for much lower latency,

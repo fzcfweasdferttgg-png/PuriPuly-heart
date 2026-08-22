@@ -154,7 +154,7 @@ class TranslatorApp(
         self.view_settings.set_overlay_runtime_state(self.overlay_state)
 
         # Custom title bar
-        self.title_bar = TitleBar(self.page)
+        self.title_bar = TitleBar(self.page, on_about_click=self._open_about_window)
 
         # Bottom navigation (order: Home, Settings, Logs, About)
         self.bottom_nav = BottomNavBar(on_change=self._on_nav_change)
@@ -301,6 +301,18 @@ class TranslatorApp(
         self.view_settings.on_view_logs = self._open_logs_tab
         self.view_logs.on_mode_change = self._on_runtime_logging_mode_change
         self.view_logs.set_runtime_logging_mode(self.controller.runtime_logging_mode)
+
+    def _open_about_window(self) -> None:
+        """Open About in an independent window."""
+        about_page = ft.Page()
+        about_page.title = "About — PuriPuly Heart"
+        about_page.window.width = 700
+        about_page.window.height = 600
+        about_page.window.resizable = True
+        about_page.bgcolor = COLOR_BACKGROUND
+        about_page.padding = 16
+        about_page.add(AboutView())
+        about_page.update()
 
 
 # ENTRY POINT — main_gui is the ONLY public API of this module.
