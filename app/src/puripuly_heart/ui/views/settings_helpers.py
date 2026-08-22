@@ -667,9 +667,9 @@ class SettingsHelpersMixin:
             draft.backup_translation.mode = LLMProviderName.LOCAL_LLM
             # Sync fallback local_llm card controls
             self._fallback_local_llm_base_url.value = draft.backup_translation.local_llm.base_url
-            self._fallback_local_llm_base_url.error_text = None
+            self._fallback_local_llm_base_url.error = None
             self._fallback_local_llm_model.value = draft.backup_translation.local_llm.model or ""
-            self._fallback_local_llm_model.error_text = None
+            self._fallback_local_llm_model.error = None
             self._fallback_local_llm_extra_body.value = (
                 json.dumps(draft.backup_translation.local_llm.extra_body, ensure_ascii=False, indent=2)
                 if draft.backup_translation.local_llm.extra_body else ""
@@ -686,7 +686,7 @@ class SettingsHelpersMixin:
                     draft.backup_translation.openai_compatible.base_url = first.get("base_url", "")
             # Sync fallback card controls from draft
             self._fallback_openai_base_url.value = draft.backup_translation.openai_compatible.base_url
-            self._fallback_openai_base_url.error_text = None
+            self._fallback_openai_base_url.error = None
             self._fallback_openai_model.value = draft.backup_translation.openai_compatible.model or ""
             _fb_opts = self._fallback_openai_provider.options or []
             _fb_matched = _fb_opts[0].key if _fb_opts else None

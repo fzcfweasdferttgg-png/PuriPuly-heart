@@ -217,6 +217,8 @@ class TranslatorApp(
         apply_debug_locale = getattr(debug_preview_panel, "apply_locale", None)
         if callable(apply_debug_locale):
             apply_debug_locale()
+        if self._microphone_test_dialog is not None:
+            self._microphone_test_dialog.apply_locale()
         try:
             self.page.update()
         except (AssertionError, RuntimeError):

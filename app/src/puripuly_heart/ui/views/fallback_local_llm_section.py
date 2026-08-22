@@ -40,9 +40,9 @@ class FallbackLocalLlmSectionMixin:
         bt = settings.backup_translation
         if bt.enabled and bt.mode == LLMProviderName.LOCAL_LLM:
             self._fallback_local_llm_base_url.value = bt.local_llm.base_url
-            self._fallback_local_llm_base_url.error_text = None
+            self._fallback_local_llm_base_url.error = None
             self._fallback_local_llm_model.value = bt.local_llm.model or ""
-            self._fallback_local_llm_model.error_text = None
+            self._fallback_local_llm_model.error = None
             self._fallback_local_llm_extra_body.value = (
                 json.dumps(bt.local_llm.extra_body, ensure_ascii=False, indent=2)
                 if bt.local_llm.extra_body else ""
@@ -160,11 +160,11 @@ class FallbackLocalLlmSectionMixin:
         try:
             normalized = _normalize_local_llm_base_url(raw_value)
         except ValueError:
-            self._fallback_local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
+            self._fallback_local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
             _update_control_if_mounted(self._fallback_local_llm_base_url)
             return
 
-        self._fallback_local_llm_base_url.error_text = None
+        self._fallback_local_llm_base_url.error = None
         self._fallback_local_llm_base_url.value = normalized
         current = self._provider_settings_draft or self._settings
         if current.backup_translation.local_llm.base_url != normalized:
@@ -176,7 +176,7 @@ class FallbackLocalLlmSectionMixin:
         if not self._settings:
             return
         model = (self._fallback_local_llm_model.value or "").strip()
-        self._fallback_local_llm_model.error_text = None
+        self._fallback_local_llm_model.error = None
         self._fallback_local_llm_model.value = model
         current = self._provider_settings_draft or self._settings
         if current.backup_translation.local_llm.model != model:
@@ -196,7 +196,7 @@ class FallbackLocalLlmSectionMixin:
         self._fallback_local_llm_extra_body_error_kwargs = dict(kwargs)
         self._fallback_local_llm_extra_body_error.value = msg
         self._fallback_local_llm_extra_body_error.visible = True
-        self._fallback_local_llm_extra_body.error_text = msg
+        self._fallback_local_llm_extra_body.error = msg
         _update_control_if_mounted(self._fallback_local_llm_extra_body)
         _update_control_if_mounted(self._fallback_local_llm_extra_body_error)
 
@@ -205,7 +205,7 @@ class FallbackLocalLlmSectionMixin:
         self._fallback_local_llm_extra_body_error_kwargs = {}
         self._fallback_local_llm_extra_body_error.value = ""
         self._fallback_local_llm_extra_body_error.visible = False
-        self._fallback_local_llm_extra_body.error_text = None
+        self._fallback_local_llm_extra_body.error = None
         _update_control_if_mounted(self._fallback_local_llm_extra_body)
         _update_control_if_mounted(self._fallback_local_llm_extra_body_error)
 
@@ -343,10 +343,10 @@ class FallbackLocalLlmSectionMixin:
         _fb_helper = t("settings.local_llm.api_key.description", default="")
         self._fallback_local_llm_api_key_helper.value = _fb_helper
         self._fallback_local_llm_api_key_helper.visible = bool(_fb_helper.strip())
-        if self._fallback_local_llm_base_url.error_text:
-            self._fallback_local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
-        if self._fallback_local_llm_model.error_text:
-            self._fallback_local_llm_model.error_text = t("settings.local_llm.model.required")
+        if self._fallback_local_llm_base_url.error:
+            self._fallback_local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+        if self._fallback_local_llm_model.error:
+            self._fallback_local_llm_model.error = t("settings.local_llm.model.required")
         if self._fallback_local_llm_extra_body_error.visible:
             fb_error_key = self._fallback_local_llm_extra_body_error_key
             fb_error_kwargs = self._fallback_local_llm_extra_body_error_kwargs
@@ -360,4 +360,4 @@ class FallbackLocalLlmSectionMixin:
                     except Exception:
                         fb_msg = template
                 self._fallback_local_llm_extra_body_error.value = fb_msg
-                self._fallback_local_llm_extra_body.error_text = fb_msg
+                self._fallback_local_llm_extra_body.error = fb_msg

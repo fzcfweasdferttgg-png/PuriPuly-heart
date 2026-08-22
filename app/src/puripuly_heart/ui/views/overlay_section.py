@@ -124,6 +124,7 @@ class OverlaySectionMixin:
             self._overlay_desktop_reset_button,
             t("settings.overlay.position_reset.action.desktop"),
         )
+        self._sync_desktop_overlay_status_control()
 
     def _build_overlay_toggle_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control]:
         self._overlay_translation_title = ft.Text(

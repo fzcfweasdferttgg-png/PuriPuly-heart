@@ -74,9 +74,9 @@ class LlmSectionMixin:
             self._get_llm_display_label(settings),
         )
         self._local_llm_base_url.value = settings.local_llm.base_url
-        self._local_llm_base_url.error_text = None
+        self._local_llm_base_url.error = None
         self._local_llm_model.value = settings.local_llm.model
-        self._local_llm_model.error_text = None
+        self._local_llm_model.error = None
         self._local_llm_extra_body.value = json.dumps(
             settings.local_llm.extra_body,
             ensure_ascii=False,
@@ -85,7 +85,7 @@ class LlmSectionMixin:
         self._clear_local_llm_extra_body_error()
         # OpenAI Compatible
         self._openai_compatible_base_url.value = settings.provider.openai_compatible.base_url
-        self._openai_compatible_base_url.error_text = None
+        self._openai_compatible_base_url.error = None
         self._openai_compatible_model.value = settings.provider.openai_compatible.model or ""
         from puripuly_heart.app.services.settings_manager import load_providers
         _loaded_providers = load_providers()
@@ -141,7 +141,7 @@ class LlmSectionMixin:
         self._local_llm_extra_body_error_kwargs = dict(kwargs)
         self._local_llm_extra_body_error.value = message
         self._local_llm_extra_body_error.visible = True
-        self._local_llm_extra_body.error_text = message
+        self._local_llm_extra_body.error = message
         _update_control_if_mounted(self._local_llm_extra_body)
         _update_control_if_mounted(self._local_llm_extra_body_error)
 
@@ -160,7 +160,7 @@ class LlmSectionMixin:
         self._local_llm_extra_body_error_kwargs = {}
         self._local_llm_extra_body_error.value = ""
         self._local_llm_extra_body_error.visible = False
-        self._local_llm_extra_body.error_text = None
+        self._local_llm_extra_body.error = None
         _update_control_if_mounted(self._local_llm_extra_body)
         _update_control_if_mounted(self._local_llm_extra_body_error)
 
@@ -172,11 +172,11 @@ class LlmSectionMixin:
         try:
             normalized = _normalize_local_llm_base_url(raw_value)
         except ValueError:
-            self._local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
+            self._local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
             _update_control_if_mounted(self._local_llm_base_url)
             return
 
-        self._local_llm_base_url.error_text = None
+        self._local_llm_base_url.error = None
         self._local_llm_base_url.value = normalized
         current = self._provider_settings_draft or self._settings
         if current.local_llm.base_url != normalized:
@@ -188,7 +188,7 @@ class LlmSectionMixin:
         if not self._settings:
             return
         model = (self._local_llm_model.value or "").strip()
-        self._local_llm_model.error_text = None
+        self._local_llm_model.error = None
         self._local_llm_model.value = model
         current = self._provider_settings_draft or self._settings
         if current.local_llm.model != model:
@@ -423,7 +423,7 @@ class LlmSectionMixin:
             return
         raw_value = (self._openai_compatible_base_url.value or "").strip()
         if not raw_value:
-            self._openai_compatible_base_url.error_text = t(
+            self._openai_compatible_base_url.error = t(
                 "settings.openai_compatible.base_url.required", default="Base URL is required"
             )
             _update_control_if_mounted(self._openai_compatible_base_url)
@@ -432,7 +432,7 @@ class LlmSectionMixin:
             )
             return
 
-        self._openai_compatible_base_url.error_text = None
+        self._openai_compatible_base_url.error = None
         self._openai_compatible_base_url.value = raw_value
         current = self._provider_settings_draft or self._settings
         if current.provider.openai_compatible.base_url != raw_value:
@@ -857,17 +857,17 @@ class LlmSectionMixin:
         self._openai_compatible_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
         self._openai_compatible_key.apply_locale()
         # Error texts
-        if self._local_llm_base_url.error_text:
-            self._local_llm_base_url.error_text = t("settings.local_llm.base_url.invalid")
-        if self._local_llm_model.error_text:
-            self._local_llm_model.error_text = t("settings.local_llm.model.required")
+        if self._local_llm_base_url.error:
+            self._local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+        if self._local_llm_model.error:
+            self._local_llm_model.error = t("settings.local_llm.model.required")
         if self._local_llm_extra_body_error.visible:
             error_key = self._local_llm_extra_body_error_key
             error_kwargs = self._local_llm_extra_body_error_kwargs
             if error_key:
                 message = self._local_llm_extra_body_error_message(error_key, **error_kwargs)
                 self._local_llm_extra_body_error.value = message
-                self._local_llm_extra_body.error_text = message
+                self._local_llm_extra_body.error = message
 
     def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
         """Controls that need font/text updates on locale change."""

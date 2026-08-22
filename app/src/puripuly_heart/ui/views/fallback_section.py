@@ -35,7 +35,7 @@ class FallbackSectionMixin:
         bt = settings.backup_translation
         if bt.enabled and bt.mode == LLMProviderName.OPENAI_COMPATIBLE:
             self._fallback_openai_base_url.value = bt.openai_compatible.base_url
-            self._fallback_openai_base_url.error_text = None
+            self._fallback_openai_base_url.error = None
             self._fallback_openai_model.value = bt.openai_compatible.model or ""
             from puripuly_heart.app.services.settings_manager import load_providers
             _loaded_providers = load_providers()
@@ -260,7 +260,7 @@ class FallbackSectionMixin:
             return
         raw_value = (self._fallback_openai_base_url.value or "").strip()
         if not raw_value:
-            self._fallback_openai_base_url.error_text = t(
+            self._fallback_openai_base_url.error = t(
                 "settings.openai_compatible.base_url.required", default="Base URL is required"
             )
             _update_control_if_mounted(self._fallback_openai_base_url)
@@ -268,7 +268,7 @@ class FallbackSectionMixin:
                 "[FallbackSection] Backup base_url is empty — validation error shown in UI"
             )
             return
-        self._fallback_openai_base_url.error_text = None
+        self._fallback_openai_base_url.error = None
         self._fallback_openai_base_url.value = raw_value
         current = self._provider_settings_draft or self._settings
         if current.backup_translation.openai_compatible.base_url != raw_value:
@@ -297,7 +297,7 @@ class FallbackSectionMixin:
         self._fallback_openai_model.label = t("settings.openai_compatible.model", default="Model")
         self._fallback_openai_model.hint_text = t("settings.openai_compatible.model.hint", default="Enter model name or click refresh")
         self._fallback_openai_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
-        if self._fallback_openai_base_url.error_text:
-            self._fallback_openai_base_url.error_text = t(
+        if self._fallback_openai_base_url.error:
+            self._fallback_openai_base_url.error = t(
                 "settings.openai_compatible.base_url.required", default="Base URL is required"
             )

@@ -193,3 +193,10 @@ class MicrophoneTestDialog:
             return
         self._close_notified = True
         self._on_close()
+
+    def apply_locale(self) -> None:
+        """Update cached translated text when locale changes."""
+        if self._hint_text is not None:
+            self._hint_text.value = t("settings.microphone_test.host_api_hint")
+        if self._level_text is not None:
+            self._level_text.semantics_label = t("settings.microphone_test.level_label")
