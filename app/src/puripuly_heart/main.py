@@ -193,6 +193,17 @@ def _requires_soxr_runtime_startup_check(args: argparse.Namespace) -> bool:
 
 
 def _run_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
+    from puripuly_heart.ui.gui_chooser import ask_gui_choice
+
+    choice = ask_gui_choice()
+
+    if choice == "tkinter":
+        return _run_tkinter_gui(config_path)
+
+    return _run_flet_gui(config_path, debug_ui_preview=debug_ui_preview)
+
+
+def _run_flet_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
     import flet as ft
 
     from puripuly_heart.ui.app import main_gui
@@ -206,6 +217,27 @@ def _run_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
         )
 
     ft.app(target=_target, assets_dir=str(assets_dir()))
+    return 0
+
+
+def _run_tkinter_gui(config_path: Path) -> int:
+    import tkinter as tk
+    from tkinter import ttk
+
+    root = tk.Tk()
+    root.title("PuriPuly Heart")
+    root.geometry("800x600")
+
+    frame = ttk.Frame(root, padding=32)
+    frame.pack(fill=tk.BOTH, expand=True)
+
+    ttk.Label(
+        frame,
+        text="Tkinter GUI — coming soon",
+        font=("Segoe UI", 24, "bold"),
+    ).pack(expand=True)
+
+    root.mainloop()
     return 0
 
 
