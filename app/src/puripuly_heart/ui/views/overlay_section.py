@@ -573,7 +573,7 @@ class OverlaySectionMixin:
         if self._current_overlay_target() == target:
             return
         self._command_executor.execute(ChangeOverlayTarget(target=target))
-        if self._overlay_state == "off":
+        if self._overlay_state in {"off", "failed"}:
             self._overlay_runtime_target = target
         self._sync_overlay_controls()
         self._emit_settings_changed()
@@ -705,7 +705,7 @@ class OverlaySectionMixin:
         self._desktop_overlay_pending_position_reset = False
         self._desktop_overlay_pending_locked = None
         self._desktop_overlay_captions_locked = False
-        if self._overlay_state == "off":
+        if self._overlay_state in {"off", "failed"}:
             self._overlay_runtime_target = self._current_overlay_target()
         self._sync_overlay_controls()
 

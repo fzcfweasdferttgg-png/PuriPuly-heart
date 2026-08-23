@@ -182,6 +182,12 @@ class OverlayBridge:
                     await connection.send(json.dumps({"type": "auth_error"}))
                     return
                 self._token_consumed = True
+                for payload in self._initial_desktop_runtime_controls:
+                    await connection.send(
+                        json.dumps(self._desktop_runtime_control_message(payload))
+                    )
+                if self.runtime_logging_mode is not None:
+                    await connection.send(json.dumps(self._runtime_control_payload()))
                 await connection.send(
                     json.dumps(
                         {
@@ -190,12 +196,6 @@ class OverlayBridge:
                         }
                     )
                 )
-                if self.runtime_logging_mode is not None:
-                    await connection.send(json.dumps(self._runtime_control_payload()))
-                for payload in self._initial_desktop_runtime_controls:
-                    await connection.send(
-                        json.dumps(self._desktop_runtime_control_message(payload))
-                    )
                 self._authenticated_connections.add(connection)
                 authenticated = True
                 logger.info(

@@ -173,7 +173,10 @@ class MicrophoneTestDialog:
         self._level_text.value = self._text_value()
         self._level_text.size = self._text_size()
         self._level_text.color = self._text_color()
-        if getattr(self._level_text, "page", None) is None:
+        try:
+            if self._level_text.page is None:
+                return
+        except (AssertionError, RuntimeError):
             return
         try:
             self._level_text.update()

@@ -128,8 +128,11 @@ class AppNavigationMixin:
             microphone_test_dialog.close(notify=True)
             return
 
-        dialog = getattr(self.page, "dialog", None)
-        close_dialog = getattr(self.page, "close", None)
+        try:
+            dialog = getattr(self.page, "dialog", None)
+            close_dialog = getattr(self.page, "close", None)
+        except (AssertionError, RuntimeError):
+            return
         if dialog is None or not callable(close_dialog):
             return
         try:

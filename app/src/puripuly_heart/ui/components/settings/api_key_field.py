@@ -96,11 +96,11 @@ class ApiKeyField(ft.Row):
         """Set field value."""
         self._text_field.value = val
         self._dirty = False
-        if self._text_field.page:
-            try:
+        try:
+            if self._text_field.page:
                 self._text_field.update()
-            except (AssertionError, RuntimeError):
-                pass
+        except (AssertionError, RuntimeError):
+            pass
 
     def _get_key_hash(self, key: str) -> str:
         """Get SHA-256 hash of the key."""
@@ -114,15 +114,12 @@ class ApiKeyField(ft.Row):
         self._reveal_button.icon = (
             icons.VISIBILITY_OFF_ROUNDED if self._text_field.password else icons.VISIBILITY_ROUNDED
         )
-        if self._text_field.page:
-            try:
+        try:
+            if self._text_field.page:
                 self._text_field.update()
-            except (AssertionError, RuntimeError):
-                pass
-            try:
                 self._reveal_button.update()
-            except (AssertionError, RuntimeError):
-                pass
+        except (AssertionError, RuntimeError):
+            pass
 
     def _handle_change(self, e) -> None:
         """Mark the field dirty after user edits."""
@@ -145,11 +142,11 @@ class ApiKeyField(ft.Row):
         self._status_icon.name = icon
         self._status_icon.color = color
         self._status_icon.tooltip = t(tooltip_key)
-        if self._status_icon.page:
-            try:
+        try:
+            if self._status_icon.page:
                 self._status_icon.update()
-            except (AssertionError, RuntimeError):
-                pass
+        except (AssertionError, RuntimeError):
+            pass
 
     def _handle_blur(self, e) -> None:
         """Handle blur event - save and verify."""

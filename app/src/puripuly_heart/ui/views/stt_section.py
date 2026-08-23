@@ -183,20 +183,24 @@ class SttSectionMixin:
             message = t(warning.key, language=lang_display, lang=lang_display)
             if self.show_snackbar:
                 self.show_snackbar(message, ft.Colors.ORANGE_700)
-            elif self.page:
-                self.page.show_dialog(
-                    ft.SnackBar(
-                        ft.Text(
-                            message,
-                            color=ft.Colors.WHITE,
-                        ),
-                        bgcolor=ft.Colors.ORANGE_700,
-                        duration=4000,
-                        behavior=ft.SnackBarBehavior.FLOATING,
-                        margin=ft.Margin.only(bottom=90),
-                        padding=20,
-                    )
-                )
+            else:
+                try:
+                    if self.page:
+                        self.page.show_dialog(
+                            ft.SnackBar(
+                                ft.Text(
+                                    message,
+                                    color=ft.Colors.WHITE,
+                                ),
+                                bgcolor=ft.Colors.ORANGE_700,
+                                duration=4000,
+                                behavior=ft.SnackBarBehavior.FLOATING,
+                                margin=ft.Margin.only(bottom=90),
+                                padding=20,
+                            )
+                        )
+                except (AssertionError, RuntimeError):
+                    pass
 
         try:
             if self.page:

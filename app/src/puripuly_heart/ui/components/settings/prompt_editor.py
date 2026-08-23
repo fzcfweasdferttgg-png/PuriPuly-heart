@@ -48,11 +48,11 @@ class PromptEditor(ft.Column):
     def value(self, val: str) -> None:
         """Set prompt value."""
         self._text_field.value = val
-        if self._text_field.page:
-            try:
+        try:
+            if self._text_field.page:
                 self._text_field.update()
-            except (AssertionError, RuntimeError):
-                pass
+        except (AssertionError, RuntimeError):
+            pass
 
     def set_provider(self, provider_name: str) -> None:
         """Update the current provider."""

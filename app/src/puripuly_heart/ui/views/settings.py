@@ -747,7 +747,7 @@ class SettingsView(
         self._desktop_overlay_pending_position_reset = False
         self._desktop_overlay_pending_locked = None
         self._desktop_overlay_captions_locked = False
-        if self._overlay_state == "off":
+        if self._overlay_state in {"off", "failed"}:
             self._overlay_runtime_target = self._current_overlay_target()
         self._sync_clickable_text_control_fonts(font_for_language(settings.ui.locale))
 
