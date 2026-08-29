@@ -27,7 +27,7 @@ from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
 from puripuly_heart.ui.components.microphone_test_dialog import MicrophoneTestDialog
 from puripuly_heart.ui.components.title_bar import TitleBar
-from puripuly_heart.app.services.gui_controller import GuiController
+from puripuly_heart.app.services.gui_controller import FletGuiController
 from puripuly_heart.ui.fonts import font_for_language, register_fonts
 from puripuly_heart.domain.i18n import get_locale, set_locale, t
 from puripuly_heart.ui.theme import COLOR_BACKGROUND, get_app_theme
@@ -57,7 +57,7 @@ class TranslatorApp(
     def __init__(self, page: ft.Page, *, config_path, debug_ui_preview: bool = False):
         self.page = page
         self.config_path = config_path
-        self.controller = GuiController(
+        self.controller = FletGuiController(
             page=page,
             app=self,
             config_path=config_path,

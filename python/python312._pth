@@ -2,4 +2,5 @@ python312.zip
 .
 Lib
 Lib\site-packages
+DLLs
 ..\app\src

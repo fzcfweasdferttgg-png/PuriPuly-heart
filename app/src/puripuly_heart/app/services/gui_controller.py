@@ -29,8 +29,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import flet as ft
-
 from puripuly_heart.app.wiring import (
     create_llm_provider,
     create_fallback_llm_provider,
@@ -107,8 +105,8 @@ STT_RESET_DEADLINE_S = 300.0
 
 
 @dataclass(slots=True)
-class GuiController:
-    page: ft.Page
+class BaseGuiController:
+    page: object
     app: object
     config_path: Path
 
@@ -140,6 +138,7 @@ class GuiController:
     _mutation_worker_active: bool = field(init=False, default=False)
 
     _calibration_service: CalibrationService | None = None
+    _async_loop: object | None = field(init=False, default=None)
     log_handler_factory: Callable[[Any], logging.Handler] | None = field(default=None)
 
     @property
@@ -322,7 +321,7 @@ class GuiController:
         return self._diagnostics_service.wrap_diagnostic_audio_source(source, channel_label=channel_label)
 
     def _schedule_audio_environment_snapshot(self) -> None:
-        run_task = getattr(self.page, "run_task", None)
+        run_task = self._get_page_run_task()
         self._diagnostics_service.schedule_audio_environment_snapshot(page_run_task=run_task)
 
     async def _log_audio_environment_snapshot_async(self) -> None:
@@ -466,7 +465,7 @@ class GuiController:
             _clock=self.clock,
             _log_error=lambda msg: self._log_error(msg),
             _settings_provider=lambda: self.settings,
-            _page_run_task=getattr(self.page, "run_task", None),
+            _page_run_task=self._get_page_run_task(),
         )
 
         await self._sync_clipboard_watcher()
@@ -545,24 +544,10 @@ class GuiController:
 
     def _show_short_message(self, message_key: str, **message_kwargs: object) -> None:
         message = t(message_key, **message_kwargs)
-        show_snackbar = getattr(self.app, "_show_snackbar", None)
-        if callable(show_snackbar):
+        notifier = getattr(self.app, "_show_notification", None)
+        if callable(notifier):
             with contextlib.suppress(Exception):
-                show_snackbar(message, ft.Colors.ORANGE_700)
-                return
-        opener = getattr(self.page, "show_dialog", None)
-        if callable(opener):
-            with contextlib.suppress(Exception):
-                opener(
-                    ft.SnackBar(
-                        ft.Text(message, color=ft.Colors.WHITE),
-                        bgcolor=ft.Colors.ORANGE_700,
-                        duration=4000,
-                        behavior=ft.SnackBarBehavior.FLOATING,
-                        margin=ft.Margin.only(bottom=90),
-                        padding=20,
-                    )
-                )
+                notifier(message, level="warning")
                 return
         self._log_error(message)
 
@@ -869,9 +854,9 @@ class GuiController:
         # Create command executor for settings sections
         from puripuly_heart.config.settings import materialize_translation_settings
         from puripuly_heart.core.services.settings_command_executor import SettingsCommandExecutor
-        if settings_view is not None:
-            if settings_view._command_executor is None:
-                draft_svc = settings_view._draft_service
+        if settings_view is not None and getattr(settings_view, "_command_executor", None) is None:
+            draft_svc = getattr(settings_view, "_draft_service", None)
+            if draft_svc is not None:
                 settings_view._command_executor = SettingsCommandExecutor(
                     settings=self.settings,
                     draft_service=draft_svc,
@@ -1418,6 +1403,23 @@ class GuiController:
 
     # Sequential FIFO queue for settings changes.
     # Prevents race conditions when user rapidly toggles settings.
+    def _get_page_run_task(self) -> Callable | None:
+        """Return the GUI framework's async-task scheduler, or None.
+
+        Override in subclasses to provide framework-specific scheduling.
+        Base implementation falls back to getattr(self.page, "run_task", None).
+        """
+        return getattr(self.page, "run_task", None)
+
+    def _run_page_task(self, task) -> None:
+        """Safely run an async task on the page's event loop.
+
+        Uses _get_page_run_task() virtual hook for framework-specific scheduling.
+        """
+        run_task = self._get_page_run_task()
+        if callable(run_task):
+            run_task(task)
+
     def _queue_mutation(self, task_factory) -> None:
         self._mutation_queue.append(task_factory)
         if self._mutation_worker_active:
@@ -1435,7 +1437,7 @@ class GuiController:
             finally:
                 self._mutation_worker_active = False
 
-        self.page.run_task(_worker)
+        self._run_page_task(_worker)
 
     def apply_settings_with_sync(self, settings) -> None:
         """Apply settings and sync mic test dialog."""
@@ -1594,8 +1596,11 @@ class GuiController:
         view_settings = getattr(self.app, "view_settings", None)
         if view_settings is None:
             return
-        if view_settings.has_provider_changes:
-            pending = view_settings.consume_provider_apply_settings()
+        if getattr(view_settings, "has_provider_changes", False):
+            consume = getattr(view_settings, "consume_provider_apply_settings", None)
+            if consume is None:
+                return
+            pending = consume()
             if pending is not None:
                 logger.info(
                     "[Settings] auto_apply: pending stt_quant=%s peer_stt_quant=%s llm=%s",
@@ -1673,26 +1678,26 @@ class GuiController:
         async def _task():
             await self.set_desktop_overlay_captions_locked(bool(locked))
             self._refresh_desktop_overlay_state()
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_desktop_overlay_size_change_async(self, size_preset: str) -> None:
         async def _task():
             await self.set_desktop_overlay_size_preset(size_preset)
             self._refresh_desktop_overlay_state()
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_desktop_overlay_recovery_action(self, action: str) -> None:
         if action not in {"retry", "reopen"}:
             return
         async def _task():
             await self.set_overlay_enabled(True)
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_desktop_overlay_position_reset_async(self) -> None:
         async def _task():
             await self.reset_desktop_overlay_position()
             self._refresh_desktop_overlay_state()
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _refresh_desktop_overlay_state(self) -> None:
         view_settings = getattr(self.app, "view_settings", None)
@@ -1704,18 +1709,18 @@ class GuiController:
     def _on_translation_toggle_async(self, enabled: bool) -> None:
         async def _task():
             await self.set_translation_enabled(enabled)
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_stt_toggle_async(self, enabled: bool) -> None:
         self._consume_pending_provider_settings_if_needed()
         async def _task():
             await self.set_stt_enabled(enabled)
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_overlay_toggle_async(self, enabled: bool) -> None:
         async def _task():
             await self.set_overlay_enabled(enabled)
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_peer_translation_toggle_async(self, enabled: bool) -> None:
         """Toggle peer translation with EULA gate."""
@@ -1729,14 +1734,14 @@ class GuiController:
         async def _task():
             self._consume_pending_provider_settings_if_needed()
             await self.set_peer_translation_enabled(enabled)
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _accept_peer_translation_eula_and_enable_async(self) -> None:
         self.settings.ui.peer_translation_eula_accepted = True
         save_settings(self.config_path, self.settings)
         async def _task():
             await self.set_peer_translation_enabled(True)
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_language_change_async(
         self,
@@ -1752,11 +1757,10 @@ class GuiController:
             source_code, self.settings.provider.stt.value if self.settings else ""
         )
         if warning:
-            view_dashboard = getattr(self.app, "view_dashboard", None)
-            if view_dashboard:
-                show_snackbar = getattr(view_dashboard, "show_snackbar", None)
-                if callable(show_snackbar):
-                    show_snackbar(warning)
+            notifier = getattr(self.app, "_show_notification", None)
+            if callable(notifier):
+                with contextlib.suppress(Exception):
+                    notifier(warning, level="warning")
         async def _task():
             await self.on_dashboard_language_change(
                 source_code=source_code, target_code=target_code,
@@ -1764,12 +1768,12 @@ class GuiController:
                 peer_target_code=peer_target_code,
                 second_target_code=second_target_code,
             )
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_manual_submit_async(self, _source, text: str) -> None:
         async def _task():
             await self.submit_text(text)
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_manual_input_activity_async(self, has_text: bool) -> None:
         self.note_manual_input_activity(has_text)
@@ -1789,12 +1793,12 @@ class GuiController:
     def _on_start_microphone_test_async(self) -> None:
         async def _task():
             await self.start_microphone_test()
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     def _on_stop_microphone_test_async(self) -> None:
         async def _task():
             await self.stop_microphone_test()
-        self.page.run_task(_task)
+        self._run_page_task(_task)
 
     # --- CalibrationService delegation (replaces CalibrationManagerMixin) ---
 
@@ -1867,7 +1871,17 @@ class GuiController:
 
     def save_settings(self) -> None:
         if self._settings_service is not None and self.settings is not None:
-            self._settings_service.save_settings_to_disk(self.config_path, self.settings)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(
+                    None,
+                    self._settings_service.save_settings_to_disk,
+                    self.config_path,
+                    self.settings,
+                )
+            except RuntimeError:
+                # No running loop — safe to call synchronously
+                self._settings_service.save_settings_to_disk(self.config_path, self.settings)
 
     # --- Settings UI sync (stays in GuiController — accesses self.app views) ---
 
@@ -2158,7 +2172,46 @@ class GuiController:
 
     def _log_error(self, message: str) -> None:
         self.log_basic(message, level=logging.ERROR)
-        show_snackbar = getattr(self.app, "_show_snackbar", None)
-        if callable(show_snackbar):
+        notifier = getattr(self.app, "_show_notification", None)
+        if callable(notifier):
             with contextlib.suppress(Exception):
-                show_snackbar(message, ft.Colors.RED_700)
+                notifier(message, level="error")
+
+
+# ─── Framework-specific controllers ──────────────────────────────────────
+
+
+@dataclass(slots=True)
+class FletGuiController(BaseGuiController):
+    """Flet-specific controller. Requires a non-None page (ft.Page)."""
+
+    def __post_init__(self) -> None:
+        if self.page is None:
+            raise TypeError("FletGuiController requires a non-None page")
+
+    def _get_page_run_task(self) -> Callable | None:
+        """Return Flet's page.run_task for async scheduling."""
+        return getattr(self.page, "run_task", None)
+
+
+@dataclass(slots=True)
+class TkinterGuiController(BaseGuiController):
+    """Tkinter-specific controller. Uses asyncio loop instead of Flet page."""
+
+    def __post_init__(self) -> None:
+        self.page = None
+
+    def _get_page_run_task(self) -> Callable | None:
+        """Return a callable that schedules coroutines on the stored event loop."""
+        loop = self._async_loop
+        if loop is None or not loop.is_running():
+            return None
+
+        def _schedule(task: object) -> None:
+            asyncio.run_coroutine_threadsafe(task, loop)
+
+        return _schedule
+
+
+# Backward compatibility alias — existing imports continue to work
+GuiController = FletGuiController
