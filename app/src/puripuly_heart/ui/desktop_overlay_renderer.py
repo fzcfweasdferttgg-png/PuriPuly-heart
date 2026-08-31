@@ -315,7 +315,11 @@ class DesktopOverlayRenderer:
                 raw_message = await asyncio.wait_for(websocket.recv(), timeout=timeout_s)
             except TimeoutError:
                 break
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "[DesktopOverlay] Error receiving initial runtime control: %s",
+                    exc,
+                )
                 break
             try:
                 message = _load_bridge_message(raw_message)

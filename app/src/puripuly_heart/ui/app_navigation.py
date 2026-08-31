@@ -64,7 +64,7 @@ class AppNavigationMixin:
         self.content_area.padding = self._content_padding_for_index(index)
         try:
             self.content_area.update()
-        except (AssertionError, RuntimeError):
+        except (AssertionError, RuntimeError, AttributeError):
             pass
         if index == 1:
             self.view_settings.refresh_prompt_if_empty()

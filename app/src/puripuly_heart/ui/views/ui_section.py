@@ -50,7 +50,7 @@ class UiSectionMixin:
             self._on_ui_click,
         )
         self._ui_title = ft.Text(
-            t("settings.section.ui"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
+            t("flet.settings.section.ui"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
         )
         ui_card = self._wrap_unit_card(
             title=self._ui_title,
@@ -61,11 +61,11 @@ class UiSectionMixin:
     def _build_low_latency_widgets(self) -> ft.Control:
         """Create low-latency mode card. Stores on self; returns the card."""
         self._low_latency_text = self._build_clickable_text(
-            t("toggle.off"),
+            t("flet.toggle.off"),
             self._on_low_latency_click,
         )
         self._low_latency_title = ft.Text(
-            t("settings.low_latency_mode"),
+            t("flet.settings.low_latency_mode"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -79,7 +79,7 @@ class UiSectionMixin:
     def _build_vad_widgets(self) -> tuple[ft.Control, ft.Control]:
         # -- Self VAD --
         self._self_vad_title = ft.Text(
-            t("settings.section.self_vad_sensitivity"),
+            t("flet.settings.section.self_vad_sensitivity"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -101,7 +101,7 @@ class UiSectionMixin:
 
         # -- Peer VAD --
         self._peer_vad_title = ft.Text(
-            t("settings.section.peer_vad_sensitivity"),
+            t("flet.settings.section.peer_vad_sensitivity"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -117,17 +117,17 @@ class UiSectionMixin:
             on_change_end=self._handle_peer_vad_change,
         )
         self._peer_vad_field = self._build_numeric_setting_field(
-            label=t("settings.vad.peer"),
+            label=t("flet.settings.vad.peer"),
             value="0.60",
             on_change_end=self._on_peer_vad_threshold_change,
         )
         self._peer_hangover_field = self._build_numeric_setting_field(
-            label=t("settings.vad.peer_hangover_ms"),
+            label=t("flet.settings.vad.peer_hangover_ms"),
             value="700",
             on_change_end=self._on_peer_hangover_change,
         )
         self._peer_pre_roll_field = self._build_numeric_setting_field(
-            label=t("settings.vad.peer_pre_roll_ms"),
+            label=t("flet.settings.vad.peer_pre_roll_ms"),
             value="500",
             on_change_end=self._on_peer_pre_roll_change,
         )
@@ -161,7 +161,7 @@ class UiSectionMixin:
         self._peer_hangover_field.value = str(settings.desktop_audio.vad_hangover_ms)
         self._peer_pre_roll_field.value = str(settings.desktop_audio.vad_pre_roll_ms)
         self._low_latency_text.content.value = t(
-            "toggle.on" if settings.stt.low_latency_mode else "toggle.off"
+            "flet.toggle.on" if settings.stt.low_latency_mode else "flet.toggle.off"
         )
 
     # ------------------------------------------------------------------
@@ -178,7 +178,7 @@ class UiSectionMixin:
         current = self._settings.ui.locale if self._settings else "en"
         modal = SettingsModal(
             self.page,
-            t("settings.section.ui"),
+            t("flet.settings.section.ui"),
             options,
             self._on_ui_selected,
             show_description=False,
@@ -330,9 +330,9 @@ class UiSectionMixin:
         self._command_executor.execute(ChangeClipboardAutoTranslate(enabled=new_value))
         # CROSS-MIXIN: _clipboard_auto_translate_text is created by OscSectionMixin._build_osc_widgets
         self._clipboard_auto_translate_text.content.value = t(
-            "settings.clipboard_auto_translate.on"
+            "flet.settings.clipboard_auto_translate.on"
             if new_value
-            else "settings.clipboard_auto_translate.off"
+            else "flet.settings.clipboard_auto_translate.off"
         )
         try:
             if self.page:
@@ -354,19 +354,19 @@ class UiSectionMixin:
         options = [
             OptionItem(
                 value="on",
-                label=t("toggle.on"),
-                description=t("toggle.on.description", default=""),
+                label=t("flet.toggle.on"),
+                description=t("flet.toggle.on.description", default=""),
             ),
             OptionItem(
                 value="off",
-                label=t("toggle.off"),
-                description=t("toggle.off.description", default=""),
+                label=t("flet.toggle.off"),
+                description=t("flet.toggle.off.description", default=""),
             ),
         ]
         current = "on" if self._settings.stt.low_latency_mode else "off"
         modal = SettingsModal(
             self.page,
-            t("settings.low_latency_mode"),
+            t("flet.settings.low_latency_mode"),
             options,
             self._on_low_latency_selected,
             show_description=True,
@@ -385,7 +385,7 @@ class UiSectionMixin:
         self._command_executor.execute(ChangeLowLatency(enabled=new_value))
 
         # Update text
-        self._low_latency_text.content.value = t("toggle.on" if new_value else "toggle.off")
+        self._low_latency_text.content.value = t("flet.toggle.on" if new_value else "flet.toggle.off")
         try:
             if self.page:
                 self._low_latency_text.update()
@@ -398,15 +398,15 @@ class UiSectionMixin:
     def _apply_locale_ui(self) -> None:
         if not hasattr(self, '_ui_title'):
             return
-        self._ui_title.value = t("settings.section.ui")
-        self._self_vad_title.value = t("settings.section.self_vad_sensitivity")
-        self._peer_vad_title.value = t("settings.section.peer_vad_sensitivity")
+        self._ui_title.value = t("flet.settings.section.ui")
+        self._self_vad_title.value = t("flet.settings.section.self_vad_sensitivity")
+        self._peer_vad_title.value = t("flet.settings.section.peer_vad_sensitivity")
         # CROSS-MIXIN: _microphone_test_title is created by OscSectionMixin._build_osc_widgets
-        self._microphone_test_title.value = t("settings.microphone_test")
-        self._peer_vad_field.label = t("settings.vad.peer")
-        self._peer_hangover_field.label = t("settings.vad.peer_hangover_ms")
-        self._peer_pre_roll_field.label = t("settings.vad.peer_pre_roll_ms")
-        self._low_latency_title.value = t("settings.low_latency_mode")
+        self._microphone_test_title.value = t("flet.settings.microphone_test")
+        self._peer_vad_field.label = t("flet.settings.vad.peer")
+        self._peer_hangover_field.label = t("flet.settings.vad.peer_hangover_ms")
+        self._peer_pre_roll_field.label = t("flet.settings.vad.peer_pre_roll_ms")
+        self._low_latency_title.value = t("flet.settings.low_latency_mode")
 
     def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
         """Controls that need font/text updates on locale change."""

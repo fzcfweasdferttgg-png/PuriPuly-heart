@@ -63,21 +63,29 @@ class AppDebugPreviewMixin:
     # _build_github_star_prompt_snackbar needs the on_click callback to exist first.
 
     def _preview_github_star_snackbar(self) -> None:
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         snackbar = None
 
         def _open_repository(_event) -> None:  # noqa: ANN001
             webbrowser.open("https://github.com/kapitalismho/PuriPuly-heart")
             if snackbar is not None:
-                close_github_star_prompt_snackbar(self.page, snackbar)
+                close_github_star_prompt_snackbar(page, snackbar)
 
         snackbar = build_github_star_prompt_snackbar(_open_repository)
-        self.page.show_dialog(snackbar)
+        page.show_dialog(snackbar)
 
     def _debug_preview_noop(self) -> None:
         return None
 
     def _preview_founder_letter(self) -> None:
-        dialog = FounderLetterDialog(self.page, on_readme=self._open_local_qwen_guide)
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
+        dialog = FounderLetterDialog(page, on_readme=self._open_local_qwen_guide)
         self._founder_letter_dialog = dialog
         dialog.open()
 
@@ -90,18 +98,18 @@ class AppDebugPreviewMixin:
     def _preview_capture_fault_cycle(self) -> None:
         profile = self.controller.cycle_debug_capture_fault_profile()
         show_snackbar(
-            self, t("debug_preview.capture_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
+            self, t("flet.debug_preview.capture_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
         )
 
     def _preview_stt_fault_cycle(self) -> None:
         profile = self.controller.cycle_debug_stt_fault_profile()
         show_snackbar(
-            self, t("debug_preview.stt_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
+            self, t("flet.debug_preview.stt_fault_snackbar", profile=profile), ft.Colors.ORANGE_700
         )
 
     def _preview_audio_fault_clear(self) -> None:
         self.controller.clear_debug_audio_fault_profiles()
-        show_snackbar(self, t("debug_preview.audio_fault_clear"), ft.Colors.GREEN_700)
+        show_snackbar(self, t("flet.debug_preview.audio_fault_clear"), ft.Colors.GREEN_700)
 
     # DUAL USE — called both from preview (on_accept=_debug_preview_noop)
     # and from AppDashboardMixin._on_peer_translation_toggle (on_accept=enable callback).
@@ -109,8 +117,12 @@ class AppDebugPreviewMixin:
     # The preview path deliberately skips EULA acceptance and peer translation enable.
 
     def _show_peer_translation_eula(self, on_accept) -> None:  # noqa: ANN001
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         dialog = PeerTranslationEulaDialog(
-            self.page,
+            page,
             on_accept=on_accept,
             on_cancel=self._debug_preview_noop,
         )
@@ -123,8 +135,12 @@ class AppDebugPreviewMixin:
     # If you rename it, update diagnostics_manager.py caller.
 
     def show_local_qwen_hallucination_dialog(self) -> None:
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         dialog = LocalQwenHallucinationDialog(
-            self.page,
+            page,
             on_open_guide=self._open_local_qwen_guide,
         )
         self._local_qwen_hallucination_dialog = dialog

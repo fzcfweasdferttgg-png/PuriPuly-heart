@@ -116,23 +116,31 @@ def load_prompt(name: str = "default") -> str:
 
     # Try .md first
     prompt_file = prompts_dir / f"{name}.md"
-    if prompt_file.exists():
+    try:
         return prompt_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        pass
 
     # Fallback to .txt
     prompt_file = prompts_dir / f"{name}.txt"
-    if prompt_file.exists():
+    try:
         return prompt_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        pass
 
     # Fallback to default
     default_file = prompts_dir / "default.md"
-    if default_file.exists():
+    try:
         return default_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        pass
 
     # Legacy default.txt
     default_file = prompts_dir / "default.txt"
-    if default_file.exists():
+    try:
         return default_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        pass
 
     return ""
 

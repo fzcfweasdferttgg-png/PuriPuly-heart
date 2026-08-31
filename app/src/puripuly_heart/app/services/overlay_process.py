@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import secrets
+import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -337,7 +338,7 @@ class DefaultOverlayProcessRunner:
         vendored_bundle: openvr_vendor.VendoredOpenVrBundle,
     ) -> Path:
         if cls._staged_openvr_runtime_dll_needs_refresh(bundled_path, vendored_bundle):
-            self.infrastructure.copy_file(vendored_bundle.dll_path, bundled_path)
+            shutil.copy2(vendored_bundle.dll_path, bundled_path)
         return openvr_vendor.validate_openvr_runtime_dll(
             bundled_path,
             expected_sha256=vendored_bundle.dll_sha256,

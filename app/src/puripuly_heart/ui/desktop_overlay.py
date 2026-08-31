@@ -392,7 +392,7 @@ class FletDesktopRendererWindow:
         window = page.window
         page.title = t_for_locale(
             self._locale,
-            "desktop_overlay.window.title",
+            "flet.desktop_overlay.window.title",
             default="PuriPuly Overlay",
         )
         window.icon = "icons/icon.ico"

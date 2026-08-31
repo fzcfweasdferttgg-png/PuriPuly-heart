@@ -28,10 +28,10 @@ class PeerTranslationEulaDialog:
     def open(self) -> None:
         result = open_warm_document_dialog(
             self._page,
-            body_paragraphs=split_body_paragraphs(t("peer_translation_eula.body")),
-            primary_label=t("peer_translation_eula.accept"),
+            body_paragraphs=split_body_paragraphs(t("flet.peer_translation_eula.body")),
+            primary_label=t("flet.peer_translation_eula.accept"),
             primary_action=self._on_accept,
-            secondary_label=t("peer_translation_eula.cancel"),
+            secondary_label=t("flet.peer_translation_eula.cancel"),
             secondary_action=self._on_cancel,
             glow_factory=create_glow_stack,
         )

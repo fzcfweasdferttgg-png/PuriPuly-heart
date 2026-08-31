@@ -124,13 +124,13 @@ def get_stt_compatibility_warning(code: str, stt_provider: str) -> SttCompatibil
         "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "sv", "ru", "uk",
     }
     if stt_provider == "local_parakeet_tdt" and lang_code not in _PARAKEET_TDT_LANGS:
-        return SttCompatibilityWarning("warning.parakeet_tdt_not_supported", lang_code)
+        return SttCompatibilityWarning("flet.warning.parakeet_tdt_not_supported", lang_code)
 
     if stt_provider in ("local_gigaam_rnnt", "local_gigaam_rnnt_gguf") and lang_code != "ru":
-        return SttCompatibilityWarning("warning.gigaam_not_supported", lang_code)
+        return SttCompatibilityWarning("flet.warning.gigaam_not_supported", lang_code)
 
     if stt_provider == "local_parakeet_tdt_gguf" and lang_code not in _PARAKEET_TDT_LANGS:
-        return SttCompatibilityWarning("warning.parakeet_tdt_not_supported", lang_code)
+        return SttCompatibilityWarning("flet.warning.parakeet_tdt_not_supported", lang_code)
 
     if stt_provider == "local_qwen3_asr_gguf":
         return None

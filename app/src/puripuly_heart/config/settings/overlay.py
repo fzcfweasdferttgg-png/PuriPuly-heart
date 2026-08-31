@@ -214,7 +214,7 @@ def _parse_desktop_flet_settings(value: object) -> DesktopFletOverlaySettings:
     return DesktopFletOverlaySettings(
         size_preset=size_preset,
         position=position,
-        locked=False,
+        locked=bool(data.get("locked", False)),
         visual=_parse_desktop_flet_visual(data.get("visual")),
     )
 
@@ -237,6 +237,7 @@ def _desktop_flet_settings_to_dict(settings: DesktopFletOverlaySettings) -> dict
     return {
         "size_preset": settings.size_preset,
         "position": {"x": settings.position.x, "y": settings.position.y},
+        "locked": settings.locked,
         "visual": _desktop_flet_visual_to_dict(settings.visual),
     }
 

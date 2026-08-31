@@ -30,17 +30,17 @@ class OscSectionMixin:
         if not hasattr(self, '_vrc_mic_text'):
             return
         self._vrc_mic_text.content.value = t(
-            "settings.vrc_mic.on" if settings.osc.vrc_mic_intercept else "settings.vrc_mic.off"
+            "flet.settings.vrc_mic.on" if settings.osc.vrc_mic_intercept else "flet.settings.vrc_mic.off"
         )
         self._chatbox_source_text.content.value = t(
-            "settings.chatbox_source.on"
+            "flet.settings.chatbox_source.on"
             if settings.osc.chatbox_include_source
-            else "settings.chatbox_source.off"
+            else "flet.settings.chatbox_source.off"
         )
         self._clipboard_auto_translate_text.content.value = t(
-            "settings.clipboard_auto_translate.on"
+            "flet.settings.clipboard_auto_translate.on"
             if settings.ui.clipboard_auto_translate_enabled
-            else "settings.clipboard_auto_translate.off"
+            else "flet.settings.clipboard_auto_translate.off"
         )
 
     # ------------------------------------------------------------------
@@ -55,11 +55,11 @@ class OscSectionMixin:
         """
         # -- Chatbox source --
         self._chatbox_source_text = self._build_clickable_text(
-            t("settings.chatbox_source.on"),
+            t("flet.settings.chatbox_source.on"),
             self._on_chatbox_source_click,
         )
         self._chatbox_source_title = ft.Text(
-            t("settings.chatbox_include_source"),
+            t("flet.settings.chatbox_include_source"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -71,11 +71,11 @@ class OscSectionMixin:
 
         # -- Clipboard auto-translate --
         self._clipboard_auto_translate_text = self._build_clickable_text(
-            t("settings.clipboard_auto_translate.off"),
+            t("flet.settings.clipboard_auto_translate.off"),
             self._on_clipboard_auto_translate_click,
         )
         self._clipboard_auto_translate_title = ft.Text(
-            t("settings.clipboard_auto_translate"),
+            t("flet.settings.clipboard_auto_translate"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -87,11 +87,11 @@ class OscSectionMixin:
 
         # -- VRC mic intercept --
         self._vrc_mic_text = self._build_clickable_text(
-            t("settings.vrc_mic.on"),
+            t("flet.settings.vrc_mic.on"),
             self._on_vrc_mic_click,
         )
         self._vrc_mic_title = ft.Text(
-            t("settings.vrc_mic_intercept"),
+            t("flet.settings.vrc_mic_intercept"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -103,11 +103,11 @@ class OscSectionMixin:
 
         # -- Microphone test --
         self._microphone_test_text = self._build_clickable_text(
-            t("settings.microphone_test.action"),
+            t("flet.settings.microphone_test.action"),
             self._on_microphone_test_click,
         )
         self._microphone_test_title = ft.Text(
-            t("settings.microphone_test"),
+            t("flet.settings.microphone_test"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -141,7 +141,7 @@ class OscSectionMixin:
         self._command_executor.execute(ChangeVRCMic(enabled=new_value))
 
         self._vrc_mic_text.content.value = t(
-            "settings.vrc_mic.on" if new_value else "settings.vrc_mic.off"
+            "flet.settings.vrc_mic.on" if new_value else "flet.settings.vrc_mic.off"
         )
         try:
             if self.page:
@@ -158,13 +158,13 @@ class OscSectionMixin:
         except (AssertionError, RuntimeError):
             return
         options = [
-            OptionItem(value="on", label=t("settings.chatbox_source.on")),
-            OptionItem(value="off", label=t("settings.chatbox_source.off")),
+            OptionItem(value="on", label=t("flet.settings.chatbox_source.on")),
+            OptionItem(value="off", label=t("flet.settings.chatbox_source.off")),
         ]
         current = "on" if self._settings.osc.chatbox_include_source else "off"
         modal = SettingsModal(
             self.page,
-            t("settings.chatbox_include_source"),
+            t("flet.settings.chatbox_include_source"),
             options,
             self._on_chatbox_source_selected,
             show_description=False,
@@ -180,7 +180,7 @@ class OscSectionMixin:
         self._command_executor.execute(ChangeChatboxSource(include_source=new_value))
 
         self._chatbox_source_text.content.value = t(
-            "settings.chatbox_source.on" if new_value else "settings.chatbox_source.off"
+            "flet.settings.chatbox_source.on" if new_value else "flet.settings.chatbox_source.off"
         )
         try:
             if self.page:
@@ -195,9 +195,9 @@ class OscSectionMixin:
         """Update OSC section labels when locale changes."""
         if not hasattr(self, '_vrc_mic_title'):
             return
-        self._vrc_mic_title.value = t("settings.vrc_mic_intercept")
-        self._chatbox_source_title.value = t("settings.chatbox_include_source")
-        self._clipboard_auto_translate_title.value = t("settings.clipboard_auto_translate")
+        self._vrc_mic_title.value = t("flet.settings.vrc_mic_intercept")
+        self._chatbox_source_title.value = t("flet.settings.chatbox_include_source")
+        self._clipboard_auto_translate_title.value = t("flet.settings.clipboard_auto_translate")
 
     def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
         """Controls that need font/text updates on locale change."""

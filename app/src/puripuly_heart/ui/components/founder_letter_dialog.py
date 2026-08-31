@@ -9,12 +9,12 @@ from puripuly_heart.ui.components.warm_document_dialog import open_warm_document
 from puripuly_heart.domain.i18n import t
 
 FOUNDER_LETTER_PARAGRAPH_KEYS = (
-    "openrouter.handoff.letter.p1",
-    "openrouter.handoff.letter.p2",
-    "openrouter.handoff.letter.p3",
-    "openrouter.handoff.letter.p4",
-    "openrouter.handoff.letter.p5",
-    "openrouter.handoff.letter.p6",
+    "flet.openrouter.handoff.letter.p1",
+    "flet.openrouter.handoff.letter.p2",
+    "flet.openrouter.handoff.letter.p3",
+    "flet.openrouter.handoff.letter.p4",
+    "flet.openrouter.handoff.letter.p5",
+    "flet.openrouter.handoff.letter.p6",
 )
 
 
@@ -42,9 +42,9 @@ class FounderLetterDialog:
         result = open_warm_document_dialog(
             self._page,
             body_paragraphs=paragraphs,
-            primary_label=t("openrouter.handoff.readme"),
+            primary_label=t("flet.openrouter.handoff.readme"),
             primary_action=self._on_readme,
-            secondary_label=t("openrouter.handoff.close"),
+            secondary_label=t("flet.openrouter.handoff.close"),
             glow_factory=create_glow_stack,
         )
         self._dialog = result.dialog

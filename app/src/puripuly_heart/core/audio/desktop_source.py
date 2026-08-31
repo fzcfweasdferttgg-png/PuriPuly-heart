@@ -153,7 +153,9 @@ class DesktopLoopbackAudioSource:
                         # .copy() required — PyAudio reuses the buffer after callback returns
                         samples = np.frombuffer(in_data, dtype=np.float32).copy()
                         self._queue.sync_q.put_nowait(samples)
-                    except queue.Full:
+                    except Exception:
+                        # Catch ALL exceptions — not just queue.Full. Any unhandled exception
+                        # in a PyAudio callback terminates the stream silently.
                         self._queue_drop_count += 1
                         return (None, continue_flag)
                 return (None, continue_flag)

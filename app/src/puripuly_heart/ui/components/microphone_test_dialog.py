@@ -110,10 +110,10 @@ class MicrophoneTestDialog:
             color=self._text_color(),
             text_align=ft.TextAlign.CENTER,
             font_family=font_for_language(get_locale()),
-            semantics_label=t("settings.microphone_test.level_label"),
+            semantics_label=t("flet.settings.microphone_test.level_label"),
         )
         self._hint_text = ft.Text(
-            t("settings.microphone_test.host_api_hint"),
+            t("flet.settings.microphone_test.host_api_hint"),
             size=_HINT_TEXT_SIZE,
             color=COLOR_NEUTRAL_DARK,
             text_align=ft.TextAlign.CENTER,
@@ -152,13 +152,13 @@ class MicrophoneTestDialog:
             content=create_glow_stack(modal_content),
             content_padding=0,
             bgcolor=ft.Colors.TRANSPARENT,
-            semantics_label=t("settings.microphone_test"),
+            semantics_label=t("flet.settings.microphone_test"),
             on_dismiss=self._handle_dismiss,
         )
 
     def _text_value(self) -> str:
         if self._failed:
-            return t("settings.microphone_test.start_failed")
+            return t("flet.settings.microphone_test.start_failed")
         return f"{_level_percent(self._level)}%"
 
     def _text_size(self) -> int:
@@ -199,6 +199,6 @@ class MicrophoneTestDialog:
     def apply_locale(self) -> None:
         """Update cached translated text when locale changes."""
         if self._hint_text is not None:
-            self._hint_text.value = t("settings.microphone_test.host_api_hint")
+            self._hint_text.value = t("flet.settings.microphone_test.host_api_hint")
         if self._level_text is not None:
-            self._level_text.semantics_label = t("settings.microphone_test.level_label")
+            self._level_text.semantics_label = t("flet.settings.microphone_test.level_label")

@@ -130,7 +130,7 @@ class SttSectionMixin:
         )
         modal = SettingsModal(
             self.page,
-            t("settings.section.stt"),
+            t("flet.settings.section.stt"),
             options,
             self._on_stt_selected,
             show_description=True,
@@ -243,7 +243,7 @@ class SttSectionMixin:
         current = current_provider.value
         SettingsModal(
             self.page,
-            t("settings.peer_stt_provider"),
+            t("flet.settings.peer_stt_provider"),
             options,
             self._on_peer_stt_selected,
             show_description=True,
@@ -522,7 +522,7 @@ class SttSectionMixin:
             self._on_stt_click,
         )
         self._stt_compute_label = ft.Text(
-            t("settings.compute.label"), size=14, color=COLOR_ON_BACKGROUND
+            t("flet.settings.compute.label"), size=14, color=COLOR_ON_BACKGROUND
         )
         self._stt_compute_gpu_btn = ft.Container(
             content=ft.Text("GPU", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
@@ -546,7 +546,7 @@ class SttSectionMixin:
             visible=False,
         )
         self._stt_quant_label = ft.Text(
-            t("settings.quant.label", default="Quant:"), size=14, color=COLOR_ON_BACKGROUND
+            t("flet.settings.quant.label", default="Quant:"), size=14, color=COLOR_ON_BACKGROUND
         )
         self._stt_quant_q8_btn = self._make_quant_button("Q8_0", lambda e: self._apply_stt_quant("q8_0"))
         self._stt_quant_q6k_btn = self._make_quant_button("Q6_K", lambda e: self._apply_stt_quant("q6_k"))
@@ -569,7 +569,7 @@ class SttSectionMixin:
             spacing=8,
         )
         self._stt_backend_label = ft.Text(
-            t("settings.backend.label", default="Backend:"), size=14, color=COLOR_ON_BACKGROUND
+            t("flet.settings.backend.label", default="Backend:"), size=14, color=COLOR_ON_BACKGROUND
         )
         # Set initial backend button state based on loaded settings
         _init_backend = self._initial_settings.provider.stt_backend if self._initial_settings else "onnx"
@@ -596,10 +596,10 @@ class SttSectionMixin:
             visible=False,
         )
         self._stt_title = ft.Text(
-            t("settings.section.stt"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
+            t("flet.settings.section.stt"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
         )
         self._stt_provider_label = ft.Text(
-            t("settings.self_stt_provider"), size=16, color=COLOR_ON_BACKGROUND
+            t("flet.settings.self_stt_provider"), size=16, color=COLOR_ON_BACKGROUND
         )
         return self._wrap_unit_card(
             title=self._stt_title,
@@ -612,13 +612,13 @@ class SttSectionMixin:
 
     def _build_peer_stt_widgets(self) -> ft.Control:
         self._peer_provider_title = ft.Text(
-            t("settings.section.peer_stt"),
+            t("flet.settings.section.peer_stt"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._dashboard_language_redirect_text = ft.Text(
-            t("settings.dashboard_language_redirect"),
+            t("flet.settings.dashboard_language_redirect"),
             size=16,
             color=COLOR_NEUTRAL,
         )
@@ -627,7 +627,7 @@ class SttSectionMixin:
             self._on_peer_stt_click,
         )
         self._peer_stt_compute_label = ft.Text(
-            t("settings.compute.label"), size=14, color=COLOR_ON_BACKGROUND
+            t("flet.settings.compute.label"), size=14, color=COLOR_ON_BACKGROUND
         )
         self._peer_stt_compute_gpu_btn = ft.Container(
             content=ft.Text("GPU", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
@@ -651,7 +651,7 @@ class SttSectionMixin:
             visible=False,
         )
         self._peer_quant_label = ft.Text(
-            t("settings.quant.label", default="Quant:"), size=14, color=COLOR_ON_BACKGROUND
+            t("flet.settings.quant.label", default="Quant:"), size=14, color=COLOR_ON_BACKGROUND
         )
         self._peer_quant_q8_btn = self._make_quant_button("Q8_0", lambda e: self._apply_peer_quant("q8_0"))
         self._peer_quant_q6k_btn = self._make_quant_button("Q6_K", lambda e: self._apply_peer_quant("q6_k"))
@@ -674,7 +674,7 @@ class SttSectionMixin:
             spacing=8,
         )
         self._peer_stt_backend_label = ft.Text(
-            t("settings.backend.label", default="Backend:"), size=14, color=COLOR_ON_BACKGROUND
+            t("flet.settings.backend.label", default="Backend:"), size=14, color=COLOR_ON_BACKGROUND
         )
         # Set initial PEER backend button state based on loaded settings
         _init_peer_backend = self._initial_settings.provider.peer_stt_backend if self._initial_settings else "onnx"
@@ -701,7 +701,7 @@ class SttSectionMixin:
             visible=False,
         )
         self._peer_stt_label = ft.Text(
-            t("settings.peer_stt_provider"),
+            t("flet.settings.peer_stt_provider"),
             size=16,
             color=COLOR_ON_BACKGROUND,
         )
@@ -715,17 +715,17 @@ class SttSectionMixin:
     def _apply_locale_stt(self) -> None:
         if not hasattr(self, '_stt_backend_label'):
             return
-        self._stt_backend_label.value = t("settings.backend.label", default="Engine:")
-        self._stt_quant_label.value = t("settings.quant.label", default="Quality:")
-        self._peer_stt_backend_label.value = t("settings.backend.label", default="Engine:")
-        self._peer_quant_label.value = t("settings.quant.label", default="Quality:")
-        self._stt_title.value = t("settings.section.stt")
-        self._stt_compute_label.value = t("settings.compute.label")
-        self._peer_stt_compute_label.value = t("settings.compute.label")
-        self._stt_provider_label.value = t("settings.self_stt_provider")
-        self._peer_provider_title.value = t("settings.section.peer_stt")
-        self._dashboard_language_redirect_text.value = t("settings.dashboard_language_redirect")
-        self._peer_stt_label.value = t("settings.peer_stt_provider")
+        self._stt_backend_label.value = t("flet.settings.backend.label", default="Engine:")
+        self._stt_quant_label.value = t("flet.settings.quant.label", default="Quality:")
+        self._peer_stt_backend_label.value = t("flet.settings.backend.label", default="Engine:")
+        self._peer_quant_label.value = t("flet.settings.quant.label", default="Quality:")
+        self._stt_title.value = t("flet.settings.section.stt")
+        self._stt_compute_label.value = t("flet.settings.compute.label")
+        self._peer_stt_compute_label.value = t("flet.settings.compute.label")
+        self._stt_provider_label.value = t("flet.settings.self_stt_provider")
+        self._peer_provider_title.value = t("flet.settings.section.peer_stt")
+        self._dashboard_language_redirect_text.value = t("flet.settings.dashboard_language_redirect")
+        self._peer_stt_label.value = t("flet.settings.peer_stt_provider")
 
     def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
         """Controls that need font/text updates on locale change."""

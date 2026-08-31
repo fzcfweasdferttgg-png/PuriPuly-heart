@@ -66,13 +66,13 @@ class ContextSectionMixin:
 
     def _build_integrated_context_unit_card(self) -> SettingsUnitCard:
         self._integrated_context_label = ft.Text(
-            t("settings.integrated_context"),
+            t("flet.settings.integrated_context"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._integrated_context_button = self._build_clickable_text(
-            t("settings.context.local"),
+            t("flet.settings.context.local"),
             self._on_integrated_context_click,
         )
         self._integrated_context_hint = ft.Text("", size=13, color=COLOR_NEUTRAL)
@@ -88,19 +88,22 @@ class ContextSectionMixin:
     # ------------------------------------------------------------------
 
     def _on_integrated_context_click(self, e) -> None:
-        if not self.page or not self._settings:
+        try:
+            if not self.page or not self._settings:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = [
-            OptionItem(value="off", label=t("settings.context.local")),
+            OptionItem(value="off", label=t("flet.settings.context.local")),
             OptionItem(
                 value="on",
-                label=t("settings.context.integrated"),
-                description=t("settings.context.integrated_modal_helper"),
+                label=t("flet.settings.context.integrated"),
+                description=t("flet.settings.context.integrated_modal_helper"),
             ),
         ]
         modal = SettingsModal(
             self.page,
-            t("settings.integrated_context"),
+            t("flet.settings.integrated_context"),
             options,
             self._on_integrated_context_selected,
             show_description=True,
@@ -125,11 +128,11 @@ class ContextSectionMixin:
         )
         self._prompt_mode = "single"  # "single" or "dual"
         self._prompt_single_btn = self._make_quant_button(
-            t("settings.prompt_mode.single", default="Single"),
+            t("flet.settings.prompt_mode.single", default="Single"),
             self._on_prompt_mode_single,
         )
         self._prompt_dual_btn = self._make_quant_button(
-            t("settings.prompt_mode.dual", default="Dual"),
+            t("flet.settings.prompt_mode.dual", default="Dual"),
             self._on_prompt_mode_dual,
         )
         self._prompt_single_btn.bgcolor = COLOR_PRIMARY
@@ -141,7 +144,7 @@ class ContextSectionMixin:
             spacing=4,
         )
         self._persona_title = ft.Text(
-            t("settings.section.persona"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
+            t("flet.settings.section.persona"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL
         )
         self._prompt_for_text = ft.Text(
             self._prompt_provider_copy(),
@@ -151,7 +154,7 @@ class ContextSectionMixin:
 
         # Reset button (matches Persona title color, hover -> primary)
         self._reset_prompt_btn = _make_text_button(
-            t("settings.reset_prompt"),
+            t("flet.settings.reset_prompt"),
             icon=ft.Icons.REFRESH_ROUNDED,
             style=ft.ButtonStyle(
                 color={
@@ -252,7 +255,7 @@ class ContextSectionMixin:
         self._sync_prompt_mode_buttons()
         from puripuly_heart.config.prompts import get_dual_translation_prompt_template
         dual = get_dual_translation_prompt_template()
-        self._prompt_editor.value = dual if dual else t("settings.prompt_mode.dual_not_found", default="Dual prompt template not found")
+        self._prompt_editor.value = dual if dual else t("flet.settings.prompt_mode.dual_not_found", default="Dual prompt template not found")
         try:
             if self.page:
                 self._prompt_mode_row.update()
@@ -277,12 +280,12 @@ class ContextSectionMixin:
     def _apply_locale_context(self) -> None:
         if not hasattr(self, '_persona_title'):
             return
-        self._persona_title.value = t("settings.section.persona")
-        _set_text_button_label(self._reset_prompt_btn, t("settings.reset_prompt"))
+        self._persona_title.value = t("flet.settings.section.persona")
+        _set_text_button_label(self._reset_prompt_btn, t("flet.settings.reset_prompt"))
         self._sync_prompt_tab_copy()
-        self._prompt_single_btn.content.value = t("settings.prompt_mode.single", default="Single")
-        self._prompt_dual_btn.content.value = t("settings.prompt_mode.dual", default="Dual")
-        self._integrated_context_label.value = t("settings.integrated_context")
+        self._prompt_single_btn.content.value = t("flet.settings.prompt_mode.single", default="Single")
+        self._prompt_dual_btn.content.value = t("flet.settings.prompt_mode.dual", default="Dual")
+        self._integrated_context_label.value = t("flet.settings.integrated_context")
 
     def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:
         """Controls that need font/text updates on locale change."""

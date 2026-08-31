@@ -48,7 +48,7 @@ class CalibrationSectionMixin:
     ) -> tuple[ft.Control, ft.Control, ft.Control, ft.Control, ft.Control, ft.Control]:
         """Build overlay calibration controls."""
         self._overlay_anchor_title = ft.Text(
-            t("settings.overlay.calibration.anchor"),
+            t("flet.settings.overlay.calibration.anchor"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -63,7 +63,7 @@ class CalibrationSectionMixin:
         )
 
         self._overlay_distance_title = ft.Text(
-            t("settings.overlay.calibration.distance"),
+            t("flet.settings.overlay.calibration.distance"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -95,7 +95,7 @@ class CalibrationSectionMixin:
         )
 
         self._overlay_offset_x_title = ft.Text(
-            t("settings.overlay.calibration.offset_x"),
+            t("flet.settings.overlay.calibration.offset_x"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -127,7 +127,7 @@ class CalibrationSectionMixin:
         )
 
         self._overlay_offset_y_title = ft.Text(
-            t("settings.overlay.calibration.offset_y"),
+            t("flet.settings.overlay.calibration.offset_y"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -159,7 +159,7 @@ class CalibrationSectionMixin:
         )
 
         self._overlay_text_scale_title = ft.Text(
-            t("settings.overlay.calibration.text_scale"),
+            t("flet.settings.overlay.calibration.text_scale"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -174,13 +174,13 @@ class CalibrationSectionMixin:
         )
 
         self._overlay_vr_reset_title = ft.Text(
-            t("settings.overlay.position_reset.vr.title"),
+            t("flet.settings.overlay.position_reset.vr.title"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._overlay_vr_reset_button = self._build_clickable_text(
-            t("settings.overlay.position_reset.action.vr"),
+            t("flet.settings.overlay.position_reset.action.vr"),
             self._on_overlay_position_reset,
             height=72,
             expand=False,
@@ -322,15 +322,18 @@ class CalibrationSectionMixin:
         self._apply_overlay_calibration_field_immediately("distance", round(next_value, 2))
 
     def _on_overlay_anchor_click(self, e) -> None:
-        if not self.page or not self._settings:
+        try:
+            if not self.page or not self._settings:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = [
-            OptionItem(value=anchor, label=t(f"settings.overlay.calibration.anchor.{anchor}"))
+            OptionItem(value=anchor, label=t(f"flet.settings.overlay.calibration.anchor.{anchor}"))
             for anchor in OVERLAY_CALIBRATION_ANCHORS
         ]
         modal = SettingsModal(
             self.page,
-            t("settings.overlay.calibration.anchor"),
+            t("flet.settings.overlay.calibration.anchor"),
             options,
             self._on_overlay_anchor_selected,
             show_description=False,
@@ -349,18 +352,21 @@ class CalibrationSectionMixin:
         self._apply_overlay_calibration_field_immediately("offset_y", current + delta)
 
     def _on_overlay_text_scale_click(self, e) -> None:
-        if not self.page or not self._settings:
+        try:
+            if not self.page or not self._settings:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = [
             OptionItem(
                 value=key,
-                label=t(f"settings.overlay.calibration.text_scale.{key}"),
+                label=t(f"flet.settings.overlay.calibration.text_scale.{key}"),
             )
             for key, _scale in _OVERLAY_TEXT_SCALE_PRESETS
         ]
         modal = SettingsModal(
             self.page,
-            t("settings.overlay.calibration.text_scale"),
+            t("flet.settings.overlay.calibration.text_scale"),
             options,
             self._on_overlay_text_scale_selected,
             show_description=False,
@@ -386,14 +392,14 @@ class CalibrationSectionMixin:
     def _apply_locale_calibration(self) -> None:
         if not hasattr(self, '_overlay_anchor_title'):
             return
-        self._overlay_anchor_title.value = t("settings.overlay.calibration.anchor")
-        self._overlay_distance_title.value = t("settings.overlay.calibration.distance")
-        self._overlay_offset_x_title.value = t("settings.overlay.calibration.offset_x")
-        self._overlay_offset_y_title.value = t("settings.overlay.calibration.offset_y")
-        self._overlay_text_scale_title.value = t("settings.overlay.calibration.text_scale")
-        self._overlay_vr_reset_title.value = t("settings.overlay.position_reset.vr.title")
+        self._overlay_anchor_title.value = t("flet.settings.overlay.calibration.anchor")
+        self._overlay_distance_title.value = t("flet.settings.overlay.calibration.distance")
+        self._overlay_offset_x_title.value = t("flet.settings.overlay.calibration.offset_x")
+        self._overlay_offset_y_title.value = t("flet.settings.overlay.calibration.offset_y")
+        self._overlay_text_scale_title.value = t("flet.settings.overlay.calibration.text_scale")
+        self._overlay_vr_reset_title.value = t("flet.settings.overlay.position_reset.vr.title")
         self._set_unit_card_value_text(
-            self._overlay_vr_reset_button, t("settings.overlay.position_reset.action.vr")
+            self._overlay_vr_reset_button, t("flet.settings.overlay.position_reset.action.vr")
         )
 
     def _locale_sensitive_controls(self) -> tuple[ft.Container, ...]:

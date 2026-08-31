@@ -38,7 +38,10 @@ class _ScrollBody(ft.Column):
         self.tab_key = tab_key
 
     def restore_scroll(self, offset: float) -> None:
-        if self.page is None:
+        try:
+            if self.page is None:
+                return
+        except (AssertionError, RuntimeError):
             return
         with contextlib.suppress(Exception):
             self.scroll_to(offset=offset, duration=0)

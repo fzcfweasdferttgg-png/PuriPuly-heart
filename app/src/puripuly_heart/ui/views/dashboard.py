@@ -38,7 +38,7 @@ class DashboardView(ft.Column):
         self.is_stt_on = False
         self.translation_needs_key = False
         self.stt_needs_key = False
-        self.last_sent_text = t("dashboard.ready")
+        self.last_sent_text = t("flet.dashboard.ready")
         self.history_items = []
 
         # Warning state for UI feedback
@@ -76,28 +76,28 @@ class DashboardView(ft.Column):
     def _build_ui(self):
         # Left-side control grid
         self.stt_button = PowerButton(
-            label=t("dashboard.stt_label"),
+            label=t("flet.dashboard.stt_label"),
             icon=ft.Icons.MIC,
             on_click=self._toggle_stt,
             icon_size=DASHBOARD_POWER_BUTTON_ICON_SIZE,
             label_size=DASHBOARD_POWER_BUTTON_LABEL_SIZE,
         )
         self.peer_button = PowerButton(
-            label=t("dashboard.peer_label"),
+            label=t("flet.dashboard.peer_label"),
             icon=ft.Icons.RECORD_VOICE_OVER,
             on_click=self._toggle_peer_translation,
             icon_size=DASHBOARD_POWER_BUTTON_ICON_SIZE,
             label_size=DASHBOARD_POWER_BUTTON_LABEL_SIZE,
         )
         self.trans_button = PowerButton(
-            label=t("dashboard.trans_label"),
+            label=t("flet.dashboard.trans_label"),
             icon=ft.Icons.TRANSLATE,
             on_click=self._toggle_translation,
             icon_size=DASHBOARD_POWER_BUTTON_ICON_SIZE,
             label_size=DASHBOARD_POWER_BUTTON_LABEL_SIZE,
         )
         self.overlay_button = PowerButton(
-            label=t("dashboard.overlay_label"),
+            label=t("flet.dashboard.overlay_label"),
             icon=ft.Icons.SUBTITLES,
             on_click=self._toggle_overlay,
             icon_size=DASHBOARD_POWER_BUTTON_ICON_SIZE,
@@ -123,9 +123,9 @@ class DashboardView(ft.Column):
             on_second_target_click=self._open_second_target_dialog,
         )
         self.language_card.set_row_labels(
-            t("dashboard.language.self"),
-            t("dashboard.language.peer"),
-            t("dashboard.language.second_target", default="Second language"),
+            t("flet.dashboard.language.self"),
+            t("flet.dashboard.language.peer"),
+            t("flet.dashboard.language.second_target", default="Second language"),
         )
         self._refresh_language_card()
         self._update_input_font()
@@ -252,7 +252,7 @@ class DashboardView(ft.Column):
             self._stt_showing_warning = False
         elif self.stt_needs_key:
             self._stt_showing_warning = True
-            self.set_display_text(t("dashboard.warn_stt_key"))
+            self.set_display_text(t("flet.dashboard.warn_stt_key"))
         else:
             self.is_stt_on = True
             self._stt_showing_warning = False
@@ -270,7 +270,7 @@ class DashboardView(ft.Column):
             self._translation_showing_warning = False
         elif self.translation_needs_key:
             self._translation_showing_warning = True
-            self.set_display_text(t("dashboard.warn_llm_key"))
+            self.set_display_text(t("flet.dashboard.warn_llm_key"))
         else:
             self.is_translation_on = True
             self._translation_showing_warning = False
@@ -304,24 +304,36 @@ class DashboardView(ft.Column):
         return True
 
     def _open_source_dialog(self):
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         modal = LanguageModal(
-            page=self.page,
+            page=page,
             languages=self._LANG_OPTIONS,
             on_select=self._on_source_select,
         )
         modal.open(current=self._source_lang_code, recent=self._recent_source_langs)
 
     def _open_target_dialog(self):
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         modal = LanguageModal(
-            page=self.page,
+            page=page,
             languages=self._LANG_OPTIONS,
             on_select=self._on_target_select,
         )
         modal.open(current=self._target_lang_code, recent=self._recent_target_langs)
 
     def _open_peer_source_dialog(self):
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         modal = LanguageModal(
-            page=self.page,
+            page=page,
             languages=self._LANG_OPTIONS,
             on_select=self._on_peer_source_select,
         )
@@ -330,8 +342,12 @@ class DashboardView(ft.Column):
         )
 
     def _open_peer_target_dialog(self):
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         modal = LanguageModal(
-            page=self.page,
+            page=page,
             languages=self._LANG_OPTIONS,
             on_select=self._on_peer_target_select,
         )
@@ -382,20 +398,28 @@ class DashboardView(ft.Column):
         self._notify_language_change()
 
     def _open_second_target_dialog(self):
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         modal = LanguageModal(
-            page=self.page,
+            page=page,
             languages=self._LANG_OPTIONS,
             on_select=self._on_second_target_select,
         )
         modal.open(
             current=self._second_target_lang_code,
             recent=self._recent_target_langs,
-            none_option=t("dashboard.language.second_target_disabled", default="Disabled"),
+            none_option=t("flet.dashboard.language.second_target_disabled", default="Disabled"),
         )
 
     def show_peer_eula_dialog(self, *, on_accept: Callable[[], None]) -> None:
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
         dialog = PeerTranslationEulaDialog(
-            self.page,
+            page,
             on_accept=on_accept,
         )
         dialog.open()
@@ -448,7 +472,7 @@ class DashboardView(ft.Column):
             self.language_card.set_second_target_name(language_name(self._second_target_lang_code))
         else:
             self.language_card.set_second_target_name(
-                t("dashboard.language.second_target_disabled", default="Disabled")
+                t("flet.dashboard.language.second_target_disabled", default="Disabled")
             )
 
     def set_status(self, status: str) -> None:
@@ -573,10 +597,10 @@ class DashboardView(ft.Column):
             return None, None
 
         notice_key_by_status = {
-            "missing": "dashboard.local_stt_notice_missing",
-            "invalid": "dashboard.local_stt_notice_invalid",
-            "downloading": "dashboard.local_stt_notice_downloading",
-            "download_failed": "dashboard.local_stt_notice_download_failed",
+            "missing": "flet.dashboard.local_stt_notice_missing",
+            "invalid": "flet.dashboard.local_stt_notice_invalid",
+            "downloading": "flet.dashboard.local_stt_notice_downloading",
+            "download_failed": "flet.dashboard.local_stt_notice_download_failed",
         }
         tone_by_status = {
             "missing": "warning",
@@ -589,7 +613,7 @@ class DashboardView(ft.Column):
             return None, None
         notice_text = (
             t(
-                "dashboard.local_stt_notice_downloading_progress",
+                "flet.dashboard.local_stt_notice_downloading_progress",
                 percent=self._local_stt_notice_percent,
             )
             if status == "downloading" and self._local_stt_notice_percent is not None
@@ -606,16 +630,16 @@ class DashboardView(ft.Column):
         if overlay.state != "warning" or not overlay.failure_reason:
             return None, None
 
-        status_text = t("settings.overlay.status.failed", default="failed")
+        status_text = t("flet.settings.overlay.status.failed", default="failed")
         reason_text = t(
-            f"settings.overlay.failure.{overlay.failure_reason}",
+            f"flet.settings.overlay.failure.{overlay.failure_reason}",
             default=overlay.failure_reason,
         )
         if overlay.failure_reason in OVERLAY_FAILURE_REASON_ONLY_NOTICE_REASONS:
             return reason_text, "error"
         return (
             t(
-                "settings.overlay.status.failed_with_reason",
+                "flet.settings.overlay.status.failed_with_reason",
                 status=status_text,
                 reason=reason_text,
                 default=f"{status_text}: {reason_text}",
@@ -634,10 +658,10 @@ class DashboardView(ft.Column):
         self.display_card.set_notice(notice_text, tone)
 
     def apply_locale(self) -> None:
-        self.stt_button.set_label(t("dashboard.stt_label"))
-        self.peer_button.set_label(t("dashboard.peer_label"))
-        self.trans_button.set_label(t("dashboard.trans_label"))
-        self.overlay_button.set_label(t("dashboard.overlay_label"))
+        self.stt_button.set_label(t("flet.dashboard.stt_label"))
+        self.peer_button.set_label(t("flet.dashboard.peer_label"))
+        self.trans_button.set_label(t("flet.dashboard.trans_label"))
+        self.overlay_button.set_label(t("flet.dashboard.overlay_label"))
         self._sync_stt_button_state()
         self._sync_translation_button_state()
         self._sync_overlay_peer_buttons()
@@ -646,15 +670,15 @@ class DashboardView(ft.Column):
             input_font_family=font_for_language(self._source_lang_code),
         )
         self.language_card.set_row_labels(
-            t("dashboard.language.self"),
-            t("dashboard.language.peer"),
-            t("dashboard.language.second_target", default="Second language"),
+            t("flet.dashboard.language.self"),
+            t("flet.dashboard.language.peer"),
+            t("flet.dashboard.language.second_target", default="Second language"),
         )
         self._refresh_language_card()
         if self._stt_showing_warning:
-            self.set_display_text(t("dashboard.warn_stt_key"))
+            self.set_display_text(t("flet.dashboard.warn_stt_key"))
         elif self._translation_showing_warning:
-            self.set_display_text(t("dashboard.warn_llm_key"))
+            self.set_display_text(t("flet.dashboard.warn_llm_key"))
 
     def set_recent_languages(self, source: list[str], target: list[str]) -> None:
         self._recent_source_langs = list(source)

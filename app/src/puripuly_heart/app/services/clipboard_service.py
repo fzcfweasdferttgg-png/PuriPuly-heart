@@ -101,9 +101,17 @@ class ClipboardService:
 
     def _schedule_clipboard_submit(self, text: str) -> None:
         try:
-            asyncio.create_task(self._submit_clipboard_text(text))
+            task = asyncio.create_task(self._submit_clipboard_text(text))
+            task.add_done_callback(self._handle_clipboard_task_error)
         except RuntimeError as exc:
             self._emit_error(f"Clipboard submit scheduling failed: {exc}")
+
+    def _handle_clipboard_task_error(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._emit_error(f"Clipboard submit task failed: {exc}")
 
     async def _submit_clipboard_text(self, text: str) -> None:
         if self._submit_text_and_wait is None:

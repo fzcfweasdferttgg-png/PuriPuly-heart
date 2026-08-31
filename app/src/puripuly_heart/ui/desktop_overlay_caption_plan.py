@@ -72,11 +72,11 @@ _DESKTOP_PREVIEW_BACKGROUND_ALPHA_PRESETS = (0.35, 0.5, 0.6, 0.8)
 _DESKTOP_PREVIEW_DEFAULT_BACKGROUND_ALPHA = DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
 _DESKTOP_PREVIEW_DEFAULT_BACKGROUND_SURFACE_ID = "bright"
 _DESKTOP_PREVIEW_BACKGROUND_SURFACE_DATA = (
-    ("bright", "settings.overlay.desktop.preview.background_surface.bright", "#FFFFFF"),
-    ("dark", "settings.overlay.desktop.preview.background_surface.dark", "#111827"),
-    ("busy", "settings.overlay.desktop.preview.background_surface.busy", "#1F2937"),
+    ("bright", "flet.settings.overlay.desktop.preview.background_surface.bright", "#FFFFFF"),
+    ("dark", "flet.settings.overlay.desktop.preview.background_surface.dark", "#111827"),
+    ("busy", "flet.settings.overlay.desktop.preview.background_surface.busy", "#1F2937"),
 )
-_DESKTOP_EMPTY_LOCK_ACTION_I18N_KEY = "settings.overlay.desktop.empty_state.action.lock"
+_DESKTOP_EMPTY_LOCK_ACTION_I18N_KEY = "flet.settings.overlay.desktop.empty_state.action.lock"
 _DESKTOP_EMPTY_LOCK_ACTION_DEFAULT_LABEL = "Lock"
 _DESKTOP_EMPTY_LOCK_ACTION_DEFAULT_COLOR = "#FFF8F4"
 _DESKTOP_EMPTY_LOCK_ACTION_FOCUS_COLOR = "#FF6B6B"
@@ -523,10 +523,10 @@ def build_desktop_overlay_preview_catalog(
         for surface_id, i18n_key, bgcolor in _DESKTOP_PREVIEW_BACKGROUND_SURFACE_DATA
     )
     labels = DesktopOverlayPreviewLabels(
-        fixture=text("settings.overlay.desktop.preview.fixture"),
-        size_preset=text("settings.overlay.desktop.size.title"),
-        background_alpha=text("settings.overlay.desktop.preview.background_alpha"),
-        background_surface=text("settings.overlay.desktop.preview.background_surface"),
+        fixture=text("flet.settings.overlay.desktop.preview.fixture"),
+        size_preset=text("flet.settings.overlay.desktop.size.title"),
+        background_alpha=text("flet.settings.overlay.desktop.preview.background_alpha"),
+        background_surface=text("flet.settings.overlay.desktop.preview.background_surface"),
     )
     return DesktopOverlayPreviewCatalog(
         fixtures=fixtures,
@@ -543,7 +543,7 @@ def _preview_size_preset(
     locale: str | None,
 ) -> DesktopOverlayPreviewSizePreset:
     preset = _DESKTOP_CAPTION_SIZE_PRESETS[preset_id]
-    i18n_key = f"settings.overlay.desktop.size.option.{preset_id}"
+    i18n_key = f"flet.settings.overlay.desktop.size.option.{preset_id}"
     return DesktopOverlayPreviewSizePreset(
         id=preset.id,
         label=t_for_locale(locale, i18n_key),
@@ -660,7 +660,7 @@ def _desktop_preview_fixture_data() -> tuple[
     return (
         (
             "korean_long_wrap",
-            "settings.overlay.desktop.preview.fixture.korean_long_wrap",
+            "flet.settings.overlay.desktop.preview.fixture.korean_long_wrap",
             OverlayPresentationSnapshot(
                 revision=1,
                 blocks=[
@@ -686,7 +686,7 @@ def _desktop_preview_fixture_data() -> tuple[
         ),
         (
             "japanese_peer_finalized",
-            "settings.overlay.desktop.preview.fixture.japanese_peer_finalized",
+            "flet.settings.overlay.desktop.preview.fixture.japanese_peer_finalized",
             OverlayPresentationSnapshot(
                 revision=2,
                 blocks=[
@@ -705,7 +705,7 @@ def _desktop_preview_fixture_data() -> tuple[
         ),
         (
             "chinese_self_finalized",
-            "settings.overlay.desktop.preview.fixture.chinese_self_finalized",
+            "flet.settings.overlay.desktop.preview.fixture.chinese_self_finalized",
             OverlayPresentationSnapshot(
                 revision=3,
                 blocks=[
@@ -724,7 +724,7 @@ def _desktop_preview_fixture_data() -> tuple[
         ),
         (
             "english_active_peer",
-            "settings.overlay.desktop.preview.fixture.english_active_peer",
+            "flet.settings.overlay.desktop.preview.fixture.english_active_peer",
             OverlayPresentationSnapshot(
                 revision=4,
                 blocks=[
@@ -743,7 +743,7 @@ def _desktop_preview_fixture_data() -> tuple[
         ),
         (
             "mixed_script_emoji",
-            "settings.overlay.desktop.preview.fixture.mixed_script_emoji",
+            "flet.settings.overlay.desktop.preview.fixture.mixed_script_emoji",
             OverlayPresentationSnapshot(
                 revision=5,
                 blocks=[
@@ -775,7 +775,7 @@ def _desktop_preview_fixture_data() -> tuple[
         ),
         (
             "no_captions",
-            "settings.overlay.desktop.preview.fixture.no_captions",
+            "flet.settings.overlay.desktop.preview.fixture.no_captions",
             OverlayPresentationSnapshot(revision=6, blocks=[]),
             frozenset({"no_caption", "edit_placeholder", "pass_through_transparent"}),
         ),

@@ -75,7 +75,7 @@ class LanguageModal:
         # Header for Recent
         content_controls.append(
             ft.Text(
-                t("language_modal.recent"),
+                t("flet.language_modal.recent"),
                 size=18,
                 weight=ft.FontWeight.BOLD,
                 color=COLOR_NEUTRAL,
@@ -90,7 +90,7 @@ class LanguageModal:
         # Header for All Languages
         content_controls.append(
             ft.Text(
-                t("language_modal.all_languages"),
+                t("flet.language_modal.all_languages"),
                 size=18,
                 weight=ft.FontWeight.BOLD,
                 color=COLOR_NEUTRAL,

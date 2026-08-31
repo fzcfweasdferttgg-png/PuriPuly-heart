@@ -83,11 +83,11 @@ class OverlaySectionMixin:
         )
 
     def _overlay_anchor_label_for(self, anchor: str) -> str:
-        return t(f"settings.overlay.calibration.anchor.{anchor}")
+        return t(f"flet.settings.overlay.calibration.anchor.{anchor}")
 
     def _overlay_text_scale_label_for(self, value: float) -> str:
         return t(
-            f"settings.overlay.calibration.text_scale.{self._overlay_text_scale_preset_key_for(value)}"
+            f"flet.settings.overlay.calibration.text_scale.{self._overlay_text_scale_preset_key_for(value)}"
         )
 
     def _overlay_text_scale_preset_key_for(self, value: float) -> str:
@@ -108,33 +108,33 @@ class OverlaySectionMixin:
     def _apply_locale_overlay(self) -> None:
         if not hasattr(self, '_overlay_target_title'):
             return
-        self._overlay_target_title.value = t("settings.overlay.caption_location")
-        self._overlay_translation_title.value = t("settings.overlay.show_translation")
-        self._overlay_peer_original_title.value = t("settings.overlay.show_peer_original")
-        self._desktop_overlay_size_title.value = t("settings.overlay.desktop.size.title")
+        self._overlay_target_title.value = t("flet.settings.overlay.caption_location")
+        self._overlay_translation_title.value = t("flet.settings.overlay.show_translation")
+        self._overlay_peer_original_title.value = t("flet.settings.overlay.show_peer_original")
+        self._desktop_overlay_size_title.value = t("flet.settings.overlay.desktop.size.title")
         self._desktop_overlay_background_alpha_title.value = t(
-            "settings.overlay.desktop.background_alpha.title"
+            "flet.settings.overlay.desktop.background_alpha.title"
         )
-        self._desktop_overlay_lock_title.value = t("settings.overlay.desktop.lock.title")
+        self._desktop_overlay_lock_title.value = t("flet.settings.overlay.desktop.lock.title")
         self._desktop_overlay_view_logs_action.content.value = t(
-            "settings.overlay.desktop.recovery.action.view_details"
+            "flet.settings.overlay.desktop.recovery.action.view_details"
         )
-        self._overlay_desktop_reset_title.value = t("settings.overlay.position_reset.desktop.title")
+        self._overlay_desktop_reset_title.value = t("flet.settings.overlay.position_reset.desktop.title")
         self._set_unit_card_value_text(
             self._overlay_desktop_reset_button,
-            t("settings.overlay.position_reset.action.desktop"),
+            t("flet.settings.overlay.position_reset.action.desktop"),
         )
         self._sync_desktop_overlay_status_control()
 
     def _build_overlay_toggle_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control]:
         self._overlay_translation_title = ft.Text(
-            t("settings.overlay.show_translation"),
+            t("flet.settings.overlay.show_translation"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._overlay_translation_button = self._build_clickable_text(
-            t("settings.option.on"),
+            t("flet.settings.option.on"),
             self._on_overlay_translation_click,
         )
         self._overlay_translation_card = self._wrap_unit_card(
@@ -143,13 +143,13 @@ class OverlaySectionMixin:
         )
 
         self._overlay_peer_original_title = ft.Text(
-            t("settings.overlay.show_peer_original"),
+            t("flet.settings.overlay.show_peer_original"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._overlay_peer_original_button = self._build_clickable_text(
-            t("settings.option.on"),
+            t("flet.settings.option.on"),
             self._on_overlay_peer_original_click,
         )
         self._overlay_peer_original_card = self._wrap_unit_card(
@@ -158,7 +158,7 @@ class OverlaySectionMixin:
         )
 
         self._overlay_target_title = ft.Text(
-            t("settings.overlay.caption_location"),
+            t("flet.settings.overlay.caption_location"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -179,13 +179,13 @@ class OverlaySectionMixin:
 
     def _build_desktop_overlay_widgets(self) -> tuple[ft.Control, ft.Control, ft.Control]:
         self._overlay_desktop_reset_title = ft.Text(
-            t("settings.overlay.position_reset.desktop.title"),
+            t("flet.settings.overlay.position_reset.desktop.title"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._overlay_desktop_reset_button = self._build_clickable_text(
-            t("settings.overlay.position_reset.action.desktop"),
+            t("flet.settings.overlay.position_reset.action.desktop"),
             self._on_desktop_overlay_position_reset,
             height=72,
             expand=False,
@@ -197,7 +197,7 @@ class OverlaySectionMixin:
         self._overlay_reset_title = self._overlay_vr_reset_title
 
         self._desktop_overlay_size_title = ft.Text(
-            t("settings.overlay.desktop.size.title"),
+            t("flet.settings.overlay.desktop.size.title"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -214,7 +214,7 @@ class OverlaySectionMixin:
         )
 
         self._desktop_overlay_background_alpha_title = ft.Text(
-            t("settings.overlay.desktop.background_alpha.title"),
+            t("flet.settings.overlay.desktop.background_alpha.title"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -250,7 +250,7 @@ class OverlaySectionMixin:
         )
 
         self._desktop_overlay_lock_title = ft.Text(
-            t("settings.overlay.desktop.lock.title"),
+            t("flet.settings.overlay.desktop.lock.title"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -267,7 +267,7 @@ class OverlaySectionMixin:
         )
 
         self._desktop_overlay_status_title = ft.Text(
-            t("settings.overlay.status.off"),
+            t("flet.settings.overlay.status.off"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -299,7 +299,7 @@ class OverlaySectionMixin:
         )
         self._desktop_overlay_primary_action.visible = False
         self._desktop_overlay_view_logs_action = self._build_clickable_text(
-            t("settings.overlay.desktop.recovery.action.view_details"),
+            t("flet.settings.overlay.desktop.recovery.action.view_details"),
             self._on_desktop_overlay_view_logs,
             size=16,
             max_lines=1,
@@ -361,7 +361,7 @@ class OverlaySectionMixin:
 
     def _overlay_target_label_for(self, target: object) -> str:
         normalized_target = self._normalized_overlay_target(target)
-        return t(f"settings.overlay.target.{normalized_target}")
+        return t(f"flet.settings.overlay.target.{normalized_target}")
 
     def _sync_overlay_target_control(self) -> None:
         self._set_unit_card_value_text(
@@ -403,7 +403,7 @@ class OverlaySectionMixin:
 
     def _desktop_overlay_size_label_for(self, size_preset: object) -> str:
         normalized = self._normalize_desktop_overlay_size_preset(size_preset)
-        return t(f"settings.overlay.desktop.size.option.{normalized}")
+        return t(f"flet.settings.overlay.desktop.size.option.{normalized}")
 
     def _current_desktop_overlay_size_preset(self) -> str:
         pending_size_preset = getattr(self, "_desktop_overlay_pending_size_preset", None)
@@ -424,9 +424,9 @@ class OverlaySectionMixin:
 
     def _desktop_overlay_lock_label_for(self, locked: bool) -> str:
         return t(
-            "settings.overlay.desktop.lock.value.locked"
+            "flet.settings.overlay.desktop.lock.value.locked"
             if locked
-            else "settings.overlay.desktop.lock.value.move"
+            else "flet.settings.overlay.desktop.lock.value.move"
         )
 
     def _current_desktop_overlay_locked(self) -> bool:
@@ -513,17 +513,17 @@ class OverlaySectionMixin:
         self._desktop_overlay_view_logs_action.disabled = False
 
         if state == "failed":
-            self._desktop_overlay_status_title.value = t("settings.overlay.desktop.status.failed")
+            self._desktop_overlay_status_title.value = t("flet.settings.overlay.desktop.status.failed")
             action_kind = self._desktop_overlay_failure_action_kind()
             self._desktop_overlay_reason_text.value = t(
-                f"settings.overlay.desktop.recovery.message.{action_kind}",
-                default=t("settings.overlay.desktop.recovery.message.retry"),
+                f"flet.settings.overlay.desktop.recovery.message.{action_kind}",
+                default=t("flet.settings.overlay.desktop.recovery.message.retry"),
             )
             self._desktop_overlay_reason_text.visible = True
             action_key = (
-                "settings.overlay.desktop.recovery.action.reopen"
+                "flet.settings.overlay.desktop.recovery.action.reopen"
                 if action_kind == "reopen"
-                else "settings.overlay.desktop.recovery.action.retry"
+                else "flet.settings.overlay.desktop.recovery.action.retry"
             )
             self._set_desktop_overlay_primary_action(
                 label_key=action_key,
@@ -533,9 +533,9 @@ class OverlaySectionMixin:
             self._desktop_overlay_view_logs_action.visible = True
         else:
             self._desktop_overlay_status_title.value = t(
-                "settings.overlay.status.stopping"
+                "flet.settings.overlay.status.stopping"
                 if state == "stopping"
-                else "settings.overlay.status.off"
+                else "flet.settings.overlay.status.off"
             )
             self._set_desktop_overlay_primary_action(
                 label_key=None,
@@ -545,7 +545,10 @@ class OverlaySectionMixin:
 
     def _on_overlay_target_click(self, e) -> None:
         _ = e
-        if not self.page or not self._settings:
+        try:
+            if not self.page or not self._settings:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = [
             OptionItem(
@@ -559,7 +562,7 @@ class OverlaySectionMixin:
         ]
         modal = SettingsModal(
             self.page,
-            t("settings.overlay.caption_location"),
+            t("flet.settings.overlay.caption_location"),
             options,
             self._on_overlay_target_selected,
             show_description=True,
@@ -580,7 +583,10 @@ class OverlaySectionMixin:
 
     def _on_desktop_overlay_size_click(self, e) -> None:
         _ = e
-        if not self.page or not self._settings or self._desktop_overlay_size_button.disabled:
+        try:
+            if not self.page or not self._settings or self._desktop_overlay_size_button.disabled:
+                return
+        except (AssertionError, RuntimeError):
             return
         options = [
             OptionItem(
@@ -591,7 +597,7 @@ class OverlaySectionMixin:
         ]
         modal = SettingsModal(
             self.page,
-            t("settings.overlay.desktop.size.title"),
+            t("flet.settings.overlay.desktop.size.title"),
             options,
             self._on_desktop_overlay_size_selected,
             show_description=False,
@@ -748,11 +754,11 @@ class OverlaySectionMixin:
         )
         self._set_unit_card_value_text(
             self._overlay_translation_button,
-            t("settings.option.on" if overlay_translation_enabled else "settings.option.off"),
+            t("flet.settings.option.on" if overlay_translation_enabled else "flet.settings.option.off"),
         )
         self._set_unit_card_value_text(
             self._overlay_peer_original_button,
-            t("settings.option.on" if overlay_peer_original_enabled else "settings.option.off"),
+            t("flet.settings.option.on" if overlay_peer_original_enabled else "flet.settings.option.off"),
         )
 
     def _sync_overlay_disabled_states(self) -> None:
@@ -783,9 +789,9 @@ class OverlaySectionMixin:
         self._set_unit_card_value_text(
             self._integrated_context_button,
             t(
-                "settings.context.integrated"
+                "flet.settings.context.integrated"
                 if integrated_context_enabled
-                else "settings.context.local"
+                else "flet.settings.context.local"
             ),
         )
         self._integrated_context_button.disabled = self._settings is None

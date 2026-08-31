@@ -281,12 +281,9 @@ class PeerChannelRuntime:
         async with self._lock:
             if self._is_superseded(target_generation):
                 return
-            if (
-                self._desired_active
-                and self._state == PeerChannelRuntimeState.RUNNING
-                and self._stt is not None
-            ):
-                return
+        # Always fault on terminal failure — the STT provider is broken.
+        # Previously this silently returned when desired_active+running+stt,
+        # leaving the peer channel in RUNNING state with a dead provider.
         await self._mark_faulted_if_current(target_generation, detach_provider=True)
 
     async def _mark_faulted_if_current(self, generation: int, *, detach_provider: bool) -> None:

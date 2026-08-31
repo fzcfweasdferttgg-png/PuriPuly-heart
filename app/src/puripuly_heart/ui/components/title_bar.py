@@ -27,7 +27,7 @@ class TitleBar(ft.Container):
 
         self._about_btn = ft.Container(
             content=ft.Text(
-                t("title_bar.about"),
+                t("flet.title_bar.about"),
                 size=13,
                 color=COLOR_NEUTRAL,
             ),
@@ -110,7 +110,7 @@ class TitleBar(ft.Container):
 
     def apply_locale(self) -> None:
         """Update translated text when locale changes."""
-        self._about_btn.content.value = t("title_bar.about")
+        self._about_btn.content.value = t("flet.title_bar.about")
 
     def _minimize(self, _):
         self._page.window.minimized = True

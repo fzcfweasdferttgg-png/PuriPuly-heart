@@ -60,7 +60,7 @@ class FallbackSectionMixin:
             _provider_options.append(ft.dropdown.Option(key=key, text=info.get("label", key)))
 
         self._fallback_openai_provider = ft.Dropdown(
-            label=t("settings.openai_compatible.provider"),
+            label=t("flet.settings.openai_compatible.provider"),
             options=_provider_options,
             value=_provider_options[0].key if _provider_options else None,
             border_radius=12,
@@ -73,7 +73,7 @@ class FallbackSectionMixin:
             on_select=self._on_fallback_provider_change,
         )
         self._fallback_openai_base_url = ft.TextField(
-            label=t("settings.openai_compatible.base_url"),
+            label=t("flet.settings.openai_compatible.base_url"),
             value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -88,8 +88,8 @@ class FallbackSectionMixin:
             on_submit=self._on_fallback_base_url_change_end,
         )
         self._fallback_openai_model = ft.TextField(
-            label=t("settings.openai_compatible.model"),
-            hint_text=t("settings.openai_compatible.model.hint"),
+            label=t("flet.settings.openai_compatible.model"),
+            hint_text=t("flet.settings.openai_compatible.model.hint"),
             value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -104,18 +104,18 @@ class FallbackSectionMixin:
         )
         self._fallback_openai_fetch_btn = ft.IconButton(
             icon=ft.Icons.REFRESH,
-            tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
+            tooltip=t("flet.settings.openai_compatible.fetch_models", default="Fetch models from API"),
             on_click=self._fetch_fallback_models,
         )
         self._fallback_openai_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.local_llm.test_connection", default="Test connection")),
+            content=ft.Text(t("flet.settings.local_llm.test_connection", default="Test connection")),
             on_click=self._test_fallback_openai_connection,
         )
         async def _verify_with_base_url(provider: str, key: str, **kwargs: object):
             return await on_verify(provider, key, base_url=self._fallback_openai_base_url.value or None)
 
         self._fallback_api_key = ApiKeyField(
-            "settings.backup_api_key",
+            "flet.settings.backup_api_key",
             "backup_api_key",
             "backup_openai_compatible",
             on_verify=_verify_with_base_url if on_verify else None,
@@ -209,11 +209,11 @@ class FallbackSectionMixin:
 
         modal = SettingsModal(
             self.page,
-            title=t("settings.openai_compatible.select_model", default="Select Model"),
+            title=t("flet.settings.openai_compatible.select_model", default="Select Model"),
             options=options,
             on_select=_on_model_selected,
             searchable=True,
-            search_hint=t("settings.filter", default="Filter..."),
+            search_hint=t("flet.settings.filter", default="Filter..."),
         )
         modal.open(current=current_value or model_ids[0])
 
@@ -237,21 +237,21 @@ class FallbackSectionMixin:
         except Exception as exc:
             logger.error("[TestConnection][Fallback] Failed: %s", exc)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
             return
 
         if status_code == 200:
             logger.info("[TestConnection][Fallback] OK (%d)", status_code)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
         elif status_code == 401:
             logger.info("[TestConnection][Fallback] 401 — needs API key")
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
         else:
             logger.warning("[TestConnection][Fallback] %d — %s", status_code, body)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _on_fallback_base_url_change_end(self, e) -> None:
         import logging
@@ -261,7 +261,7 @@ class FallbackSectionMixin:
         raw_value = (self._fallback_openai_base_url.value or "").strip()
         if not raw_value:
             self._fallback_openai_base_url.error = t(
-                "settings.openai_compatible.base_url.required", default="Base URL is required"
+                "flet.settings.openai_compatible.base_url.required", default="Base URL is required"
             )
             _update_control_if_mounted(self._fallback_openai_base_url)
             logging.getLogger(__name__).warning(
@@ -290,14 +290,14 @@ class FallbackSectionMixin:
         if not hasattr(self, '_fallback_api_key'):
             return
         self._fallback_api_key.apply_locale()
-        self._fallback_openai_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
-        self._fallback_openai_test_btn.content.value = t("settings.local_llm.test_connection", default="Test connection")
-        self._fallback_openai_provider.label = t("settings.openai_compatible.provider", default="Provider")
-        self._fallback_openai_base_url.label = t("settings.openai_compatible.base_url", default="Base URL")
-        self._fallback_openai_model.label = t("settings.openai_compatible.model", default="Model")
-        self._fallback_openai_model.hint_text = t("settings.openai_compatible.model.hint", default="Enter model name or click refresh")
-        self._fallback_openai_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
+        self._fallback_openai_title.value = t("flet.settings.backup_translation.connection", default="Backup Translation Settings")
+        self._fallback_openai_test_btn.content.value = t("flet.settings.local_llm.test_connection", default="Test connection")
+        self._fallback_openai_provider.label = t("flet.settings.openai_compatible.provider", default="Provider")
+        self._fallback_openai_base_url.label = t("flet.settings.openai_compatible.base_url", default="Base URL")
+        self._fallback_openai_model.label = t("flet.settings.openai_compatible.model", default="Model")
+        self._fallback_openai_model.hint_text = t("flet.settings.openai_compatible.model.hint", default="Enter model name or click refresh")
+        self._fallback_openai_fetch_btn.tooltip = t("flet.settings.openai_compatible.fetch_models", default="Fetch models from API")
         if self._fallback_openai_base_url.error:
             self._fallback_openai_base_url.error = t(
-                "settings.openai_compatible.base_url.required", default="Base URL is required"
+                "flet.settings.openai_compatible.base_url.required", default="Base URL is required"
             )

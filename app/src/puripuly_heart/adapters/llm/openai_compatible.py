@@ -75,7 +75,7 @@ def _build_system_prompt(
             source_language=source_language,
             target_language=target_language,
         )
-        if "{source_language}" in system_prompt
+        if "{source_language}" in system_prompt or "{target_language}" in system_prompt
         else system_prompt
     )
 

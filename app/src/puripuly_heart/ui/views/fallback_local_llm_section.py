@@ -56,7 +56,7 @@ class FallbackLocalLlmSectionMixin:
         show_snackbar,
     ) -> None:
         self._fallback_local_llm_base_url = ft.TextField(
-            label=t("settings.local_llm.base_url"),
+            label=t("flet.settings.local_llm.base_url"),
             value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -70,7 +70,7 @@ class FallbackLocalLlmSectionMixin:
             on_submit=self._on_fallback_local_llm_base_url_change_end,
         )
         self._fallback_local_llm_model = ft.TextField(
-            label=t("settings.local_llm.model"),
+            label=t("flet.settings.local_llm.model"),
             value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -85,16 +85,16 @@ class FallbackLocalLlmSectionMixin:
         )
         self._fallback_local_llm_fetch_btn = ft.IconButton(
             icon=ft.Icons.REFRESH,
-            tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
+            tooltip=t("flet.settings.openai_compatible.fetch_models", default="Fetch models from API"),
             on_click=self._fetch_fallback_local_llm_models,
         )
         self._fallback_local_llm_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.local_llm.test_connection", default="Test connection")),
+            content=ft.Text(t("flet.settings.local_llm.test_connection", default="Test connection")),
             on_click=self._test_fallback_local_llm_connection,
         )
 
         self._fallback_local_llm_api_key = ApiKeyField(
-            "settings.fallback_local_llm_api_key",
+            "flet.settings.fallback_local_llm_api_key",
             "fallback_local_llm_api_key",
             "fallback_local_llm",
             on_verify=None,
@@ -102,7 +102,7 @@ class FallbackLocalLlmSectionMixin:
             show_snackbar=show_snackbar,
             show_status=False,
         )
-        fallback_local_llm_api_key_description = t("settings.local_llm.api_key.description")
+        fallback_local_llm_api_key_description = t("flet.settings.local_llm.api_key.description")
         self._fallback_local_llm_api_key_helper = ft.Text(
             fallback_local_llm_api_key_description,
             size=15,
@@ -110,7 +110,7 @@ class FallbackLocalLlmSectionMixin:
             visible=bool(fallback_local_llm_api_key_description.strip()),
         )
         self._fallback_local_llm_extra_body = ft.TextField(
-            label=t("settings.local_llm.extra_body"),
+            label=t("flet.settings.local_llm.extra_body"),
             value="",
             multiline=True,
             min_lines=3,
@@ -127,7 +127,7 @@ class FallbackLocalLlmSectionMixin:
             on_submit=self._on_fallback_local_llm_extra_body_change_end,
         )
         self._fallback_local_llm_extra_body_helper = ft.Text(
-            t("settings.local_llm.extra_body.description"),
+            t("flet.settings.local_llm.extra_body.description"),
             size=15,
             color=COLOR_NEUTRAL,
         )
@@ -160,7 +160,7 @@ class FallbackLocalLlmSectionMixin:
         try:
             normalized = _normalize_local_llm_base_url(raw_value)
         except ValueError:
-            self._fallback_local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+            self._fallback_local_llm_base_url.error = t("flet.settings.local_llm.base_url.invalid")
             _update_control_if_mounted(self._fallback_local_llm_base_url)
             return
 
@@ -285,11 +285,11 @@ class FallbackLocalLlmSectionMixin:
 
         modal = SettingsModal(
             self.page,
-            title=t("settings.openai_compatible.select_model", default="Select Model"),
+            title=t("flet.settings.openai_compatible.select_model", default="Select Model"),
             options=options,
             on_select=_on_model_selected,
             searchable=True,
-            search_hint=t("settings.filter", default="Filter..."),
+            search_hint=t("flet.settings.filter", default="Filter..."),
         )
         modal.open(current=current_value or model_ids[0])
 
@@ -313,40 +313,40 @@ class FallbackLocalLlmSectionMixin:
         except Exception as exc:
             logger.error("[TestConnection][FallbackLocal] Failed: %s", exc)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
             return
 
         if status_code == 200:
             logger.info("[TestConnection][FallbackLocal] OK (%d)", status_code)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
         elif status_code == 401:
             logger.info("[TestConnection][FallbackLocal] 401 — needs API key")
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
         else:
             logger.warning("[TestConnection][FallbackLocal] %d — %s", status_code, body)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _apply_locale_fallback_local_llm(self) -> None:
         if not hasattr(self, '_fallback_local_llm_api_key'):
             return
         self._fallback_local_llm_api_key.apply_locale()
-        self._fallback_local_llm_title.value = t("settings.backup_translation.connection", default="Backup Translation Settings")
-        self._fallback_local_llm_test_btn.content.value = t("settings.local_llm.test_connection", default="Test connection")
-        self._fallback_local_llm_base_url.label = t("settings.local_llm.base_url", default="Base URL")
-        self._fallback_local_llm_model.label = t("settings.local_llm.model", default="Model")
-        self._fallback_local_llm_extra_body.label = t("settings.local_llm.extra_body", default="Extra Body")
-        self._fallback_local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description", default="")
-        self._fallback_local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
-        _fb_helper = t("settings.local_llm.api_key.description", default="")
+        self._fallback_local_llm_title.value = t("flet.settings.backup_translation.connection", default="Backup Translation Settings")
+        self._fallback_local_llm_test_btn.content.value = t("flet.settings.local_llm.test_connection", default="Test connection")
+        self._fallback_local_llm_base_url.label = t("flet.settings.local_llm.base_url", default="Base URL")
+        self._fallback_local_llm_model.label = t("flet.settings.local_llm.model", default="Model")
+        self._fallback_local_llm_extra_body.label = t("flet.settings.local_llm.extra_body", default="Extra Body")
+        self._fallback_local_llm_extra_body_helper.value = t("flet.settings.local_llm.extra_body.description", default="")
+        self._fallback_local_llm_fetch_btn.tooltip = t("flet.settings.openai_compatible.fetch_models", default="Fetch models from API")
+        _fb_helper = t("flet.settings.local_llm.api_key.description", default="")
         self._fallback_local_llm_api_key_helper.value = _fb_helper
         self._fallback_local_llm_api_key_helper.visible = bool(_fb_helper.strip())
         if self._fallback_local_llm_base_url.error:
-            self._fallback_local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+            self._fallback_local_llm_base_url.error = t("flet.settings.local_llm.base_url.invalid")
         if self._fallback_local_llm_model.error:
-            self._fallback_local_llm_model.error = t("settings.local_llm.model.required")
+            self._fallback_local_llm_model.error = t("flet.settings.local_llm.model.required")
         if self._fallback_local_llm_extra_body_error.visible:
             fb_error_key = self._fallback_local_llm_extra_body_error_key
             fb_error_kwargs = self._fallback_local_llm_extra_body_error_kwargs

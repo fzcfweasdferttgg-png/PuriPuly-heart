@@ -30,17 +30,17 @@ class AudioSettings(ft.Column):
         on_change: Callable[[], None] | None = None,
     ):
         self._on_change = on_change
-        self._default_option_label = t("settings.default_option")
+        self._default_option_label = t("flet.settings.default_option")
 
         # Current selections
         self._current_host_api = ""
         self._current_microphone = ""
         self._current_desktop_output_device = ""
 
-        self._host_api_label = self._build_section_label(t("settings.audio_host_api"))
-        self._microphone_label = self._build_section_label(t("settings.microphone"))
+        self._host_api_label = self._build_section_label(t("flet.settings.audio_host_api"))
+        self._microphone_label = self._build_section_label(t("flet.settings.microphone"))
         self._desktop_output_label = self._build_section_label(
-            t("settings.desktop_audio.output_device")
+            t("flet.settings.desktop_audio.output_device")
         )
 
         # Clickable text for Host API
@@ -105,12 +105,12 @@ class AudioSettings(ft.Column):
             return self._default_option_label
 
         label_key_by_value = {
-            WINDOWS_MME_HOST_API: "settings.audio_host_api.option.windows_mme",
-            WINDOWS_WASAPI_HOST_API: "settings.audio_host_api.option.windows_wasapi",
+            WINDOWS_MME_HOST_API: "flet.settings.audio_host_api.option.windows_mme",
+            WINDOWS_WASAPI_HOST_API: "flet.settings.audio_host_api.option.windows_wasapi",
             WINDOWS_WASAPI_COMPATIBILITY_HOST_API: (
-                "settings.audio_host_api.option.windows_wasapi_compatibility"
+                "flet.settings.audio_host_api.option.windows_wasapi_compatibility"
             ),
-            WINDOWS_DIRECTSOUND_HOST_API: "settings.audio_host_api.option.windows_directsound",
+            WINDOWS_DIRECTSOUND_HOST_API: "flet.settings.audio_host_api.option.windows_directsound",
         }
         label_key = label_key_by_value.get(host_api)
         if label_key is None:
@@ -296,7 +296,7 @@ class AudioSettings(ft.Column):
         options = self._get_host_api_options()
         modal = SettingsModal(
             self.page,
-            t("settings.audio_host_api"),
+            t("flet.settings.audio_host_api"),
             options,
             self._on_host_api_selected,
             show_description=False,
@@ -320,7 +320,7 @@ class AudioSettings(ft.Column):
         options = self._get_microphone_options()
         modal = SettingsModal(
             self.page,
-            t("settings.microphone"),
+            t("flet.settings.microphone"),
             options,
             self._on_mic_selected,
             show_description=False,
@@ -342,7 +342,7 @@ class AudioSettings(ft.Column):
         options = self._get_desktop_output_options()
         modal = SettingsModal(
             self.page,
-            t("settings.desktop_audio.output_device"),
+            t("flet.settings.desktop_audio.output_device"),
             options,
             self._on_desktop_output_selected,
             show_description=False,
@@ -359,10 +359,10 @@ class AudioSettings(ft.Column):
 
     def apply_locale(self) -> None:
         """Update labels when locale changes."""
-        self._default_option_label = t("settings.default_option")
-        self._host_api_label.value = t("settings.audio_host_api")
-        self._microphone_label.value = t("settings.microphone")
-        self._desktop_output_label.value = t("settings.desktop_audio.output_device")
+        self._default_option_label = t("flet.settings.default_option")
+        self._host_api_label.value = t("flet.settings.audio_host_api")
+        self._microphone_label.value = t("flet.settings.microphone")
+        self._desktop_output_label.value = t("flet.settings.desktop_audio.output_device")
 
         self._host_api_text.content.value = self._host_api_label_for(self._current_host_api)
         self._mic_text.content.value = self._current_microphone or self._default_option_label

@@ -4,6 +4,7 @@ import ast
 import asyncio
 import contextlib
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from puripuly_heart.ports.logging import SessionLogger
 from puripuly_heart.domain.models import Translation
@@ -93,7 +96,7 @@ def _assert_extra_body_is_safe(extra_body: Mapping[str, object]) -> None:
 def _build_system_prompt(*, system_prompt: str, source_language: str, target_language: str) -> str:
     return (
         system_prompt.format(source_language=source_language, target_language=target_language)
-        if "{source_language}" in system_prompt
+        if "{source_language}" in system_prompt or "{target_language}" in system_prompt
         else system_prompt
     )
 
@@ -495,7 +498,7 @@ class HttpxLocalOpenAIClient:
         if not isinstance(choices, list) or not choices:
             raise RuntimeError("Local LLM response did not contain choices")
         if _has_length_finish_reason(data):
-            raise RuntimeError("Local LLM response was truncated by max_tokens limit")
+            logger.warning("[LocalLLM] Response truncated by max_tokens (finish_reason=length) — returning partial result")
         first = choices[0]
         if not isinstance(first, dict):
             raise RuntimeError("Local LLM response choice was malformed")

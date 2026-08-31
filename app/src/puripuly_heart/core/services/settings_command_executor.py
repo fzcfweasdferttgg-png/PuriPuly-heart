@@ -194,7 +194,9 @@ class SettingsCommandExecutor:
 
     def _apply_hangover(self, cmd: ChangeHangover) -> CommandResult:
         value = max(0, cmd.hangover_ms)
-        if cmd.channel == "peer":
+        if cmd.channel == "self":
+            self._settings.stt.low_latency_vad_hangover_ms = value
+        elif cmd.channel == "peer":
             self._settings.desktop_audio.vad_hangover_ms = value
         return CommandResult(success=True, settings=self._settings)
 
@@ -243,7 +245,7 @@ class SettingsCommandExecutor:
         self, cmd: ChangeOverlayDesktopBackgroundAlpha
     ) -> CommandResult:
         alpha = max(0.0, min(1.0, cmd.alpha))
-        self._settings.overlay.desktop_flet.background_alpha = alpha
+        self._settings.overlay.desktop_flet.visual.background_alpha = alpha
         return CommandResult(success=True, settings=self._settings)
 
     def _apply_overlay_translation(self, cmd: ChangeOverlayTranslation) -> CommandResult:
@@ -419,7 +421,8 @@ class SettingsCommandExecutor:
         draft = draft_svc._ensure_provider_settings_draft()
         draft.provider.llm = LLMProviderName(cmd.provider)
         draft.translation.model = TranslationModel(cmd.provider)
-        assert self._materialize_fn is not None, "materialize_fn must be injected"
+        if self._materialize_fn is None:
+            return CommandResult(success=False, error="materialize_fn not injected")
         self._materialize_fn(draft)
         draft_svc.has_provider_changes = True
         return CommandResult(success=True, settings=self._settings)

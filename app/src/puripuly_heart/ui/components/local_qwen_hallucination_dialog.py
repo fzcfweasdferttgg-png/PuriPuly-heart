@@ -15,8 +15,8 @@ from puripuly_heart.domain.i18n import t
 
 class LocalQwenHallucinationDialog:
     action_labels = [
-        "local_qwen_hallucination.close",
-        "local_qwen_hallucination.open_guide",
+        "flet.local_qwen_hallucination.close",
+        "flet.local_qwen_hallucination.open_guide",
     ]
 
     def __init__(
@@ -35,10 +35,10 @@ class LocalQwenHallucinationDialog:
     def open(self) -> None:
         result = open_warm_document_dialog(
             self._page,
-            body_paragraphs=split_body_paragraphs(t("local_qwen_hallucination.body")),
-            primary_label=t("local_qwen_hallucination.open_guide"),
+            body_paragraphs=split_body_paragraphs(t("flet.local_qwen_hallucination.body")),
+            primary_label=t("flet.local_qwen_hallucination.open_guide"),
             primary_action=self._on_open_guide,
-            secondary_label=t("local_qwen_hallucination.close"),
+            secondary_label=t("flet.local_qwen_hallucination.close"),
             secondary_action=self._on_close,
             glow_factory=create_glow_stack,
         )

@@ -95,7 +95,7 @@ class SecretsSectionMixin:
         stripped = value.strip()
         if not self._write_secret_value(key, stripped):
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.api_key.save_failed"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.api_key.save_failed"), ft.Colors.RED_400)
             return
         self._local_llm_api_key.value = stripped
         if self.on_local_llm_secret_changed:

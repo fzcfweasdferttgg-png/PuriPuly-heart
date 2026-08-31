@@ -4,6 +4,14 @@ Module-level mutable state (_current_locale, _bundles, _locale_cache).
 Not thread-safe — safe only in single-threaded asyncio context.
 Cache invalidation: set_locale() clears _locale_cache; _bundles grows
 monotonically (never evicted).
+
+Bundle structure:
+    data/i18n/
+    ├── flet/   ← Flet GUI keys (flet.* prefix) + helper keys (unprefixed)
+    └── tk/     ← Tkinter GUI keys (tk.* prefix) + helper keys (unprefixed)
+
+Helper keys (source.*, locale.*, language.*, provider.*) are shared
+between both bundles and stay unprefixed.
 """
 from __future__ import annotations
 
@@ -17,6 +25,7 @@ from puripuly_heart.domain.language import get_language_info
 logger = logging.getLogger(__name__)
 
 _I18N_DIR = "data/i18n"
+_SUBDIRS = ("flet", "tk")
 _DEFAULT_LOCALE = "en"
 _FALLBACK_LOCALE = "en"
 _LOCALE_DISPLAY_ORDER = (
@@ -28,6 +37,7 @@ _LOCALE_DISPLAY_ORDER = (
 _LOCALE_DISPLAY_RANK = {code: index for index, code in enumerate(_LOCALE_DISPLAY_ORDER)}
 
 _current_locale = _DEFAULT_LOCALE
+_gui_mode = "flet"  # "flet" or "tk"
 _bundles: dict[str, dict[str, str]] = {}
 _locale_cache: tuple[str, ...] | None = None
 
@@ -40,22 +50,25 @@ def _locale_display_sort_key(locale_code: str) -> tuple[int, str]:
 
 
 def _load_bundle(locale: str) -> dict[str, str]:
+    """Load and merge all sub-bundles for a locale."""
     if locale in _bundles:
         return _bundles[locale]
 
     data: dict[str, str] = {}
-    try:
-        bundle_path = resources.files("puripuly_heart").joinpath(f"{_I18N_DIR}/{locale}.json")
-        if bundle_path.is_file():
-            raw = json.loads(bundle_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                data = {
-                    str(key): value
-                    for key, value in raw.items()
-                    if isinstance(key, str) and isinstance(value, str)
-                }
-    except Exception as exc:
-        logger.warning("Failed to load i18n bundle for locale '%s': %s", locale, exc)
+    base = resources.files("puripuly_heart")
+    for subdir in _SUBDIRS:
+        try:
+            bundle_path = base.joinpath(f"{_I18N_DIR}/{subdir}/{locale}.json")
+            if bundle_path.is_file():
+                raw = json.loads(bundle_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    data.update({
+                        str(key): value
+                        for key, value in raw.items()
+                        if isinstance(key, str) and isinstance(value, str)
+                    })
+        except Exception as exc:
+            logger.warning("Failed to load i18n %s/%s: %s", subdir, locale, exc)
 
     _bundles[locale] = data
     return data
@@ -66,24 +79,21 @@ def available_locales() -> tuple[str, ...]:
     if _locale_cache is not None:
         return _locale_cache
 
-    locales: list[str] = []
-    try:
-        base = resources.files("puripuly_heart").joinpath(_I18N_DIR)
-        for entry in base.iterdir():
-            if not entry.is_file():
-                continue
-            name = entry.name
-            if name.endswith(".json"):
-                locales.append(name[:-5])
-    except Exception:
-        locales = []
+    locales: set[str] = set()
+    base = resources.files("puripuly_heart").joinpath(_I18N_DIR)
+    for subdir in _SUBDIRS:
+        try:
+            sub = base.joinpath(subdir)
+            for entry in sub.iterdir():
+                if entry.is_file() and entry.name.endswith(".json"):
+                    locales.add(entry.name[:-5])
+        except Exception:
+            pass
 
     if not locales:
-        locales = [_DEFAULT_LOCALE]
+        locales = {_DEFAULT_LOCALE}
 
-    locales = sorted(locales, key=_locale_display_sort_key)
-
-    _locale_cache = tuple(locales)
+    _locale_cache = tuple(sorted(locales, key=_locale_display_sort_key))
     return _locale_cache
 
 
@@ -101,7 +111,9 @@ def resolve_locale(locale: str | None) -> str:
 
 def set_locale(locale: str | None) -> str:
     global _current_locale
+    old_locale = _current_locale
     _current_locale = resolve_locale(locale)
+    logger.info("[i18n] set_locale: '%s' → '%s'", old_locale, _current_locale)
     _load_bundle(_current_locale)
     _load_bundle(_FALLBACK_LOCALE)
     return _current_locale
@@ -109,6 +121,22 @@ def set_locale(locale: str | None) -> str:
 
 def get_locale() -> str:
     return _current_locale
+
+
+def set_gui(mode: str) -> None:
+    """Set the active GUI mode ('flet' or 'tk').
+
+    Call this once at startup before any t() calls.
+    """
+    global _gui_mode
+    if mode not in _SUBDIRS:
+        logger.warning("Unknown GUI mode '%s', keeping '%s'", mode, _gui_mode)
+        return
+    _gui_mode = mode
+
+
+def get_gui() -> str:
+    return _gui_mode
 
 
 def t(key: str, *, default: str | None = None, **params: Any) -> str:

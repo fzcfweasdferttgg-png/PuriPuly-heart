@@ -253,7 +253,7 @@ class UIEventBridge:
 
         if event.type == UIEventType.ERROR:
             payload = event.payload
-            text = str(payload) if payload is not None else t("error.unknown")
+            text = str(payload) if payload is not None else t("flet.error.unknown")
             controller = getattr(self.app, "controller", None)
             try:
                 if self.runtime_logging is not None:

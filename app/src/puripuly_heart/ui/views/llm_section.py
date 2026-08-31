@@ -172,7 +172,7 @@ class LlmSectionMixin:
         try:
             normalized = _normalize_local_llm_base_url(raw_value)
         except ValueError:
-            self._local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+            self._local_llm_base_url.error = t("flet.settings.local_llm.base_url.invalid")
             _update_control_if_mounted(self._local_llm_base_url)
             return
 
@@ -327,11 +327,11 @@ class LlmSectionMixin:
 
         modal = SettingsModal(
             self.page,
-            title=t("settings.openai_compatible.select_model", default="Select Model"),
+            title=t("flet.settings.openai_compatible.select_model", default="Select Model"),
             options=options,
             on_select=_on_model_selected,
             searchable=True,
-            search_hint=t("settings.filter", default="Filter..."),
+            search_hint=t("flet.settings.filter", default="Filter..."),
         )
         modal.open(current=current_value or model_ids[0])
 
@@ -363,21 +363,21 @@ class LlmSectionMixin:
         except Exception as exc:
             logger.error("[TestConnection] Failed: %s", exc)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
             return
 
         if status_code == 200:
             logger.info("[TestConnection] OK (%d)", status_code)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
         elif status_code == 401:
             logger.info("[TestConnection] 401 — server reachable but needs API key")
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
         else:
             logger.warning("[TestConnection] %d — %s", status_code, body)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _test_openai_compatible_connection(self, e) -> None:
         import logging
@@ -399,21 +399,21 @@ class LlmSectionMixin:
         except Exception as exc:
             logger.error("[TestConnection][OpenAI] Failed: %s", exc)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.failed", default="Connection failed"), ft.Colors.RED_400)
             return
 
         if status_code == 200:
             logger.info("[TestConnection][OpenAI] OK (%d)", status_code)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.ok", default="Server is responding"), ft.Colors.GREEN_400)
         elif status_code == 401:
             logger.info("[TestConnection][OpenAI] 401 — needs API key")
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.needs_key", default="Server reachable, API key required"), ft.Colors.ORANGE_400)
         else:
             logger.warning("[TestConnection][OpenAI] %d — %s", status_code, body)
             if self.show_snackbar:
-                self.show_snackbar(t("settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
+                self.show_snackbar(t("flet.settings.local_llm.test_connection.error", default=f"Server returned {status_code}"), ft.Colors.RED_400)
 
     def _on_openai_compatible_base_url_change_end(self, e) -> None:
         import logging
@@ -424,7 +424,7 @@ class LlmSectionMixin:
         raw_value = (self._openai_compatible_base_url.value or "").strip()
         if not raw_value:
             self._openai_compatible_base_url.error = t(
-                "settings.openai_compatible.base_url.required", default="Base URL is required"
+                "flet.settings.openai_compatible.base_url.required", default="Base URL is required"
             )
             _update_control_if_mounted(self._openai_compatible_base_url)
             logger.warning(
@@ -462,7 +462,7 @@ class LlmSectionMixin:
             OptionItem(
                 value=model.value,
                 label=self._translation_model_display_label(model),
-                description=t(f"settings.translation_model.{model.value}.description", default=""),
+                description=t(f"flet.settings.translation_model.{model.value}.description", default=""),
                 section=section,
             )
             for model, section in model_sections
@@ -475,7 +475,7 @@ class LlmSectionMixin:
         )
         modal = SettingsModal(
             self.page,
-            t("settings.section.translation"),
+            t("flet.settings.section.translation"),
             options,
             self._on_llm_selected,
             show_description=True,
@@ -595,13 +595,13 @@ class LlmSectionMixin:
             self._on_llm_click,
         )
         self._trans_title = ft.Text(
-            t("settings.section.translation"),
+            t("flet.settings.section.translation"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._translation_provider_label = ft.Text(
-            t("settings.shared_translation_provider"), size=16, color=COLOR_ON_BACKGROUND
+            t("flet.settings.shared_translation_provider"), size=16, color=COLOR_ON_BACKGROUND
         )
         trans_card = self._wrap_unit_card(
             title=self._trans_title,
@@ -610,7 +610,7 @@ class LlmSectionMixin:
 
         # API Key for Translation card (inline)
         self._openai_compatible_key = ApiKeyField(
-            "settings.openai_compatible_api_key",
+            "flet.settings.openai_compatible_api_key",
             "openai_compatible_api_key",
             "openai_compatible",
             on_verify=self._verify_key,
@@ -628,13 +628,13 @@ class LlmSectionMixin:
     # _local_llm_api_key is an ApiKeyField (with verify/save/show_snackbar callbacks).
     def _build_local_llm_widgets(self) -> ft.Control:
         self._local_llm_connection_title = ft.Text(
-            t("settings.openai_compatible.connection", default="Translation Settings"),
+            t("flet.settings.openai_compatible.connection", default="Translation Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._local_llm_base_url = ft.TextField(
-            label=t("settings.local_llm.base_url"),
+            label=t("flet.settings.local_llm.base_url"),
             value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -648,7 +648,7 @@ class LlmSectionMixin:
             on_submit=self._on_local_llm_base_url_change_end,
         )
         self._local_llm_model = ft.TextField(
-            label=t("settings.local_llm.model"),
+            label=t("flet.settings.local_llm.model"),
             value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -663,15 +663,15 @@ class LlmSectionMixin:
         )
         self._local_llm_fetch_btn = ft.IconButton(
             icon=ft.Icons.REFRESH,
-            tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
+            tooltip=t("flet.settings.openai_compatible.fetch_models", default="Fetch models from API"),
             on_click=self._fetch_local_llm_models,
         )
         self._local_llm_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.local_llm.test_connection", default="Test connection")),
+            content=ft.Text(t("flet.settings.local_llm.test_connection", default="Test connection")),
             on_click=self._test_local_llm_connection,
         )
         self._local_llm_api_key = ApiKeyField(
-            "settings.local_llm.api_key",
+            "flet.settings.local_llm.api_key",
             "local_llm_api_key",
             "local_llm",
             on_verify=None,
@@ -681,7 +681,7 @@ class LlmSectionMixin:
             ),
             show_status=False,
         )
-        local_llm_api_key_description = t("settings.local_llm.api_key.description")
+        local_llm_api_key_description = t("flet.settings.local_llm.api_key.description")
         self._local_llm_api_key_helper = ft.Text(
             local_llm_api_key_description,
             size=15,
@@ -689,7 +689,7 @@ class LlmSectionMixin:
             visible=bool(local_llm_api_key_description.strip()),
         )
         self._local_llm_extra_body = ft.TextField(
-            label=t("settings.local_llm.extra_body"),
+            label=t("flet.settings.local_llm.extra_body"),
             value=json.dumps({"reasoning_effort": "none"}, ensure_ascii=False, indent=2),
             multiline=True,
             min_lines=3,
@@ -706,7 +706,7 @@ class LlmSectionMixin:
             on_submit=self._on_local_llm_extra_body_change_end,
         )
         self._local_llm_extra_body_helper = ft.Text(
-            t("settings.local_llm.extra_body.description"),
+            t("flet.settings.local_llm.extra_body.description"),
             size=15,
             color=COLOR_NEUTRAL,
         )
@@ -744,7 +744,7 @@ class LlmSectionMixin:
     # _openai_compatible_key is an ApiKeyField with base_url_getter lambda.
     def _build_openai_compat_widgets(self) -> ft.Control:
         self._openai_compatible_title = ft.Text(
-            t("settings.openai_compatible.connection", default="Translation Provider Settings"),
+            t("flet.settings.openai_compatible.connection", default="Translation Provider Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -755,7 +755,7 @@ class LlmSectionMixin:
         for key, info in _providers.items():
             _provider_options.append(ft.dropdown.Option(key=key, text=info.get("label", key)))
         self._openai_compatible_provider = ft.Dropdown(
-            label=t("settings.openai_compatible.provider", default="Provider"),
+            label=t("flet.settings.openai_compatible.provider", default="Provider"),
             options=_provider_options,
             value=_provider_options[0].key if _provider_options else None,
             border_radius=12,
@@ -768,7 +768,7 @@ class LlmSectionMixin:
             on_select=self._on_openai_compatible_provider_change,
         )
         self._openai_compatible_base_url = ft.TextField(
-            label=t("settings.openai_compatible.base_url", default="Base URL"),
+            label=t("flet.settings.openai_compatible.base_url", default="Base URL"),
             value="https://api.openai.com/v1",
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -782,8 +782,8 @@ class LlmSectionMixin:
             on_submit=self._on_openai_compatible_base_url_change_end,
         )
         self._openai_compatible_model = ft.TextField(
-            label=t("settings.openai_compatible.model", default="Model"),
-            hint_text=t("settings.openai_compatible.model.hint", default="Enter model name or click refresh"),
+            label=t("flet.settings.openai_compatible.model", default="Model"),
+            hint_text=t("flet.settings.openai_compatible.model.hint", default="Enter model name or click refresh"),
             value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
@@ -798,11 +798,11 @@ class LlmSectionMixin:
         )
         self._openai_compatible_fetch_btn = ft.IconButton(
             icon=ft.Icons.REFRESH,
-            tooltip=t("settings.openai_compatible.fetch_models", default="Fetch models from API"),
+            tooltip=t("flet.settings.openai_compatible.fetch_models", default="Fetch models from API"),
             on_click=self._fetch_models,
         )
         self._openai_compatible_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.local_llm.test_connection", default="Test connection")),
+            content=ft.Text(t("flet.settings.local_llm.test_connection", default="Test connection")),
             on_click=self._test_openai_compatible_connection,
         )
         self._translation_openai_card = self._wrap_card(
@@ -833,34 +833,34 @@ class LlmSectionMixin:
         if not hasattr(self, '_local_llm_connection_title'):
             return
         # Translation section labels (owned by LlmSectionMixin)
-        self._trans_title.value = t("settings.section.translation")
-        self._translation_provider_label.value = t("settings.shared_translation_provider")
+        self._trans_title.value = t("flet.settings.section.translation")
+        self._translation_provider_label.value = t("flet.settings.shared_translation_provider")
         # Local LLM labels
-        self._local_llm_connection_title.value = t("settings.openai_compatible.connection", default="Translation Settings")
-        self._local_llm_base_url.label = t("settings.local_llm.base_url")
-        self._local_llm_model.label = t("settings.local_llm.model")
-        self._local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
-        self._local_llm_test_btn.content.value = t("settings.local_llm.test_connection", default="Test connection")
-        self._openai_compatible_test_btn.content.value = t("settings.local_llm.test_connection", default="Test connection")
+        self._local_llm_connection_title.value = t("flet.settings.openai_compatible.connection", default="Translation Settings")
+        self._local_llm_base_url.label = t("flet.settings.local_llm.base_url")
+        self._local_llm_model.label = t("flet.settings.local_llm.model")
+        self._local_llm_fetch_btn.tooltip = t("flet.settings.openai_compatible.fetch_models", default="Fetch models from API")
+        self._local_llm_test_btn.content.value = t("flet.settings.local_llm.test_connection", default="Test connection")
+        self._openai_compatible_test_btn.content.value = t("flet.settings.local_llm.test_connection", default="Test connection")
         self._local_llm_api_key.apply_locale()
-        local_llm_api_key_description = t("settings.local_llm.api_key.description")
+        local_llm_api_key_description = t("flet.settings.local_llm.api_key.description")
         self._local_llm_api_key_helper.value = local_llm_api_key_description
         self._local_llm_api_key_helper.visible = bool(local_llm_api_key_description.strip())
-        self._local_llm_extra_body.label = t("settings.local_llm.extra_body")
-        self._local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description")
+        self._local_llm_extra_body.label = t("flet.settings.local_llm.extra_body")
+        self._local_llm_extra_body_helper.value = t("flet.settings.local_llm.extra_body.description")
         # Translation OpenAI-compatible labels
-        self._openai_compatible_title.value = t("settings.openai_compatible.connection", default="Translation Provider Settings")
-        self._openai_compatible_provider.label = t("settings.openai_compatible.provider", default="Provider")
-        self._openai_compatible_base_url.label = t("settings.openai_compatible.base_url", default="Base URL")
-        self._openai_compatible_model.label = t("settings.openai_compatible.model", default="Model")
-        self._openai_compatible_model.hint_text = t("settings.openai_compatible.model.hint", default="Enter model name or click refresh")
-        self._openai_compatible_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models", default="Fetch models from API")
+        self._openai_compatible_title.value = t("flet.settings.openai_compatible.connection", default="Translation Provider Settings")
+        self._openai_compatible_provider.label = t("flet.settings.openai_compatible.provider", default="Provider")
+        self._openai_compatible_base_url.label = t("flet.settings.openai_compatible.base_url", default="Base URL")
+        self._openai_compatible_model.label = t("flet.settings.openai_compatible.model", default="Model")
+        self._openai_compatible_model.hint_text = t("flet.settings.openai_compatible.model.hint", default="Enter model name or click refresh")
+        self._openai_compatible_fetch_btn.tooltip = t("flet.settings.openai_compatible.fetch_models", default="Fetch models from API")
         self._openai_compatible_key.apply_locale()
         # Error texts
         if self._local_llm_base_url.error:
-            self._local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+            self._local_llm_base_url.error = t("flet.settings.local_llm.base_url.invalid")
         if self._local_llm_model.error:
-            self._local_llm_model.error = t("settings.local_llm.model.required")
+            self._local_llm_model.error = t("flet.settings.local_llm.model.required")
         if self._local_llm_extra_body_error.visible:
             error_key = self._local_llm_extra_body_error_key
             error_kwargs = self._local_llm_extra_body_error_kwargs

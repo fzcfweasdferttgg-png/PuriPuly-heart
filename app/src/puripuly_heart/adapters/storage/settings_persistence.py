@@ -42,17 +42,36 @@ def save_settings(path: Path, settings: AppSettings) -> None:
 
 
 def load_settings(path: Path) -> AppSettings:
-    """Load AppSettings from JSON file, with migration if needed."""
+    """Load AppSettings from JSON file, with migration if needed.
+
+    Returns default settings if the file is corrupted or unreadable.
+    """
     from puripuly_heart.config.settings.base import (
         _coerce_int,
         _migrate_settings_dict,
         from_dict,
     )
 
-    raw_text = path.read_text(encoding="utf-8")
-    raw = json.loads(raw_text)
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+        raw = json.loads(raw_text)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "[Settings] Failed to read settings file %s: %s — using defaults",
+            path,
+            exc,
+        )
+        from puripuly_heart.config.settings.base import AppSettings
+        return AppSettings()
+
     if not isinstance(raw, dict):
-        raise ValueError("settings file must contain a JSON object")
+        logger.warning(
+            "[Settings] Settings file %s is not a JSON object — using defaults",
+            path,
+        )
+        from puripuly_heart.config.settings.base import AppSettings
+        return AppSettings()
+
     raw_version = _coerce_int(raw.get("settings_version"), 1)
     if raw_version < 1:
         raw_version = 1

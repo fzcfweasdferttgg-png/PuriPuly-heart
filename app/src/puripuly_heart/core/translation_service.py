@@ -165,9 +165,11 @@ class TranslationService:
             timestamp=timestamp,
             source_language=self._source_language_for(runtime),
             target_language=self._target_language_for(runtime),
-            # Must match ContextResolver.local_max_entries — storing more wastes
-            # memory because local mode caps retrieval at that count.
-            max_entries=3,
+            # Must match ContextResolver.integrated_max_entries (4) so that
+            # integrated mode has enough entries when only one channel is active.
+            # Local mode caps retrieval at local_max_entries (3), so storing 4
+            # wastes only one entry — acceptable trade-off for correctness.
+            max_entries=4,
         )
 
     def normalize_translation(

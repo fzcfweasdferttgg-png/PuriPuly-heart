@@ -29,7 +29,7 @@ from puripuly_heart.ui.components.microphone_test_dialog import MicrophoneTestDi
 from puripuly_heart.ui.components.title_bar import TitleBar
 from puripuly_heart.app.services.gui_controller import FletGuiController
 from puripuly_heart.ui.fonts import font_for_language, register_fonts
-from puripuly_heart.domain.i18n import get_locale, set_locale, t
+from puripuly_heart.domain.i18n import get_locale, set_gui, set_locale, t
 from puripuly_heart.ui.theme import COLOR_BACKGROUND, get_app_theme
 from puripuly_heart.ui.views.about import AboutView
 from puripuly_heart.ui.views.dashboard import DashboardView
@@ -124,7 +124,7 @@ class TranslatorApp(
         self._wire_callbacks()
 
     def _setup_page(self):
-        self.page.title = t("app.title")
+        self.page.title = t("flet.app.title")
         self.page.theme_mode = ft.ThemeMode.LIGHT
         register_fonts(self.page)
         self.page.theme = get_app_theme(font_family=font_for_language(get_locale()))
@@ -147,7 +147,8 @@ class TranslatorApp(
         except Exception as exc:
             logger.warning("[UI] Failed to load initial settings: %s", exc)
             _initial_settings = None
-        # Set locale BEFORE creating SettingsView so t() returns translated labels
+        # Set GUI mode and locale BEFORE creating SettingsView so t() returns translated labels
+        set_gui("flet")
         if _initial_settings is not None:
             set_locale(_initial_settings.ui.locale)
         self.view_settings = SettingsView(
@@ -206,9 +207,9 @@ class TranslatorApp(
     # contract to BOTH view_settings and view_dashboard.
     # If you move this to a mixin, it must still reach all 5 targets.
     def apply_locale(self) -> None:
-        self.page.title = t("app.title")
+        self.page.title = t("flet.app.title")
         self.page.theme = get_app_theme(font_family=font_for_language(get_locale()))
-        self.title_bar.set_title(t("app.title"))
+        self.title_bar.set_title(t("flet.app.title"))
         self.title_bar.apply_locale()
         self.view_dashboard.apply_locale()
         self.view_settings.apply_locale()

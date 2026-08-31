@@ -55,13 +55,13 @@ class AudioSectionMixin:
 
         # -- Host API --
         self._audio_host_api_title = ft.Text(
-            t("settings.audio_host_api"),
+            t("flet.settings.audio_host_api"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._audio_host_api_text = self._build_clickable_text(
-            t("settings.default_option"),
+            t("flet.settings.default_option"),
             self._on_mic_host_api_click,
         )
         host_api_card = self._wrap_unit_card(
@@ -71,13 +71,13 @@ class AudioSectionMixin:
 
         # -- Microphone Audio --
         self._mic_audio_title = ft.Text(
-            t("settings.section.microphone_audio"),
+            t("flet.settings.section.microphone_audio"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._mic_audio_text = self._build_clickable_text(
-            t("settings.default_option"),
+            t("flet.settings.default_option"),
             self._on_mic_audio_click,
         )
         mic_audio_card = self._wrap_unit_card(
@@ -87,13 +87,13 @@ class AudioSectionMixin:
 
         # -- Loopback Audio --
         self._loopback_audio_title = ft.Text(
-            t("settings.section.loopback_audio"),
+            t("flet.settings.section.loopback_audio"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._loopback_audio_text = self._build_clickable_text(
-            t("settings.default_option"),
+            t("flet.settings.default_option"),
             self._on_loopback_audio_click,
         )
         loopback_audio_card = self._wrap_unit_card(
@@ -139,7 +139,7 @@ class AudioSectionMixin:
         options = self._audio_settings._get_host_api_options()
         modal = SettingsModal(
             self.page,
-            t("settings.audio_host_api"),
+            t("flet.settings.audio_host_api"),
             options,
             self._on_mic_host_api_selected,
             show_description=False,
@@ -171,7 +171,7 @@ class AudioSectionMixin:
         options = self._audio_settings._get_microphone_options()
         modal = SettingsModal(
             self.page,
-            t("settings.section.microphone_audio"),
+            t("flet.settings.section.microphone_audio"),
             options,
             self._on_mic_audio_selected,
             show_description=False,
@@ -197,7 +197,7 @@ class AudioSectionMixin:
         options = self._audio_settings._get_desktop_output_options()
         modal = SettingsModal(
             self.page,
-            t("settings.section.loopback_audio"),
+            t("flet.settings.section.loopback_audio"),
             options,
             self._on_loopback_audio_selected,
             show_description=False,
@@ -219,9 +219,9 @@ class AudioSectionMixin:
     def _apply_locale_audio(self) -> None:
         if not hasattr(self, '_audio_host_api_title'):
             return
-        self._audio_host_api_title.value = t("settings.audio_host_api")
-        self._mic_audio_title.value = t("settings.section.microphone_audio")
-        self._loopback_audio_title.value = t("settings.section.loopback_audio")
+        self._audio_host_api_title.value = t("flet.settings.audio_host_api")
+        self._mic_audio_title.value = t("flet.settings.section.microphone_audio")
+        self._loopback_audio_title.value = t("flet.settings.section.loopback_audio")
         self._audio_settings.apply_locale()
         self._sync_general_audio_card_texts()
 

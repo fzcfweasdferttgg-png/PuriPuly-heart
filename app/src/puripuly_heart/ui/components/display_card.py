@@ -38,12 +38,12 @@ def _display_size_for_length(length: int) -> int:
 
 def _status_label(status: str) -> str:
     if status == "connecting":
-        return t("display.connecting")
+        return t("flet.display.connecting")
     if status == "connected":
-        return t("display.connected")
+        return t("flet.display.connected")
     if status == "stopping":
-        return t("display.stopping")
-    return t("display.disconnected")
+        return t("flet.display.stopping")
+    return t("flet.display.disconnected")
 
 
 def _apply_debug_prefix(text: str, debug_prefix: str | None) -> str:
@@ -114,7 +114,7 @@ class DisplayCard(ft.Container):
         )
 
         self._input_field = ft.TextField(
-            hint_text=t("display.input_hint"),
+            hint_text=t("flet.display.input_hint"),
             border=ft.InputBorder.NONE,
             text_size=20,
             color=COLOR_NEUTRAL_DARK,
@@ -365,7 +365,7 @@ class DisplayCard(ft.Container):
         display_font_family: str | None = None,
         input_font_family: str | None = None,
     ) -> None:
-        self._input_field.hint_text = t("display.input_hint")
+        self._input_field.hint_text = t("flet.display.input_hint")
 
         # Explicitly set hint font to UI font (Display font)
         self._input_field.hint_style = ft.TextStyle(

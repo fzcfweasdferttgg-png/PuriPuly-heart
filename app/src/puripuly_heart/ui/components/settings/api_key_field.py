@@ -41,7 +41,11 @@ class ApiKeyField(ft.Row):
         self._show_snackbar_cb = show_snackbar
         self._show_status = show_status
         self._base_url_getter = base_url_getter
-        self._dirty = False
+        # Renamed from _dirty to _is_dirty — Flet 0.86.x BaseControl._dirty
+        # is a dict used for diff/patch tracking. A bool _dirty on this subclass
+        # shadows it, crashing _configure_dataclass which calls
+        # dst_dirty.clear() on every control expecting a dict.
+        self._is_dirty = False
         self._last_verified_hash = ""
         self._is_verifying = False
 
@@ -74,7 +78,7 @@ class ApiKeyField(ft.Row):
             icon=icons.HELP_OUTLINE_ROUNDED,
             color=COLOR_NEUTRAL,
             size=36,
-            tooltip=t("api_key.status.idle"),
+            tooltip=t("flet.api_key.status.idle"),
         )
 
         controls: list[ft.Control] = [self._text_field]
@@ -95,7 +99,7 @@ class ApiKeyField(ft.Row):
     def value(self, val: str) -> None:
         """Set field value."""
         self._text_field.value = val
-        self._dirty = False
+        self._is_dirty = False
         try:
             if self._text_field.page:
                 self._text_field.update()
@@ -124,7 +128,7 @@ class ApiKeyField(ft.Row):
     def _handle_change(self, e) -> None:
         """Mark the field dirty after user edits."""
         _ = e
-        self._dirty = True
+        self._is_dirty = True
 
     def _set_status(self, status: str) -> None:
         """Update status icon based on verification state."""
@@ -132,10 +136,10 @@ class ApiKeyField(ft.Row):
             return
 
         icon_map = {
-            "idle": (icons.HELP_OUTLINE_ROUNDED, COLOR_NEUTRAL, "api_key.status.idle"),
-            "verifying": (icons.HOURGLASS_TOP_ROUNDED, COLOR_NEUTRAL, "api_key.status.verifying"),
-            "success": (icons.CHECK_CIRCLE_ROUNDED, COLOR_PRIMARY, "api_key.status.success"),
-            "error": (icons.WARNING_ROUNDED, COLOR_WARNING, "api_key.status.error"),
+            "idle": (icons.HELP_OUTLINE_ROUNDED, COLOR_NEUTRAL, "flet.api_key.status.idle"),
+            "verifying": (icons.HOURGLASS_TOP_ROUNDED, COLOR_NEUTRAL, "flet.api_key.status.verifying"),
+            "success": (icons.CHECK_CIRCLE_ROUNDED, COLOR_PRIMARY, "flet.api_key.status.success"),
+            "error": (icons.WARNING_ROUNDED, COLOR_WARNING, "flet.api_key.status.error"),
         }
         icon, color, tooltip_key = icon_map.get(status, icon_map["idle"])
         self._current_status = status
@@ -154,8 +158,8 @@ class ApiKeyField(ft.Row):
         if key != self.value:
             self._text_field.value = key
 
-        if self._dirty:
-            self._dirty = False
+        if self._is_dirty:
+            self._is_dirty = False
             # Save user-edited values on blur.
             if self._on_save:
                 self._on_save(self._secret_key, key)
@@ -217,14 +221,14 @@ class ApiKeyField(ft.Row):
                 self._set_status("success")
                 self._last_verified_hash = key_hash
                 self._show_snackbar(
-                    t("snackbar.verification_ok", provider=provider_label(self._provider)),
+                    t("flet.snackbar.verification_ok", provider=provider_label(self._provider)),
                     colors.GREEN_400,
                 )
             else:
                 self._set_status("error")
                 self._last_verified_hash = ""
                 self._show_snackbar(
-                    t("snackbar.verification_failed", message=self._translate_error(msg)),
+                    t("flet.snackbar.verification_failed", message=self._translate_error(msg)),
                     colors.RED_400,
                 )
         except Exception as exc:
@@ -234,7 +238,7 @@ class ApiKeyField(ft.Row):
             self._set_status("error")
             self._last_verified_hash = ""
             self._show_snackbar(
-                t("snackbar.verification_error", message=self._translate_error(str(exc))),
+                t("flet.snackbar.verification_error", message=self._translate_error(str(exc))),
                 colors.RED_400,
             )
         finally:
@@ -265,15 +269,15 @@ class ApiKeyField(ft.Row):
         msg_lower = msg.lower()
         if msg_lower.startswith("qwen_model_unavailable:"):
             model = msg.split(":", 1)[1].strip() if ":" in msg else ""
-            return t("error.qwen_model_unavailable", model=model or "unknown")
+            return t("flet.error.qwen_model_unavailable", model=model or "unknown")
         if "401" in msg or "unauthorized" in msg_lower:
-            return t("error.api_key_invalid")
+            return t("flet.error.api_key_invalid")
         if "403" in msg or "forbidden" in msg_lower:
-            return t("error.api_key_invalid")
+            return t("flet.error.api_key_invalid")
         if "timeout" in msg_lower or "timed out" in msg_lower:
-            return t("error.network_timeout")
+            return t("flet.error.network_timeout")
         if "connection" in msg_lower or "network" in msg_lower:
-            return t("error.network_error")
+            return t("flet.error.network_error")
         return msg
 
     def apply_locale(self) -> None:
@@ -282,12 +286,12 @@ class ApiKeyField(ft.Row):
         if self._show_status:
             # Update tooltip based on current status
             tooltip_keys = {
-                "idle": "api_key.status.idle",
-                "verifying": "api_key.status.verifying",
-                "success": "api_key.status.success",
-                "error": "api_key.status.error",
+                "idle": "flet.api_key.status.idle",
+                "verifying": "flet.api_key.status.verifying",
+                "success": "flet.api_key.status.success",
+                "error": "flet.api_key.status.error",
             }
-            tooltip_key = tooltip_keys.get(self._current_status, "api_key.status.idle")
+            tooltip_key = tooltip_keys.get(self._current_status, "flet.api_key.status.idle")
             self._status_icon.tooltip = t(tooltip_key)
         try:
             if self.page:

@@ -133,7 +133,7 @@ class ConversationViewModel:
 
     def render(self) -> str:
         if not self._records:
-            return t("logs.conversation.empty")
+            return t("flet.logs.conversation.empty")
 
         return "\n\n".join(
             f"[{record.timestamp_label}] {source_label(record.source)}\n"
@@ -210,7 +210,7 @@ class LogsView(ft.Column):
 
         # Title (styled like About page section headers)
         self._title_text = ft.Text(
-            t("logs.title"),
+            t("flet.logs.title"),
             size=28,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -218,7 +218,7 @@ class LogsView(ft.Column):
 
         # Folder open button (brown, hover -> primary)
         self._folder_button = ft.TextButton(
-            content=ft.Text(t("logs.open_folder")),
+            content=ft.Text(t("flet.logs.open_folder")),
             icon=ft.Icons.FOLDER_OPEN,
             style=self._get_button_style(font_family),
             on_click=self._open_log_folder,
@@ -309,7 +309,11 @@ class LogsView(ft.Column):
 
     def append_log_threadsafe(self, record: str) -> None:
         """Append a log entry from any thread without mutating Flet state off-loop."""
-        page = self.page
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            self.append_log(record)
+            return
         loop = getattr(page, "loop", None) if page is not None else None
         if loop is None:
             self.append_log(record)
@@ -364,7 +368,10 @@ class LogsView(ft.Column):
                 pass
 
     def _schedule_log_append(self, record: str) -> bool:
-        page = self.page
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return False
         loop = getattr(page, "loop", None) if page is not None else None
         if loop is None:
             return False
@@ -457,7 +464,7 @@ class LogsView(ft.Column):
         self._log_text.value = self._conversation_model.render()
 
     def _conversation_button_label(self) -> str:
-        key = "logs.conversation.hide" if self._showing_conversation else "logs.conversation.show"
+        key = "flet.logs.conversation.hide" if self._showing_conversation else "flet.logs.conversation.show"
         return t(key)
 
     def _on_conversation_button_click(self, _e: ft.ControlEvent | object) -> None:
@@ -481,9 +488,9 @@ class LogsView(ft.Column):
         """Refresh UI text when locale changes."""
         font_family = font_for_language(get_locale())
         if self._title_text:
-            self._title_text.value = t("logs.title")
+            self._title_text.value = t("flet.logs.title")
         if self._folder_button:
-            self._folder_button.content.value = t("logs.open_folder")
+            self._folder_button.content.value = t("flet.logs.open_folder")
             self._folder_button.style = self._get_button_style(font_family)
         if self._mode_button:
             self._mode_button.content.value = self._mode_button_label()
@@ -524,7 +531,7 @@ class LogsView(ft.Column):
         return normalized
 
     def _mode_button_label(self) -> str:
-        return t(f"logs.mode.{self._runtime_logging_mode}")
+        return t(f"flet.logs.mode.{self._runtime_logging_mode}")
 
     def _on_mode_button_click(self, _e: ft.ControlEvent | object) -> None:
         next_mode = _DETAILED_MODE if self._runtime_logging_mode == _BASIC_MODE else _BASIC_MODE
@@ -534,7 +541,11 @@ class LogsView(ft.Column):
 
     async def scroll_to_bottom(self) -> None:
         """Scroll to the latest log entry."""
-        if self._log_scroll and self.page:
+        try:
+            has_page = self._log_scroll and self.page
+        except (AssertionError, RuntimeError):
+            return
+        if has_page:
             if self._pending_update:
                 self._flush_logs()
             result = self._log_scroll.scroll_to(offset=-1, duration=0)
@@ -544,9 +555,12 @@ class LogsView(ft.Column):
     def _open_log_folder(self, _):
         """Open the log folder in the system file explorer."""
         log_dir = _get_log_dir()
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", str(log_dir)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(log_dir)])
-        else:
-            subprocess.Popen(["xdg-open", str(log_dir)])
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", str(log_dir)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(log_dir)])
+            else:
+                subprocess.Popen(["xdg-open", str(log_dir)])
+        except FileNotFoundError:
+            logger.warning("[Logs] Could not open log folder: %s", log_dir)

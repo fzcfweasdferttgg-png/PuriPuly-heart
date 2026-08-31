@@ -60,24 +60,24 @@ def validate_extra_body_json(raw: str) -> tuple[bool, str | None, object]:
             else json.loads(raw, parse_constant=_reject_json_constant)
         )
     except json.JSONDecodeError:
-        return False, "settings.local_llm.extra_body.invalid_json", None
+        return False, "flet.settings.local_llm.extra_body.invalid_json", None
 
     if not isinstance(parsed, dict):
-        return False, "settings.local_llm.extra_body.must_be_object", None
+        return False, "flet.settings.local_llm.extra_body.must_be_object", None
 
     lowered = {str(key).lower() for key in parsed}
 
     reserved = LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS.intersection(lowered)
     if reserved:
-        return False, "settings.local_llm.extra_body.reserved_key", sorted(reserved)[0]
+        return False, "flet.settings.local_llm.extra_body.reserved_key", sorted(reserved)[0]
 
     sensitive = LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS.intersection(lowered)
     if sensitive:
-        return False, "settings.local_llm.extra_body.sensitive_key", sorted(sensitive)[0]
+        return False, "flet.settings.local_llm.extra_body.sensitive_key", sorted(sensitive)[0]
 
     try:
         json.dumps(parsed, allow_nan=False)
     except (TypeError, ValueError):
-        return False, "settings.local_llm.extra_body.not_serializable", None
+        return False, "flet.settings.local_llm.extra_body.not_serializable", None
 
     return True, None, copy.deepcopy(parsed)

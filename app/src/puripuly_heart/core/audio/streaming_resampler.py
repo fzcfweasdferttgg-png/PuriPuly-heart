@@ -75,7 +75,12 @@ class MonoFirstStreamingResampler:
         else:
             if self._stream is None:
                 raise RuntimeError("soxr stream is unavailable")
-            output = np.asarray(self._stream.resample_chunk(mono, last=last), dtype=np.float32)
+            try:
+                output = np.asarray(self._stream.resample_chunk(mono, last=last), dtype=np.float32)
+            except Exception:
+                if last:
+                    self._flushed = True
+                raise
 
         if last:
             self._flushed = True

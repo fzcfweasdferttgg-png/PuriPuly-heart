@@ -270,15 +270,8 @@ class ManagedSTTProvider:
         await self._send_audio(event.chunk)
 
     async def _on_speech_end(self, event: SpeechEnd) -> None:
-        # AI-RACE-WINDOW: _active_utterance_id is cleared (line below) BEFORE _pending.append().
-        # Between these two operations, _consume_session_events running in a parallel coroutine
-        # can see _active_utterance_id=None AND _pending empty, causing the final transcript
-        # to be silently dropped (utterance_id=None → continue).
-        # SAFE FIX: swap order — call _pending.append() FIRST, then clear _active_utterance_id.
-        # CURRENT: not fixed because the window is ~microseconds (no await between them) and
-        # the consumer is blocked on `await session.events()`. Risk: very low in practice.
-        if self._active_utterance_id == event.utterance_id:
-            self._active_utterance_id = None
+        # AI-RACE-WINDOW FIX: _pending.append() BEFORE clearing _active_utterance_id.
+        # This prevents _consume_session_events from seeing both as None simultaneously.
         self._last_speech_end_time = self.clock.now()
 
         # Delegate end-of-speech handling to the backend (silence + finalize etc.)
@@ -292,6 +285,10 @@ class ManagedSTTProvider:
             )
             self._diag.emit_for_utterance(event.utterance_id, finalize=True)
             await self._active_session.on_speech_end(trailing_silence_ms=event.trailing_silence_ms)
+
+        # Clear active utterance AFTER appending to pending
+        if self._active_utterance_id == event.utterance_id:
+            self._active_utterance_id = None
 
     async def _send_audio(self, samples_f32: np.ndarray) -> None:
         samples_f32 = np.asarray(samples_f32, dtype=np.float32).reshape(-1)
@@ -643,22 +640,23 @@ class ManagedSTTProvider:
         #   3. Emits STTErrorEvent to the output queue
         #   4. Calls on_terminal_failure callback (async-safe via inspect.isawaitable)
         # After this, the provider is in DISCONNECTED state and will re-open on next speech.
-        is_active_session = session is self._active_session
-        if is_active_session:
-            self._active_session = None
-            self._consumer_task = None
-            self._session_started_at = None
-            self._active_utterance_id = None
-            self._pending.clear()
-            self._last_speech_end_time = None
-            if self._reset_timer is not None:
-                self._reset_timer.cancel()
-                self._reset_timer = None
-            await self._set_state(STTSessionState.DISCONNECTED)
-            if self.on_terminal_failure is not None:
-                maybe_awaitable = self.on_terminal_failure(exc)
-                if inspect.isawaitable(maybe_awaitable):
-                    await maybe_awaitable
+        async with self._session_open_lock:
+            is_active_session = session is self._active_session
+            if is_active_session:
+                self._active_session = None
+                self._consumer_task = None
+                self._session_started_at = None
+                self._active_utterance_id = None
+                self._pending.clear()
+                self._last_speech_end_time = None
+                if self._reset_timer is not None:
+                    self._reset_timer.cancel()
+                    self._reset_timer = None
+                await self._set_state(STTSessionState.DISCONNECTED)
+                if self.on_terminal_failure is not None:
+                    maybe_awaitable = self.on_terminal_failure(exc)
+                    if inspect.isawaitable(maybe_awaitable):
+                        await maybe_awaitable
 
         with contextlib.suppress(Exception):
             await session.stop()

@@ -517,7 +517,9 @@ class SoundDeviceAudioSource(AudioSource):
                 # (int assignment is atomic). Breaks on non-GIL runtimes or if
                 # changed to a non-atomic type (e.g. dict).
                 self._queue.sync_q.put_nowait(samples)
-            except queue.Full:
+            except Exception:
+                # Catch ALL exceptions — not just queue.Full. Any unhandled exception
+                # in a PortAudio callback terminates the stream silently.
                 self._queue_drop_count += 1
                 return
 

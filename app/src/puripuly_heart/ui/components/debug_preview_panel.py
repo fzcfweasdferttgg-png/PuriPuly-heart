@@ -48,39 +48,39 @@ class DebugPreviewPanel(ft.Container):
         self._actions = (
             _PreviewAction(
                 "github_star_snackbar",
-                "debug_preview.github_star_snackbar",
+                "flet.debug_preview.github_star_snackbar",
                 on_github_star_snackbar,
             ),
-            _PreviewAction("founder_letter", "debug_preview.founder_letter", on_founder_letter),
+            _PreviewAction("founder_letter", "flet.debug_preview.founder_letter", on_founder_letter),
             _PreviewAction(
                 "peer_translation_eula",
-                "debug_preview.peer_translation_eula",
+                "flet.debug_preview.peer_translation_eula",
                 on_peer_translation_eula,
             ),
             _PreviewAction(
                 "local_qwen_hallucination_modal",
-                "debug_preview.local_qwen_hallucination_modal",
+                "flet.debug_preview.local_qwen_hallucination_modal",
                 on_local_qwen_hallucination_modal,
             ),
             _PreviewAction(
                 "capture_fault_cycle",
-                "debug_preview.capture_fault_cycle",
+                "flet.debug_preview.capture_fault_cycle",
                 on_capture_fault_cycle,
             ),
             _PreviewAction(
                 "stt_fault_cycle",
-                "debug_preview.stt_fault_cycle",
+                "flet.debug_preview.stt_fault_cycle",
                 on_stt_fault_cycle,
             ),
             _PreviewAction(
                 "audio_fault_clear",
-                "debug_preview.audio_fault_clear",
+                "flet.debug_preview.audio_fault_clear",
                 on_audio_fault_clear,
             ),
         )
         self._toggle_button = _make_text_button(
-            t("debug_preview.button"),
-            tooltip=t("debug_preview.tooltip"),
+            t("flet.debug_preview.button"),
+            tooltip=t("flet.debug_preview.tooltip"),
             on_click=self._toggle,
             style=self._toggle_style(),
         )
@@ -156,8 +156,8 @@ class DebugPreviewPanel(ft.Container):
         callback()
 
     def apply_locale(self) -> None:
-        _set_text_button_label(self._toggle_button, t("debug_preview.button"))
-        self._toggle_button.tooltip = t("debug_preview.tooltip")
+        _set_text_button_label(self._toggle_button, t("flet.debug_preview.button"))
+        self._toggle_button.tooltip = t("flet.debug_preview.tooltip")
         for action in self._actions:
             _set_text_button_label(self._action_buttons[action.key], t(action.label_key))
         self._update_if_mounted()

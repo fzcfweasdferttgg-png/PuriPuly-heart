@@ -101,7 +101,11 @@ class PendingUtteranceTracker:
             utterance_id = self._ids[0]
             ended_at = self._times.get(utterance_id)
             if ended_at is None:
-                return
+                # Corrupted entry (no timestamp) — pop it and continue cleanup
+                # instead of blocking all subsequent stale entries.
+                self._ids.popleft()
+                self._times.pop(utterance_id, None)
+                continue
 
             age_s = now - ended_at
             if age_s <= stale_after_s:

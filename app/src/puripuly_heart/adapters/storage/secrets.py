@@ -84,9 +84,8 @@ def migrate_encrypted_to_plain(
     except ImportError:
         logger.warning(
             "[Secrets] Cannot migrate encrypted secrets — cryptography not installed. "
-            "Secrets will be empty."
+            "Install 'cryptography' and restart to migrate. Leaving encrypted file intact."
         )
-        _atomic_write_json(path, {"items": {}})
         return
 
     salt = base64.b64decode(raw["salt"])
@@ -118,5 +117,13 @@ def migrate_encrypted_to_plain(
 
 def _atomic_write_json(path: Path, data: object) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        logger.error("[Secrets] Failed to write secrets file %s: %s", path, exc)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise

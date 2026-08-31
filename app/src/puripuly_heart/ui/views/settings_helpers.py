@@ -76,7 +76,7 @@ def _make_overlay_anchor_dropdown(value: str, on_change) -> ft.Dropdown:
         options=[
             ft.dropdown.Option(
                 key=anchor,
-                text=t(f"settings.overlay.calibration.anchor.{anchor}"),
+                text=t(f"flet.settings.overlay.calibration.anchor.{anchor}"),
             )
             for anchor in OVERLAY_CALIBRATION_ANCHORS
         ],
@@ -280,7 +280,7 @@ class SettingsHelpersMixin:
                 control.content.font_family = font_family
 
     def _sync_general_audio_card_texts(self) -> None:
-        default_label = t("settings.default_option")
+        default_label = t("flet.settings.default_option")
         self._set_unit_card_value_text(
             self._mic_audio_text,
             self._audio_settings.microphone or default_label,
@@ -441,7 +441,7 @@ class SettingsHelpersMixin:
         )
 
     def _settings_subtab_label(self, key: str) -> str:
-        return t(f"settings.subtab.{key}")
+        return t(f"flet.settings.subtab.{key}")
 
     def _build_settings_subtab_shell(
         self, tab_rows: dict[str, list[ft.Control]]
@@ -590,7 +590,7 @@ class SettingsHelpersMixin:
 
     def _prompt_provider_copy(self) -> str:
         return t(
-            "settings.prompt_for",
+            "flet.settings.prompt_for",
             provider=provider_label(self._active_prompt_key()),
         )
 
@@ -632,21 +632,21 @@ class SettingsHelpersMixin:
         else:
             current_key = "_disabled"
         options = [
-            OptionItem(value="_disabled", label=t("option.disabled")),
+            OptionItem(value="_disabled", label=t("flet.option.disabled")),
             OptionItem(
                 value="local_llm",
                 label=t("provider.local_llms"),
-                description=t("settings.translation_model.local_llm.description", default=""),
+                description=t("flet.settings.translation_model.local_llm.description", default=""),
             ),
             OptionItem(
                 value="openai_compatible",
                 label=t("provider.openai_compatible"),
-                description=t("settings.translation_model.openai_compatible.description", default=""),
+                description=t("flet.settings.translation_model.openai_compatible.description", default=""),
             ),
         ]
         modal = SettingsModal(
             self.page,
-            t("settings.backup_translation"),
+            t("flet.settings.backup_translation"),
             options,
             self._on_fallback_status_selected,
             show_description=True,
@@ -664,7 +664,7 @@ class SettingsHelpersMixin:
         draft = self._ensure_provider_settings_draft()
         if value == "_disabled":
             draft.backup_translation.enabled = False
-            self._set_unit_card_value_text(self._fallback_status_text, t("option.disabled"))
+            self._set_unit_card_value_text(self._fallback_status_text, t("flet.option.disabled"))
         elif value == "local_llm":
             draft.backup_translation.enabled = True
             draft.backup_translation.mode = LLMProviderName.LOCAL_LLM

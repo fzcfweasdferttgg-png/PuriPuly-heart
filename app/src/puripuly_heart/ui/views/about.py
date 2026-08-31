@@ -48,7 +48,7 @@ class AboutView(ft.Column):
         return ft.Column(
             [
                 ft.Text(
-                    t("app.title"),
+                    t("flet.app.title"),
                     size=36,
                     weight=ft.FontWeight.BOLD,
                     color=COLOR_PRIMARY,
@@ -65,7 +65,7 @@ class AboutView(ft.Column):
     def _build_fork_notice(self) -> ft.Control:
         return ft.Container(
             content=ft.Text(
-                t("about.fork_notice"),
+                t("flet.about.fork_notice"),
                 size=14,
                 color=COLOR_ON_BACKGROUND,
                 weight=ft.FontWeight.BOLD,
@@ -87,10 +87,10 @@ class AboutView(ft.Column):
 
         return ft.Column(
             [
-                ft.Text(t("about.developed_by"), size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                ft.Text(t("flet.about.developed_by"), size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
                 _link("salee — github.com/kapitalismho/PuriPuly-heart", "https://github.com/kapitalismho/PuriPuly-heart"),
                 ft.Container(height=8),
-                ft.Text(t("about.inspired_by"), size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                ft.Text(t("flet.about.inspired_by"), size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
                 _link("VRCT — github.com/misyaguziya/VRCT", "https://github.com/misyaguziya/VRCT"),
                 _link("mimiuchi — github.com/naeruru/mimiuchi", "https://github.com/naeruru/mimiuchi"),
                 _link("Yakutan — github.com/febilly/Yakutan", "https://github.com/febilly/Yakutan"),
@@ -103,21 +103,21 @@ class AboutView(ft.Column):
 
     def _build_special_thanks(self) -> ft.Control:
         names = [
-            t("about.special_thanks.name.sui_32c"),
-            t("about.special_thanks.name.nagikokoro"),
-            t("about.special_thanks.name.motoka96"),
-            t("about.special_thanks.name.ykol"),
-            t("about.special_thanks.name.kascr"),
-            t("about.special_thanks.name.just_monika_v"),
-            t("about.special_thanks.name.fluvia"),
-            t("about.special_thanks.name.han_chole"),
-            t("about.special_thanks.name.ea_pe"),
-            t("about.special_thanks.name.ephedrine"),
-            t("about.special_thanks.name.eri"),
+            t("flet.about.special_thanks.name.sui_32c"),
+            t("flet.about.special_thanks.name.nagikokoro"),
+            t("flet.about.special_thanks.name.motoka96"),
+            t("flet.about.special_thanks.name.ykol"),
+            t("flet.about.special_thanks.name.kascr"),
+            t("flet.about.special_thanks.name.just_monika_v"),
+            t("flet.about.special_thanks.name.fluvia"),
+            t("flet.about.special_thanks.name.han_chole"),
+            t("flet.about.special_thanks.name.ea_pe"),
+            t("flet.about.special_thanks.name.ephedrine"),
+            t("flet.about.special_thanks.name.eri"),
         ]
         return ft.Column(
             [
-                ft.Text(t("about.special_thanks"), size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                ft.Text(t("flet.about.special_thanks"), size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
                 ft.Text(", ".join(names), size=14, color=COLOR_ON_BACKGROUND),
                 ft.Text("and you!", size=14, color=COLOR_ON_BACKGROUND, italic=True),
             ],
@@ -127,7 +127,7 @@ class AboutView(ft.Column):
     def _build_licenses(self) -> ft.Control:
         return ft.Column(
             [
-                ft.Text(t("about.licenses"), size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                ft.Text(t("flet.about.licenses"), size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
                 ft.Container(
                     content=ft.Text(
                         _load_third_party_notices(),

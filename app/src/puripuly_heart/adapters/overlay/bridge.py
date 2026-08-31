@@ -207,7 +207,14 @@ class OverlayBridge:
                 )
 
             async for raw_message in connection:
-                message = self._load_message(raw_message)
+                try:
+                    message = self._load_message(raw_message)
+                except (ValueError, json.JSONDecodeError) as exc:
+                    logger.warning(
+                        "[OverlayBridge] Malformed message from overlay: %s",
+                        exc,
+                    )
+                    continue
                 await self.messages.put(message)
         except ConnectionClosed as exc:
             close_code = self._close_code(exc)

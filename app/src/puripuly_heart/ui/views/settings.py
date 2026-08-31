@@ -505,13 +505,13 @@ class SettingsView(
             value=self._stub_text,
         )
         self._fallback_status_title = ft.Text(
-            t("settings.backup_translation.connection", default="Backup Translation Settings"),
+            t("flet.settings.backup_translation.connection", default="Backup Translation Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
         self._fallback_status_text = self._build_clickable_text(
-            t("option.disabled"),
+            t("flet.option.disabled"),
             self._on_fallback_status_click,
         )
         self._fallback_status_card = self._wrap_unit_card(
@@ -547,7 +547,7 @@ class SettingsView(
             ),
         )
         self._fallback_openai_title = ft.Text(
-            t("settings.backup_translation.connection", default="Backup Translation Settings"),
+            t("flet.settings.backup_translation.connection", default="Backup Translation Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -576,7 +576,7 @@ class SettingsView(
             ),
         )
         self._fallback_local_llm_title = ft.Text(
-            t("settings.backup_translation.connection", default="Backup Translation Settings"),
+            t("flet.settings.backup_translation.connection", default="Backup Translation Settings"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -774,7 +774,7 @@ class SettingsView(
                 _fb_label = t("provider.openai_compatible")
             self._set_unit_card_value_text(self._fallback_status_text, _fb_label)
         else:
-            self._set_unit_card_value_text(self._fallback_status_text, t("option.disabled"))
+            self._set_unit_card_value_text(self._fallback_status_text, t("flet.option.disabled"))
 
         # Load secrets
         self._load_secrets(settings, config_path)
@@ -909,7 +909,7 @@ class SettingsView(
             if _bt.enabled:
                 _fb_label = t("provider.local_llms") if _bt.mode == LLMProviderName.LOCAL_LLM else t("provider.openai_compatible")
             else:
-                _fb_label = t("option.disabled")
+                _fb_label = t("flet.option.disabled")
             self._set_unit_card_value_text(self._fallback_status_text, _fb_label)
         self._apply_locale_context()
         self._apply_locale_overlay()
@@ -952,26 +952,26 @@ class SettingsView(
             )
             self._ui_text.content.value = locale_label(display_settings.ui.locale)
             self._low_latency_text.content.value = t(
-                "toggle.on" if display_settings.stt.low_latency_mode else "toggle.off"
+                "flet.toggle.on" if display_settings.stt.low_latency_mode else "flet.toggle.off"
             )
             self._vrc_mic_text.content.value = t(
-                "settings.vrc_mic.on"
+                "flet.settings.vrc_mic.on"
                 if display_settings.osc.vrc_mic_intercept
-                else "settings.vrc_mic.off"
+                else "flet.settings.vrc_mic.off"
             )
             self._chatbox_source_text.content.value = t(
-                "settings.chatbox_source.on"
+                "flet.settings.chatbox_source.on"
                 if display_settings.osc.chatbox_include_source
-                else "settings.chatbox_source.off"
+                else "flet.settings.chatbox_source.off"
             )
             self._clipboard_auto_translate_text.content.value = t(
-                "settings.clipboard_auto_translate.on"
+                "flet.settings.clipboard_auto_translate.on"
                 if display_settings.ui.clipboard_auto_translate_enabled
-                else "settings.clipboard_auto_translate.off"
+                else "flet.settings.clipboard_auto_translate.off"
             )
             self._set_unit_card_value_text(
                 self._microphone_test_text,
-                t("settings.microphone_test.action"),
+                t("flet.settings.microphone_test.action"),
             )
             self._sync_overlay_controls()
             self._sync_overlay_calibration_controls()

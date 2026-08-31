@@ -136,7 +136,7 @@ class EntryStore:
         return record
 
     def drain_pending_removals(self) -> list[OverlayEntryRemovalRecord]:
-        # drain_pending_removals: returns OWNED list — caller must process all records
-        removals = self._pending_removals
+        # drain_pending_removals: returns a COPY — caller must process all records
+        removals = list(self._pending_removals)
         self._pending_removals.clear()
         return removals

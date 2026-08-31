@@ -13,13 +13,21 @@ class HttpxModelDiscovery:
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            return sorted(
-                m.get("id", "") for m in data.get("data", []) if m.get("id")
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                return sorted(
+                    m.get("id", "") for m in data.get("data", []) if m.get("id")
+                )
+        except Exception as exc:
+            logger.warning(
+                "[ModelDiscovery] Failed to fetch models from %s: %s",
+                base_url,
+                exc,
             )
+            return []
 
     async def test_connection(self, base_url: str, api_key: str = "") -> tuple[int, str]:
         url = base_url.rstrip("/") + "/models"

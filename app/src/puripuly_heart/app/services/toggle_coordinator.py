@@ -48,7 +48,7 @@ class ToggleCoordinator:
 
     # STT state
     _stt_desired: bool = field(default=False)
-    _stt_switch_lock: asyncio.Lock | None = field(default=None, repr=False)
+    _stt_switch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _stt_switch_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stt_idle_release_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stt_restart_requested: bool = field(default=False)
@@ -191,8 +191,6 @@ class ToggleCoordinator:
                 f"[Settings] STT provider replacement: "
                 f"provider_type={self.settings.provider.stt_compute}"
             )
-        if self._stt_switch_lock is None:
-            self._stt_switch_lock = asyncio.Lock()
         async with self._stt_switch_lock:
             if self.stop_mic_loop is not None:
                 await self.stop_mic_loop()
@@ -213,8 +211,6 @@ class ToggleCoordinator:
     async def _run_stt_switch(self) -> None:
         """STT switch state machine.
         """
-        if self._stt_switch_lock is None:
-            self._stt_switch_lock = asyncio.Lock()
         async with self._stt_switch_lock:
             # Snapshot _stt_desired here; re-check at loop bottom.
             # If user toggles STT while this iteration runs async work

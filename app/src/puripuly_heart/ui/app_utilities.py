@@ -100,6 +100,21 @@ def show_snackbar(app, message: str, bgcolor, duration: int = 4000) -> None:
     app.page.show_dialog(snackbar)
 
 
+def _show_notification(app, message: str, level: str = "warning") -> None:
+    """Framework-agnostic notification callback for GuiController.
+
+    Maps semantic levels to Flet colors and delegates to show_snackbar.
+    GuiController calls this via getattr(app, '_show_notification').
+    """
+    _LEVEL_COLORS = {
+        "info": ft.Colors.GREEN_700,
+        "warning": ft.Colors.ORANGE_700,
+        "error": ft.Colors.RED_700,
+    }
+    color = _LEVEL_COLORS.get(level, ft.Colors.ORANGE_700)
+    show_snackbar(app, message, color)
+
+
 def log_basic(app, message: str, *, level: int = logging.INFO) -> None:
     """Log a basic message via controller or stdlib logger fallback.
 
@@ -123,14 +138,14 @@ def build_github_star_prompt_snackbar(on_click) -> ft.SnackBar:  # noqa: ANN001
         content=ft.Row(
             controls=[
                 ft.Text(
-                    t("github_star.snackbar.message"),
+                    t("flet.github_star.snackbar.message"),
                     size=18,
                     color=ft.Colors.WHITE,
                     font_family=font_for_language(get_locale()),
                     expand=True,
                 ),
                 ft.TextButton(
-                    content=t("github_star.snackbar.action"),
+                    content=t("flet.github_star.snackbar.action"),
                     on_click=on_click,
                     style=ft.ButtonStyle(
                         color=ft.Colors.WHITE,
@@ -203,6 +218,9 @@ class _AppUtilitiesMixin:
     def _show_snackbar(self, message: str, bgcolor, duration: int = 4000) -> None:
         show_snackbar(self, message, bgcolor, duration)
 
+    def _show_notification(self, message: str, level: str = "warning") -> None:
+        _show_notification(self, message, level)
+
     def _mark_launch_high_priority_feedback_shown(
         self,
         reason: str,
@@ -217,7 +235,11 @@ class _AppUtilitiesMixin:
         return build_github_star_prompt_snackbar(on_click)
 
     def _close_github_star_prompt_snackbar(self, snackbar: ft.SnackBar) -> None:
-        close_github_star_prompt_snackbar(self.page, snackbar)
+        try:
+            page = self.page
+        except (AssertionError, RuntimeError):
+            return
+        close_github_star_prompt_snackbar(page, snackbar)
 
     # --- Settings mutation queue ---
 
@@ -250,7 +272,11 @@ class _AppUtilitiesMixin:
             finally:
                 self._settings_mutation_worker_active = False
 
-        self.page.run_task(_worker)
+        try:
+            run_task = self.page.run_task
+        except (AssertionError, RuntimeError):
+            return
+        run_task(_worker)
 
     # PRE-TOGGLE SYNC — called by _on_stt_toggle and _on_peer_translation_toggle
     # (in AppDashboardMixin) BEFORE queuing their async tasks. Ensures provider settings

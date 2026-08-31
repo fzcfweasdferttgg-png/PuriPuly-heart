@@ -67,7 +67,7 @@ def build_overlay_peer_consumer_contract(
         effective_enabled=peer_effective_enabled,
         action_enabled=overlay_state == "connected" or peer_intent_enabled,
         state=peer_state,
-        status_text=f"settings.peer_translation.status.{peer_state}",
+        status_text=f"flet.settings.peer_translation.status.{peer_state}",
         helper_text=_peer_helper_text(
             peer_state=peer_state,
             overlay_state=overlay_state,
@@ -112,13 +112,13 @@ def _overlay_status_text(
 ) -> str:
     """Return i18n key for overlay status display."""
     if overlay_state == "failed" and overlay_failure_reason:
-        return "settings.overlay.status.failed_with_reason"
-    return f"settings.overlay.status.{overlay_state}"
+        return "flet.settings.overlay.status.failed_with_reason"
+    return f"flet.settings.overlay.status.{overlay_state}"
 
 
 def _overlay_failure_text(overlay_failure_reason: str | None) -> str:
     """Return i18n key for overlay failure reason."""
-    return f"settings.overlay.failure.{overlay_failure_reason or 'unknown'}"
+    return f"flet.settings.overlay.failure.{overlay_failure_reason or 'unknown'}"
 
 
 def _peer_surface_state(
@@ -165,15 +165,15 @@ def _peer_helper_text(
     if peer_state == "off":
         if overlay_state == "connected":
             return ""
-        return "settings.peer_translation.disabled.overlay_required"
+        return "flet.settings.peer_translation.disabled.overlay_required"
     if peer_state == "on":
         return ""
     if peer_warning_reason == "overlay_starting":
-        return "settings.peer_translation.warning.overlay_starting"
+        return "flet.settings.peer_translation.warning.overlay_starting"
     if peer_warning_reason == "overlay_stopping":
-        return "settings.peer_translation.warning.overlay_stopping"
+        return "flet.settings.peer_translation.warning.overlay_stopping"
     if peer_warning_reason == "overlay_failed":
-        return "settings.peer_translation.warning.overlay_failed"
+        return "flet.settings.peer_translation.warning.overlay_failed"
     if peer_warning_reason == "runtime_unavailable":
-        return "settings.peer_translation.warning.runtime_unavailable"
-    return "settings.peer_translation.disabled.overlay_required"
+        return "flet.settings.peer_translation.warning.runtime_unavailable"
+    return "flet.settings.peer_translation.disabled.overlay_required"
