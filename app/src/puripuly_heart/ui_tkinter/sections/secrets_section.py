@@ -21,10 +21,10 @@ from puripuly_heart.ui_tkinter.sections.section_base import CollapsibleSection
 logger = logging.getLogger(__name__)
 
 # Provider keys that require API key management
-_SECRET_PROVIDERS: list[tuple[str, str]] = [
-    ("openai_compatible", "OpenAI-Compatible"),
-    ("local_llm", "Local LLM"),
-    ("backup_openai_compatible", "Backup OpenAI"),
+_SECRET_PROVIDERS: list[tuple[str, str, str, str]] = [
+    ("openai_compatible", "OpenAI-Compatible", "tk.settings.secret.openai_compatible", "OpenAI-Compatible"),
+    ("local_llm", "Local LLM", "tk.settings.secret.local_llm", "Local LLM"),
+    ("backup_openai_compatible", "Backup OpenAI", "tk.settings.secret.backup_openai_compatible", "Backup OpenAI"),
 ]
 
 
@@ -32,34 +32,79 @@ class SecretsSection(CollapsibleSection):
     """API key management grouped by provider."""
 
     def __init__(self, master: Any, controller: Any, **kwargs: Any) -> None:
-        super().__init__(master, t("settings.section.secrets", default="API Keys"), **kwargs)
+        super().__init__(
+            master,
+            t("tk.settings.section.secrets", default="API Keys"),
+            title_i18n_key="tk.settings.section.secrets",
+            title_default="API Keys",
+            **kwargs,
+        )
         self._controller = controller
         self._entries: dict[str, ctk.CTkEntry] = {}
+        self._verify_buttons: dict[str, ctk.CTkButton] = {}
         self._build()
 
     def _build(self) -> None:
         verified = self._controller.settings.api_key_verified
 
-        for provider_key, display_name in _SECRET_PROVIDERS:
+        for provider_key, display_name, i18n_key, i18n_default in _SECRET_PROVIDERS:
             # --- Masked entry ---
-            entry = ctk.CTkEntry(self._content, width=240, show="*")
-            entry.bind("<FocusOut>", lambda _, pk=provider_key: self._on_key_change(pk))
+            def _make_entry(row, pk=provider_key):
+                entry = ctk.CTkEntry(row, width=240, show="*")
+                entry.bind("<FocusOut>", lambda _, _pk=pk: self._on_key_change(_pk))
+                return entry
+
+            entry = self.add_row(
+                t(i18n_key, default=display_name),
+                _make_entry,
+                label_i18n_key=i18n_key,
+                label_default=i18n_default,
+                label_id=f"label.secret_{provider_key}",
+                control_id=f"input.secret_{provider_key}",
+            )
             self._entries[provider_key] = entry
-            self.add_row(display_name, entry)
-            self._add_debug_label(entry, f"input.secret_{provider_key}")
 
             # --- Verify button ---
-            status = "✓" if verified.is_verified(provider_key) else "—"
             btn = ctk.CTkButton(
                 self._content,
-                text=f"{t('settings.verify', default='Verify')} {status}",
+                text=self._verify_text(provider_key),
                 width=100,
                 command=lambda pk=provider_key: self._on_verify(pk),
                 fg_color=th.COLOR_PRIMARY,
                 hover_color=th.COLOR_PRIMARY_CONTAINER,
             )
-            self.add_row("", btn)
-            self._add_debug_label(btn, f"btn.verify_{provider_key}")
+            self._verify_buttons[provider_key] = btn
+            self.add_row(
+                "",
+                btn,
+                control_id=f"btn.verify_{provider_key}",
+                full_width=True,
+            )
+            # Register with formatter for dynamic [OK] status
+            self._register_translatable(
+                btn,
+                "tk.settings.verify",
+                "Verify",
+                formatter=lambda base, pk=provider_key: self._format_verify(base, pk),
+            )
+
+    # --- Verify button helpers ---
+
+    def _verify_text(self, provider_key: str) -> str:
+        """Compose verify button text with current status."""
+        status = "[OK]" if self._controller.settings.api_key_verified.is_verified(provider_key) else ""
+        return f"{t('tk.settings.verify', default='Verify')} {status}".strip()
+
+    def _format_verify(self, base_text: str, provider_key: str) -> str:
+        """Formatter for _TranslatableEntry: append [OK] status to base text."""
+        status = "[OK]" if self._controller.settings.api_key_verified.is_verified(provider_key) else ""
+        return f"{base_text} {status}".strip()
+
+    def _update_verify_button(self, provider_key: str) -> None:
+        """Update a single verify button text after verification."""
+        btn = self._verify_buttons.get(provider_key)
+        if btn is not None:
+            btn.configure(text=self._verify_text(provider_key))
 
     # --- Handlers ---
 
@@ -98,6 +143,8 @@ class SecretsSection(CollapsibleSection):
             except Exception:
                 logger.debug("[Secrets] Verify failed for %s", provider_key, exc_info=True)
                 self._controller.settings.api_key_verified.set_verified(provider_key, False)
+            # Update button text with new status (thread-safe via after)
+            self.after(0, lambda: self._update_verify_button(provider_key))
 
         if loop is not None and loop.is_running():
             asyncio.run_coroutine_threadsafe(_verify(), loop)

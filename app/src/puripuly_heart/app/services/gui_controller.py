@@ -1332,6 +1332,17 @@ class BaseGuiController:
             self._runtime_logging.attach_realtime_sink(logs_view)
         return self._runtime_logging
 
+    def attach_view_logs_if_ready(self) -> None:
+        """Retroactively attach the realtime log sink when the popup view is created after runtime_logging.
+
+        Call this after setting ``app.view_logs`` to connect the GUI log
+        display to the logging pipeline.
+        """
+        if self._runtime_logging is not None:
+            logs_view = getattr(self.app, "view_logs", None)
+            if logs_view is not None:
+                self._runtime_logging.attach_realtime_sink(logs_view)
+
     @property
     def runtime_logging_mode(self) -> str:
         return self.runtime_logging.mode.value
@@ -1437,7 +1448,7 @@ class BaseGuiController:
             finally:
                 self._mutation_worker_active = False
 
-        self._run_page_task(_worker)
+        self._run_page_task(_worker())
 
     def apply_settings_with_sync(self, settings) -> None:
         """Apply settings and sync mic test dialog."""
@@ -1775,6 +1786,10 @@ class BaseGuiController:
             await self.submit_text(text)
         self._run_page_task(_task)
 
+    async def submit_manual_text(self, text: str) -> None:
+        """Public API for manual text submission from popup view."""
+        await self.submit_text(text)
+
     def _on_manual_input_activity_async(self, has_text: bool) -> None:
         self.note_manual_input_activity(has_text)
 
@@ -1904,11 +1919,8 @@ class BaseGuiController:
                     settings.languages.recent_target_languages,
                 )
                 dash.on_recent_languages_change = self._on_recent_languages_change
-        with contextlib.suppress(Exception):
-            view_settings = getattr(self.app, "view_settings", None)
-            if view_settings is not None:
-                view_settings.load_from_settings(settings, config_path=self.config_path)
-                view_settings.set_overlay_calibration(self.overlay_calibration)
+        # Settings window is NOT updated here — it manages its own state.
+        # Only the dashboard (Control popup) is synced.
         self._refresh_overlay_peer_consumers()
 
     def _on_recent_languages_change(self, source: list[str], target: list[str]) -> None:
@@ -2142,22 +2154,8 @@ class BaseGuiController:
         if diff.should_restart_stt:
             await self._replace_runtime_stt_provider()
 
-        any_language_changed = (
-            diff.source_language_changed
-            or diff.target_language_changed
-            or diff.second_target_language_changed
-            or diff.effective_peer_source_changed
-            or diff.effective_peer_target_changed
-        )
-        if any_language_changed:
-            view_settings = getattr(self.app, "view_settings", None)
-            if view_settings is not None:
-                with contextlib.suppress(Exception):
-                    view_settings.load_from_settings(
-                        settings,
-                        config_path=self.config_path,
-                        preserve_custom_vocab_draft=True,
-                    )
+        # Settings window is NOT updated here — it manages its own state.
+        # Language changes are synced at the data level only.
 
         if diff.locale_changed:
             set_locale(settings.ui.locale)

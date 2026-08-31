@@ -19,7 +19,13 @@ class OSCSection(CollapsibleSection):
     """OSC connection and chatbox settings."""
 
     def __init__(self, master: Any, controller: Any, **kwargs: Any) -> None:
-        super().__init__(master, t("settings.section.osc", default="OSC"), **kwargs)
+        super().__init__(
+            master,
+            t("tk.settings.section.osc", default="OSC"),
+            title_i18n_key="tk.settings.section.osc",
+            title_default="OSC",
+            **kwargs,
+        )
         self._controller = controller
         self._build()
 
@@ -27,44 +33,87 @@ class OSCSection(CollapsibleSection):
         osc = self._controller.settings.osc
 
         # --- Host ---
-        self._host_entry = ctk.CTkEntry(self._content, width=200)
-        self._host_entry.insert(0, osc.host)
-        self._host_entry.bind("<FocusOut>", lambda _: self._apply_host())
-        self._host_entry.bind("<Return>", lambda _: self._apply_host())
-        self.add_row(t("settings.osc_host", default="Host"), self._host_entry)
-        self._add_debug_label(self._host_entry, "input.osc_host")
+        def _make_host_entry(row):
+            entry = ctk.CTkEntry(row, width=200)
+            entry.insert(0, osc.host)
+            entry.bind("<FocusOut>", lambda _: self._apply_host())
+            entry.bind("<Return>", lambda _: self._apply_host())
+            return entry
+
+        self._host_entry = self.add_row(
+            t("tk.settings.osc_host", default="Host"),
+            _make_host_entry,
+            label_i18n_key="tk.settings.osc_host",
+            label_default="Host",
+            label_id="label.osc_host",
+            control_id="input.osc_host",
+        )
 
         # --- Port ---
-        self._port_entry = ctk.CTkEntry(self._content, width=120)
-        self._port_entry.insert(0, str(osc.port))
-        self._port_entry.bind("<FocusOut>", lambda _: self._apply_port())
-        self._port_entry.bind("<Return>", lambda _: self._apply_port())
-        self.add_row(t("settings.osc_port", default="Port"), self._port_entry)
-        self._add_debug_label(self._port_entry, "input.osc_port")
+        def _make_port_entry(row):
+            entry = ctk.CTkEntry(row, width=120)
+            entry.insert(0, str(osc.port))
+            entry.bind("<FocusOut>", lambda _: self._apply_port())
+            entry.bind("<Return>", lambda _: self._apply_port())
+            return entry
+
+        self._port_entry = self.add_row(
+            t("tk.settings.osc_port", default="Port"),
+            _make_port_entry,
+            label_i18n_key="tk.settings.osc_port",
+            label_default="Port",
+            label_id="label.osc_port",
+            control_id="input.osc_port",
+        )
 
         # --- Chatbox send toggle ---
-        self._chatbox_switch = ctk.CTkSwitch(self._content, text="", command=self._on_chatbox_toggle)
-        if osc.chatbox_send:
-            self._chatbox_switch.select()
-        self.add_row(t("settings.chatbox_send", default="Chatbox Send"), self._chatbox_switch)
-        self._add_debug_label(self._chatbox_switch, "switch.chatbox_send")
+        def _make_chatbox_switch(row):
+            switch = ctk.CTkSwitch(row, text="", command=self._on_chatbox_toggle)
+            if osc.chatbox_send:
+                switch.select()
+            return switch
+
+        self._chatbox_switch = self.add_row(
+            t("tk.settings.chatbox_send", default="Chatbox Send"),
+            _make_chatbox_switch,
+            label_i18n_key="tk.settings.chatbox_send",
+            label_default="Chatbox Send",
+            label_id="label.chatbox_send",
+            control_id="switch.chatbox_send",
+        )
 
         # --- Chatbox max chars ---
-        self._max_chars_entry = ctk.CTkEntry(self._content, width=120)
-        self._max_chars_entry.insert(0, str(osc.chatbox_max_chars))
-        self._max_chars_entry.bind("<FocusOut>", lambda _: self._apply_max_chars())
-        self._max_chars_entry.bind("<Return>", lambda _: self._apply_max_chars())
-        self.add_row(t("settings.chatbox_max_chars", default="Max Characters"), self._max_chars_entry)
-        self._add_debug_label(self._max_chars_entry, "input.chatbox_max_chars")
+        def _make_max_chars_entry(row):
+            entry = ctk.CTkEntry(row, width=120)
+            entry.insert(0, str(osc.chatbox_max_chars))
+            entry.bind("<FocusOut>", lambda _: self._apply_max_chars())
+            entry.bind("<Return>", lambda _: self._apply_max_chars())
+            return entry
+
+        self._max_chars_entry = self.add_row(
+            t("tk.settings.chatbox_max_chars", default="Max Characters"),
+            _make_max_chars_entry,
+            label_i18n_key="tk.settings.chatbox_max_chars",
+            label_default="Max Characters",
+            label_id="label.chatbox_max_chars",
+            control_id="input.chatbox_max_chars",
+        )
 
         # --- VRC mic intercept toggle ---
-        self._mic_intercept_switch = ctk.CTkSwitch(
-            self._content, text="", command=self._on_mic_intercept_toggle,
+        def _make_mic_intercept_switch(row):
+            switch = ctk.CTkSwitch(row, text="", command=self._on_mic_intercept_toggle)
+            if osc.vrc_mic_intercept:
+                switch.select()
+            return switch
+
+        self._mic_intercept_switch = self.add_row(
+            t("tk.settings.vrc_mic_intercept", default="VRC Mic Intercept"),
+            _make_mic_intercept_switch,
+            label_i18n_key="tk.settings.vrc_mic_intercept",
+            label_default="VRC Mic Intercept",
+            label_id="label.vrc_mic_intercept",
+            control_id="switch.vrc_mic_intercept",
         )
-        if osc.vrc_mic_intercept:
-            self._mic_intercept_switch.select()
-        self.add_row(t("settings.vrc_mic_intercept", default="VRC Mic Intercept"), self._mic_intercept_switch)
-        self._add_debug_label(self._mic_intercept_switch, "switch.vrc_mic_intercept")
 
     # --- Handlers ---
 

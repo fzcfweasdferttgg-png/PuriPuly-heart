@@ -1,8 +1,11 @@
 """Main application window for the Tkinter/CTk GUI.
 
-``TkApp`` is the root ``CTk`` window.  It owns the sidebar navigation,
-content area, status bar, and notification toast system.  Business logic
-is delegated entirely to ``GuiController``.
+``TkApp`` is the root ``CTk`` window.  It owns the settings sections
+directly (no sidebar navigation), a status bar, popup lifecycle management
+for ``PopupControlView`` and ``PopupViewWindow``, and the notification
+toast system.  Business logic is delegated entirely to ``GuiController``.
+
+Architecture: 3-window (main settings + 2 popup windows).
 """
 
 from __future__ import annotations
@@ -16,14 +19,36 @@ from typing import Any
 import customtkinter as ctk
 import tkinter as tk
 
-from puripuly_heart.domain.i18n import set_locale, t
+from puripuly_heart.domain.i18n import (
+    available_locales,
+    get_locale,
+    native_locale_label,
+    set_gui,
+    set_locale,
+    t,
+)
 from puripuly_heart.ui_tkinter import theme as th
-from puripuly_heart.ui_tkinter.views.dashboard import DashboardView
+from puripuly_heart.ui_tkinter.views.popup_control import PopupControlView
+from puripuly_heart.ui_tkinter.views.popup_view import PopupViewWindow
 from puripuly_heart.ui_tkinter.views.settings import SettingsView
-from puripuly_heart.ui_tkinter.views.logs import LogsView
-from puripuly_heart.ui_tkinter.views.about import AboutView
+from puripuly_heart.ui_tkinter.views.about import _load_third_party_notices, _system_info_lines
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Section navigation mapping (key, i18n_key, fallback_label)
+# ---------------------------------------------------------------------------
+
+_NAV_SECTIONS: list[tuple[str, str, str]] = [
+    ("stt", "tk.nav.section.stt", "STT"),
+    ("audio", "tk.nav.section.audio", "Audio"),
+    ("llm", "tk.nav.section.llm", "LLM"),
+    ("secrets", "tk.nav.section.secrets", "Keys"),
+    ("prompt_context", "tk.nav.section.prompt", "Prompt"),
+    ("overlay", "tk.nav.section.overlay", "Overlay"),
+    ("osc", "tk.nav.section.osc", "VRChat"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -86,20 +111,22 @@ class _ToastWindow(ctk.CTkToplevel):
 # TkApp — root window
 # ---------------------------------------------------------------------------
 
-# Navigation items: (internal key, i18n label key, fallback label)
-_NAV_ITEMS: list[tuple[str, str, str]] = [
-    ("dashboard", "nav.dashboard", "Dashboard"),
-    ("settings", "nav.settings", "Settings"),
-    ("logs", "nav.logs", "Logs"),
-    ("about", "nav.about", "About"),
-]
-
 
 class TkApp(ctk.CTk):
-    """Root application window for the PuriPuly Heart Tkinter GUI."""
+    """Root application window for the PuriPuly Heart Tkinter GUI.
+
+    Architecture: main settings window + 2 popup windows (Control, View).
+    The main window contains all settings sections in a scrollable frame.
+    Popups are created on demand and managed via ``_popup_control`` /
+    ``_popup_view`` references.
+    """
 
     def __init__(self, config_path: Path, *, debug_ui_preview: bool = False) -> None:
         super().__init__()
+
+        # --- File logging --------------------------------------------------
+        # Removed redundant FileHandler — controller already writes to
+        # puripuly_heart.log via RotatingFileHandler (see runtime_logging).
 
         # --- Debug mode ----------------------------------------------------
         self.debug_ui_preview = debug_ui_preview
@@ -107,18 +134,21 @@ class TkApp(ctk.CTk):
         self._debug_visible: bool = False
 
         # --- Window configuration ------------------------------------------
-        self.title("PuriPuly Heart")
+        self.title(t("tk.app.title", default="PuriPuly Heart"))
         self.geometry(f"{th.WINDOW_DEFAULT_WIDTH}x{th.WINDOW_DEFAULT_HEIGHT}")
         self.minsize(th.WINDOW_MIN_WIDTH, th.WINDOW_MIN_HEIGHT)
+        self.resizable(False, False)  # Fixed size — no manual resize
         self.configure(fg_color=th.COLOR_BACKGROUND)
 
         # --- GuiController ------------------------------------------------
         from puripuly_heart.app.services.gui_controller import TkinterGuiController
+        from puripuly_heart.ui_tkinter.views.popup_view import TkinterLogHandler
 
         self.controller: TkinterGuiController = TkinterGuiController(
             page=None,
             app=self,
             config_path=config_path,
+            log_handler_factory=TkinterLogHandler,
         )
 
         # Pre-load settings synchronously so views can read them during build.
@@ -137,178 +167,565 @@ class TkApp(ctk.CTk):
             if self.controller.settings
             else "en"
         )
+        set_gui("tk")
         set_locale(locale)
 
-        # --- View references (set by _build_ui) ---------------------------
-        self._views: dict[str, ctk.CTkFrame] = {}
-        self._nav_buttons: dict[str, ctk.CTkButton] = {}
-        self._current_view: str = "dashboard"
+        # --- Popup references (created on demand) --------------------------
+        self._popup_control: PopupControlView | None = None
+        self._popup_view: PopupViewWindow | None = None
+
+        # --- Controller compatibility attributes ---------------------------
+        # GuiController accesses these via getattr on the app instance.
+        self.view_dashboard: PopupControlView | None = None  # Set when popup opens
+        self.view_settings: SettingsView  # Set during _build_ui
+        self.view_logs: PopupViewWindow | None = None  # Set when popup opens
 
         # --- Build ---------------------------------------------------------
+        self.withdraw()  # Hide window during build to prevent flash
         self._build_ui()
         if self.debug_ui_preview:
             self._build_debug_toggle()
         self._start_controller()
+        self.update_idletasks()  # Force layout completion before showing
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(500, self.deiconify)  # Show window after build completes
+
+        # --- Popup sync on window restore ----------------------------------
+        self._was_iconic: bool = False
+        self.bind("<Unmap>", self._on_main_window_unmap)
+        self.bind("<Map>", self._on_main_window_map)
 
     # -----------------------------------------------------------------------
     # UI construction
     # -----------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        """Assemble sidebar + content area + status bar."""
-        # Root container: horizontal split
-        self._root_row = ctk.CTkFrame(self, fg_color=th.COLOR_BACKGROUND)
-        self._root_row.pack(fill="both", expand=True)
+        """Assemble menu bar + scrollable settings + action buttons."""
+        self._build_menu_bar()
+        self._build_scrollable_settings()
+        self._build_action_buttons()
 
-        self._build_sidebar(self._root_row)
-        self._build_content(self._root_row)
-        self._build_status_bar()
+    def _build_menu_bar(self) -> None:
+        """Create the menu bar: Language (native), About."""
+        self._menubar = tk.Menu(self)
+        self.configure(menu=self._menubar)
 
-        # Show default view
-        self._show_view("dashboard")
-
-    def _build_sidebar(self, parent: ctk.CTkFrame) -> None:
-        """Left sidebar with navigation buttons."""
-        self._sidebar = ctk.CTkFrame(
-            parent,
-            width=th.SIDEBAR_WIDTH,
-            fg_color=th.COLOR_SIDEBAR,
-            corner_radius=0,
-        )
-        self._sidebar.pack(side="left", fill="y")
-        self._sidebar.pack_propagate(False)
-
-        # App title at top of sidebar
-        self._sidebar_title = ctk.CTkLabel(
-            self._sidebar,
-            text="💖 PuriPuly",
-            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING + 2, "bold"),
-            text_color=th.COLOR_PRIMARY,
-        )
-        self._sidebar_title.pack(
-            pady=(20, 16),
-            padx=th.SIDEBAR_PAD_X,
-            anchor="w",
-        )
-
-        # Divider
-        ctk.CTkFrame(
-            self._sidebar,
-            height=1,
-            fg_color=th.COLOR_DIVIDER,
-        ).pack(fill="x", padx=th.SIDEBAR_PAD_X, pady=(0, 8))
-
-        # Navigation buttons
-        for key, i18n_key, fallback in _NAV_ITEMS:
-            btn = ctk.CTkButton(
-                self._sidebar,
-                text=self._nav_label(i18n_key, fallback),
-                anchor="w",
-                height=th.SIDEBAR_BUTTON_HEIGHT,
-                corner_radius=th.SIDEBAR_BUTTON_CORNER,
-                fg_color="transparent",
-                hover_color=th.COLOR_SIDEBAR_ACTIVE,
-                text_color=th.COLOR_NAV_INACTIVE,
-                font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY, "normal"),
-                command=lambda k=key: self._show_view(k),
+        # --- Language menu (index 0) ---
+        self._lang_menu = tk.Menu(self._menubar, tearoff=0)
+        current = get_locale()
+        for code in available_locales():
+            native = native_locale_label(code)
+            self._lang_menu.add_command(
+                label=native,
+                command=lambda c=code: self._change_locale(c),
             )
-            btn.pack(
-                fill="x",
-                padx=th.SIDEBAR_PAD_X,
-                pady=(th.SIDEBAR_PAD_Y // 2),
-            )
-            self._nav_buttons[key] = btn
-            self._add_debug_label(btn, f"nav.{key}")
+        current_native = native_locale_label(current)
+        self._menubar.add_cascade(
+            label=f"Language ({current_native})",
+            menu=self._lang_menu,
+        )
 
-    def _build_content(self, parent: ctk.CTkFrame) -> None:
-        """Right content area holding view frames."""
-        self._content = ctk.CTkFrame(
-            parent,
+        # --- Theme toggle (index 1) — direct item ---
+        self._menubar.add_command(
+            label=self._theme_label(),
+            command=self._toggle_theme,
+        )
+
+        # --- About command (index 2) — direct item ---
+        self._menubar.add_command(
+            label=t("tk.about.menu", default="About"),
+            command=self._show_about_dialog,
+        )
+
+    def _build_scrollable_settings(self) -> None:
+        """Place the SettingsView (scrollable sections) in the main window."""
+        self._settings_container = ctk.CTkFrame(
+            self,
             fg_color=th.COLOR_BACKGROUND,
             corner_radius=0,
         )
-        self._content.pack(side="left", fill="both", expand=True)
+        self._settings_container.pack(fill="both", expand=True)
 
-        # Dashboard — real view (exposed as view_dashboard for GuiController)
-        dashboard = DashboardView(self._content, controller=self.controller)
-        dashboard.place(in_=self._content, relwidth=1.0, relheight=1.0)
-        self._views["dashboard"] = dashboard
-        self.view_dashboard = dashboard  # GuiController accesses this
-        self._add_debug_label(dashboard, "view.dashboard")
-
-        # Settings — real view
-        settings_view = SettingsView(self._content, controller=self.controller)
-        settings_view.place(in_=self._content, relwidth=1.0, relheight=1.0)
-        self._views["settings"] = settings_view
-        self.view_settings = settings_view  # GuiController may access this
-        self._add_debug_label(settings_view, "view.settings")
-
-        # Logs — real view (exposed as view_logs for GuiController)
-        logs_view = LogsView(self._content, controller=self.controller)
-        logs_view.place(in_=self._content, relwidth=1.0, relheight=1.0)
-        self._views["logs"] = logs_view
-        self.view_logs = logs_view  # GuiController accesses this
-        self._add_debug_label(logs_view, "view.logs")
-
-        # About — real view
-        about_view = AboutView(self._content, controller=self.controller)
-        about_view.place(in_=self._content, relwidth=1.0, relheight=1.0)
-        self._views["about"] = about_view
-        self._add_debug_label(about_view, "view.about")
-
-    def _build_status_bar(self) -> None:
-        """Bottom status bar."""
-        self._status_bar = ctk.CTkFrame(
-            self,
-            height=th.STATUS_BAR_HEIGHT,
+        # Left-side navigation panel
+        self._nav_panel = ctk.CTkFrame(
+            self._settings_container,
             fg_color=th.COLOR_SURFACE,
             corner_radius=0,
+            width=110,
         )
-        self._status_bar.pack(side="bottom", fill="x")
-        self._status_bar.pack_propagate(False)
+        self._nav_panel.pack(side="left", fill="y")
+        self._nav_panel.pack_propagate(False)
 
-        self._status_label = ctk.CTkLabel(
-            self._status_bar,
-            text=t("status.ready", default="Ready"),
-            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_SMALL, "normal"),
-            text_color=th.COLOR_TEXT_SECONDARY,
+        settings_view = SettingsView(
+            self._settings_container,
+            controller=self.controller,
         )
-        self._status_label.pack(side="left", padx=12, pady=4)
+        settings_view.pack(side="left", fill="both", expand=True)
+        self.view_settings = settings_view
+        self._add_debug_label(settings_view, "main.scroll_frame")
 
-        self._add_debug_label(self._status_bar, "status_bar")
+        self._build_nav_panel()
 
-    # -----------------------------------------------------------------------
-    # Navigation
-    # -----------------------------------------------------------------------
+        # Show the first section by default
+        if _NAV_SECTIONS:
+            first_key = _NAV_SECTIONS[0][0]
+            self._select_section(first_key)
 
-    def _show_view(self, key: str) -> None:
-        """Raise *key*'s frame to the front and highlight its nav button."""
-        view = self._views.get(key)
-        if view is None:
-            return
+    def _build_nav_panel(self) -> None:
+        """Build the left-side section navigation buttons."""
+        self._nav_buttons: dict[str, ctk.CTkButton] = {}
+        self._active_nav_key: str | None = None
 
-        # Hide all, show target
-        for v in self._views.values():
-            v.lower()
-        view.lift()
+        for key, i18n_key, fallback in _NAV_SECTIONS:
+            btn = ctk.CTkButton(
+                self._nav_panel,
+                text=t(i18n_key, default=fallback),
+                fg_color="transparent",
+                hover_color=th.COLOR_PRIMARY_CONTAINER,
+                text_color=th.COLOR_TEXT,
+                font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_SMALL),
+                anchor="w",
+                height=32,
+                command=lambda k=key: self._select_section(k),
+            )
+            btn.pack(fill="x", padx=4, pady=1)
+            self._nav_buttons[key] = btn
 
-        # Update button styles
+    def _select_section(self, key: str) -> None:
+        """Switch the center area to show only the section identified by *key*."""
+        # Update nav button highlighting
         for btn_key, btn in self._nav_buttons.items():
             if btn_key == key:
-                btn.configure(
-                    fg_color=th.COLOR_SIDEBAR_ACTIVE,
-                    text_color=th.COLOR_NAV_ACTIVE,
-                    font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY, "bold"),
-                )
+                btn.configure(fg_color=th.COLOR_PRIMARY_CONTAINER)
             else:
-                btn.configure(
-                    fg_color="transparent",
-                    text_color=th.COLOR_NAV_INACTIVE,
-                    font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY, "normal"),
-                )
+                btn.configure(fg_color="transparent")
+        self._active_nav_key = key
 
-        self._current_view = key
+        # Show only the selected section in the settings view
+        if hasattr(self.view_settings, "show_section"):
+            self.view_settings.show_section(key)
+
+    def _build_action_buttons(self) -> None:
+        """Bottom action bar with Control and View popup buttons."""
+        self._action_bar = ctk.CTkFrame(
+            self,
+            fg_color=th.COLOR_SURFACE,
+            corner_radius=0,
+            height=48,
+        )
+        self._action_bar.pack(side="bottom", fill="x", before=self._settings_container)
+        self._action_bar.pack_propagate(False)
+
+        # Control button
+        self._btn_control = ctk.CTkButton(
+            self._action_bar,
+            text=t("tk.btn.open_control", default="Control"),
+            width=140,
+            height=36,
+            corner_radius=th.NAV_BUTTON_CORNER_RADIUS,
+            fg_color=th.COLOR_PRIMARY,
+            hover_color=th.COLOR_PRIMARY_CONTAINER,
+            text_color="#FFFFFF",
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY, "bold"),
+            command=self._open_control_popup,
+        )
+        self._btn_control.pack(side="left", padx=(16, 8), pady=6)
+        self._add_debug_label(self._btn_control, "main.btn.open_control")
+
+        # View button
+        self._btn_view = ctk.CTkButton(
+            self._action_bar,
+            text=t("tk.btn.open_view", default="View"),
+            width=140,
+            height=36,
+            corner_radius=th.NAV_BUTTON_CORNER_RADIUS,
+            fg_color=th.COLOR_PRIMARY,
+            hover_color=th.COLOR_PRIMARY_CONTAINER,
+            text_color="#FFFFFF",
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY, "bold"),
+            command=self._open_view_popup,
+        )
+        self._btn_view.pack(side="left", padx=(0, 16), pady=6)
+        self._add_debug_label(self._btn_view, "main.btn.open_view")
+
+    # -----------------------------------------------------------------------
+    # Popup lifecycle
+    # -----------------------------------------------------------------------
+
+    def _open_control_popup(self) -> None:
+        """Open or raise the Control popup window."""
+        if self._popup_control is None or not self._popup_control.winfo_exists():
+            self._popup_control = PopupControlView(
+                self, controller=self.controller
+            )
+            self.view_dashboard = self._popup_control  # Controller compatibility
+        else:
+            self._popup_control.deiconify()
+            self._popup_control.lift()
+
+    def _open_view_popup(self) -> None:
+        """Open or raise the View popup window."""
+        if self._popup_view is None or not self._popup_view.winfo_exists():
+            self._popup_view = PopupViewWindow(
+                self, controller=self.controller
+            )
+            self.view_logs = self._popup_view  # Controller compatibility
+            # Retroactively attach the realtime log sink if runtime_logging
+            # was already initialized before the popup existed.
+            if hasattr(self.controller, "attach_view_logs_if_ready"):
+                self.controller.attach_view_logs_if_ready()
+        else:
+            self._popup_view.deiconify()
+            self._popup_view.lift()
+
+    def _on_main_window_unmap(self, _event: tk.Event | None = None) -> None:
+        """Track when the main window is minimized (iconified)."""
+        try:
+            if self.state() == "iconic":
+                self._was_iconic = True
+        except Exception:
+            pass
+
+    def _on_main_window_map(self, _event: tk.Event | None = None) -> None:
+        """Restore visible popups when main window is restored from minimized.
+
+        Only acts when the window was previously iconified to avoid
+        accidentally raising popups during section switches or other
+        internal pack/unpack cycles.
+        """
+        if not self._was_iconic:
+            return
+        self._was_iconic = False
+
+        if self._popup_control and self._popup_control.winfo_exists():
+            self._popup_control.deiconify()
+        if self._popup_view and self._popup_view.winfo_exists():
+            self._popup_view.deiconify()
+
+    # -----------------------------------------------------------------------
+    # Locale helpers
+    # -----------------------------------------------------------------------
+
+    def _change_locale(self, locale_code: str) -> None:
+        """Apply a new locale and refresh all UI labels.
+
+        Locale change is a UI-only operation — we do NOT go through the
+        async ``apply_settings_with_sync`` pipeline because it can race
+        and overwrite the locale with stale state.
+        """
+        logger.info("[locale] switching to '%s'", locale_code)
+        self.controller.settings.ui.locale = locale_code
+        set_locale(locale_code)
+        # Save to disk without triggering the full async apply pipeline
+        try:
+            from puripuly_heart.adapters.storage.settings_persistence import save_settings
+            save_settings(self.controller.config_path, self.controller.settings)
+        except Exception as exc:
+            logger.warning("[locale] save failed: %s", exc)
+        self.apply_locale()
+
+    def _update_lang_menu_label(self) -> None:
+        """Update the Language cascade label to show the current native name."""
+        current_native = native_locale_label(get_locale())
+        # Index 0 is the hidden tearoff entry, so cascade is at index 1
+        self._menubar.entryconfigure(1, label=f"Language ({current_native})")
+
+    # -----------------------------------------------------------------------
+    # Theme toggle
+    # -----------------------------------------------------------------------
+
+    def _theme_label(self) -> str:
+        """Return menu label for theme toggle."""
+        return "Theme (Dark)" if th.is_dark() else "Theme (Light)"
+
+    def _toggle_theme(self) -> None:
+        """Switch between light and dark theme."""
+        th.toggle_theme()
+        th.refresh_colors()
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        """Apply current theme colors to all widgets."""
+        # Update menu label
+        self._menubar.entryconfigure(2, label=self._theme_label())
+
+        # Update main window
+        self.configure(fg_color=th.COLOR_BACKGROUND)
+
+        # Update settings container and nav panel
+        if hasattr(self, "_settings_container"):
+            self._settings_container.configure(fg_color=th.COLOR_BACKGROUND)
+        if hasattr(self, "_nav_panel"):
+            self._nav_panel.configure(fg_color=th.COLOR_SURFACE)
+
+        # Update nav buttons
+        if hasattr(self, "_nav_buttons"):
+            for key, btn in self._nav_buttons.items():
+                if key == self._active_nav_key:
+                    btn.configure(fg_color=th.COLOR_PRIMARY_CONTAINER, text_color=th.COLOR_TEXT)
+                else:
+                    btn.configure(fg_color="transparent", text_color=th.COLOR_TEXT)
+
+        # Update action bar
+        if hasattr(self, "_action_bar"):
+            self._action_bar.configure(fg_color=th.COLOR_SURFACE)
+        if hasattr(self, "_btn_control"):
+            self._btn_control.configure(fg_color=th.COLOR_PRIMARY, hover_color=th.COLOR_PRIMARY_CONTAINER)
+        if hasattr(self, "_btn_view"):
+            self._btn_view.configure(fg_color=th.COLOR_PRIMARY, hover_color=th.COLOR_PRIMARY_CONTAINER)
+
+        # Update settings view
+        if hasattr(self, "view_settings"):
+            self.view_settings.configure(fg_color=th.COLOR_BACKGROUND)
+            # Rebuild sections with new colors
+            self.view_settings.reload()
+
+    # -----------------------------------------------------------------------
+    # About dialog
+    # -----------------------------------------------------------------------
+
+    def _show_about_dialog(self) -> None:
+        """Open a popup About dialog with full version, links, system info, and licenses."""
+        import webbrowser
+        from puripuly_heart import __version__
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("About PuriPuly Heart")
+        dlg.geometry("560x680")
+        dlg.resizable(True, True)
+        dlg.minsize(480, 500)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.configure(fg_color=th.COLOR_BACKGROUND)
+
+        # Scrollable content area
+        scroll = ctk.CTkScrollableFrame(
+            dlg,
+            fg_color=th.COLOR_BACKGROUND,
+            scrollbar_button_color=th.COLOR_DIVIDER,
+        )
+        scroll.pack(fill="both", expand=True, padx=16, pady=12)
+
+        # --- Header card ---
+        header_card = ctk.CTkFrame(
+            scroll,
+            fg_color=th.COLOR_SURFACE,
+            corner_radius=th.CARD_CORNER_RADIUS,
+        )
+        header_card.pack(fill="x", pady=(0, 12))
+
+        header_inner = ctk.CTkFrame(header_card, fg_color="transparent")
+        header_inner.pack(fill="x", padx=th.CARD_PAD_X, pady=th.CARD_PAD_Y)
+
+        ctk.CTkLabel(
+            header_inner,
+            text=t("tk.app.title", default="PuriPuly Heart"),
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_TITLE + 4, "bold"),
+            text_color=th.COLOR_PRIMARY,
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            header_inner,
+            text=f"{t('tk.about.version', default='Version')} {__version__}",
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING),
+            text_color=th.COLOR_TEXT_SECONDARY,
+        ).pack(anchor="w", pady=(4, 0))
+
+        ctk.CTkLabel(
+            header_inner,
+            text=t(
+                "tk.about.description",
+                default="LLM-powered real-time translator for VRChat",
+            ),
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY),
+            text_color=th.COLOR_TEXT,
+            wraplength=500,
+        ).pack(anchor="w", pady=(8, 0))
+
+        ctk.CTkLabel(
+            header_inner,
+            text="License: AGPL-3.0-or-later  |  \u00a9 2026 TriOmegaOptimum",
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_SMALL),
+            text_color=th.COLOR_TEXT_SECONDARY,
+        ).pack(anchor="w", pady=(8, 0))
+
+        # --- Fork notice ---
+        fork_card = ctk.CTkFrame(
+            scroll,
+            fg_color=th.COLOR_PRIMARY_CONTAINER,
+            corner_radius=th.CARD_CORNER_RADIUS,
+            border_width=1,
+            border_color=th.COLOR_PRIMARY,
+        )
+        fork_card.pack(fill="x", pady=(0, 12))
+
+        fork_inner = ctk.CTkFrame(fork_card, fg_color="transparent")
+        fork_inner.pack(fill="x", padx=th.CARD_PAD_X, pady=th.CARD_PAD_Y)
+
+        ctk.CTkLabel(
+            fork_inner,
+            text=t(
+                "tk.about.fork_notice",
+                default=(
+                    "This is an unofficial fork. "
+                    "The original author has no relation to this version."
+                ),
+            ),
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY, "bold"),
+            text_color=th.COLOR_ON_PRIMARY_CONTAINER,
+            wraplength=500,
+            justify="left",
+        ).pack(anchor="w")
+
+        # --- Links card ---
+        links_card = ctk.CTkFrame(
+            scroll,
+            fg_color=th.COLOR_SURFACE,
+            corner_radius=th.CARD_CORNER_RADIUS,
+        )
+        links_card.pack(fill="x", pady=(0, 12))
+
+        links_inner = ctk.CTkFrame(links_card, fg_color="transparent")
+        links_inner.pack(fill="x", padx=th.CARD_PAD_X, pady=th.CARD_PAD_Y)
+
+        def _make_link(parent: ctk.CTkFrame, text: str, url: str) -> None:
+            """Create a styled link button."""
+            btn = ctk.CTkButton(
+                parent,
+                text=text,
+                fg_color="transparent",
+                hover_color=th.COLOR_PRIMARY_CONTAINER,
+                text_color=th.COLOR_PRIMARY,
+                anchor="w",
+                font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY, "normal"),
+                command=lambda u=url: webbrowser.open(u),
+            )
+            btn.pack(fill="x", pady=2)
+
+        ctk.CTkLabel(
+            links_inner,
+            text=t("tk.about.developed_by", default="Developed by"),
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
+            text_color=th.COLOR_TEXT,
+        ).pack(anchor="w", pady=(0, 4))
+
+        _make_link(
+            links_inner,
+            "salee \u2014 github.com/kapitalismho/PuriPuly-heart",
+            "https://github.com/kapitalismho/PuriPuly-heart",
+        )
+
+        ctk.CTkLabel(
+            links_inner,
+            text=t("tk.about.inspired_by", default="Inspired by"),
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
+            text_color=th.COLOR_TEXT,
+        ).pack(anchor="w", pady=(12, 4))
+
+        for label, url in [
+            ("VRCT \u2014 github.com/misyaguziya/VRCT", "https://github.com/misyaguziya/VRCT"),
+            ("mimiuchi \u2014 github.com/naeruru/mimiuchi", "https://github.com/naeruru/mimiuchi"),
+            ("Yakutan \u2014 github.com/febilly/Yakutan", "https://github.com/febilly/Yakutan"),
+        ]:
+            _make_link(links_inner, label, url)
+
+        ctk.CTkLabel(
+            links_inner,
+            text=t("tk.about.fork", default="Fork:"),
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
+            text_color=th.COLOR_TEXT,
+        ).pack(anchor="w", pady=(12, 4))
+
+        _make_link(
+            links_inner,
+            "github.com/fzcfweasdferttgg-png/PuriPuly-heart",
+            "https://github.com/fzcfweasdferttgg-png/PuriPuly-heart",
+        )
+
+        # --- System info card ---
+        sys_card = ctk.CTkFrame(
+            scroll,
+            fg_color=th.COLOR_SURFACE,
+            corner_radius=th.CARD_CORNER_RADIUS,
+        )
+        sys_card.pack(fill="x", pady=(0, 12))
+
+        sys_inner = ctk.CTkFrame(sys_card, fg_color="transparent")
+        sys_inner.pack(fill="x", padx=th.CARD_PAD_X, pady=th.CARD_PAD_Y)
+
+        ctk.CTkLabel(
+            sys_inner,
+            text=t("tk.about.system_info", default="System Info"),
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
+            text_color=th.COLOR_TEXT,
+        ).pack(anchor="w", pady=(0, 8))
+
+        for label, value in _system_info_lines():
+            row = ctk.CTkFrame(sys_inner, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+
+            ctk.CTkLabel(
+                row,
+                text=f"{label}:",
+                font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY, "bold"),
+                text_color=th.COLOR_TEXT_SECONDARY,
+                width=80,
+                anchor="w",
+            ).pack(side="left")
+
+            ctk.CTkLabel(
+                row,
+                text=value,
+                font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY),
+                text_color=th.COLOR_TEXT,
+                anchor="w",
+            ).pack(side="left", padx=(4, 0))
+
+        # --- Licenses card ---
+        lic_card = ctk.CTkFrame(
+            scroll,
+            fg_color=th.COLOR_SURFACE,
+            corner_radius=th.CARD_CORNER_RADIUS,
+        )
+        lic_card.pack(fill="x", pady=(0, 12))
+
+        lic_inner = ctk.CTkFrame(lic_card, fg_color="transparent")
+        lic_inner.pack(fill="x", padx=th.CARD_PAD_X, pady=th.CARD_PAD_Y)
+
+        ctk.CTkLabel(
+            lic_inner,
+            text=t("tk.about.licenses", default="Licenses"),
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
+            text_color=th.COLOR_TEXT,
+        ).pack(anchor="w", pady=(0, 6))
+
+        notices_text = _load_third_party_notices()
+        textbox = ctk.CTkTextbox(
+            lic_inner,
+            height=200,
+            fg_color=th.COLOR_BACKGROUND,
+            text_color=th.COLOR_TEXT,
+            font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_SMALL),
+            corner_radius=8,
+            border_width=1,
+            border_color=th.COLOR_DIVIDER,
+            state="disabled",
+            wrap="word",
+        )
+        textbox.pack(fill="x")
+        textbox.configure(state="normal")
+        textbox.insert("end", notices_text)
+        textbox.configure(state="disabled")
+
+        # --- OK button ---
+        ctk.CTkButton(
+            dlg,
+            text=t("tk.about.ok", default="OK"),
+            width=100,
+            fg_color=th.COLOR_PRIMARY,
+            hover_color=th.COLOR_ERROR,
+            command=dlg.destroy,
+        ).pack(pady=(0, 12))
 
     # -----------------------------------------------------------------------
     # GuiController integration
@@ -343,27 +760,65 @@ class TkApp(ctk.CTk):
 
     def apply_locale(self) -> None:
         """Re-apply i18n labels after a locale change."""
-        for key, i18n_key, fallback in _NAV_ITEMS:
-            btn = self._nav_buttons.get(key)
-            if btn is not None:
-                btn.configure(text=self._nav_label(i18n_key, fallback))
+        # Update menu bar language label
+        try:
+            self._update_lang_menu_label()
+        except Exception as exc:
+            logger.error("[locale] _update_lang_menu_label failed: %s", exc)
 
-        self._status_label.configure(
-            text=t("status.ready", default="Ready"),
-        )
+        # Update action button labels
+        try:
+            self._btn_control.configure(text=t("tk.btn.open_control", default="Control"))
+            self._btn_view.configure(text=t("tk.btn.open_view", default="View"))
+        except Exception as exc:
+            logger.error("[locale] action buttons failed: %s", exc)
 
-        # Propagate locale to views that support it
-        for view in self._views.values():
-            apply_fn = getattr(view, "apply_locale", None)
-            if callable(apply_fn):
-                apply_fn()
+        # Update nav panel labels
+        try:
+            if hasattr(self, "_nav_buttons"):
+                for key, i18n_key, fallback in _NAV_SECTIONS:
+                    btn = self._nav_buttons.get(key)
+                    if btn is not None:
+                        btn.configure(text=t(i18n_key, default=fallback))
+        except Exception as exc:
+            logger.error("[locale] nav buttons failed: %s", exc)
+
+        # Propagate locale to settings view (in-place label updates)
+        if hasattr(self.view_settings, "apply_locale"):
+            try:
+                self.view_settings.apply_locale()
+            except Exception as exc:
+                logger.error("[locale] view_settings.apply_locale failed: %s", exc, exc_info=True)
+
+        # Re-highlight the active nav button after section rebuild
+        if hasattr(self, "_active_nav_key") and self._active_nav_key:
+            self._select_section(self._active_nav_key)
+
+        # Propagate locale to popups
+        for popup_attr in ("_popup_control", "_popup_view"):
+            popup = getattr(self, popup_attr, None)
+            if popup is not None and popup.winfo_exists() and hasattr(popup, "apply_locale"):
+                try:
+                    popup.apply_locale()
+                except Exception as exc:
+                    logger.error("[locale] %s.apply_locale failed: %s", popup_attr, exc)
 
     # -----------------------------------------------------------------------
     # Shutdown
     # -----------------------------------------------------------------------
 
     def _on_close(self) -> None:
-        """Gracefully stop controller, then destroy the window."""
+        """Gracefully close popups, stop controller, then destroy the window."""
+        # Close popups first
+        for popup in (self._popup_control, self._popup_view):
+            if popup and popup.winfo_exists():
+                popup.destroy()
+
+        # Destroy settings view before the main window to prevent
+        # _update_dimensions_event errors on already-destroyed canvases
+        if hasattr(self, "view_settings") and self.view_settings:
+            self.view_settings.destroy()
+
         from puripuly_heart.ui_tkinter.app_controller import stop_controller_async
 
         try:
@@ -378,11 +833,11 @@ class TkApp(ctk.CTk):
     # -----------------------------------------------------------------------
 
     def _build_debug_toggle(self) -> None:
-        """Floating 🔍 button that toggles all debug labels on/off."""
+        """Floating [D] button that toggles all debug labels on/off."""
         self._debug_toggle_btn = tk.Button(
             self,
-            text="🔍",
-            font=("Segoe UI Emoji", 10),
+            text="D",
+            font=("Consolas", 10, "bold"),
             relief="flat",
             bd=0,
             bg="#333333",
@@ -397,19 +852,24 @@ class TkApp(ctk.CTk):
     def _toggle_debug_labels(self) -> None:
         """Flip visibility of all registered debug labels."""
         self._debug_visible = not self._debug_visible
+        alive: list[ctk.CTkLabel] = []
         for label in self._debug_labels:
             try:
+                if not label.winfo_exists():
+                    continue
                 if self._debug_visible:
-                    label.lift()
+                    label.place(x=4, y=4)
                 else:
-                    label.lower()
+                    label.place_forget()
+                alive.append(label)
             except Exception:
                 pass
+        self._debug_labels = alive
 
     def _add_debug_label(self, widget: ctk.CTkFrame, widget_id: str) -> None:
         """Add a small debug label showing the widget identifier.
 
-        Labels start hidden and are toggled via the 🔍 button.
+        Labels start hidden and are toggled via the [D] button.
         Clicking a label copies its text to the clipboard with a flash.
         """
         if not self.debug_ui_preview:
@@ -421,10 +881,8 @@ class TkApp(ctk.CTk):
             text_color="#00FF88",
             fg_color="transparent",
         )
-        label.place(x=4, y=4)
         label.bind("<Button-1>", lambda e, t=widget_id: self._copy_debug_label(t))
-        # Start hidden — lower below parent so it's invisible
-        label.lower()
+        # Start hidden — don't place until toggled via [D] button
         self._debug_labels.append(label)
 
     def _copy_debug_label(self, text: str) -> None:
@@ -440,13 +898,3 @@ class TkApp(ctk.CTk):
                     break
             except Exception:
                 pass
-
-    # -----------------------------------------------------------------------
-    # Helpers
-    # -----------------------------------------------------------------------
-
-    @staticmethod
-    def _nav_label(i18n_key: str, fallback: str) -> str:
-        """Translate a nav label; return *fallback* when the key is missing."""
-        translated = t(i18n_key, default=fallback)
-        return translated if translated != i18n_key else fallback

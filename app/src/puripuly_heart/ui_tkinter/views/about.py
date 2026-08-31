@@ -33,7 +33,7 @@ def _load_third_party_notices() -> str:
             .read_text(encoding="utf-8")
         )
     except Exception:
-        return t("about.licenses.load_error", default="Could not load license information.")
+        return t("tk.about.licenses.load_error", default="Could not load license information.")
 
 
 def _detect_gpu() -> str:
@@ -64,22 +64,22 @@ def _detect_gpu() -> str:
     except Exception:
         pass
 
-    return t("about.system.gpu_unknown", default="Unknown")
+    return t("tk.about.system.gpu_unknown", default="Unknown")
 
 
 def _system_info_lines() -> list[tuple[str, str]]:
     """Return label/value pairs for the system info section."""
     return [
         (
-            t("about.system.python", default="Python"),
+            t("tk.about.system.python", default="Python"),
             f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         ),
         (
-            t("about.system.os", default="OS"),
+            t("tk.about.system.os", default="OS"),
             f"{platform.system()} {platform.release()}",
         ),
         (
-            t("about.system.gpu", default="GPU"),
+            t("tk.about.system.gpu", default="GPU"),
             _detect_gpu(),
         ),
     ]
@@ -148,7 +148,7 @@ class AboutView(ctk.CTkFrame):
         # Title
         ctk.CTkLabel(
             self,
-            text=t("nav.about", default="About"),
+            text=t("tk.nav.about", default="About"),
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_TITLE, "bold"),
             text_color=th.COLOR_TEXT,
         ).pack(anchor="w", padx=th.CONTENT_PAD_X, pady=(th.CONTENT_PAD_Y, 8))
@@ -183,14 +183,14 @@ class AboutView(ctk.CTkFrame):
 
         ctk.CTkLabel(
             inner,
-            text=t("app.title", default="PuriPuly Heart"),
+            text=t("tk.app.title", default="PuriPuly Heart"),
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_TITLE + 8, "bold"),
             text_color=th.COLOR_PRIMARY,
         ).pack(anchor="w")
 
         ctk.CTkLabel(
             inner,
-            text=f"{t('about.version', default='Version')} {__version__}",
+            text=f"{t('tk.about.version', default='Version')} {__version__}",
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING),
             text_color=th.COLOR_TEXT_SECONDARY,
         ).pack(anchor="w", pady=(4, 0))
@@ -198,7 +198,7 @@ class AboutView(ctk.CTkFrame):
         ctk.CTkLabel(
             inner,
             text=t(
-                "about.description",
+                "tk.about.description",
                 default="LLM-powered real-time translator for VRChat",
             ),
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_BODY),
@@ -233,7 +233,7 @@ class AboutView(ctk.CTkFrame):
         ctk.CTkLabel(
             inner,
             text=t(
-                "about.fork_notice",
+                "tk.about.fork_notice",
                 default=(
                     "This is an unofficial fork. "
                     "The original author has no relation to this version."
@@ -261,7 +261,7 @@ class AboutView(ctk.CTkFrame):
 
         ctk.CTkLabel(
             inner,
-            text=t("about.developed_by", default="Developed by"),
+            text=t("tk.about.developed_by", default="Developed by"),
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
             text_color=th.COLOR_TEXT,
         ).pack(anchor="w", pady=(0, 4))
@@ -276,7 +276,7 @@ class AboutView(ctk.CTkFrame):
 
         ctk.CTkLabel(
             inner,
-            text=t("about.inspired_by", default="Inspired by"),
+            text=t("tk.about.inspired_by", default="Inspired by"),
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
             text_color=th.COLOR_TEXT,
         ).pack(anchor="w", pady=(12, 4))
@@ -293,7 +293,7 @@ class AboutView(ctk.CTkFrame):
         # Fork repo
         ctk.CTkLabel(
             inner,
-            text=t("about.fork", default="Fork:"),
+            text=t("tk.about.fork", default="Fork:"),
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
             text_color=th.COLOR_TEXT,
         ).pack(anchor="w", pady=(12, 4))
@@ -322,7 +322,7 @@ class AboutView(ctk.CTkFrame):
 
         ctk.CTkLabel(
             inner,
-            text=t("about.system_info", default="System Info"),
+            text=t("tk.about.system_info", default="System Info"),
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
             text_color=th.COLOR_TEXT,
         ).pack(anchor="w", pady=(0, 8))
@@ -364,7 +364,7 @@ class AboutView(ctk.CTkFrame):
 
         ctk.CTkLabel(
             inner,
-            text=t("about.licenses", default="Licenses"),
+            text=t("tk.about.licenses", default="Licenses"),
             font=(th.FONT_FAMILY_FALLBACK, th.FONT_SIZE_HEADING, "bold"),
             text_color=th.COLOR_TEXT,
         ).pack(anchor="w", pady=(0, 6))
@@ -395,7 +395,7 @@ class AboutView(ctk.CTkFrame):
     def _add_debug_label(self, widget: ctk.CTkFrame, widget_id: str) -> None:
         """Add a small debug label showing the widget identifier.
 
-        Labels start hidden and are toggled via the app's 🔍 button.
+        Labels start hidden and are toggled via the app's [D] button.
         Clicking a label copies its text to the clipboard with a flash.
         """
         app = getattr(self._controller, "app", None)

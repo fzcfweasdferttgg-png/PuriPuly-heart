@@ -25,7 +25,13 @@ class OverlaySection(CollapsibleSection):
     """Overlay target, visibility toggles, and desktop overlay options."""
 
     def __init__(self, master: Any, controller: Any, **kwargs: Any) -> None:
-        super().__init__(master, t("settings.section.overlay", default="Overlay"), **kwargs)
+        super().__init__(
+            master,
+            t("tk.settings.section.overlay", default="Overlay"),
+            title_i18n_key="tk.settings.section.overlay",
+            title_default="Overlay",
+            **kwargs,
+        )
         self._controller = controller
         self._build()
 
@@ -35,66 +41,112 @@ class OverlaySection(CollapsibleSection):
         # --- Target: SteamVR / Desktop ---
         target_labels = ["SteamVR", "Desktop"]
         target_values = [OVERLAY_TARGET_STEAMVR, OVERLAY_TARGET_DESKTOP]
-        self._target_menu = ctk.CTkOptionMenu(
-            self._content,
-            values=target_labels,
-            width=160,
-            command=lambda _: self._on_target_change(),
-            fg_color=th.COLOR_PRIMARY,
-            button_color=th.COLOR_PRIMARY,
-            button_hover_color=th.COLOR_PRIMARY_CONTAINER,
-            dropdown_fg_color=th.COLOR_SURFACE,
-            dropdown_hover_color=th.COLOR_PRIMARY_CONTAINER,
-            dropdown_text_color=th.COLOR_TEXT,
-        )
-        current_target = "Desktop" if overlay.target == OVERLAY_TARGET_DESKTOP else "SteamVR"
-        self._target_menu.set(current_target)
         self._target_values = target_values
         self._target_labels = target_labels
-        self.add_row(t("settings.overlay_target", default="Overlay Target"), self._target_menu)
-        self._add_debug_label(self._target_menu, "dropdown.overlay_target")
+        current_target = "Desktop" if overlay.target == OVERLAY_TARGET_DESKTOP else "SteamVR"
+
+        def _make_target_menu(row):
+            menu = ctk.CTkOptionMenu(
+                row,
+                values=target_labels,
+                width=160,
+                command=lambda _: self._on_target_change(),
+                fg_color=th.COLOR_PRIMARY,
+                button_color=th.COLOR_PRIMARY,
+                button_hover_color=th.COLOR_PRIMARY_CONTAINER,
+                text_color=th.COLOR_ON_PRIMARY,
+                dropdown_fg_color=th.COLOR_SURFACE,
+                dropdown_hover_color=th.COLOR_PRIMARY_CONTAINER,
+                dropdown_text_color=th.COLOR_TEXT,
+            )
+            menu.set(current_target)
+            return menu
+
+        self._target_menu = self.add_row(
+            t("tk.settings.overlay_target", default="Overlay Target"),
+            _make_target_menu,
+            label_i18n_key="tk.settings.overlay_target",
+            label_default="Overlay Target",
+            label_id="label.overlay_target",
+            control_id="dropdown.overlay_target",
+        )
 
         # --- Show translation toggle ---
-        self._show_trans_switch = ctk.CTkSwitch(self._content, text="", command=self._on_show_trans)
-        if overlay.show_translation:
-            self._show_trans_switch.select()
-        self.add_row(t("settings.show_translation", default="Show Translation"), self._show_trans_switch)
-        self._add_debug_label(self._show_trans_switch, "switch.show_translation")
+        def _make_show_trans_switch(row):
+            switch = ctk.CTkSwitch(row, text="", command=self._on_show_trans)
+            if overlay.show_translation:
+                switch.select()
+            return switch
+
+        self._show_trans_switch = self.add_row(
+            t("tk.settings.show_translation", default="Show Translation"),
+            _make_show_trans_switch,
+            label_i18n_key="tk.settings.show_translation",
+            label_default="Show Translation",
+            label_id="label.show_translation",
+            control_id="switch.show_translation",
+        )
 
         # --- Show peer original toggle ---
-        self._show_peer_switch = ctk.CTkSwitch(self._content, text="", command=self._on_show_peer)
-        if overlay.show_peer_original:
-            self._show_peer_switch.select()
-        self.add_row(t("settings.show_peer_original", default="Show Peer Original"), self._show_peer_switch)
-        self._add_debug_label(self._show_peer_switch, "switch.show_peer")
+        def _make_show_peer_switch(row):
+            switch = ctk.CTkSwitch(row, text="", command=self._on_show_peer)
+            if overlay.show_peer_original:
+                switch.select()
+            return switch
+
+        self._show_peer_switch = self.add_row(
+            t("tk.settings.show_peer_original", default="Show Peer Original"),
+            _make_show_peer_switch,
+            label_i18n_key="tk.settings.show_peer_original",
+            label_default="Show Peer Original",
+            label_id="label.show_peer",
+            control_id="switch.show_peer",
+        )
 
         # --- Desktop overlay size preset ---
         preset_labels = list(DESKTOP_FLET_SIZE_PRESET_ORDER)
-        self._size_menu = ctk.CTkOptionMenu(
-            self._content,
-            values=preset_labels,
-            width=160,
-            command=lambda _: self._on_size_change(),
-            fg_color=th.COLOR_PRIMARY,
-            button_color=th.COLOR_PRIMARY,
-            button_hover_color=th.COLOR_PRIMARY_CONTAINER,
-            dropdown_fg_color=th.COLOR_SURFACE,
-            dropdown_hover_color=th.COLOR_PRIMARY_CONTAINER,
-            dropdown_text_color=th.COLOR_TEXT,
+
+        def _make_size_menu(row):
+            menu = ctk.CTkOptionMenu(
+                row,
+                values=preset_labels,
+                width=160,
+                command=lambda _: self._on_size_change(),
+                fg_color=th.COLOR_PRIMARY,
+                button_color=th.COLOR_PRIMARY,
+                button_hover_color=th.COLOR_PRIMARY_CONTAINER,
+                text_color=th.COLOR_ON_PRIMARY,
+                dropdown_fg_color=th.COLOR_SURFACE,
+                dropdown_hover_color=th.COLOR_PRIMARY_CONTAINER,
+                dropdown_text_color=th.COLOR_TEXT,
+            )
+            menu.set(overlay.desktop_flet.size_preset or DESKTOP_FLET_DEFAULT_SIZE_PRESET)
+            return menu
+
+        self._size_menu = self.add_row(
+            t("tk.settings.overlay_size_preset", default="Size Preset"),
+            _make_size_menu,
+            label_i18n_key="tk.settings.overlay_size_preset",
+            label_default="Size Preset",
+            label_id="label.overlay_size",
+            control_id="dropdown.overlay_size",
         )
-        self._size_menu.set(overlay.desktop_flet.size_preset or DESKTOP_FLET_DEFAULT_SIZE_PRESET)
-        self.add_row(
-            t("settings.overlay_size_preset", default="Size Preset"),
-            self._size_menu,
-        )
-        self._add_debug_label(self._size_menu, "dropdown.overlay_size")
 
         # --- Desktop overlay locked toggle ---
-        self._lock_switch = ctk.CTkSwitch(self._content, text="", command=self._on_lock_toggle)
-        if overlay.desktop_flet.locked:
-            self._lock_switch.select()
-        self.add_row(t("settings.overlay_locked", default="Overlay Locked"), self._lock_switch)
-        self._add_debug_label(self._lock_switch, "switch.overlay_locked")
+        def _make_lock_switch(row):
+            switch = ctk.CTkSwitch(row, text="", command=self._on_lock_toggle)
+            if overlay.desktop_flet.locked:
+                switch.select()
+            return switch
+
+        self._lock_switch = self.add_row(
+            t("tk.settings.overlay_locked", default="Overlay Locked"),
+            _make_lock_switch,
+            label_i18n_key="tk.settings.overlay_locked",
+            label_default="Overlay Locked",
+            label_id="label.overlay_locked",
+            control_id="switch.overlay_locked",
+        )
 
     # --- Handlers ---
 

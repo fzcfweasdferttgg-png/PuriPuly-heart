@@ -19,7 +19,14 @@ class AudioSection(CollapsibleSection):
     """Audio input device, host API, and VAD settings."""
 
     def __init__(self, master: Any, controller: Any, **kwargs: Any) -> None:
-        super().__init__(master, t("settings.section.audio", default="Audio"), expanded=True, **kwargs)
+        super().__init__(
+            master,
+            t("tk.settings.section.audio", default="Audio"),
+            title_i18n_key="tk.settings.section.audio",
+            title_default="Audio",
+            expanded=True,
+            **kwargs,
+        )
         self._controller = controller
         self._build()
 
@@ -27,44 +34,77 @@ class AudioSection(CollapsibleSection):
         settings = self._controller.settings
 
         # --- Input device (text entry, populated externally) ---
-        self._device_entry = ctk.CTkEntry(self._content, width=240)
-        self._device_entry.insert(0, settings.audio.input_device)
-        self._device_entry.bind("<FocusOut>", lambda _: self._apply_device())
-        self._device_entry.bind("<Return>", lambda _: self._apply_device())
-        self.add_row(t("settings.input_device", default="Input Device"), self._device_entry)
-        self._add_debug_label(self._device_entry, "input.input_device")
+        def _make_device_entry(row):
+            entry = ctk.CTkEntry(row, width=240)
+            entry.insert(0, settings.audio.input_device)
+            entry.bind("<FocusOut>", lambda _: self._apply_device())
+            entry.bind("<Return>", lambda _: self._apply_device())
+            return entry
+
+        self._device_entry = self.add_row(
+            t("tk.settings.input_device", default="Input Device"),
+            _make_device_entry,
+            label_i18n_key="tk.settings.input_device",
+            label_default="Input Device",
+            label_id="label.input_device",
+            control_id="input.input_device",
+        )
 
         # --- Host API ---
-        self._host_api_entry = ctk.CTkEntry(self._content, width=240)
-        self._host_api_entry.insert(0, settings.audio.input_host_api)
-        self._host_api_entry.bind("<FocusOut>", lambda _: self._apply_host_api())
-        self._host_api_entry.bind("<Return>", lambda _: self._apply_host_api())
-        self.add_row(t("settings.audio_host_api", default="Host API"), self._host_api_entry)
-        self._add_debug_label(self._host_api_entry, "input.host_api")
+        def _make_host_api_entry(row):
+            entry = ctk.CTkEntry(row, width=240)
+            entry.insert(0, settings.audio.input_host_api)
+            entry.bind("<FocusOut>", lambda _: self._apply_host_api())
+            entry.bind("<Return>", lambda _: self._apply_host_api())
+            return entry
+
+        self._host_api_entry = self.add_row(
+            t("tk.settings.audio_host_api", default="Host API"),
+            _make_host_api_entry,
+            label_i18n_key="tk.settings.audio_host_api",
+            label_default="Host API",
+            label_id="label.host_api",
+            control_id="input.host_api",
+        )
 
         # --- VAD Threshold (slider 0.0–1.0) ---
-        self._vad_slider = ctk.CTkSlider(
-            self._content,
-            from_=0.0,
-            to=1.0,
-            number_of_steps=100,
-            width=200,
-            command=self._on_vad_slider_change,
+        def _make_vad_slider(row):
+            slider = ctk.CTkSlider(
+                row,
+                from_=0.0,
+                to=1.0,
+                number_of_steps=100,
+                width=200,
+                command=self._on_vad_slider_change,
+            )
+            slider.set(settings.stt.vad_speech_threshold)
+            return slider
+
+        self._vad_slider = self.add_row(
+            t("tk.settings.vad_threshold", default="VAD Threshold"),
+            _make_vad_slider,
+            label_i18n_key="tk.settings.vad_threshold",
+            label_default="VAD Threshold",
+            label_id="label.vad_threshold",
+            control_id="slider.vad_threshold",
         )
-        self._vad_slider.set(settings.stt.vad_speech_threshold)
-        self.add_row(t("settings.vad_threshold", default="VAD Threshold"), self._vad_slider)
-        self._add_debug_label(self._vad_slider, "slider.vad_threshold")
 
         # --- VAD Hangover ms ---
-        self._hangover_entry = ctk.CTkEntry(self._content, width=120)
-        self._hangover_entry.insert(0, str(settings.stt.low_latency_vad_hangover_ms))
-        self._hangover_entry.bind("<FocusOut>", lambda _: self._apply_hangover())
-        self._hangover_entry.bind("<Return>", lambda _: self._apply_hangover())
-        self.add_row(
-            t("settings.vad_hangover_ms", default="VAD Hangover (ms)"),
-            self._hangover_entry,
+        def _make_hangover_entry(row):
+            entry = ctk.CTkEntry(row, width=120)
+            entry.insert(0, str(settings.stt.low_latency_vad_hangover_ms))
+            entry.bind("<FocusOut>", lambda _: self._apply_hangover())
+            entry.bind("<Return>", lambda _: self._apply_hangover())
+            return entry
+
+        self._hangover_entry = self.add_row(
+            t("tk.settings.vad_hangover_ms", default="VAD Hangover (ms)"),
+            _make_hangover_entry,
+            label_i18n_key="tk.settings.vad_hangover_ms",
+            label_default="VAD Hangover (ms)",
+            label_id="label.vad_hangover",
+            control_id="input.vad_hangover",
         )
-        self._add_debug_label(self._hangover_entry, "input.vad_hangover")
 
     # --- Handlers ---
 
