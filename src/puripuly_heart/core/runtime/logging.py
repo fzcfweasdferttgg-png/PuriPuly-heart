@@ -1,0 +1,578 @@
+from __future__ import annotations
+
+import hashlib
+import logging
+import sys
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Literal, Protocol
+
+from puripuly_heart.core.messages import DiagnosticFieldValue, ErrorDiagnostics
+from puripuly_heart.core.observability import ConversationRecordChannel, RealtimeLogSink
+
+LIVE_AUDIENCE_RECORD_ATTRIBUTE = "_puripuly_heart_live_audience"
+LIVE_AUDIENCE_BASIC = "basic"
+
+
+def emit_safe_fallback_log(
+    logger: logging.Logger,
+    message: str,
+    *,
+    level: int,
+    live: bool,
+) -> bool:
+    if logger.disabled or not logger.isEnabledFor(level):
+        return False
+    level_name = logging.getLevelName(level)
+    rendered = (
+        "[Logging] A log message could not be delivered."
+        if live
+        else (
+            "[Logging] diagnostic_delivery_failed "
+            f"level={str(level_name).replace(' ', '_')} "
+            f"message_len={len(message)} "
+            f"message_sha256={hashlib.sha256(message.encode('utf-8', errors='replace')).hexdigest()[:16]}"
+        )
+    )
+    extra = {LIVE_AUDIENCE_RECORD_ATTRIBUTE: LIVE_AUDIENCE_BASIC} if live else None
+    try:
+        record = logger.makeRecord(
+            logger.name,
+            level,
+            fn="",
+            lno=0,
+            msg=rendered,
+            args=(),
+            exc_info=None,
+            extra=extra,
+        )
+        if not logger.filter(record):
+            return False
+    except Exception:
+        return False
+    return _deliver_record(logger, record)
+
+
+def _deliver_record(logger: logging.Logger, record: logging.LogRecord) -> bool:
+    delivered = False
+    current: logging.Logger | None = logger
+    while current is not None:
+        for handler in tuple(current.handlers):
+            if record.levelno < handler.level:
+                continue
+            try:
+                result = handler.handle(record)
+                delivered = result is not False or delivered
+            except Exception:
+                pass
+        if not current.propagate:
+            break
+        current = current.parent
+    return delivered
+
+
+class RuntimeLoggingAdapterPort(Protocol):
+    log_file: Path
+
+    def configure_diagnostics(self, *, instance_id: str | None = None, event_sink=None) -> None: ...
+
+    def diagnostic_history(self, arguments: dict) -> dict: ...
+
+    def diagnostic_health(self) -> dict: ...
+
+    def emit_failure(
+        self,
+        diagnostics: ErrorDiagnostics,
+        *,
+        severity: str = "error",
+        disposition: str = "failed",
+        stage: str | None = None,
+        exception: BaseException | None = None,
+    ) -> dict: ...
+
+    def attach_realtime_sink(self, sink: RealtimeLogSink) -> None: ...
+
+    def detach_realtime_sink(self) -> None: ...
+
+    def emit_basic(self, message: str, *, level: int = logging.INFO) -> None: ...
+
+    def emit_diagnostic(self, message: str, *, level: int = logging.INFO) -> bool: ...
+
+    def emit_translation_latency(self, message: str) -> bool: ...
+
+    def emit_diagnostic_lazy(
+        self,
+        build_message: Callable[[], str],
+        *,
+        level: int = logging.INFO,
+    ) -> bool: ...
+
+    def emit_persisted(self, message: str, *, level: int = logging.INFO) -> None: ...
+
+    def record_conversation_observation(
+        self,
+        *,
+        utterance_id: str,
+        speaker_channel: ConversationRecordChannel,
+        transcript_text: str | None,
+        translation_text: str | None,
+        source_language: str | None,
+        target_language: str | None,
+        metadata: Mapping[str, DiagnosticFieldValue] | None = None,
+        correlation_id: str | None = None,
+    ) -> None: ...
+
+    def record_request_context(
+        self,
+        *,
+        utterance_id: str,
+        context_texts: Sequence[str],
+        segment_index: int | None = None,
+    ) -> None: ...
+
+    def close_terminal_owner(self) -> None: ...
+
+
+class RuntimeLoggingCloseError(RuntimeError):
+    """Bounded terminal logging close failure summary."""
+
+    def __init__(self, failures: Sequence[BaseException]) -> None:
+        self.failure_types = tuple(type(failure).__name__ for failure in failures)
+        self._failure_count = len(self.failure_types)
+        failure_type_text = ",".join(self.failure_types) if self.failure_types else "none"
+        super().__init__(
+            "runtime logging shutdown failed "
+            f"failure_count={self._failure_count} failure_types={failure_type_text}"
+        )
+
+    @property
+    def failure_count(self) -> int:
+        return self._failure_count
+
+
+class RuntimeLoggingService:
+    """Lifecycle owner that keeps runtime logging open until terminal shutdown."""
+
+    resource_fields = (
+        "live log sink",
+        "queue listener",
+        "file handlers",
+        "retained diagnostic metadata",
+    )
+    stop_ingress = "stop after producers have stopped"
+    shutdown_policy = "flush final shutdown summary, then close handlers"
+    late_callback_rule = "late logs after close go to bounded fallback/stderr only"
+
+    def __init__(
+        self,
+        *,
+        session_service: RuntimeLoggingAdapterPort | None = None,
+        session_factory: Callable[[], RuntimeLoggingAdapterPort] | None = None,
+        fallback_logger: logging.Logger | None = None,
+    ) -> None:
+        if session_service is not None and session_factory is not None:
+            raise ValueError("Provide either session_service or session_factory, not both")
+        if session_service is None and session_factory is None:
+            raise ValueError("A runtime logging adapter or factory is required")
+        self._session = session_service if session_service is not None else session_factory()
+        self._fallback_logger = fallback_logger
+        self._closed = False
+
+    @property
+    def owner_name(self) -> str:
+        return "RuntimeLoggingService"
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    @property
+    def log_file(self) -> Path:
+        return self._session.log_file
+
+    def lifecycle_owner_snapshot(self) -> dict[str, object]:
+        return {
+            "owner": self.owner_name,
+            "resource_fields": self.resource_fields,
+            "stop_ingress": self.stop_ingress,
+            "shutdown_policy": self.shutdown_policy,
+            "late_callback_rule": self.late_callback_rule,
+        }
+
+    def attach_realtime_sink(self, sink: RealtimeLogSink) -> None:
+        if self._closed:
+            return
+        self._session.attach_realtime_sink(sink)
+
+    def detach_realtime_sink(self) -> None:
+        if self._closed:
+            return
+        self._session.detach_realtime_sink()
+
+    def configure_diagnostics(self, *, instance_id: str | None = None, event_sink=None) -> None:
+        self._session.configure_diagnostics(instance_id=instance_id, event_sink=event_sink)
+
+    def diagnostic_history(self, arguments: dict) -> dict:
+        return self._session.diagnostic_history(arguments)
+
+    def diagnostic_health(self) -> dict:
+        return self._session.diagnostic_health()
+
+    def emit_failure(
+        self,
+        diagnostics: ErrorDiagnostics,
+        *,
+        severity: str = "error",
+        disposition: str = "failed",
+        stage: str | None = None,
+        exception: BaseException | None = None,
+    ) -> dict:
+        return self._session.emit_failure(
+            diagnostics,
+            severity=severity,
+            disposition=disposition,
+            stage=stage,
+            exception=exception,
+        )
+
+    def record_output_routing_decision(self, decision) -> None:
+        self._session.record_output_routing_decision(decision)
+
+    def observe_provider_operation(self, **kwargs) -> None:
+        self._session.observe_provider_operation(**kwargs)
+
+    def emit_basic(self, message: str, *, level: int = logging.INFO) -> None:
+        if self._closed:
+            self._emit_fallback(message, level=level)
+            return
+        try:
+            self._session.emit_basic(message, level=level)
+        except Exception:
+            self._emit_delivery_fallback(message, level=level, live=True)
+
+    def emit_diagnostic(self, message: str, *, level: int = logging.INFO) -> bool:
+        if self._closed:
+            return self._emit_fallback(message, level=level)
+        try:
+            return self._session.emit_diagnostic(message, level=level)
+        except Exception:
+            return self._emit_delivery_fallback(message, level=level, live=False)
+
+    def emit_translation_latency(self, message: str) -> bool:
+        if self._closed:
+            return False
+        try:
+            return self._session.emit_translation_latency(message)
+        except Exception:
+            return False
+
+    def emit_diagnostic_lazy(
+        self,
+        build_message: Callable[[], str],
+        *,
+        level: int = logging.INFO,
+    ) -> bool:
+        rendered: str | None = None
+
+        def render() -> str:
+            nonlocal rendered
+            if rendered is None:
+                rendered = build_message()
+            return rendered
+
+        if self._closed:
+            return False
+        try:
+            return self._session.emit_diagnostic_lazy(render, level=level)
+        except Exception as exc:
+            if rendered is None:
+                self._session.emit_failure(
+                    ErrorDiagnostics(
+                        component="runtime_logging",
+                        operation="emit",
+                        code="diagnostic_builder_failed",
+                        category="lifecycle",
+                        visibility="diagnostic_only",
+                        content_policy="metadata_only",
+                        status_code=None,
+                        retry_after_ms=None,
+                        fields={},
+                    ),
+                    stage="diagnostic",
+                    exception=exc,
+                )
+                return False
+            return self._emit_delivery_fallback(rendered, level=level, live=False)
+
+    def emit_persisted(self, message: str, *, level: int = logging.INFO) -> None:
+        if self._closed:
+            self._emit_fallback(message, level=level)
+            return
+        self._session.emit_persisted(message, level=level)
+
+    def emit_startup_boundary(
+        self,
+        *,
+        outcome: Literal["entered", "completed", "cancelled", "failed"],
+        attempt_id: str,
+        process_id: int,
+        monotonic_ns: int,
+        exception_class: str | None,
+    ) -> None:
+        message = _format_startup_boundary(
+            outcome=outcome,
+            attempt_id=attempt_id,
+            process_id=process_id,
+            monotonic_ns=monotonic_ns,
+            exception_class=exception_class,
+        )
+        level = logging.ERROR if outcome == "failed" else logging.INFO
+        if self._closed:
+            self._emit_fallback(
+                message,
+                level=level,
+                message_is_safe=True,
+            )
+            return
+        try:
+            self._session.emit_persisted(message, level=level)
+        except Exception:
+            self._emit_fallback(
+                message,
+                level=level,
+                message_is_safe=True,
+            )
+
+    def record_conversation_observation(
+        self,
+        *,
+        utterance_id: str,
+        speaker_channel: ConversationRecordChannel,
+        transcript_text: str | None,
+        translation_text: str | None,
+        source_language: str | None,
+        target_language: str | None,
+        metadata: Mapping[str, DiagnosticFieldValue] | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        if self._closed:
+            return
+        self._session.record_conversation_observation(
+            utterance_id=utterance_id,
+            speaker_channel=speaker_channel,
+            transcript_text=transcript_text,
+            translation_text=translation_text,
+            source_language=source_language,
+            target_language=target_language,
+            metadata=metadata,
+            correlation_id=correlation_id,
+        )
+
+    def record_request_context(
+        self,
+        *,
+        utterance_id: str,
+        context_texts: Sequence[str],
+        segment_index: int | None = None,
+    ) -> None:
+        if self._closed:
+            return
+        self._session.record_request_context(
+            utterance_id=utterance_id,
+            context_texts=context_texts,
+            segment_index=segment_index,
+        )
+
+    def close_after_producers_stop(
+        self,
+        *,
+        cleanup_failures: Sequence[BaseException] = (),
+    ) -> None:
+        if self._closed:
+            return
+
+        close_failures: list[BaseException] = []
+        try:
+            self._session.emit_persisted(
+                _format_final_shutdown_summary(cleanup_failures),
+                level=logging.INFO,
+            )
+        except Exception as exc:
+            close_failures.append(exc)
+
+        try:
+            self._close_session_as_logging_owner()
+        except Exception as exc:
+            close_failures.append(exc)
+        finally:
+            self._closed = True
+
+        if close_failures:
+            self._emit_close_failure_diagnostic(close_failures)
+            _raise_runtime_logging_close_error(close_failures)
+
+    def close(self) -> None:
+        self.close_after_producers_stop()
+
+    def _emit_close_failure_diagnostic(self, failures: Sequence[BaseException]) -> None:
+        failure_types = ",".join(type(failure).__name__ for failure in failures) or "none"
+        self._emit_fallback(
+            "[Lifecycle][Shutdown] runtime_logging_close_failed "
+            f"failure_count={len(failures)} failure_types={failure_types}",
+            level=logging.ERROR,
+            message_is_safe=True,
+        )
+
+    def _close_session_as_logging_owner(self) -> None:
+        self._session.close_terminal_owner()
+
+    def _emit_delivery_fallback(self, message: str, *, level: int, live: bool) -> bool:
+        if self._fallback_logger is None:
+            return False
+        return emit_safe_fallback_log(
+            self._fallback_logger,
+            message,
+            level=level,
+            live=live,
+        )
+
+    def _emit_fallback(
+        self,
+        message: str,
+        *,
+        level: int,
+        message_is_safe: bool = False,
+    ) -> bool:
+        fallback_message = (
+            message if message_is_safe else _format_late_log_fallback(message, level=level)
+        )
+        if self._emit_to_fallback_logger(fallback_message, level=level, live=False):
+            return True
+        stream = getattr(sys, "stderr", None)
+        if stream is None:
+            return False
+        try:
+            stream.write(f"{logging.getLevelName(level)}: {fallback_message}\n")
+            stream.flush()
+        except Exception:
+            return False
+        return True
+
+    def _emit_to_fallback_logger(
+        self,
+        message: str,
+        *,
+        level: int,
+        live: bool,
+    ) -> bool:
+        if self._fallback_logger is None:
+            return False
+        try:
+            if self._fallback_logger.disabled or not self._fallback_logger.isEnabledFor(level):
+                return False
+            record = self._fallback_logger.makeRecord(
+                self._fallback_logger.name,
+                level,
+                fn="",
+                lno=0,
+                msg=message,
+                args=(),
+                exc_info=None,
+                extra=({LIVE_AUDIENCE_RECORD_ATTRIBUTE: LIVE_AUDIENCE_BASIC} if live else None),
+            )
+            if not self._fallback_logger.filter(record):
+                return False
+        except Exception:
+            return False
+
+        emitted = False
+        current: logging.Logger | None = self._fallback_logger
+        while current is not None:
+            for handler in list(current.handlers):
+                if level < handler.level:
+                    continue
+                try:
+                    result = handler.handle(record)
+                    emitted = result is not False or emitted
+                except Exception:
+                    pass
+            if not current.propagate:
+                break
+            current = current.parent
+        return emitted
+
+
+def _format_startup_boundary(
+    *,
+    outcome: Literal["entered", "completed", "cancelled", "failed"],
+    attempt_id: str,
+    process_id: int,
+    monotonic_ns: int,
+    exception_class: str | None,
+) -> str:
+    if outcome not in {"entered", "completed", "cancelled", "failed"}:
+        raise ValueError("invalid startup boundary outcome")
+    if (
+        not attempt_id.startswith("startup-")
+        or len(attempt_id) != len("startup-") + 32
+        or any(character not in "0123456789abcdef" for character in attempt_id[8:])
+    ):
+        raise ValueError("invalid startup boundary attempt ID")
+    if isinstance(process_id, bool) or not isinstance(process_id, int) or process_id <= 0:
+        raise ValueError("invalid startup boundary process ID")
+    if isinstance(monotonic_ns, bool) or not isinstance(monotonic_ns, int) or monotonic_ns < 0:
+        raise ValueError("invalid startup boundary timestamp")
+    rendered_exception_class = _canonical_startup_exception_class(exception_class)
+    return (
+        "[Lifecycle][Startup] boundary "
+        f"outcome={outcome} "
+        f"attempt_id={attempt_id} "
+        f"process_id={process_id} "
+        f"monotonic_ns={monotonic_ns} "
+        f"exception_class={rendered_exception_class}"
+    )
+
+
+def _canonical_startup_exception_class(exception_class: str | None) -> str:
+    if exception_class is None:
+        return "none"
+    if (
+        exception_class
+        and len(exception_class) <= 128
+        and all(
+            character.isascii() and (character.isalnum() or character == "_")
+            for character in exception_class
+        )
+    ):
+        return exception_class
+    digest = hashlib.sha256(exception_class.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return f"redacted_{digest}"
+
+
+def _format_final_shutdown_summary(failures: Sequence[BaseException]) -> str:
+    failure_types = ",".join(type(failure).__name__ for failure in failures) or "none"
+    status = "failed" if failures else "ok"
+    return (
+        "[Lifecycle][Shutdown] final_summary "
+        "owner=RuntimeLoggingService "
+        f"status={status} "
+        f"failure_count={len(failures)} "
+        f"failure_types={failure_types}"
+    )
+
+
+def _format_late_log_fallback(message: str, *, level: int) -> str:
+    level_name = logging.getLevelName(level)
+    if not isinstance(level_name, str):
+        level_name = str(level_name)
+    message_hash = hashlib.sha256(message.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return (
+        "[Lifecycle][Shutdown] late_runtime_log_dropped "
+        f"level={level_name.replace(' ', '_')} "
+        f"message_len={len(message)} "
+        f"message_sha256={message_hash}"
+    )
+
+
+def _raise_runtime_logging_close_error(failures: Sequence[BaseException]) -> None:
+    raise RuntimeLoggingCloseError(failures) from None

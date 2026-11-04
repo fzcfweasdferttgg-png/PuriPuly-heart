@@ -1,0 +1,688 @@
+from __future__ import annotations
+
+import asyncio
+import copy
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from puripuly_heart.app.adapters.settings_vnext_canonical_persistence import (
+    SettingsVNextCanonicalPersistenceAdapter,
+)
+from puripuly_heart.app.ports.settings_runtime_effects import (
+    SettingsRuntimeState,
+    SettingsRuntimeTransition,
+)
+from puripuly_heart.app.ports.settings_view import ActivationNoticeSettingsIntent
+from puripuly_heart.app.services.canonical_settings_persistence import SettingsOwner
+from puripuly_heart.app.services.capture.self_capture_application import (
+    SelfCaptureRuntimeApplyError,
+)
+from puripuly_heart.app.services.settings import (
+    settings_application as settings_application_module,
+)
+from puripuly_heart.app.services.settings.settings_application import SettingsApplicationOwner
+from puripuly_heart.app.services.settings.settings_mutation_legacy import apply_settings_path_patch
+from puripuly_heart.app.services.settings.settings_projection import SettingsProjectionOwner
+from puripuly_heart.config.settings_vnext import serialization
+from puripuly_heart.config.settings_vnext.migration import apply_canonical_delta
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.core.messages import (
+    CONTENT_POLICY_METADATA_ONLY,
+    DIAGNOSTIC_CATEGORY_TRANSACTION,
+    DIAGNOSTIC_VISIBILITY_BASIC,
+    RUNTIME_APPLY_STATUS_FAILED,
+    TRANSACTION_STATUS_SETTINGS_COMMIT_FAILED,
+    TRANSACTION_STATUS_SETTINGS_COMMIT_SUCCESS_RUNTIME_APPLIED,
+    ErrorDiagnostics,
+    TransactionResult,
+)
+
+
+class FakeSettingsOwner:
+    def __init__(
+        self,
+        current: AppSettingsVNext,
+        events: list[str] | None = None,
+    ) -> None:
+        self.canonical = current
+        self.committed_settings = current
+        self.projection_snapshot = copy.deepcopy(current)
+        self.commits = 0
+        self.events = events
+        self._overlay_enabled = False
+        self._peer_enabled = False
+        self._overlay_locked = False
+
+    @staticmethod
+    def snapshot_values(settings: AppSettingsVNext) -> dict[str, object]:
+        return serialization.to_dict(settings)
+
+    def require_committed(self) -> AppSettingsVNext:
+        return self.committed_settings
+
+    @staticmethod
+    def normalize_compatibility(settings: AppSettingsVNext) -> AppSettingsVNext:
+        return settings
+
+    @staticmethod
+    def create_canonical_patch_repository(**_kwargs: object) -> object:
+        return object()
+
+    def commit_delta(
+        self,
+        base: AppSettingsVNext,
+        next_settings: AppSettingsVNext,
+    ) -> AppSettingsVNext:
+        self.canonical = apply_canonical_delta(self.canonical, base, next_settings)
+        self.committed_settings = self.canonical
+        self.projection_snapshot = copy.deepcopy(self.canonical)
+        self.commits += 1
+        if self.events is not None:
+            self.events.append("commit")
+        return self.canonical
+
+    def overlay_enabled(self) -> bool:
+        return self._overlay_enabled
+
+    def peer_translation_enabled(self) -> bool:
+        return self._peer_enabled
+
+    def overlay_desktop_locked(self) -> bool:
+        return self._overlay_locked
+
+    def set_overlay_enabled(self, enabled: bool) -> None:
+        self._overlay_enabled = enabled
+
+    def set_peer_translation_enabled(self, enabled: bool) -> None:
+        self._peer_enabled = enabled
+
+    def set_overlay_desktop_locked(self, locked: bool) -> None:
+        self._overlay_locked = locked
+
+
+class RecordingMutationService:
+    def __init__(self, settings: FakeSettingsOwner) -> None:
+        self.settings = settings
+        self.requests: list[object] = []
+
+    async def mutate(self, request: object) -> TransactionResult:
+        self.requests.append(request)
+        current = self.settings.canonical
+        self.settings.commit_delta(current, apply_settings_path_patch(current, request.values))
+        return TransactionResult(
+            status=TRANSACTION_STATUS_SETTINGS_COMMIT_SUCCESS_RUNTIME_APPLIED,
+            message=None,
+            diagnostics=None,
+        )
+
+
+class FakeRuntimeEffects:
+    def __init__(
+        self,
+        events: list[str],
+        failure: BaseException | None = None,
+    ) -> None:
+        self.events = events
+        self.failure = failure
+        self.reload_settings_view: list[bool] = []
+
+    async def preserve_before_replace(self, settings: AppSettingsVNext) -> AppSettingsVNext:
+        self.events.append("preserve")
+        return settings
+
+    def capture_runtime_signatures(self) -> None:
+        self.events.append("capture")
+
+    async def prepare(
+        self,
+        current_settings: AppSettingsVNext | None,
+        next_settings: AppSettingsVNext,
+    ) -> SettingsRuntimeTransition[AppSettingsVNext]:
+        self.events.append("prepare")
+        return SettingsRuntimeTransition(
+            settings=next_settings,
+            previous_settings=current_settings,
+            previous_locale="en",
+            previous_overlay_enabled=False,
+            previous_self_signature=None,
+            previous_peer_signature=None,
+            previous_peer_translation_enabled=False,
+            previous_peer_activation_requested=False,
+            source_language_changed=False,
+            target_language_changed=False,
+            effective_peer_source_changed=False,
+            effective_peer_target_changed=False,
+            peer_source_language_changed=False,
+            peer_target_language_changed=False,
+            peer_source_mode_changed=False,
+            desktop_runtime_controls=(),
+        )
+
+    def activate_before_persist(
+        self,
+        _transition: SettingsRuntimeTransition[AppSettingsVNext],
+    ) -> None:
+        self.events.append("activate")
+
+    async def prepare_overlay_persistence(
+        self,
+        _previous_settings: AppSettingsVNext,
+        _next_settings: AppSettingsVNext,
+    ) -> None:
+        return None
+
+    def restore_memory(self, _settings: AppSettingsVNext) -> None:
+        return None
+
+    def sync_stt_signatures(self, _settings: AppSettingsVNext) -> None:
+        return None
+
+    def state(self, _settings: AppSettingsVNext) -> SettingsRuntimeState:
+        return SettingsRuntimeState(
+            runtime_available=False,
+            self_stt_desired=False,
+            self_stt_available=False,
+            peer_stt_desired=False,
+            peer_stt_available=False,
+            qwen_llm_desired=False,
+            llm_available=False,
+        )
+
+    async def apply_after_persist(
+        self,
+        _transition: SettingsRuntimeTransition[AppSettingsVNext],
+        **kwargs: object,
+    ) -> None:
+        self.events.append("runtime")
+        self.reload_settings_view.append(bool(kwargs.get("reload_settings_view", True)))
+        if self.failure is not None:
+            raise self.failure
+
+
+@pytest.mark.asyncio
+async def test_settings_application_owner_routes_mixed_surfaces_in_transaction_order() -> None:
+    settings = FakeSettingsOwner(AppSettingsVNext())
+    service = RecordingMutationService(settings)
+    projection = SettingsProjectionOwner(
+        presentation=SimpleNamespace(render_settings=lambda *_args, **_kwargs: True),
+        config_path=Path("settings.json"),
+        current_settings=lambda: settings.canonical,
+    )
+    projection.remember_all(settings.canonical)
+
+    owner = SettingsApplicationOwner(
+        settings=settings,
+        projection=projection,
+        runtime_effects=FakeRuntimeEffects([]),
+        sync_ui=lambda: None,
+        mutation_service_provider=lambda: service,
+        consume_superseded_settings=lambda _settings: False,
+        active_local_asr_change=lambda _base, _next: False,
+    )
+    pending = replace(
+        settings.canonical,
+        intent=replace(
+            settings.canonical.intent,
+            languages=replace(settings.canonical.intent.languages, source_language="ja"),
+            overlay=replace(settings.canonical.intent.overlay, show_translation=False),
+            ui=replace(settings.canonical.intent.ui, locale="ko"),
+            prompts=replace(
+                settings.canonical.intent.prompts,
+                system_prompt_override="mixed prompt",
+            ),
+        ),
+    )
+
+    assert await owner.apply(pending)
+    assert [request.reason for request in service.requests] == [
+        "settings.stt_language_audio",
+        "settings.overlay_osc_output",
+        "settings.ui_prompt_clipboard_state",
+    ]
+    assert service.requests[0].values == {"intent.languages.source_language": "ja"}
+    assert service.requests[1].values == {"intent.overlay.show_translation": False}
+    assert service.requests[2].values == {
+        "intent.ui.locale": "ko",
+        "intent.prompts.system_prompt_override": "mixed prompt",
+    }
+    assert settings.canonical.intent.languages.source_language == "ja"
+    assert settings.canonical.intent.overlay.show_translation is False
+    assert settings.canonical.intent.ui.locale == "ko"
+    assert settings.canonical.intent.prompts.system_prompt_override == "mixed prompt"
+    assert settings.commits == 3
+    assert owner.results.current is not None
+    assert (
+        owner.results.current.status == TRANSACTION_STATUS_SETTINGS_COMMIT_SUCCESS_RUNTIME_APPLIED
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_application_owner_logs_coded_failed_apply_result() -> None:
+    settings = FakeSettingsOwner(AppSettingsVNext())
+    projection = SettingsProjectionOwner(
+        presentation=SimpleNamespace(render_settings=lambda *_args, **_kwargs: True),
+        config_path=Path("settings.json"),
+        current_settings=lambda: settings.canonical,
+    )
+    projection.remember_all(settings.canonical)
+
+    class FailedMutationService:
+        async def mutate(self, _request: object) -> TransactionResult:
+            return TransactionResult(
+                status=TRANSACTION_STATUS_SETTINGS_COMMIT_FAILED,
+                message=None,
+                diagnostics=ErrorDiagnostics(
+                    component="settings",
+                    operation="commit",
+                    code="settings_write_rejected",
+                    category=DIAGNOSTIC_CATEGORY_TRANSACTION,
+                    visibility=DIAGNOSTIC_VISIBILITY_BASIC,
+                    content_policy=CONTENT_POLICY_METADATA_ONLY,
+                    status_code=None,
+                    retry_after_ms=None,
+                    fields={},
+                ),
+            )
+
+    owner = SettingsApplicationOwner(
+        settings=settings,
+        projection=projection,
+        runtime_effects=FakeRuntimeEffects([]),
+        sync_ui=lambda: None,
+        mutation_service_provider=FailedMutationService,
+        consume_superseded_settings=lambda _settings: False,
+        active_local_asr_change=lambda _base, _next: False,
+    )
+    pending = replace(
+        settings.canonical,
+        intent=replace(
+            settings.canonical.intent,
+            languages=replace(
+                settings.canonical.intent.languages,
+                source_language="ja",
+            ),
+        ),
+    )
+
+    assert await owner.apply(pending) is False
+    assert owner.results.current.diagnostics.code == "settings_write_rejected"
+
+
+@pytest.mark.asyncio
+async def test_settings_application_owner_can_suppress_language_view_reload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = FakeSettingsOwner(AppSettingsVNext())
+    renders: list[object] = []
+    projection = SettingsProjectionOwner(
+        presentation=SimpleNamespace(
+            render_settings=lambda *args, **_kwargs: renders.append(args[0])
+        ),
+        config_path=Path("settings.json"),
+        current_settings=lambda: settings.canonical,
+    )
+    projection.remember_all(settings.canonical)
+    effects = FakeRuntimeEffects([])
+
+    class ApplyingMutationService:
+        def __init__(self, *, runtime_apply: object, **_kwargs: object) -> None:
+            self.runtime_apply = runtime_apply
+
+        async def mutate(self, _request: object) -> TransactionResult:
+            await self.runtime_apply.apply_runtime(SimpleNamespace())
+            return TransactionResult(
+                status=TRANSACTION_STATUS_SETTINGS_COMMIT_SUCCESS_RUNTIME_APPLIED,
+                message=None,
+                diagnostics=None,
+            )
+
+    monkeypatch.setattr(
+        settings_application_module,
+        "SettingsMutationService",
+        ApplyingMutationService,
+    )
+    owner = SettingsApplicationOwner(
+        settings=settings,
+        projection=projection,
+        runtime_effects=effects,
+        sync_ui=lambda: None,
+        mutation_service_provider=lambda: None,
+        consume_superseded_settings=lambda _settings: False,
+        active_local_asr_change=lambda _base, _next: False,
+    )
+    pending = replace(
+        settings.canonical,
+        intent=replace(
+            settings.canonical.intent,
+            languages=replace(settings.canonical.intent.languages, source_language="ja"),
+        ),
+    )
+
+    assert await owner.apply(pending, reload_settings_view=False)
+
+    assert effects.reload_settings_view == [False]
+    assert renders == []
+
+
+@pytest.mark.asyncio
+async def test_settings_application_owner_names_degrading_runtime_apply_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = FakeSettingsOwner(AppSettingsVNext())
+    projection = SettingsProjectionOwner(
+        presentation=SimpleNamespace(render_settings=lambda *_args, **_kwargs: True),
+        config_path=Path("settings.json"),
+        current_settings=lambda: settings.canonical,
+    )
+    projection.remember_all(settings.canonical)
+    applied: list[object] = []
+
+    class ApplyingMutationService:
+        def __init__(self, *, runtime_apply: object, **_kwargs: object) -> None:
+            self.runtime_apply = runtime_apply
+
+        async def mutate(self, _request: object) -> TransactionResult:
+            applied.append(await self.runtime_apply.apply_runtime(SimpleNamespace()))
+            return TransactionResult(
+                status=TRANSACTION_STATUS_SETTINGS_COMMIT_SUCCESS_RUNTIME_APPLIED,
+                message=None,
+                diagnostics=None,
+            )
+
+    monkeypatch.setattr(
+        settings_application_module,
+        "SettingsMutationService",
+        ApplyingMutationService,
+    )
+    owner = SettingsApplicationOwner(
+        settings=settings,
+        projection=projection,
+        runtime_effects=FakeRuntimeEffects(
+            [],
+            SelfCaptureRuntimeApplyError(
+                "Self STT runtime did not apply the requested configuration"
+            ),
+        ),
+        sync_ui=lambda: None,
+        mutation_service_provider=lambda: None,
+        consume_superseded_settings=lambda _settings: False,
+        active_local_asr_change=lambda _base, _next: False,
+    )
+    pending = replace(
+        settings.canonical,
+        intent=replace(
+            settings.canonical.intent,
+            languages=replace(settings.canonical.intent.languages, source_language="ja"),
+        ),
+    )
+
+    assert await owner.apply(pending)
+
+    runtime_result = applied[-1]
+    assert runtime_result.status == RUNTIME_APPLY_STATUS_FAILED
+    assert runtime_result.diagnostics is not None
+    assert runtime_result.diagnostics.code == "self_stt_runtime_apply_not_converged"
+    assert runtime_result.diagnostics.component == "settings_application"
+    assert runtime_result.diagnostics.fields["phase"] == "runtime_apply"
+
+
+@pytest.mark.asyncio
+async def test_settings_application_owner_owns_direct_persistence_sequence() -> None:
+    events: list[str] = []
+    settings = FakeSettingsOwner(AppSettingsVNext(), events)
+    projection = SettingsProjectionOwner(
+        presentation=SimpleNamespace(render_settings=lambda *_args, **_kwargs: True),
+        config_path=Path("settings.json"),
+        current_settings=lambda: settings.canonical,
+    )
+    projection.remember_all(settings.canonical)
+    owner = SettingsApplicationOwner(
+        settings=settings,
+        projection=projection,
+        runtime_effects=FakeRuntimeEffects(events),
+        sync_ui=lambda: None,
+        mutation_service_provider=lambda: None,
+        consume_superseded_settings=lambda _settings: False,
+        active_local_asr_change=lambda _base, _next: False,
+    )
+    pending = replace(
+        settings.canonical,
+        intent=replace(
+            settings.canonical.intent,
+            ui=replace(settings.canonical.intent.ui, locale="ja"),
+        ),
+    )
+
+    await owner.apply_direct(pending)
+
+    assert events == ["preserve", "capture", "prepare", "activate", "commit", "runtime"]
+    assert settings.canonical.intent.ui.locale == "ja"
+    assert settings.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_runtime_failure_finalizes_commit_and_preserves_it_on_next_failed_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for index, failure in enumerate((RuntimeError("runtime failed"), asyncio.CancelledError())):
+        current = AppSettingsVNext()
+        persistence = SettingsVNextCanonicalPersistenceAdapter()
+        settings = SettingsOwner(
+            path=tmp_path / f"settings-{index}.json",
+            persistence=persistence,
+            canonical=current,
+            authoritative=True,
+            projection_snapshot=copy.deepcopy(current),
+        )
+        projection = SettingsProjectionOwner(
+            presentation=SimpleNamespace(render_settings=lambda *_args, **_kwargs: True),
+            config_path=settings.path,
+            current_settings=lambda: settings.canonical,
+        )
+        projection.remember_all(current)
+        effects = FakeRuntimeEffects([], failure)
+        owner = SettingsApplicationOwner(
+            settings=settings,
+            projection=projection,
+            runtime_effects=effects,
+            sync_ui=lambda: None,
+            mutation_service_provider=lambda: None,
+            consume_superseded_settings=lambda _settings: False,
+            active_local_asr_change=lambda _base, _next: False,
+        )
+        committed = replace(
+            current,
+            intent=replace(
+                current.intent,
+                ui=replace(current.intent.ui, locale="ja"),
+            ),
+        )
+
+        with pytest.raises(type(failure)):
+            await owner.apply_direct(
+                committed,
+                strict_runtime_errors=True,
+            )
+
+        assert settings.mutation_depth == 0
+        assert settings.rollback_pending is False
+        assert settings.canonical.intent.ui.locale == "ja"
+        assert settings.projection_snapshot is not None
+        assert settings.projection_snapshot.intent.ui.locale == "ja"
+
+        effects.failure = None
+        rejected = replace(
+            committed,
+            intent=replace(
+                committed.intent,
+                prompts=replace(
+                    committed.intent.prompts,
+                    system_prompt_override="must roll back",
+                ),
+            ),
+        )
+
+        def fail_persist(_path: Path, _settings: AppSettingsVNext) -> None:
+            raise OSError("save failed")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(persistence, "persist", fail_persist)
+            await owner.apply_direct(rejected)
+        result = owner.results.current
+        assert result.status == "settings_commit_failed"
+        assert result.diagnostics is settings.last_failure
+        assert result.diagnostics.fields["exception_class"] == "OSError"
+        assert "save failed" not in repr(result.diagnostics)
+
+        assert settings.mutation_depth == 0
+        assert settings.rollback_pending is False
+        assert settings.canonical.intent.ui.locale == "ja"
+        assert settings.canonical.intent.prompts.system_prompt_override != "must roll back"
+        assert settings.projection_snapshot is not None
+        assert settings.projection_snapshot.intent.ui.locale == "ja"
+        assert (
+            settings.projection_snapshot.intent.prompts.system_prompt_override != "must roll back"
+        )
+
+
+@pytest.mark.asyncio
+async def test_routed_mutation_cancellation_finalizes_committed_settings(
+    tmp_path: Path,
+) -> None:
+    current = AppSettingsVNext()
+    settings = SettingsOwner(
+        path=tmp_path / "settings.json",
+        persistence=SettingsVNextCanonicalPersistenceAdapter(),
+        canonical=current,
+        authoritative=True,
+        projection_snapshot=copy.deepcopy(current),
+    )
+    projection = SettingsProjectionOwner(
+        presentation=SimpleNamespace(render_settings=lambda *_args, **_kwargs: True),
+        config_path=settings.path,
+        current_settings=lambda: settings.canonical,
+    )
+    projection.remember_all(current)
+    owner = SettingsApplicationOwner(
+        settings=settings,
+        projection=projection,
+        runtime_effects=FakeRuntimeEffects([], asyncio.CancelledError()),
+        sync_ui=lambda: None,
+        mutation_service_provider=lambda: None,
+        consume_superseded_settings=lambda _settings: False,
+        active_local_asr_change=lambda _base, _next: False,
+    )
+    committed = replace(
+        current,
+        intent=replace(
+            current.intent,
+            languages=replace(current.intent.languages, source_language="ja"),
+        ),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await owner.apply(committed)
+
+    assert settings.mutation_depth == 0
+    assert settings.rollback_pending is False
+    assert settings.canonical.intent.languages.source_language == "ja"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous_enabled", [True, False])
+@pytest.mark.parametrize("save_fails", [True, False])
+async def test_activation_notice_edit_commits_or_restores_without_generic_runtime_apply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    previous_enabled: bool,
+    save_fails: bool,
+) -> None:
+    current = AppSettingsVNext()
+    current = replace(
+        current,
+        intent=replace(
+            current.intent,
+            osc=replace(
+                current.intent.osc,
+                activation_notice_enabled=previous_enabled,
+                connection_mode="manual",
+                send_port=9120,
+                receive_port=9121,
+                chatbox_include_source=True,
+            ),
+        ),
+    )
+    persistence = SettingsVNextCanonicalPersistenceAdapter()
+    settings = SettingsOwner(
+        path=tmp_path / "settings.json",
+        persistence=persistence,
+        canonical=current,
+        authoritative=True,
+        projection_snapshot=copy.deepcopy(current),
+    )
+    persistence.persist(settings.path, current)
+    rendered: list[bool] = []
+
+    def render_settings(**kwargs: object) -> bool:
+        rendered.append(kwargs["general"].activation_notice_enabled)
+        return True
+
+    projection = SettingsProjectionOwner(
+        presentation=SimpleNamespace(render_settings=render_settings),
+        config_path=settings.path,
+        current_settings=lambda: settings.canonical,
+    )
+    projection.remember_all(current)
+    events: list[str] = []
+
+    class NoticeRuntimeEffects(FakeRuntimeEffects):
+        effective_enabled = previous_enabled
+
+        async def prepare_overlay_persistence(self, *_args: object) -> None:
+            pytest.fail("notice-only edit must not prepare overlay resources")
+
+        def apply_activation_notice(self, committed: AppSettingsVNext) -> None:
+            events.append("notice")
+            self.effective_enabled = committed.intent.osc.activation_notice_enabled
+
+    effects = NoticeRuntimeEffects(events)
+    owner = SettingsApplicationOwner(
+        settings=settings,
+        projection=projection,
+        runtime_effects=effects,
+        sync_ui=lambda: None,
+        mutation_service_provider=lambda: None,
+        consume_superseded_settings=lambda _settings: False,
+        active_local_asr_change=lambda _base, _next: False,
+    )
+    pending = settings_application_module.materialize_immediate_settings_intent(
+        current,
+        ActivationNoticeSettingsIntent(not previous_enabled),
+    )
+    if save_fails:
+
+        def fail_persist(_path: Path, _settings: AppSettingsVNext) -> None:
+            raise OSError("save failed")
+
+        monkeypatch.setattr(persistence, "persist", fail_persist)
+
+    await owner.apply(pending)
+
+    expected_enabled = previous_enabled if save_fails else not previous_enabled
+    expected = current if save_fails else pending
+    assert settings.canonical == expected
+    assert persistence.load_active(settings.path).canonical_settings == expected
+    assert effects.effective_enabled is expected_enabled
+    assert rendered == [expected_enabled]
+    assert events == ([] if save_fails else ["notice"])
+    assert settings.mutation_depth == 0
+    assert settings.rollback_pending is False
+    assert owner.results.current.status == (
+        TRANSACTION_STATUS_SETTINGS_COMMIT_FAILED
+        if save_fails
+        else TRANSACTION_STATUS_SETTINGS_COMMIT_SUCCESS_RUNTIME_APPLIED
+    )

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from huggingface_hub.errors import InferenceEndpointError, InferenceEndpointTimeoutError
 
 from .utils import get_session, logging, parse_datetime
+from .utils._headers import get_token_to_send
 
 
 if TYPE_CHECKING:
@@ -18,7 +19,12 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
-def _build_endpoint_image_payload(custom_image: dict) -> dict:
+def _build_endpoint_image_payload(
+    custom_image: dict,
+    *,
+    container_registry_username: str | None = None,
+    container_registry_password: str | None = None,
+) -> dict:
     """Build the `model.image` payload of an Inference Endpoint from a user-provided image dict.
 
     `model.image` is a union keyed by variant (`{"vLLM": {...}}`, `{"custom": {...}}`, ...). Only a flat
@@ -26,9 +32,21 @@ def _build_endpoint_image_payload(custom_image: dict) -> dict:
     one are wrapped in `{"custom": ...}`. Everything else is forwarded as-is, so variants added to the API
     later work without a release.
     """
-    if "url" in custom_image:
-        return {"custom": custom_image}
-    return custom_image
+    image = {"custom": custom_image} if "url" in custom_image else custom_image
+
+    if container_registry_password is not None and container_registry_username is None:
+        raise ValueError("`container_registry_password` requires `container_registry_username`.")
+    if container_registry_username is None:
+        return image
+
+    custom_container = image.get("custom")
+    if not isinstance(custom_container, dict):
+        raise ValueError("Container registry credentials can only be set for a custom container image.")
+
+    credentials = {"username": container_registry_username}
+    if container_registry_password is not None:
+        credentials["password"] = container_registry_password
+    return {**image, "custom": {**custom_container, "credentials": credentials}}
 
 
 # Image variants that declare `tensorParallelSize` / `dataParallelSize`. The API ignores a field a variant doesn't
@@ -85,7 +103,6 @@ class InferenceEndpointStatus(str, Enum):
 
 class InferenceEndpointType(str, Enum):
     PUBlIC = "public"
-    PROTECTED = "protected"  # deprecated, use AUTHENTICATED instead
     AUTHENTICATED = "authenticated"
     PRIVATE = "private"
 
@@ -140,7 +157,7 @@ class InferenceEndpoint:
         >>> endpoint.status
         'running'
         >>> endpoint.url
-        'https://my-text-to-image.region.vendor.endpoints.huggingface.cloud'
+        'https://68a0f3b5c6ee5c9dcc0e0a01.endpoints.huggingface.cloud'
 
         # Run inference
         >>> endpoint.client.text_to_image(...)
@@ -190,6 +207,8 @@ class InferenceEndpoint:
             api = HfApi()
         if token is None:
             token = api.token
+        if token is True:
+            token = get_token_to_send(token)
 
         # All other fields are populated in __post_init__
         return cls(raw=raw, namespace=namespace, _token=token, _api=api)
@@ -582,4 +601,95 @@ class InferenceEndpointHardware:
             status=raw["status"],
             max_accelerators=quota["maxAccelerators"],
             used_accelerators=quota["usedAccelerators"],
+        )
+
+
+@dataclass
+class InferenceCatalogRecipe:
+    """
+    Contains information about a pre-tested way of deploying a model from the Inference Catalog.
+
+    A recipe is a hardware and engine combination that the Inference Endpoints team has tested for a given model. A
+    model usually has one recipe, but it can have several (e.g. a GPU one and a Neuron one, or one per GGUF quant).
+
+    Args:
+        id (`str`):
+            The public recipe id, to pass to [`create_inference_endpoint_from_catalog`] as `recipe_id`.
+        accelerator (`str`):
+            The type of hardware accelerator the recipe runs on, e.g. `"cpu"`, `"gpu"` or `"neuron"`.
+        engine (`str`):
+            The inference engine the recipe runs, e.g. `"vllm"`, `"llamacpp"`, `"tei"` or `"sglang"`.
+        gguf_file (`str`, *optional*):
+            The GGUF file deployed by the recipe. Only set for `"llamacpp"` recipes.
+        revision (`str`, *optional*):
+            The model revision the recipe is pinned to, if any.
+    """
+
+    id: str
+    accelerator: str
+    engine: str
+    gguf_file: str | None
+    revision: str | None
+
+    @classmethod
+    def from_raw(cls, raw: dict) -> "InferenceCatalogRecipe":
+        """Initialize object from a raw recipe dictionary, nested under a model in the API response."""
+        return cls(
+            id=raw["publicId"],
+            accelerator=raw["accelerator"],
+            engine=raw["engineType"],
+            gguf_file=raw.get("ggufFile"),
+            revision=raw.get("revision"),
+        )
+
+
+@dataclass
+class InferenceCatalogModel:
+    """
+    Contains information about a model available in the Inference Catalog.
+
+    Args:
+        repo_id (`str`):
+            The id of the model repository on the Hub, e.g. `"meta-llama/Llama-3.1-8B-Instruct"`.
+        name (`str`):
+            The model name, i.e. the part of `repo_id` after the author, e.g. `"Llama-3.1-8B-Instruct"`.
+        author (`str`):
+            The author of the model repository, e.g. `"meta-llama"`.
+        license (`str`):
+            The license of the model, e.g. `"Apache 2.0"`.
+        task (`str`):
+            The task the model is deployed on, e.g. `"text-generation"`.
+        created_at (`datetime`):
+            The date the model was added to the catalog.
+        recipes (`list[InferenceCatalogRecipe]`):
+            The tested ways of deploying this model.
+
+    Example:
+        ```python
+        >>> from huggingface_hub import list_inference_catalog
+        >>> catalog = list_inference_catalog(engine="vllm")
+        >>> catalog[0]
+        InferenceCatalogModel(repo_id='Qwen/Qwen2.5-Coder-7B-Instruct', name='Qwen2.5-Coder-7B-Instruct', ...)
+        ```
+    """
+
+    repo_id: str
+    name: str
+    author: str
+    license: str
+    task: str
+    created_at: datetime
+    recipes: list[InferenceCatalogRecipe]
+
+    @classmethod
+    def from_raw(cls, raw: dict) -> "InferenceCatalogModel":
+        """Initialize object from a raw catalog item dictionary."""
+        return cls(
+            repo_id=raw["repoId"],
+            name=raw["modelName"],
+            author=raw["authorName"],
+            license=raw["license"],
+            task=raw["task"],
+            created_at=parse_datetime(raw["createdAt"]),
+            recipes=[InferenceCatalogRecipe.from_raw(recipe) for recipe in raw["recipes"]],
         )

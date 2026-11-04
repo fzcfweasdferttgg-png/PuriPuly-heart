@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+from puripuly_heart.ui import app as app_module
+
+
+class PageDouble:
+    def __init__(self, window) -> None:
+        self.window = window
+        self.visibility_updates: list[bool] = []
+
+    def update(self) -> None:
+        self.visibility_updates.append(self.window.visible)
+
+
+def _make_page(*, wait_until_ready_to_show=None, center=None) -> PageDouble:
+    async def noop() -> None:
+        return None
+
+    window = SimpleNamespace(
+        visible=False,
+        center=center or noop,
+        wait_until_ready_to_show=wait_until_ready_to_show or noop,
+    )
+    return PageDouble(window)
+
+
+@pytest.mark.asyncio
+async def test_prepare_and_show_main_window_awaits_center_before_showing() -> None:
+    events: list[str] = []
+
+    async def wait_until_ready_to_show() -> None:
+        events.append("ready")
+
+    async def center() -> None:
+        events.append("center-start")
+        await asyncio.sleep(0)
+        events.append("center-end")
+
+    page = _make_page(
+        wait_until_ready_to_show=wait_until_ready_to_show,
+        center=center,
+    )
+
+    await app_module._prepare_and_show_main_window(page)
+
+    assert events == ["ready", "center-start", "center-end"]
+    assert page.window.visible is True
+    assert page.visibility_updates == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_prepare_and_show_main_window_shows_after_readiness_failure() -> None:
+    async def wait_until_ready_to_show() -> None:
+        raise RuntimeError("window not ready")
+
+    page = _make_page(wait_until_ready_to_show=wait_until_ready_to_show)
+
+    await app_module._prepare_and_show_main_window(page)
+
+    assert page.window.visible is True
+    assert page.visibility_updates == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_prepare_and_show_main_window_shows_after_center_failure() -> None:
+    async def center() -> None:
+        raise RuntimeError("center failed")
+
+    page = _make_page(center=center)
+
+    await app_module._prepare_and_show_main_window(page)
+
+    assert page.window.visible is True
+    assert page.visibility_updates == [False, True]

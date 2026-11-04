@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+from puripuly_heart.config.resolved import vad_exit_threshold
+from puripuly_heart.core.self_capture import SelfCaptureSessionConfig
+
+SelfCaptureVadModelPathResolver = Callable[[], Path]
+SelfCaptureVadEngineFactory = Callable[..., object]
+SelfCaptureVadGatingFactory = Callable[..., object]
+
+
+@dataclass(frozen=True, slots=True)
+class SelfCaptureVadAdapter:
+    model_path_resolver: SelfCaptureVadModelPathResolver
+    engine_factory: SelfCaptureVadEngineFactory
+    gating_factory: SelfCaptureVadGatingFactory
+
+    def __call__(self, config: SelfCaptureSessionConfig) -> object:
+        return self.gating_factory(
+            engine=self.engine_factory(model_path=self.model_path_resolver()),
+            sample_rate_hz=config.target_sample_rate_hz,
+            ring_buffer_ms=config.ring_buffer_ms,
+            speech_threshold=config.vad_speech_threshold,
+            continuation_threshold=vad_exit_threshold(config.vad_speech_threshold),
+            hangover_ms=config.vad_hangover_ms,
+        )
+
+
+__all__ = [
+    "SelfCaptureVadAdapter",
+    "SelfCaptureVadEngineFactory",
+    "SelfCaptureVadGatingFactory",
+    "SelfCaptureVadModelPathResolver",
+]

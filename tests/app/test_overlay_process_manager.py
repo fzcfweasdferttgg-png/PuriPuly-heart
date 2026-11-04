@@ -1,0 +1,3426 @@
+from __future__ import annotations
+
+import asyncio
+import copy
+import hashlib
+import json
+import os
+import shutil
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from puripuly_heart.core.overlay import openvr_vendor as openvr_vendor_module
+from puripuly_heart.core.overlay import process as process_module
+from puripuly_heart.core.overlay import process_runners as process_runners_module
+from puripuly_heart.core.overlay.bridge import OverlayBridge
+from puripuly_heart.core.overlay.manifest import (
+    OVERLAY_CONTRACT_VERSION,
+    OVERLAY_EXECUTION_CONTRACT,
+    OVERLAY_NATIVE_RETRY_CONTRACT,
+    OVERLAY_SPEAKER_IDENTITY_CONTRACT,
+    OverlayLaunchManifest,
+)
+from puripuly_heart.core.overlay.openvr_vendor import VendoredOpenVrBundle
+from puripuly_heart.core.overlay.process import (
+    DefaultOverlayProcessRunner,
+    OverlayManagedProcess,
+    OverlayPreparationError,
+    OverlayProcessManager,
+)
+from puripuly_heart.core.overlay.process_adapter import (
+    OverlayProcessEvent,
+    _AsyncioOverlayProcess,
+    _BoundedProcessEventQueue,
+)
+
+
+def _ready_script_line() -> str:
+    return (
+        "m=__import__('json').load(open(sys.argv[2], encoding='utf-8')); "
+        "print(__import__('json').dumps({'type':'overlay_ready',"
+        "'overlay_instance_id':m['overlay_instance_id'],'runtime_generation':1,"
+        "'capabilities':{'execution_contract':{'version':1,'revision':'r2'},"
+        "'native_presentation_retry':{'version':2,'ownership':'exclusive'},"
+        "'speaker_identity_presentation':{'version':2,"
+        "'policy':'immutable_first_readable_style'}}}), flush=True)"
+    )
+
+
+def _process_event(payload: dict[str, object]) -> OverlayProcessEvent:
+    return OverlayProcessEvent(payload=payload, trust_origin="process_pipe")
+
+
+@pytest.mark.asyncio
+async def test_default_runner_passes_p05_product_default_in_child_env_without_mutating_parent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_spawn(*command: str, **kwargs: object) -> object:
+        captured["command"] = command
+        captured.update(kwargs)
+        return SimpleNamespace(stdout=None, stderr=None)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.delenv(process_module.QUIET_TAIL_PROFILE_ENV, raising=False)
+    monkeypatch.setenv(
+        process_module.HANDOFF_EXPERIMENT_ENV,
+        process_module.HANDOFF_EXPERIMENT_CACHED_FRAME_REHANDOFF,
+    )
+    runner = DefaultOverlayProcessRunner()
+    await runner.spawn(tmp_path / "overlay.exe", tmp_path / "manifest.json")
+    child_env = captured["env"]
+    assert isinstance(child_env, dict)
+    assert child_env[process_module.QUIET_TAIL_PROFILE_ENV] == "p05"
+    assert child_env[process_module.HANDOFF_EXPERIMENT_ENV] == process_module.HANDOFF_EXPERIMENT_OFF
+    assert process_module.QUIET_TAIL_PROFILE_ENV not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_default_runner_passes_explicit_p20_in_child_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_spawn(*command: str, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(stdout=None, stderr=None)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+    runner = DefaultOverlayProcessRunner(quiet_tail_profile="p20")
+    await runner.spawn(tmp_path / "overlay.exe", tmp_path / "manifest.json")
+    child_env = captured["env"]
+    assert isinstance(child_env, dict)
+    assert child_env[process_module.QUIET_TAIL_PROFILE_ENV] == "p20"
+
+
+@pytest.mark.asyncio
+async def test_default_runner_propagates_explicit_cached_frame_arm(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_spawn(*command: str, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(stdout=None, stderr=None)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+    runner = DefaultOverlayProcessRunner(
+        handoff_experiment=process_module.HANDOFF_EXPERIMENT_CACHED_FRAME_REHANDOFF
+    )
+    await runner.spawn(tmp_path / "overlay.exe", tmp_path / "manifest.json")
+
+    child_env = captured["env"]
+    assert isinstance(child_env, dict)
+    assert (
+        child_env[process_module.HANDOFF_EXPERIMENT_ENV]
+        == process_module.HANDOFF_EXPERIMENT_CACHED_FRAME_REHANDOFF
+    )
+
+
+def test_overlay_process_manager_rejects_unknown_handoff_experiment() -> None:
+    with pytest.raises(ValueError, match="off or cached_frame_rehandoff"):
+        OverlayProcessManager(handoff_experiment="skip_identical_frame")
+
+
+def test_new_manifest_serialization_omits_runtime_profile() -> None:
+    payload = _overlay_manifest().to_dict()
+    assert "quiet_tail_profile" not in payload
+
+
+@dataclass(slots=True)
+class FakeOverlayManagedProcess(OverlayManagedProcess):
+    ready_event_delay_ms: int | None = None
+    startup_error: str | None = None
+    exit_code: int | None = None
+    exit_after_ready_code: int | None = None
+    runtime_error_after_ready: str | None = None
+    terminated: bool = False
+    overlay_instance_id: str = "overlay-test"
+    startup_transition_ready: asyncio.Event = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        self.startup_transition_ready = asyncio.Event()
+        self._exit_future: asyncio.Future[int | None] = asyncio.get_running_loop().create_future()
+        self._schedule_transitions()
+
+    async def next_event(self) -> OverlayProcessEvent:
+        return _process_event(await self._events.get())
+
+    async def wait_for_exit(self) -> int | None:
+        return await asyncio.shield(self._exit_future)
+
+    async def finish_readers(self) -> None:
+        return None
+
+    def drain_events(self) -> list[OverlayProcessEvent]:
+        events = []
+        while not self._events.empty():
+            events.append(_process_event(self._events.get_nowait()))
+        return events
+
+    async def terminate(self) -> None:
+        self.terminated = True
+        if not self._exit_future.done():
+            self._exit_future.set_result(0)
+
+    @property
+    def returncode(self) -> int | None:
+        if not self._exit_future.done() or self._exit_future.cancelled():
+            return None
+        return self._exit_future.result()
+
+    def _schedule_transitions(self) -> None:
+        async def runner() -> None:
+            if self.startup_error is not None:
+                await self._events.put(
+                    {
+                        "type": "startup_error",
+                        "failure_reason": self.startup_error,
+                    }
+                )
+                self.startup_transition_ready.set()
+                if self.exit_code is not None and not self._exit_future.done():
+                    await asyncio.sleep(0)
+                    self._exit_future.set_result(self.exit_code)
+                return
+
+            if self.ready_event_delay_ms is not None:
+                await asyncio.sleep(self.ready_event_delay_ms / 1000.0)
+                await self._events.put(
+                    {
+                        "type": "overlay_ready",
+                        "overlay_instance_id": self.overlay_instance_id,
+                        "runtime_generation": 1,
+                        "capabilities": {
+                            "execution_contract": OVERLAY_EXECUTION_CONTRACT,
+                            "native_presentation_retry": OVERLAY_NATIVE_RETRY_CONTRACT,
+                            "speaker_identity_presentation": OVERLAY_SPEAKER_IDENTITY_CONTRACT,
+                        },
+                    }
+                )
+                if self.runtime_error_after_ready is not None:
+                    await asyncio.sleep(0)
+                    await self._events.put(
+                        {
+                            "type": "runtime_error",
+                            "failure_reason": self.runtime_error_after_ready,
+                        }
+                    )
+                    return
+                if self.exit_after_ready_code is not None and not self._exit_future.done():
+                    await asyncio.sleep(0)
+                    self._exit_future.set_result(self.exit_after_ready_code)
+                    return
+
+            if self.exit_code is not None and not self._exit_future.done():
+                await asyncio.sleep(0)
+                self._exit_future.set_result(self.exit_code)
+
+        asyncio.create_task(runner())
+
+
+@pytest.mark.asyncio
+async def test_asyncio_overlay_process_terminate_escalates_to_kill_after_grace() -> None:
+    class HangingProcess:
+        stdout = None
+        stderr = None
+        returncode = None
+        pid = 4321
+
+        def __init__(self) -> None:
+            self.terminate_calls = 0
+            self.kill_calls = 0
+            self._wait_future: asyncio.Future[int | None] = (
+                asyncio.get_running_loop().create_future()
+            )
+
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+
+        def kill(self) -> None:
+            self.kill_calls += 1
+            self.returncode = -9
+            if not self._wait_future.done():
+                self._wait_future.set_result(self.returncode)
+
+        async def wait(self) -> int | None:
+            return await self._wait_future
+
+    process = HangingProcess()
+    managed = _AsyncioOverlayProcess(
+        process=process,
+        terminate_grace_s=0.0,
+    )
+
+    await managed.terminate()
+
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_overlay_manager_traces_asyncio_process_kill_escalation() -> None:
+    class HangingProcess:
+        stdout = None
+        stderr = None
+        returncode = None
+        pid = 4321
+
+        def __init__(self) -> None:
+            self._wait_future: asyncio.Future[int | None] = (
+                asyncio.get_running_loop().create_future()
+            )
+
+        def terminate(self) -> None:
+            return None
+
+        def kill(self) -> None:
+            self.returncode = -9
+            self._wait_future.set_result(self.returncode)
+
+        async def wait(self) -> int | None:
+            return await self._wait_future
+
+    managed = _AsyncioOverlayProcess(
+        process=HangingProcess(),
+        terminate_grace_s=0.0,
+    )
+    manager = OverlayProcessManager(selected_target="desktop", geometry_authority="flet")
+    manager.state = "connected"
+    manager._process = managed
+    manager._attach_process_diagnostics(managed)
+
+    await manager.stop()
+
+    assert manager.diagnostics is not None
+    events = [event["event"] for event in manager.diagnostics.process_events]
+    assert events.index("terminate_requested") < events.index("kill_requested")
+    assert events.index("kill_requested") < events.index("process_exited")
+    receipt = manager.shutdown_receipt()
+    assert receipt["terminate_requested"] is True
+    assert receipt["kill_requested"] is True
+    assert receipt["forced"] is True
+    assert receipt["exit_confirmed"] is True
+
+
+@pytest.mark.asyncio
+async def test_process_reverse_queue_bounds_diagnostics_and_rejects_excess_controls() -> None:
+    queue = _BoundedProcessEventQueue()
+    for index in range(256):
+        queue.put_nowait({"type": "overlay_trace", "index": index})
+
+    diagnostics = [queue.get_nowait() for _ in range(128)]
+    assert [event["index"] for event in diagnostics] == list(range(128, 256))
+    assert queue.dropped_diagnostics == 128
+
+    for index in range(8):
+        assert await queue.put(
+            {
+                "type": f"control-{index}",
+                "payload": {"event": f"event-{index}"},
+            }
+        )
+    assert await queue.put({"type": "overlay_ready"})
+    assert await queue.put({"type": "runtime_error", "failure_reason": "gpu_query_failed"})
+    assert not await queue.put({"type": "control-8", "payload": {"event": "event-8"}})
+    assert queue.rejected_controls == 1
+
+    assert queue.get_nowait() == {"type": "overlay_ready"}
+    assert queue.get_nowait() == {
+        "type": "runtime_error",
+        "failure_reason": "gpu_query_failed",
+    }
+    controls = [queue.get_nowait() for _ in range(8)]
+    assert {event["type"] for event in controls} == {f"control-{index}" for index in range(8)}
+
+    assert await queue.put({"type": "startup_error", "failure_reason": "first_terminal_cause"})
+    assert await queue.put({"type": "runtime_error", "failure_reason": "later_terminal_cause"})
+    assert await queue.put({"type": "shutdown_complete"})
+    assert queue.get_nowait() == {
+        "type": "startup_error",
+        "failure_reason": "first_terminal_cause",
+    }
+    assert queue.get_nowait() == {"type": "shutdown_complete"}
+
+
+@pytest.mark.asyncio
+async def test_desktop_first_visible_flows_from_real_process_reader_to_manager_callback(
+    tmp_path: Path,
+) -> None:
+    class PipeProcess:
+        def __init__(self) -> None:
+            self.stdout = asyncio.StreamReader()
+            self.stderr = None
+            self.pid = 72
+            self.returncode = 0
+
+    fired: list[str] = []
+    manager = OverlayProcessManager(
+        overlay_instance_id="overlay-reader-visible",
+        selected_target="desktop",
+        diagnostics_dir=tmp_path,
+        first_visible_callback=lambda: fired.append("visible"),
+    )
+    manager.state = "starting"
+    manager._current_phase = "startup"
+    process = PipeProcess()
+    managed = _AsyncioOverlayProcess(process=process)
+    assert manager.diagnostics is not None
+    managed.attach_diagnostics(
+        manager.diagnostics,
+        overlay_instance_id=manager.overlay_instance_id,
+    )
+    process.stdout.feed_data(
+        (
+            json.dumps(
+                {
+                    "type": "desktop_first_visible",
+                    "overlay_instance_id": manager.overlay_instance_id,
+                    "generation": 1,
+                }
+            )
+            + "\n"
+        ).encode()
+    )
+    process.stdout.feed_eof()
+
+    event = await asyncio.wait_for(managed.next_event(), timeout=0.5)
+    await manager._handle_lifecycle_event(event, allow_ready=False)
+    await managed.finish_readers()
+
+    assert event.payload["type"] == "desktop_first_visible"
+    assert manager.desktop_first_visible is True
+    assert fired == ["visible"]
+    assert manager.diagnostics.evidence_summary()["input_rejected"] == {}
+
+
+@pytest.mark.asyncio
+async def test_owned_process_stop_finishes_with_full_reverse_control_queue() -> None:
+    class ControlledProcess:
+        def __init__(self) -> None:
+            self.stdout = asyncio.StreamReader()
+            self.stderr = None
+            self.pid = 73
+            self.returncode: int | None = None
+            self._wait_future: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+        def terminate(self) -> None:
+            self.returncode = 0
+            self._wait_future.set_result(0)
+
+        async def wait(self) -> int:
+            return await self._wait_future
+
+    process = ControlledProcess()
+    managed = _AsyncioOverlayProcess(
+        process=process,
+        terminate_grace_s=0.0,
+        reader_cleanup_timeout_s=0.1,
+    )
+    lifecycle: list[tuple[str, dict[str, object]]] = []
+    managed.attach_lifecycle_sink(lambda event, fields: lifecycle.append((event, fields)))
+    for index in range(9):
+        process.stdout.feed_data(
+            (
+                json.dumps(
+                    {
+                        "type": "overlay_event",
+                        "payload": {"event": f"event-{index}"},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+    for _ in range(20):
+        if managed._events.rejected_controls:
+            break
+        await asyncio.sleep(0)
+
+    assert managed._events.rejected_controls == 1
+    await asyncio.wait_for(managed.terminate(), timeout=0.5)
+
+    assert managed._reader_tasks == []
+    assert (
+        "reverse_control_rejected",
+        {
+            "type": "overlay_event",
+            "payload_event": "unclassified",
+            "reason": "control_capacity",
+        },
+    ) in lifecycle
+    assert (
+        "process_readers_cancelled",
+        {
+            "count": 1,
+            "reason": "reader_finish_timeout",
+        },
+    ) in lifecycle
+
+
+@pytest.mark.asyncio
+async def test_actual_manager_consumes_reserved_ready_and_runtime_error_after_control_flood() -> (
+    None
+):
+    class ControlledProcess:
+        def __init__(self) -> None:
+            self.stdout = asyncio.StreamReader()
+            self.stderr = None
+            self.pid = 74
+            self.returncode: int | None = None
+            self._wait_future: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+        def terminate(self) -> None:
+            self.returncode = 0
+            self.stdout.feed_eof()
+            if not self._wait_future.done():
+                self._wait_future.set_result(0)
+
+        async def wait(self) -> int:
+            return await asyncio.shield(self._wait_future)
+
+    class ActualManagedRunner:
+        def __init__(self) -> None:
+            self.managed: _AsyncioOverlayProcess | None = None
+            self.overlay_instance_id = "overlay-test"
+
+        def configure_runtime(self, *, quiet_tail_profile: str, handoff_experiment: str) -> None:
+            _ = (quiet_tail_profile, handoff_experiment)
+
+        def prepare(self, manifest: OverlayLaunchManifest) -> Path:
+            self.overlay_instance_id = manifest.overlay_instance_id
+            return Path("C:/fake/PuriPulyHeartOverlay.exe")
+
+        async def spawn(
+            self,
+            executable_path: Path,
+            manifest_path: Path,
+        ) -> OverlayManagedProcess:
+            _ = (executable_path, manifest_path)
+            process = ControlledProcess()
+            self.managed = _AsyncioOverlayProcess(
+                process=process,
+                terminate_grace_s=0.0,
+            )
+            events = [
+                {
+                    "type": "overlay_event",
+                    "payload": {"event": f"event-{index}"},
+                }
+                for index in range(8)
+            ]
+            events.extend(
+                (
+                    {
+                        "type": "overlay_ready",
+                        "overlay_instance_id": self.overlay_instance_id,
+                        "runtime_generation": 1,
+                        "capabilities": {
+                            "execution_contract": OVERLAY_EXECUTION_CONTRACT,
+                            "native_presentation_retry": OVERLAY_NATIVE_RETRY_CONTRACT,
+                            "speaker_identity_presentation": OVERLAY_SPEAKER_IDENTITY_CONTRACT,
+                        },
+                    },
+                    {
+                        "type": "runtime_error",
+                        "failure_reason": "gpu_query_failed",
+                    },
+                )
+            )
+            for event in events:
+                process.stdout.feed_data((json.dumps(event) + "\n").encode())
+            return self.managed
+
+    runner = ActualManagedRunner()
+    manager = OverlayProcessManager(process_runner=runner)
+
+    await manager.start()
+    for _ in range(100):
+        if manager.state == "failed":
+            break
+        await asyncio.sleep(0)
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "gpu_query_failed"
+    assert manager.restart_scheduled
+    assert runner.managed is not None
+    assert runner.managed._reader_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_real_subprocess_pressure_preserves_lifecycle_and_bounded_cleanup(
+    tmp_path: Path,
+) -> None:
+    script_path = tmp_path / "overlay_pipe_pressure.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import sys",
+                "import time",
+                "manifest = json.load(open(sys.argv[2], encoding='utf-8'))",
+                "for index in range(2048):",
+                "    print(json.dumps({'type':'overlay_trace','component':'probe','event':'pressure','index':index}), flush=True)",
+                "print(json.dumps({'type':'overlay_ready','overlay_instance_id':manifest['overlay_instance_id'],'runtime_generation':1,'capabilities':{'execution_contract':{'version':1,'revision':'r2'},'native_presentation_retry':{'version':2,'ownership':'exclusive'},'speaker_identity_presentation':{'version':2,'policy':'immutable_first_readable_style'}}}), flush=True)",
+                "time.sleep(0.1)",
+                "print(json.dumps({'type':'shutdown_complete','overlay_instance_id':manifest['overlay_instance_id']}), flush=True)",
+                "time.sleep(0.05)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manager = OverlayProcessManager(
+        process_runner=DefaultOverlayProcessRunner(executable_path=script_path),
+        startup_timeout_ms=1000,
+        graceful_shutdown_request=lambda: asyncio.sleep(0),
+        graceful_shutdown_timeout_s=1.0,
+    )
+
+    await manager.start()
+    managed = manager._process
+    assert isinstance(managed, _AsyncioOverlayProcess)
+
+    await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert managed._events.dropped_diagnostics > 0
+    assert managed._reader_tasks == []
+    assert manager.state == "off"
+    assert receipt["acknowledged"] is True
+    assert receipt["exit_confirmed"] is True
+    assert receipt["exit_code"] == 0
+    assert receipt["reader_cleanup"] == "complete"
+    assert receipt["cleanup_succeeded"] is True
+
+
+@pytest.mark.asyncio
+async def test_actual_manager_fails_process_on_noncoalescible_reverse_control_overflow() -> None:
+    class ControlledProcess:
+        def __init__(self) -> None:
+            self.stdout = asyncio.StreamReader()
+            self.stderr = None
+            self.pid = 75
+            self.returncode: int | None = None
+            self._wait_future: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+        def terminate(self) -> None:
+            self.returncode = 0
+            self.stdout.feed_eof()
+            if not self._wait_future.done():
+                self._wait_future.set_result(0)
+
+        async def wait(self) -> int:
+            return await asyncio.shield(self._wait_future)
+
+    class ActualManagedRunner:
+        def __init__(self) -> None:
+            self.managed: _AsyncioOverlayProcess | None = None
+
+        def configure_runtime(self, *, quiet_tail_profile: str, handoff_experiment: str) -> None:
+            _ = (quiet_tail_profile, handoff_experiment)
+
+        def prepare(self, manifest: OverlayLaunchManifest) -> Path:
+            _ = manifest
+            return Path("C:/fake/PuriPulyHeartOverlay.exe")
+
+        async def spawn(
+            self,
+            executable_path: Path,
+            manifest_path: Path,
+        ) -> OverlayManagedProcess:
+            _ = (executable_path, manifest_path)
+            process = ControlledProcess()
+            self.managed = _AsyncioOverlayProcess(
+                process=process,
+                terminate_grace_s=0.0,
+            )
+            for index in range(9):
+                event = {
+                    "type": "overlay_event",
+                    "payload": {"event": f"event-{index}"},
+                }
+                process.stdout.feed_data((json.dumps(event) + "\n").encode())
+            process.stdout.feed_data(
+                (
+                    json.dumps(
+                        {
+                            "type": "runtime_error",
+                            "failure_reason": "later_runtime_error",
+                        }
+                    )
+                    + "\n"
+                ).encode()
+            )
+            return self.managed
+
+    runner = ActualManagedRunner()
+    manager = OverlayProcessManager(process_runner=runner)
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "reverse_control_capacity"
+    assert not manager.restart_scheduled
+    assert runner.managed is not None
+    assert runner.managed._reader_tasks == []
+    assert manager.diagnostics is not None
+    rejection = next(
+        event
+        for event in manager.diagnostics.process_events
+        if event["event"] == "reverse_control_rejected"
+    )
+    assert rejection["type"] == "overlay_event"
+    assert rejection["payload_event"] == "unclassified"
+    assert rejection["reason"] == "control_capacity"
+
+
+@dataclass(slots=True)
+class FakeProcessRunner:
+    ready_event_delay_ms: int | None = None
+    startup_error: str | None = None
+    exit_code: int | None = None
+    exit_after_ready_code: int | None = None
+    runtime_error_after_ready: str | None = None
+    spawn_error: Exception | None = None
+    manifest_error: Exception | None = None
+    last_process: FakeOverlayManagedProcess | None = None
+    overlay_instance_id: str = "overlay-test"
+
+    def configure_runtime(self, *, quiet_tail_profile: str, handoff_experiment: str) -> None:
+        _ = (quiet_tail_profile, handoff_experiment)
+
+    def prepare(self, manifest: OverlayLaunchManifest) -> Path:
+        self.overlay_instance_id = manifest.overlay_instance_id
+        if self.manifest_error is not None:
+            raise self.manifest_error
+        return Path("C:/fake/PuriPulyHeartOverlay.exe")
+
+    async def spawn(
+        self,
+        executable_path: Path,
+        manifest_path: Path,
+    ) -> OverlayManagedProcess:
+        _ = (executable_path, manifest_path)
+        if self.spawn_error is not None:
+            raise self.spawn_error
+        self.last_process = FakeOverlayManagedProcess(
+            ready_event_delay_ms=self.ready_event_delay_ms,
+            startup_error=self.startup_error,
+            exit_code=self.exit_code,
+            exit_after_ready_code=self.exit_after_ready_code,
+            runtime_error_after_ready=self.runtime_error_after_ready,
+            overlay_instance_id=self.overlay_instance_id,
+        )
+        if self.startup_error is not None:
+            await self.last_process.startup_transition_ready.wait()
+        return self.last_process
+
+
+@dataclass(slots=True)
+class MissingExecutableRunner:
+    def configure_runtime(self, *, quiet_tail_profile: str, handoff_experiment: str) -> None:
+        _ = (quiet_tail_profile, handoff_experiment)
+
+    def prepare(self, manifest: OverlayLaunchManifest) -> Path:
+        _ = manifest
+        raise FileNotFoundError("missing")
+
+    async def spawn(
+        self,
+        executable_path: Path,
+        manifest_path: Path,
+    ) -> OverlayManagedProcess:
+        _ = (executable_path, manifest_path)
+        raise AssertionError("spawn should not be called")
+
+
+def _overlay_manifest() -> OverlayLaunchManifest:
+    return OverlayLaunchManifest(
+        contract_version=OVERLAY_CONTRACT_VERSION,
+        app_version="test",
+        overlay_instance_id="overlay-test",
+        bridge_url="ws://127.0.0.1:8765",
+        session_token="session-token",
+        parent_pid=1234,
+        startup_deadline_ms=3000,
+        log_dir="logs",
+        log_level="INFO",
+        locale="en",
+    )
+
+
+def _write_vendored_openvr_bundle(
+    repo_root: Path,
+    *,
+    dll_bytes: bytes = b"vendored-openvr-runtime",
+) -> VendoredOpenVrBundle:
+    bundle_dir = repo_root / "third_party" / "openvr"
+    dll_path = bundle_dir / "win64" / "openvr_api.dll"
+    sha256_path = bundle_dir / "win64" / "openvr_api.dll.sha256"
+    license_path = bundle_dir / "LICENSE"
+    readme_path = bundle_dir / "README.md"
+
+    dll_path.parent.mkdir(parents=True, exist_ok=True)
+    dll_path.write_bytes(dll_bytes)
+    sha256_path.write_text(
+        f"{hashlib.sha256(dll_bytes).hexdigest()} *openvr_api.dll\n",
+        encoding="utf-8",
+    )
+    license_path.write_text("OpenVR license", encoding="utf-8")
+    readme_path.write_text("Vendored OpenVR runtime", encoding="utf-8")
+
+    return VendoredOpenVrBundle(
+        bundle_dir=bundle_dir,
+        dll_path=dll_path,
+        sha256_path=sha256_path,
+        license_path=license_path,
+        readme_path=readme_path,
+        dll_sha256=hashlib.sha256(dll_bytes).hexdigest(),
+    )
+
+
+def _make_local_dev_overlay_fixture(
+    tmp_path: Path,
+    *,
+    staged_dll_bytes: bytes | None,
+    vendored_dll_bytes: bytes = b"vendored-openvr-runtime",
+) -> tuple[Path, VendoredOpenVrBundle]:
+    repo_root = tmp_path / "repo"
+    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_text("staged-overlay", encoding="utf-8")
+
+    overlay_source = repo_root / "native" / "overlay" / "src" / "state.rs"
+    overlay_source.parent.mkdir(parents=True, exist_ok=True)
+    overlay_source.write_text("// overlay source", encoding="utf-8")
+
+    if staged_dll_bytes is not None:
+        staged.with_name("openvr_api.dll").write_bytes(staged_dll_bytes)
+
+    base_mtime = 1_700_000_000
+    os.utime(overlay_source, (base_mtime, base_mtime))
+    os.utime(staged, (base_mtime + 60, base_mtime + 60))
+
+    return staged, _write_vendored_openvr_bundle(repo_root, dll_bytes=vendored_dll_bytes)
+
+
+def _make_packaged_overlay_fixture(
+    tmp_path: Path,
+    *,
+    packaged_dll_bytes: bytes | None,
+    vendored_dll_bytes: bytes = b"vendored-openvr-runtime",
+) -> tuple[Path, VendoredOpenVrBundle]:
+    overlay_executable = tmp_path / "installed" / "PuriPulyHeartOverlay.exe"
+    overlay_executable.parent.mkdir(parents=True, exist_ok=True)
+    overlay_executable.write_text("packaged-overlay", encoding="utf-8")
+
+    if packaged_dll_bytes is not None:
+        overlay_executable.with_name("openvr_api.dll").write_bytes(packaged_dll_bytes)
+
+    return overlay_executable, _write_vendored_openvr_bundle(
+        tmp_path / "repo",
+        dll_bytes=vendored_dll_bytes,
+    )
+
+
+def _repo_vendored_openvr_dll_path() -> Path:
+    return (
+        Path(__file__).resolve().parents[2] / "third_party" / "openvr" / "win64" / "openvr_api.dll"
+    )
+
+
+def _patch_vendored_openvr_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    bundle: VendoredOpenVrBundle | None = None,
+    error: Exception | None = None,
+) -> None:
+    def validate_vendored_openvr_bundle() -> VendoredOpenVrBundle:
+        if error is not None:
+            raise error
+        assert bundle is not None
+        return bundle
+
+    monkeypatch.setattr(
+        process_runners_module,
+        "openvr_vendor",
+        SimpleNamespace(
+            validate_openvr_runtime_dll=openvr_vendor_module.validate_openvr_runtime_dll,
+            validate_vendored_openvr_bundle=validate_vendored_openvr_bundle,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_stop_preserves_process_when_terminate_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class FailingOnceTerminateProcess:
+        def __init__(self) -> None:
+            self.terminate_calls = 0
+
+        async def next_event(self) -> OverlayProcessEvent:
+            raise AssertionError("next_event should not be called")
+
+        async def wait_for_exit(self) -> int | None:
+            return None
+
+        async def finish_readers(self) -> None:
+            return None
+
+        async def terminate(self) -> None:
+            self.terminate_calls += 1
+            if self.terminate_calls == 1:
+                raise RuntimeError("terminate failed SYNTHETIC_PRIVATE_CREDENTIAL_PATH")
+
+    manager = OverlayProcessManager()
+    process = FailingOnceTerminateProcess()
+    manager._process = process
+
+    with pytest.raises(RuntimeError, match="terminate failed"):
+        await manager.stop()
+
+    assert manager._process is process
+    assert manager._primary_diagnostics is not None
+    assert manager._primary_diagnostics.fields["cleanup_stage"] == "process_terminate"
+    assert manager._primary_diagnostics.fields["exception_class"] == "RuntimeError"
+    assert "SYNTHETIC_PRIVATE" not in caplog.text
+
+    await manager.stop()
+
+    assert process.terminate_calls == 2
+    assert manager._process is None
+    receipt = manager.shutdown_receipt()
+    assert receipt["terminal_cause"] == "termination_unconfirmed"
+    assert receipt["cleanup_succeeded"] is False
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_stop_awaits_pre_requested_graceful_cleanup() -> None:
+    process = FakeOverlayManagedProcess()
+    shutdown_request_calls = 0
+
+    def reject_new_runtime_task(
+        coroutine: object,
+        *,
+        task_name: str,
+    ) -> asyncio.Task[object]:
+        _ = task_name
+        close = getattr(coroutine, "close", None)
+        if callable(close):
+            close()
+        raise RuntimeError("runtime is closing to new tasks")
+
+    async def request_shutdown() -> None:
+        nonlocal shutdown_request_calls
+        shutdown_request_calls += 1
+
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.2,
+        selected_target="desktop",
+        geometry_authority="flet",
+        task_factory=reject_new_runtime_task,
+    )
+    manager.state = "connected"
+    manager._process = process
+    manager._attach_process_diagnostics(process)
+    manager.mark_shutdown_requested()
+    for event in (
+        "stop_requested",
+        "graceful_close_requested",
+        "process_exited",
+        "pid_file_removed",
+    ):
+        await process._events.put(
+            {
+                "type": "overlay_trace",
+                "component": "flet_desktop_view_process",
+                "event": event,
+                "generation": 1,
+                "monotonic_ms": 1,
+            }
+        )
+    await process._events.put(
+        {
+            "type": "shutdown_complete",
+            "overlay_instance_id": manager.overlay_instance_id,
+        }
+    )
+    process._exit_future.set_result(0)
+
+    await manager.stop()
+
+    assert shutdown_request_calls == 0
+    assert process.terminated is False
+    assert manager.state == "off"
+    assert manager._process is None
+    assert manager.diagnostics is not None
+    process_events = manager.diagnostics.process_events
+    child_events = [
+        event["trace_event"]
+        for event in process_events
+        if event.get("trace_component") == "flet_desktop_view_process"
+    ]
+    assert child_events == [
+        "stop_requested",
+        "graceful_close_requested",
+        "process_exited",
+        "pid_file_removed",
+    ]
+    manager_events = [event["event"] for event in process_events]
+    assert "graceful_shutdown_acknowledged" in manager_events
+    assert "terminate_requested" not in manager_events
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_latches_ack_consumed_by_connected_monitor() -> None:
+    process = FakeOverlayManagedProcess()
+    shutdown_request_calls = 0
+
+    async def request_shutdown() -> None:
+        nonlocal shutdown_request_calls
+        shutdown_request_calls += 1
+
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.2,
+        selected_target="desktop",
+        geometry_authority="flet",
+    )
+    manager.state = "connected"
+    manager._process = process
+    manager._attach_process_diagnostics(process)
+    manager._monitor_task = manager._create_task(
+        manager._monitor_connected_process(),
+        task_name="connected-process-monitor",
+    )
+    await asyncio.sleep(0)
+    manager.mark_shutdown_requested()
+    await process._events.put(
+        {
+            "type": "shutdown_complete",
+            "overlay_instance_id": manager.overlay_instance_id,
+        }
+    )
+    for _ in range(10):
+        if manager._shutdown_acknowledged:
+            break
+        await asyncio.sleep(0)
+    assert manager._shutdown_acknowledged is True
+
+    async def exit_after_stop_begins() -> None:
+        while manager.state != "stopping" and manager._active_process_exit_task is None:
+            await asyncio.sleep(0)
+        process._exit_future.set_result(0)
+
+    exit_task = asyncio.create_task(exit_after_stop_begins())
+    await manager.stop()
+    await exit_task
+
+    assert shutdown_request_calls == 0
+    assert process.terminated is False
+    assert manager.state == "off"
+    assert manager.diagnostics is not None
+    manager_events = manager.diagnostics.process_events
+    assert sum(event["event"] == "graceful_shutdown_acknowledged" for event in manager_events) == 1
+    assert not any(event["event"] == "graceful_shutdown_timeout" for event in manager_events)
+    assert not any(event["event"] == "terminate_requested" for event in manager_events)
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_reconciles_ack_read_during_monitor_cancellation() -> None:
+    class AckHandoffManager(OverlayProcessManager):
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            self.ack_handoff_reached = asyncio.Event()
+
+        async def _handle_lifecycle_event(
+            self,
+            event: object,
+            *,
+            allow_ready: bool,
+            trusted_process_event: bool = True,
+        ) -> str:
+            payload = event.payload if isinstance(event, OverlayProcessEvent) else event
+            if (
+                isinstance(payload, dict)
+                and payload.get("type") == "shutdown_complete"
+                and not self.ack_handoff_reached.is_set()
+            ):
+                self.ack_handoff_reached.set()
+                await asyncio.Event().wait()
+            return await super()._handle_lifecycle_event(
+                event,
+                allow_ready=allow_ready,
+                trusted_process_event=trusted_process_event,
+            )
+
+    process = FakeOverlayManagedProcess()
+    manager = AckHandoffManager(
+        graceful_shutdown_request=lambda: asyncio.sleep(0),
+        graceful_shutdown_timeout_s=0.2,
+        selected_target="desktop",
+        geometry_authority="flet",
+    )
+    manager.state = "connected"
+    manager._process = process
+    manager._attach_process_diagnostics(process)
+    manager._monitor_task = manager._create_task(
+        manager._monitor_connected_process(),
+        task_name="connected-process-monitor",
+    )
+    await asyncio.sleep(0)
+    manager.mark_shutdown_requested()
+    await process._events.put(
+        {
+            "type": "shutdown_complete",
+            "overlay_instance_id": manager.overlay_instance_id,
+        }
+    )
+    await asyncio.wait_for(manager.ack_handoff_reached.wait(), timeout=0.2)
+    assert manager._shutdown_acknowledged is False
+
+    async def exit_after_stop_begins() -> None:
+        while manager.state != "stopping" and manager._active_process_exit_task is None:
+            await asyncio.sleep(0)
+        process._exit_future.set_result(0)
+
+    exit_task = asyncio.create_task(exit_after_stop_begins())
+    await manager.stop()
+    await exit_task
+
+    assert process.terminated is False
+    assert manager.diagnostics is not None
+    manager_events = manager.diagnostics.process_events
+    assert sum(event["event"] == "graceful_shutdown_acknowledged" for event in manager_events) == 1
+    assert not any(event["event"] == "graceful_shutdown_timeout" for event in manager_events)
+    assert not any(event["event"] == "terminate_requested" for event in manager_events)
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_timeout_does_not_claim_cancelled_waiter_exited() -> None:
+    process = FakeOverlayManagedProcess()
+
+    async def request_shutdown() -> None:
+        return None
+
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.01,
+        selected_target="desktop",
+        geometry_authority="flet",
+    )
+    manager.state = "connected"
+    manager._process = process
+    manager._attach_process_diagnostics(process)
+
+    await manager.stop()
+
+    assert process.terminated is True
+    assert manager.diagnostics is not None
+    timeout_event = next(
+        event
+        for event in manager.diagnostics.process_events
+        if event["event"] == "graceful_shutdown_timeout"
+    )
+    assert timeout_event["acknowledged"] is False
+    assert timeout_event["process_exited"] is False
+
+
+@pytest.mark.asyncio
+async def test_shutdown_ack_in_final_pipe_events_is_preserved_after_exit() -> None:
+    class LateAckProcess:
+        pid = 4321
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+            self.next_event_wait = asyncio.Event()
+
+        async def next_event(self) -> OverlayProcessEvent:
+            await self.next_event_wait.wait()
+            return _process_event(self.events.pop(0))
+
+        async def wait_for_exit(self) -> int:
+            return 0
+
+        async def finish_readers(self) -> None:
+            self.events.append(
+                {
+                    "type": "shutdown_complete",
+                    "overlay_instance_id": manager.overlay_instance_id,
+                }
+            )
+
+        async def terminate(self) -> None:
+            raise AssertionError("exited process must not be terminated")
+
+        def drain_events(self) -> list[OverlayProcessEvent]:
+            events = [_process_event(event) for event in self.events]
+            self.events.clear()
+            return events
+
+    process = LateAckProcess()
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=lambda: asyncio.sleep(0),
+        graceful_shutdown_timeout_s=0.01,
+    )
+    manager.state = "connected"
+    manager._process = process
+
+    await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert receipt["acknowledged"] is True
+    assert receipt["graceful_completed"] is True
+    assert receipt["exit_confirmed"] is True
+    assert receipt["reader_cleanup"] == "complete"
+    assert receipt["terminal_cause"] is None
+
+
+@pytest.mark.asyncio
+async def test_graceful_request_failure_observes_delayed_ack_and_exit_without_termination() -> None:
+    process = FakeOverlayManagedProcess()
+
+    async def request_shutdown() -> None:
+        raise RuntimeError("writer unavailable")
+
+    async def finish_orderly() -> None:
+        await asyncio.sleep(0.05)
+        await process._events.put(
+            {
+                "type": "shutdown_complete",
+                "overlay_instance_id": manager.overlay_instance_id,
+            }
+        )
+        process._exit_future.set_result(0)
+
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.2,
+    )
+    manager.state = "connected"
+    manager._process = process
+    finish_task = asyncio.create_task(finish_orderly())
+
+    await manager.stop()
+    await finish_task
+
+    receipt = manager.shutdown_receipt()
+    assert process.terminated is False
+    assert manager.state == "off"
+    assert receipt["graceful_request"] == "failed"
+    assert receipt["acknowledged"] is True
+    assert receipt["exit_code"] == 0
+    assert receipt["forced"] is False
+    assert receipt["cleanup_succeeded"] is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_receipt_rejects_acknowledged_nonzero_exit() -> None:
+    process = FakeOverlayManagedProcess()
+
+    async def request_shutdown() -> None:
+        await process._events.put(
+            {
+                "type": "shutdown_complete",
+                "overlay_instance_id": manager.overlay_instance_id,
+            }
+        )
+        process._exit_future.set_result(1)
+
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.2,
+    )
+    manager.state = "connected"
+    manager._process = process
+
+    await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert manager.state == "failed"
+    assert receipt["terminal_cause"] == "runtime_exit_nonzero"
+    assert receipt["exit_confirmed"] is True
+    assert receipt["exit_code"] == 1
+    assert receipt["cleanup_succeeded"] is False
+
+
+@pytest.mark.asyncio
+async def test_shutdown_receipt_distinguishes_missing_ack_forced_exit() -> None:
+    process = FakeOverlayManagedProcess()
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=lambda: asyncio.sleep(0),
+        graceful_shutdown_timeout_s=0.01,
+    )
+    manager.state = "connected"
+    manager._process = process
+
+    await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert manager.state == "failed"
+    assert receipt["terminal_cause"] == "shutdown_forced"
+    assert receipt["acknowledged"] is False
+    assert receipt["terminate_requested"] is True
+    assert receipt["forced"] is True
+    assert receipt["exit_confirmed"] is True
+
+
+@pytest.mark.asyncio
+async def test_forced_shutdown_preserves_earlier_runtime_terminal_cause() -> None:
+    process = FakeOverlayManagedProcess()
+
+    async def request_shutdown() -> None:
+        await process._events.put({"type": "runtime_error", "failure_reason": "gpu_query_failed"})
+
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.01,
+    )
+    manager.state = "connected"
+    manager._process = process
+
+    await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert receipt["terminal_cause"] == "gpu_query_failed"
+    assert receipt["forced"] is True
+    assert receipt["exit_confirmed"] is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_preserves_first_runtime_error_with_safe_bounded_evidence() -> None:
+    process = FakeOverlayManagedProcess()
+
+    async def request_shutdown() -> None:
+        await process._events.put({"type": "runtime_error", "failure_reason": "gpu_query_failed"})
+        await process._events.put(
+            {"type": "runtime_error", "failure_reason": "later_cleanup_error"}
+        )
+        await process._events.put(
+            {
+                "type": "shutdown_complete",
+                "overlay_instance_id": manager.overlay_instance_id,
+            }
+        )
+        process._exit_future.set_result(0)
+
+    manager = OverlayProcessManager(
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.2,
+    )
+    manager.state = "connected"
+    manager._process = process
+
+    await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert manager.state == "failed"
+    assert receipt["terminal_cause"] == "gpu_query_failed"
+    assert receipt["exit_code"] == 0
+    assert len(receipt["stdout_events"]) <= process_module._SHUTDOWN_EVIDENCE_LIMIT
+    assert [event["failure_reason"] for event in receipt["stdout_events"][:2]] == [
+        "gpu_query_failed",
+        "unknown",
+    ]
+    assert "later_cleanup_error" not in repr(receipt)
+
+
+def test_overlay_process_manager_cleanup_manifest_preserves_path_when_unlink_fails() -> None:
+    class FailingOnceManifestPath:
+        def __init__(self) -> None:
+            self.unlink_calls = 0
+
+        def unlink(self) -> None:
+            self.unlink_calls += 1
+            if self.unlink_calls == 1:
+                raise PermissionError("manifest locked")
+
+    manager = OverlayProcessManager()
+    manifest_path = FailingOnceManifestPath()
+    manager._manifest_path = manifest_path
+
+    with pytest.raises(PermissionError, match="manifest locked"):
+        manager._cleanup_manifest()
+
+    assert manager._manifest_path is manifest_path
+
+    manager._cleanup_manifest()
+
+    assert manifest_path.unlink_calls == 2
+    assert manager._manifest_path is None
+
+
+@pytest.mark.asyncio
+async def test_overlay_stop_reports_cleanup_failure_and_retains_manifest_reference(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class LockedManifest:
+        def unlink(self) -> None:
+            raise PermissionError(5, "manifest locked SYNTHETIC_PRIVATE_CREDENTIAL_PATH")
+
+    manager = OverlayProcessManager()
+    manifest = LockedManifest()
+    manager._manifest_path = manifest
+
+    with pytest.raises(PermissionError, match="manifest locked"):
+        await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert manager.state == "failed"
+    assert manager._manifest_path is manifest
+    assert receipt["terminal_cause"] == "shutdown_cleanup_failed"
+    assert receipt["cleanup_succeeded"] is False
+    assert manager._primary_diagnostics is not None
+    assert manager._primary_diagnostics.fields["cleanup_stage"] == "cleanup"
+    assert manager._primary_diagnostics.fields["exception_class"] == "PermissionError"
+    assert manager._primary_diagnostics.fields["errno"] == 5
+    assert "SYNTHETIC_PRIVATE" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reader_cleanup_requires_positive_settlement_and_retains_failed_owner() -> None:
+    class ExitedProcess:
+        stdout = None
+        stderr = None
+        pid = 4321
+        returncode = 0
+
+        async def wait(self) -> int:
+            return 0
+
+    release_reader = asyncio.Event()
+
+    async def cancellation_resistant_reader() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await release_reader.wait()
+
+    managed = _AsyncioOverlayProcess(
+        process=ExitedProcess(),
+        reader_cleanup_timeout_s=0.05,
+    )
+    reader_task = asyncio.create_task(cancellation_resistant_reader())
+    managed._reader_tasks.append(reader_task)
+    manager = OverlayProcessManager()
+    manager._process = managed
+    manager._attach_process_diagnostics(managed)
+
+    with pytest.raises(RuntimeError, match="reader cleanup failed"):
+        await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert receipt["exit_confirmed"] is True
+    assert receipt["exit_code"] == 0
+    assert receipt["reader_cleanup"] == "failed"
+    assert receipt["cleanup_succeeded"] is False
+    assert manager._process is managed
+    assert managed._reader_tasks == [reader_task]
+
+    release_reader.set()
+    await reader_task
+    await manager.stop()
+
+    assert managed._reader_tasks == []
+    assert manager._process is None
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_waits_for_overlay_ready_before_connected() -> None:
+    manager = OverlayProcessManager(process_runner=FakeProcessRunner(ready_event_delay_ms=50))
+
+    try:
+        await manager.start()
+
+        assert manager.state == "connected"
+        assert manager.failure_reason is None
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_maps_missing_executable_to_failure_reason() -> None:
+    manager = OverlayProcessManager(process_runner=MissingExecutableRunner())
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "missing_executable"
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_maps_spawn_failure_to_failure_reason() -> None:
+    manager = OverlayProcessManager(process_runner=FakeProcessRunner(spawn_error=OSError("boom")))
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "spawn_failed"
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_maps_invalid_manifest_to_failure_reason() -> None:
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(manifest_error=ValueError("bad manifest"))
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "manifest_invalid"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_reason", "exit_code"),
+    [
+        ("bridge_auth_failed", 12),
+        ("gpu_readiness_late", 21),
+        ("gpu_readiness_cancelled", 21),
+        ("gpu_query_failed", 21),
+        ("gpu_stalled", 21),
+    ],
+)
+async def test_overlay_process_manager_prefers_explicit_startup_error_event_over_exit_code(
+    failure_reason: str,
+    exit_code: int,
+) -> None:
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(
+            startup_error=failure_reason,
+            exit_code=exit_code,
+        )
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == failure_reason
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_maps_profile_startup_event_to_manifest_invalid() -> None:
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(startup_error="manifest_invalid", exit_code=1)
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "manifest_invalid"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_reason",
+    [
+        "steamvr_not_installed",
+        "steamvr_not_running",
+        "hmd_not_found",
+    ],
+)
+async def test_overlay_process_manager_preserves_specific_preflight_failure_reasons(
+    failure_reason: str,
+) -> None:
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(startup_error=failure_reason, exit_code=20)
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == failure_reason
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_maps_pre_ready_exit_code_to_standard_failure_reason() -> (
+    None
+):
+    manager = OverlayProcessManager(process_runner=FakeProcessRunner(exit_code=21))
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "renderer_init_failed"
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_schedules_restart_after_connected_crash() -> None:
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(ready_event_delay_ms=0, exit_after_ready_code=1)
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "runtime_crashed"
+    assert manager.restart_scheduled is True
+    assert manager._manifest_path is None
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_treats_expected_connected_zero_exit_as_graceful(
+    tmp_path: Path,
+) -> None:
+    runner = FakeProcessRunner(ready_event_delay_ms=0)
+    manager = OverlayProcessManager(
+        process_runner=runner,
+        diagnostics_dir=tmp_path,
+    )
+
+    await manager.start()
+    assert manager.state == "connected"
+    manager.mark_shutdown_requested()
+    assert runner.last_process is not None
+    runner.last_process._exit_future.set_result(0)
+    assert manager._monitor_task is not None
+    await manager._monitor_task
+
+    assert manager.state == "stopping"
+    assert manager.failure_reason is None
+    assert manager._failure_dumped is False
+    assert manager._process is None
+    assert manager._manifest_path is None
+
+    await manager.stop()
+
+    assert manager.state == "off"
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_does_not_restart_when_shutdown_requested() -> None:
+    runner = FakeProcessRunner(ready_event_delay_ms=0)
+    manager = OverlayProcessManager(process_runner=runner)
+
+    await manager.start()
+    assert manager.state == "connected"
+    manager.mark_shutdown_requested()
+    assert runner.last_process is not None
+    runner.last_process._exit_future.set_result(1)
+    assert manager._monitor_task is not None
+    await manager._monitor_task
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "runtime_crashed"
+    assert manager.restart_scheduled is False
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_treats_unexpected_connected_zero_exit_as_crash(
+    tmp_path: Path,
+) -> None:
+    runner = FakeProcessRunner(ready_event_delay_ms=0)
+    manager = OverlayProcessManager(
+        process_runner=runner,
+        diagnostics_dir=tmp_path,
+    )
+
+    await manager.start()
+    assert manager.state == "connected"
+    assert runner.last_process is not None
+    runner.last_process._exit_future.set_result(0)
+    assert manager._monitor_task is not None
+    await manager._monitor_task
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "runtime_crashed"
+    assert manager._failure_dumped is True
+    assert manager._process is None
+    assert manager._manifest_path is None
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_terminates_child_on_startup_timeout() -> None:
+    runner = FakeProcessRunner()
+    manager = OverlayProcessManager(process_runner=runner, startup_timeout_ms=10)
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "startup_timeout"
+    assert runner.last_process is not None
+    assert runner.last_process.terminated is True
+
+
+@pytest.mark.asyncio
+async def test_startup_budget_includes_nonblocking_prepare_and_reaps_late_spawn_before_replacement() -> (
+    None
+):
+    prepare_entered = threading.Event()
+    release_prepare = threading.Event()
+
+    class LateRunner:
+        def __init__(self) -> None:
+            self.spawn_calls = 0
+            self.last_process: FakeOverlayManagedProcess | None = None
+
+        def configure_runtime(self, *, quiet_tail_profile: str, handoff_experiment: str) -> None:
+            _ = (quiet_tail_profile, handoff_experiment)
+
+        def prepare(self, manifest: OverlayLaunchManifest) -> Path:
+            prepare_entered.set()
+            release_prepare.wait()
+            return Path("C:/fake/PuriPulyHeartOverlay.exe")
+
+        async def spawn(
+            self,
+            executable_path: Path,
+            manifest_path: Path,
+        ) -> OverlayManagedProcess:
+            _ = (executable_path, manifest_path)
+            self.spawn_calls += 1
+            self.last_process = FakeOverlayManagedProcess(overlay_instance_id="overlay-late")
+            return self.last_process
+
+    runner = LateRunner()
+    manager = OverlayProcessManager(
+        process_runner=runner,
+        overlay_instance_id="overlay-late",
+        startup_timeout_ms=30,
+    )
+    try:
+        start_task = asyncio.create_task(manager.start())
+        await asyncio.wait_for(asyncio.to_thread(prepare_entered.wait), timeout=0.2)
+        await asyncio.wait_for(start_task, timeout=0.2)
+        assert manager.failure_reason == "startup_timeout"
+        assert runner.spawn_calls == 0
+
+        await manager.start()
+        assert manager.failure_reason == "termination_unconfirmed"
+        assert runner.spawn_calls == 0
+
+        release_prepare.set()
+        assert manager._late_spawn_reaper is not None
+        await asyncio.wait_for(manager._late_spawn_reaper, timeout=1.0)
+        assert runner.spawn_calls == 1
+        assert runner.last_process is not None
+        assert runner.last_process.terminated is True
+        assert manager._process is None
+    finally:
+        release_prepare.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("startup_error", "startup_timeout_ms", "expected_failure"),
+    [
+        (None, 10, "startup_timeout"),
+        ("renderer_init_failed", 3_000, "renderer_init_failed"),
+    ],
+)
+async def test_overlay_process_manager_waits_for_renderer_cleanup_ack_before_escalation(
+    startup_error: str | None,
+    startup_timeout_ms: int,
+    expected_failure: str,
+) -> None:
+    runner = FakeProcessRunner(startup_error=startup_error)
+    shutdown_requests: list[str] = []
+    manager: OverlayProcessManager
+
+    async def request_shutdown() -> None:
+        shutdown_requests.append("requested")
+        process = runner.last_process
+        assert process is not None
+        await process._events.put(
+            {
+                "type": "shutdown_complete",
+                "overlay_instance_id": manager.overlay_instance_id,
+            }
+        )
+        if not process._exit_future.done():
+            process._exit_future.set_result(0)
+
+    manager = OverlayProcessManager(
+        process_runner=runner,
+        startup_timeout_ms=startup_timeout_ms,
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.2,
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == expected_failure
+    if manager._late_spawn_reaper is not None:
+        await manager._late_spawn_reaper
+    assert shutdown_requests == ["requested"]
+    assert runner.last_process is not None
+    assert runner.last_process.terminated is False
+
+
+@pytest.mark.asyncio
+async def test_native_startup_failure_can_be_reported_before_cleanup_finishes() -> None:
+    runner = FakeProcessRunner(startup_error="steamvr_not_running")
+    cleanup_entered = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def request_shutdown() -> None:
+        cleanup_entered.set()
+        await release_cleanup.wait()
+        runner.last_process._exit_future.set_result(20)
+
+    manager = OverlayProcessManager(
+        process_runner=runner,
+        selected_target="steamvr",
+        defer_startup_cleanup=True,
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=60.0,
+    )
+    stop_task = None
+    try:
+        await asyncio.wait_for(manager.start(), timeout=1.0)
+        assert manager.state == "failed"
+        assert manager.failure_reason == "steamvr_not_running"
+        stop_task = asyncio.create_task(manager.stop())
+        await asyncio.wait_for(cleanup_entered.wait(), timeout=1.0)
+        assert not stop_task.done()
+        assert runner.last_process.returncode is None
+        release_cleanup.set()
+        await asyncio.wait_for(stop_task, timeout=1.0)
+        receipt = manager.shutdown_receipt()
+        assert receipt["exit_confirmed"] is True
+        assert receipt["reader_cleanup"] == "complete"
+        assert receipt["acknowledged"] is False
+        assert receipt["graceful_completed"] is False
+        assert receipt["terminal_cause"] == "steamvr_not_running"
+    finally:
+        release_cleanup.set()
+        if stop_task is not None:
+            await stop_task
+        else:
+            await manager.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defer_cleanup", [False, True])
+async def test_exited_native_failure_does_not_wait_for_an_impossible_shutdown_ack(
+    defer_cleanup: bool,
+) -> None:
+    runner = FakeProcessRunner(startup_error="steamvr_not_running", exit_code=20)
+    manager = OverlayProcessManager(
+        process_runner=runner,
+        selected_target="steamvr",
+        bridge_messages=asyncio.Queue(),
+        bridge_messages_authenticated=True,
+        defer_startup_cleanup=defer_cleanup,
+        graceful_shutdown_request=lambda: asyncio.sleep(0),
+        graceful_shutdown_timeout_s=60.0,
+    )
+    try:
+        await asyncio.wait_for(manager.start(), timeout=1.0)
+        await asyncio.wait_for(manager.stop(), timeout=1.0)
+        assert manager.failure_reason == "steamvr_not_running"
+        assert manager.shutdown_receipt()["acknowledged"] is False
+        assert runner.last_process.returncode == 20
+        assert not runner.last_process.terminated
+        receipt = manager.shutdown_receipt()
+        assert receipt["exit_confirmed"] is True
+        assert receipt["reader_cleanup"] == "complete"
+        assert receipt["graceful_completed"] is False
+        assert receipt["terminal_cause"] == "steamvr_not_running"
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_consumes_structured_stdout_events_from_default_runner(
+    tmp_path: Path,
+) -> None:
+    script_path = tmp_path / "overlay_stub.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import sys",
+                "import time",
+                "assert sys.argv[1] == '--config'",
+                _ready_script_line(),
+                "time.sleep(5)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+
+    manager = OverlayProcessManager(
+        process_runner=DefaultOverlayProcessRunner(executable_path=script_path),
+        startup_timeout_ms=500,
+    )
+
+    try:
+        await manager.start()
+
+        assert manager.state == "connected"
+        assert manager.failure_reason is None
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_connected_exit_with_reader_failure_reaches_failed_disposition(
+    tmp_path: Path,
+) -> None:
+    script_path = tmp_path / "overlay_reader_failure_after_ready.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import sys",
+                "import time",
+                "assert sys.argv[1] == '--config'",
+                _ready_script_line(),
+                "time.sleep(0.05)",
+                "sys.stdout.write('x' * 100000)",
+                "sys.stdout.flush()",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+    manager = OverlayProcessManager(
+        process_runner=DefaultOverlayProcessRunner(executable_path=script_path),
+        startup_timeout_ms=500,
+    )
+
+    await manager.start()
+    assert manager.state == "connected"
+    assert manager._monitor_task is not None
+    await asyncio.wait_for(manager._monitor_task, timeout=1.0)
+
+    assert manager._monitor_task.exception() is None
+    assert manager.state == "failed"
+    assert manager.failure_reason == "runtime_crashed"
+    assert manager.restart_scheduled is False
+    assert manager.shutdown_receipt()["reader_cleanup"] == "failed"
+    assert manager._process is not None
+
+
+@pytest.mark.asyncio
+async def test_startup_exit_with_reader_failure_reaches_failed_disposition(
+    tmp_path: Path,
+) -> None:
+    script_path = tmp_path / "overlay_reader_failure_before_ready.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import sys",
+                "assert sys.argv[1] == '--config'",
+                "sys.stdout.write('x' * 100000)",
+                "sys.stdout.flush()",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+    manager = OverlayProcessManager(
+        process_runner=DefaultOverlayProcessRunner(executable_path=script_path),
+        startup_timeout_ms=500,
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "unknown"
+    assert manager.restart_scheduled is False
+    receipt = manager.shutdown_receipt()
+    assert receipt["exit_code"] == 0
+    assert receipt["reader_cleanup"] == "failed"
+    assert receipt["terminal_cause"] == "unknown"
+    assert manager._process is not None
+
+
+def test_default_overlay_process_runner_uses_repository_root_after_module_extraction(
+    tmp_path: Path,
+) -> None:
+    app_executable = tmp_path / "installed" / "PuriPulyHeart.exe"
+
+    packaged, staged = DefaultOverlayProcessRunner.default_executable_candidates(
+        sys_executable=app_executable,
+    )
+
+    assert packaged == app_executable.resolve().with_name("PuriPulyHeartOverlay.exe")
+    assert staged == (
+        Path(process_runners_module.__file__).resolve().parents[4]
+        / "build"
+        / "overlay"
+        / "PuriPulyHeartOverlay.exe"
+    )
+
+
+def test_default_overlay_process_runner_prefers_newer_packaged_sibling_over_staged_overlay(
+    tmp_path: Path,
+) -> None:
+    installed_dir = tmp_path / "installed"
+    installed_dir.mkdir()
+    app_executable = installed_dir / "PuriPulyHeart.exe"
+    app_executable.write_text("", encoding="utf-8")
+
+    packaged_sibling = installed_dir / "PuriPulyHeartOverlay.exe"
+    packaged_sibling.write_text("packaged", encoding="utf-8")
+
+    repo_root = tmp_path / "repo"
+    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged.parent.mkdir(parents=True)
+    staged.write_text("staged", encoding="utf-8")
+
+    base_mtime = 1_700_000_000
+    os.utime(staged, (base_mtime, base_mtime))
+    os.utime(packaged_sibling, (base_mtime + 60, base_mtime + 60))
+
+    resolved = DefaultOverlayProcessRunner.resolve_default_executable(
+        sys_executable=app_executable,
+        repo_root=repo_root,
+    )
+
+    assert resolved == packaged_sibling
+
+
+def test_default_overlay_process_runner_prefers_newer_staged_overlay_over_packaged_sibling(
+    tmp_path: Path,
+) -> None:
+    installed_dir = tmp_path / "installed"
+    installed_dir.mkdir()
+    app_executable = installed_dir / "PuriPulyHeart.exe"
+    app_executable.write_text("", encoding="utf-8")
+
+    packaged_sibling = installed_dir / "PuriPulyHeartOverlay.exe"
+    packaged_sibling.write_text("packaged", encoding="utf-8")
+
+    repo_root = tmp_path / "repo"
+    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged.parent.mkdir(parents=True)
+    staged.write_text("staged", encoding="utf-8")
+
+    base_mtime = 1_700_000_000
+    os.utime(packaged_sibling, (base_mtime, base_mtime))
+    os.utime(staged, (base_mtime + 60, base_mtime + 60))
+
+    resolved = DefaultOverlayProcessRunner.resolve_default_executable(
+        sys_executable=app_executable,
+        repo_root=repo_root,
+    )
+
+    assert resolved == staged
+
+
+def test_default_overlay_process_runner_uses_staged_overlay_for_local_dev_when_sibling_missing(
+    tmp_path: Path,
+) -> None:
+    installed_dir = tmp_path / "installed"
+    installed_dir.mkdir()
+    app_executable = installed_dir / "PuriPulyHeart.exe"
+    app_executable.write_text("", encoding="utf-8")
+
+    repo_root = tmp_path / "repo"
+    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged.parent.mkdir(parents=True)
+    staged.write_text("staged", encoding="utf-8")
+
+    resolved = DefaultOverlayProcessRunner.resolve_default_executable(
+        sys_executable=app_executable,
+        repo_root=repo_root,
+    )
+
+    assert resolved == staged
+
+
+@pytest.mark.parametrize(
+    "source_relative_path",
+    ["native/overlay/src/presentation/retry/state.rs", "native/windows_version.rs"],
+)
+@pytest.mark.asyncio
+async def test_overlay_process_manager_rejects_stale_staged_overlay_build(
+    tmp_path: Path,
+    source_relative_path: str,
+) -> None:
+    repo_root = tmp_path / "repo"
+    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged.parent.mkdir(parents=True)
+    staged.write_text("staged", encoding="utf-8")
+
+    (repo_root / "native/overlay/src").mkdir(parents=True, exist_ok=True)
+    overlay_source = repo_root / source_relative_path
+    overlay_source.parent.mkdir(parents=True, exist_ok=True)
+    overlay_source.write_text("const CHECK: () = ();", encoding="utf-8")
+
+    staged_mtime = 1_700_000_000
+    source_mtime = staged_mtime + 60
+    os.utime(staged, (staged_mtime, staged_mtime))
+    os.utime(overlay_source, (source_mtime, source_mtime))
+
+    manager = OverlayProcessManager(
+        process_runner=DefaultOverlayProcessRunner(executable_path=staged),
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "stale_overlay_build"
+
+
+@pytest.mark.parametrize(
+    "source_relative_path",
+    ["native/overlay/src/presentation/retry/state.rs", "native/windows_version.rs"],
+)
+@pytest.mark.parametrize("source_age_s", [-60, 0], ids=["older", "same"])
+def test_default_overlay_process_runner_accepts_current_staged_overlay_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_relative_path: str,
+    source_age_s: int,
+) -> None:
+    staged, bundle = _make_local_dev_overlay_fixture(tmp_path, staged_dll_bytes=None)
+    _patch_vendored_openvr_bundle(monkeypatch, bundle=bundle)
+    source = tmp_path / "repo" / source_relative_path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("const CHECK: () = ();", encoding="utf-8")
+    source_mtime = staged.stat().st_mtime + source_age_s
+    os.utime(source, (source_mtime, source_mtime))
+
+    resolved = DefaultOverlayProcessRunner(executable_path=staged).prepare(_overlay_manifest())
+
+    assert resolved == staged
+    assert staged.with_name("openvr_api.dll").read_bytes() == bundle.dll_path.read_bytes()
+
+
+@pytest.mark.parametrize("staged_dll_bytes", [None, b"stale-openvr-runtime"])
+def test_default_overlay_process_runner_refreshes_staged_openvr_runtime_dll_from_vendored_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    staged_dll_bytes: bytes | None,
+) -> None:
+    overlay_executable, bundle = _make_local_dev_overlay_fixture(
+        tmp_path,
+        staged_dll_bytes=staged_dll_bytes,
+    )
+    _patch_vendored_openvr_bundle(monkeypatch, bundle=bundle)
+
+    resolved = DefaultOverlayProcessRunner(executable_path=overlay_executable).prepare(
+        _overlay_manifest()
+    )
+    bundled_path = overlay_executable.with_name("openvr_api.dll")
+
+    assert resolved == overlay_executable
+    assert bundled_path.read_bytes() == bundle.dll_path.read_bytes()
+
+
+def test_default_overlay_process_runner_rejects_missing_vendored_openvr_bundle_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay_executable, bundle = _make_local_dev_overlay_fixture(
+        tmp_path,
+        staged_dll_bytes=b"stale-openvr-runtime",
+    )
+    _ = bundle
+    _patch_vendored_openvr_bundle(
+        monkeypatch,
+        error=FileNotFoundError("vendored bundle contract missing"),
+    )
+
+    with pytest.raises(OverlayPreparationError) as exc_info:
+        DefaultOverlayProcessRunner(executable_path=overlay_executable).prepare(_overlay_manifest())
+
+    assert exc_info.value.failure_reason == "vendored_openvr_dll_missing"
+
+
+def test_default_overlay_process_runner_rejects_missing_packaged_openvr_runtime_dll(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay_executable, bundle = _make_packaged_overlay_fixture(tmp_path, packaged_dll_bytes=None)
+    _patch_vendored_openvr_bundle(monkeypatch, bundle=bundle)
+
+    with pytest.raises(OverlayPreparationError) as exc_info:
+        DefaultOverlayProcessRunner(executable_path=overlay_executable).prepare(_overlay_manifest())
+
+    assert exc_info.value.failure_reason == "packaged_openvr_dll_missing"
+
+
+def test_default_overlay_process_runner_rejects_packaged_openvr_runtime_dll_hash_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay_executable, bundle = _make_packaged_overlay_fixture(
+        tmp_path,
+        packaged_dll_bytes=b"mismatched-openvr-runtime",
+    )
+    _patch_vendored_openvr_bundle(monkeypatch, bundle=bundle)
+
+    with pytest.raises(OverlayPreparationError) as exc_info:
+        DefaultOverlayProcessRunner(executable_path=overlay_executable).prepare(_overlay_manifest())
+
+    assert exc_info.value.failure_reason == "openvr_dll_hash_mismatch"
+
+
+def test_default_overlay_process_runner_accepts_packaged_sibling_openvr_runtime_without_repo_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay_executable = tmp_path / "installed" / "PuriPulyHeartOverlay.exe"
+    overlay_executable.parent.mkdir(parents=True, exist_ok=True)
+    overlay_executable.write_text("packaged-overlay", encoding="utf-8")
+
+    packaged_dll = overlay_executable.with_name("openvr_api.dll")
+    shutil.copy2(_repo_vendored_openvr_dll_path(), packaged_dll)
+
+    fake_repo_module = (
+        tmp_path / "fake-repo" / "src" / "puripuly_heart" / "core" / "overlay" / "openvr_vendor.py"
+    )
+    fake_repo_module.parent.mkdir(parents=True, exist_ok=True)
+    fake_repo_module.write_text("# fake packaged layout module path\n", encoding="utf-8")
+    monkeypatch.setattr(openvr_vendor_module, "__file__", str(fake_repo_module))
+
+    resolved = DefaultOverlayProcessRunner(executable_path=overlay_executable).prepare(
+        _overlay_manifest()
+    )
+
+    assert resolved == overlay_executable
+    assert packaged_dll.read_bytes() == _repo_vendored_openvr_dll_path().read_bytes()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_reason",
+    [
+        "runtime_disconnected",
+        "gpu_readiness_cancelled",
+        "gpu_query_failed",
+        "gpu_stalled",
+    ],
+)
+async def test_overlay_process_manager_maps_post_ready_runtime_error_to_failure_reason(
+    failure_reason: str,
+) -> None:
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(
+            ready_event_delay_ms=0,
+            runtime_error_after_ready=failure_reason,
+        )
+    )
+
+    await manager.start()
+    await asyncio.sleep(0)
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == failure_reason
+    assert manager.restart_scheduled is True
+    assert manager._manifest_path is None
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_does_not_accept_overlay_ready_from_bridge_messages() -> None:
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(),
+        bridge_messages=bridge_messages,
+        startup_timeout_ms=100,
+    )
+
+    async def publish_ready() -> None:
+        await asyncio.sleep(0)
+        await bridge_messages.put({"type": "overlay_ready"})
+
+    publisher = asyncio.create_task(publish_ready())
+    try:
+        await manager.start()
+        assert manager.state == "failed"
+        assert manager.failure_reason == "startup_timeout"
+    finally:
+        publisher.cancel()
+        await asyncio.gather(publisher, return_exceptions=True)
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_bridge_shutdown_ack_requires_process_exit_for_completion() -> None:
+    process = FakeOverlayManagedProcess()
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+
+    async def request_shutdown() -> None:
+        await bridge_messages.put(
+            {
+                "type": "shutdown_ack",
+                "overlay_instance_id": manager.overlay_instance_id,
+            }
+        )
+        process._exit_future.set_result(0)
+
+    manager = OverlayProcessManager(
+        bridge_messages=bridge_messages,
+        bridge_messages_authenticated=True,
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=0.2,
+        selected_target="desktop",
+    )
+    manager.state = "connected"
+    manager._process = process
+
+    await manager.stop()
+
+    receipt = manager.shutdown_receipt()
+    assert receipt["acknowledged"] is True
+    assert receipt["exit_confirmed"] is True
+    assert receipt["terminal_status_received"] is False
+    assert receipt["graceful_completed"] is False
+    assert receipt["native_evidence_state"] == "incomplete"
+    assert receipt["forced"] is False
+    assert receipt["cleanup_succeeded"] is False
+    assert receipt["terminal_cause"] == "shutdown_terminal_unavailable"
+    assert manager.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_lifecycle_wait_preserves_simultaneously_ready_pipe_and_bridge_events() -> (
+    None
+):
+    process = FakeOverlayManagedProcess()
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        bridge_messages=bridge_messages,
+        bridge_messages_authenticated=True,
+        overlay_instance_id="overlay-current",
+    )
+    process._events.put_nowait(
+        {
+            "type": "shutdown_complete",
+            "overlay_instance_id": "overlay-current",
+        }
+    )
+    bridge_messages.put_nowait(
+        {
+            "type": "shutdown_ack",
+            "overlay_instance_id": "overlay-current",
+        }
+    )
+
+    events = await manager._next_shutdown_lifecycle_event(process)
+    for event in events:
+        await manager._record_shutdown_lifecycle_event(event)
+
+    assert [event["type"] for event in manager.shutdown_receipt()["stdout_events"]] == [
+        "shutdown_complete",
+        "shutdown_ack",
+    ]
+    assert manager.shutdown_receipt()["acknowledged"] is True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_shutdown_lifecycle_wait_does_not_consume_later_events() -> None:
+    process = FakeOverlayManagedProcess()
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        bridge_messages=bridge_messages,
+        bridge_messages_authenticated=True,
+    )
+    waiter = asyncio.create_task(manager._next_shutdown_lifecycle_event(process))
+    await asyncio.sleep(0)
+
+    waiter.cancel()
+    await asyncio.gather(waiter, return_exceptions=True)
+    process._events.put_nowait({"type": "process-later"})
+    bridge_messages.put_nowait({"type": "bridge-later"})
+    await asyncio.sleep(0)
+
+    assert process._events.get_nowait() == {"type": "process-later"}
+    assert bridge_messages.get_nowait() == {"type": "bridge-later"}
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_events_distinguish_authenticated_and_untrusted_origins() -> None:
+    manager = OverlayProcessManager(overlay_instance_id="overlay-current")
+    payload = {
+        "type": "shutdown_ack",
+        "overlay_instance_id": "overlay-current",
+    }
+
+    await manager._handle_lifecycle_event(
+        OverlayProcessEvent(
+            payload=payload,
+            trust_origin="bridge_reverse",
+        ),
+        allow_ready=False,
+    )
+    assert manager.shutdown_receipt()["acknowledged"] is False
+
+    await manager._handle_lifecycle_event(
+        OverlayProcessEvent(
+            payload=payload,
+            trust_origin="authenticated_bridge_reverse",
+        ),
+        allow_ready=False,
+    )
+    assert manager.shutdown_receipt()["acknowledged"] is True
+
+    manager._shutdown_acknowledged = False
+
+    await manager._handle_lifecycle_event(
+        OverlayProcessEvent(
+            payload=payload,
+            trust_origin="process_pipe",
+        ),
+        allow_ready=False,
+    )
+    assert manager.shutdown_receipt()["acknowledged"] is True
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_maps_bridge_runtime_error_after_ready() -> None:
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(ready_event_delay_ms=0),
+        bridge_messages=bridge_messages,
+        bridge_messages_authenticated=True,
+    )
+
+    await manager.start()
+    await bridge_messages.put(
+        {
+            "type": "runtime_error",
+            "failure_reason": "runtime_disconnected",
+        }
+    )
+
+    for _ in range(10):
+        if manager.state == "failed":
+            break
+        await asyncio.sleep(0)
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "runtime_disconnected"
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_renderer_events_forwards_valid_window_bounds_from_bridge() -> (
+    None
+):
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    renderer_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(ready_event_delay_ms=0),
+        bridge_messages=bridge_messages,
+        renderer_events=renderer_events,
+    )
+    event: dict[str, object] = {
+        "type": "overlay_event",
+        "payload": {
+            "event": "window_bounds_changed",
+            "source": "user",
+            "persist": True,
+            "x": 320,
+            "y": 720,
+            "width": 1280,
+            "height": 330,
+        },
+    }
+
+    try:
+        await manager.start()
+        await bridge_messages.put(event)
+
+        forwarded = await asyncio.wait_for(renderer_events.get(), timeout=0.5)
+
+        assert forwarded == event
+        assert manager.state == "connected"
+        assert manager.failure_reason is None
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_renderer_events_strips_legacy_window_bounds_epoch() -> None:
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    renderer_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(ready_event_delay_ms=0),
+        bridge_messages=bridge_messages,
+        renderer_events=renderer_events,
+    )
+    event: dict[str, object] = {
+        "type": "overlay_event",
+        "payload": {
+            "event": "window_bounds_changed",
+            "source": "user",
+            "persist": True,
+            "x": 320,
+            "y": 720,
+            "width": 1280,
+            "height": 330,
+            "bounds_epoch": 2,
+        },
+    }
+
+    try:
+        await manager.start()
+        await bridge_messages.put(event)
+
+        forwarded = await asyncio.wait_for(renderer_events.get(), timeout=0.5)
+
+        expected = copy.deepcopy(event)
+        assert isinstance(expected["payload"], dict)
+        expected["payload"].pop("bounds_epoch")
+        assert forwarded == expected
+        assert manager.state == "connected"
+        assert manager.failure_reason is None
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_renderer_events_forwards_valid_mode_and_reset_events() -> (
+    None
+):
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    renderer_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(ready_event_delay_ms=0),
+        bridge_messages=bridge_messages,
+        renderer_events=renderer_events,
+    )
+    mode_event: dict[str, object] = {
+        "type": "overlay_event",
+        "payload": {
+            "event": "interaction_mode_changed",
+            "mode": "pass_through",
+        },
+    }
+    reset_event: dict[str, object] = {
+        "type": "overlay_event",
+        "payload": {"event": "reset_to_bottom_center_requested"},
+    }
+
+    try:
+        await manager.start()
+        await bridge_messages.put(mode_event)
+        await bridge_messages.put(reset_event)
+
+        forwarded_mode = await asyncio.wait_for(renderer_events.get(), timeout=0.5)
+        forwarded_reset = await asyncio.wait_for(renderer_events.get(), timeout=0.5)
+
+        assert forwarded_mode == mode_event
+        assert forwarded_reset == reset_event
+        assert manager.state == "connected"
+        assert manager.failure_reason is None
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_message",
+    [
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "window_bounds_changed",
+                "source": "programmatic",
+                "persist": True,
+                "x": 320,
+                "y": 720,
+                "width": 1280,
+                "height": 330,
+            },
+        },
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "window_bounds_changed",
+                "source": "user",
+                "persist": True,
+                "x": 320,
+                "y": 720,
+                "width": 0,
+                "height": 330,
+            },
+        },
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "window_bounds_changed",
+                "source": "user",
+                "persist": True,
+                "x": 320,
+                "y": 720,
+                "width": 1280,
+                "height": 330,
+                "bounds_epoch": -1,
+            },
+        },
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "window_bounds_changed",
+                "source": "user",
+                "persist": True,
+                "x": 320,
+                "y": 720,
+                "width": 1280,
+                "height": 330,
+                "bounds_epoch": True,
+            },
+        },
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "window_bounds_changed",
+                "source": "user",
+                "persist": True,
+                "x": 320,
+                "y": 720,
+                "width": 1280,
+                "height": 330,
+                "bounds_epoch": "2",
+            },
+        },
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "interaction_mode_changed",
+                "mode": "dragging",
+            },
+        },
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "interaction_mode_changed",
+                "mode": ["edit"],
+            },
+        },
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "interaction_mode_changed",
+                "mode": "edit",
+                "persist": True,
+            },
+        },
+        {
+            "type": "overlay_event",
+            "payload": {
+                "event": "reset_to_bottom_center_requested",
+                "source": "user",
+                "persist": True,
+            },
+        },
+        "not-a-renderer-message",
+    ],
+)
+async def test_overlay_process_manager_renderer_events_ignores_invalid_messages_without_failure(
+    invalid_message: object,
+) -> None:
+    bridge_messages: asyncio.Queue[object] = asyncio.Queue()
+    renderer_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(ready_event_delay_ms=0),
+        bridge_messages=bridge_messages,  # type: ignore[arg-type]
+        renderer_events=renderer_events,
+    )
+    diagnostics = manager.diagnostics
+    assert diagnostics is not None
+
+    async def _wait_until_renderer_message_ignored() -> None:
+        while not any(
+            event["event"] == "renderer_message_ignored" for event in diagnostics.process_events
+        ):
+            await asyncio.sleep(0)
+
+    try:
+        await manager.start()
+        await bridge_messages.put(invalid_message)
+        await asyncio.wait_for(_wait_until_renderer_message_ignored(), timeout=0.5)
+
+        assert renderer_events.empty()
+        assert manager.state == "connected"
+        assert manager.failure_reason is None
+        assert manager._monitor_task is not None
+        assert not manager._monitor_task.done()
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_renderer_events_without_queue_are_diagnostic_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(ready_event_delay_ms=0),
+        bridge_messages=bridge_messages,
+    )
+    diagnostics = manager.diagnostics
+    assert diagnostics is not None
+
+    async def _wait_until_renderer_event_diagnostic_only() -> None:
+        while not any(
+            event["event"] == "renderer_event_diagnostic_only"
+            for event in diagnostics.process_events
+        ):
+            await asyncio.sleep(0)
+
+    try:
+        await manager.start()
+        with caplog.at_level("INFO", logger="puripuly_heart.core.overlay.process"):
+            await bridge_messages.put(
+                {
+                    "type": "overlay_event",
+                    "payload": {
+                        "event": "interaction_mode_changed",
+                        "mode": "edit",
+                    },
+                }
+            )
+            await asyncio.wait_for(_wait_until_renderer_event_diagnostic_only(), timeout=0.5)
+
+        assert manager.state == "connected"
+        assert manager.failure_reason is None
+        assert not any(
+            "Renderer event ignored without controller queue" in message
+            for message in caplog.messages
+        )
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_writes_runtime_crash_dump_with_recent_child_output(
+    tmp_path: Path,
+) -> None:
+    script_path = tmp_path / "overlay_stub_runtime_crash.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import sys",
+                "assert sys.argv[1] == '--config'",
+                'print("[overlay][WARN] warning-line-0", flush=True)',
+                'print("[overlay][WARN] warning-line-1", flush=True)',
+                "for index in range(105):",
+                '    print(f"stdout-line-{index}", flush=True)',
+                "for index in range(3):",
+                '    print(f"stderr-line-{index}", file=sys.stderr, flush=True)',
+                _ready_script_line(),
+                "raise SystemExit(1)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+
+    manager = OverlayProcessManager(
+        process_runner=DefaultOverlayProcessRunner(executable_path=script_path),
+        startup_timeout_ms=500,
+        diagnostics_dir=tmp_path,
+    )
+
+    async def _wait_until_failure_requested() -> None:
+        while manager.failure_reason is None:
+            await asyncio.sleep(0)
+
+    await manager.start()
+    await asyncio.wait_for(
+        _wait_until_failure_requested(), timeout=manager.startup_timeout_ms / 1000.0
+    )
+    await manager.stop()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "runtime_crashed"
+    assert manager._diagnostic_dump_task is None
+    assert manager.diagnostics is not None
+    assert manager.diagnostics.last_dump_receipt is not None
+    assert manager.diagnostics.last_dump_receipt["outcome"] in {"written", "abandoned"}
+
+    dump_files = sorted(tmp_path.glob("overlay-diagnostics-*.jsonl"))
+    assert len(dump_files) == 1
+    dump_rows = [
+        json.loads(line) for line in dump_files[0].read_text(encoding="utf-8").splitlines()
+    ]
+
+    summary = dump_rows[0]
+    assert summary["event"] == "failure_summary"
+    assert summary["overlay_instance_id"] == manager.overlay_instance_id
+    assert summary["phase"] == "connected"
+    assert summary["exit_code"] == 1
+    assert summary["failure_reason"] == "runtime_crashed"
+
+    stdout_rows = [row for row in dump_rows if row.get("stream") == "stdout"]
+    assert {row["line"] for row in stdout_rows} == {"child_reported_warning"}
+    assert "warning-line-0" not in dump_files[0].read_text(encoding="utf-8")
+    assert "warning-line-1" not in dump_files[0].read_text(encoding="utf-8")
+    assert summary["input_rejected"]["unstamped_child_line"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_overlay_process_manager_dump_marks_startup_phase_for_pre_ready_exit(
+    tmp_path: Path,
+) -> None:
+    manager = OverlayProcessManager(
+        process_runner=FakeProcessRunner(exit_code=21),
+        diagnostics_dir=tmp_path,
+    )
+
+    await manager.start()
+
+    assert manager.state == "failed"
+    assert manager.failure_reason == "renderer_init_failed"
+    assert manager._diagnostic_dump_task is None
+    assert manager.diagnostics is not None
+    assert manager.diagnostics.last_dump_receipt is not None
+    assert manager.diagnostics.last_dump_receipt["outcome"] == "written"
+
+    dump_files = sorted(tmp_path.glob("overlay-diagnostics-*.jsonl"))
+    assert len(dump_files) == 1
+    summary = json.loads(dump_files[0].read_text(encoding="utf-8").splitlines()[0])
+    assert summary["event"] == "failure_summary"
+    assert summary["phase"] == "startup"
+    assert summary["exit_code"] == 21
+    assert summary["failure_reason"] == "renderer_init_failed"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_failure_owner_records_bounded_dump_abandonment_before_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    script_path = tmp_path / "overlay_stub_cancelled_failure.py"
+    script_path.write_text(
+        "#!/usr/bin/env python3\nraise SystemExit(21)\n",
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+    writer_gate = threading.Event()
+
+    def blocked_write(_temporary: Path, _path: Path, _content: bytes) -> None:
+        writer_gate.wait(timeout=5.0)
+
+    monkeypatch.setattr(
+        process_module.OverlayDiagnosticsRecorder,
+        "_write_dump_file",
+        staticmethod(blocked_write),
+    )
+    manager = OverlayProcessManager(
+        process_runner=DefaultOverlayProcessRunner(executable_path=script_path),
+        diagnostics_dir=tmp_path,
+    )
+
+    async def _wait_until_failure_requested() -> None:
+        while manager.failure_reason is None:
+            await asyncio.sleep(0)
+
+    start_task = asyncio.create_task(manager.start())
+    try:
+        await asyncio.wait_for(_wait_until_failure_requested(), timeout=1.0)
+        start_task.cancel()
+        await asyncio.gather(start_task, return_exceptions=True)
+        await manager.stop()
+
+        assert manager.failure_reason == "renderer_init_failed"
+        assert manager.state == "failed"
+        assert manager._diagnostic_dump_task is None
+        assert manager.diagnostics is not None
+        assert manager.diagnostics.last_dump_receipt is not None
+        assert manager.diagnostics.last_dump_receipt["outcome"] == "abandoned"
+        assert manager.diagnostics.last_dump_receipt["reason"] in {
+            "dump_cancelled",
+            "dump_deadline_exceeded",
+        }
+    finally:
+        writer_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_overlay_ready_rejects_stale_instance_and_duplicate_generation() -> None:
+    manager = OverlayProcessManager(overlay_instance_id="overlay-current")
+
+    stale = await manager._handle_lifecycle_event(
+        {
+            "type": "overlay_ready",
+            "overlay_instance_id": "overlay-retired",
+            "generation": 1,
+        },
+        allow_ready=True,
+    )
+    accepted = await manager._handle_lifecycle_event(
+        {
+            "type": "overlay_ready",
+            "overlay_instance_id": "overlay-current",
+            "generation": 2,
+            "runtime_generation": 1,
+            "capabilities": {
+                "execution_contract": OVERLAY_EXECUTION_CONTRACT,
+                "native_presentation_retry": OVERLAY_NATIVE_RETRY_CONTRACT,
+                "speaker_identity_presentation": OVERLAY_SPEAKER_IDENTITY_CONTRACT,
+            },
+        },
+        allow_ready=True,
+    )
+    duplicate = await manager._handle_lifecycle_event(
+        {
+            "type": "overlay_ready",
+            "overlay_instance_id": "overlay-current",
+            "generation": 2,
+            "runtime_generation": 1,
+            "capabilities": {
+                "execution_contract": OVERLAY_EXECUTION_CONTRACT,
+                "native_presentation_retry": OVERLAY_NATIVE_RETRY_CONTRACT,
+                "speaker_identity_presentation": OVERLAY_SPEAKER_IDENTITY_CONTRACT,
+            },
+        },
+        allow_ready=True,
+    )
+
+    assert (stale, accepted, duplicate) == ("ignored", "ready", "ignored")
+    assert manager._accepted_ready_generation == 2
+    assert manager.diagnostics is not None
+    rejected = [
+        event
+        for event in manager.diagnostics.process_events
+        if event.get("event") == "renderer_message_ignored"
+    ]
+    assert {event.get("reason") for event in rejected} == {
+        "stale_overlay_instance",
+        "duplicate_ready_generation",
+    }
+    assert all(event["accepted"] is False for event in rejected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "native_retry_capability",
+    [
+        {"version": 1, "ownership": "exclusive"},
+        {"version": 3, "ownership": "exclusive"},
+        {"version": True, "ownership": "exclusive"},
+        {"version": 2.0, "ownership": "exclusive"},
+        {"version": 2, "ownership": "shared"},
+        {"version": 2, "ownership": "exclusive", "extension": True},
+    ],
+)
+async def test_overlay_ready_rejects_non_exact_native_retry_contract(
+    native_retry_capability: dict[str, object],
+) -> None:
+    manager = OverlayProcessManager(
+        overlay_instance_id="overlay-current",
+        selected_target="steamvr",
+    )
+
+    outcome = await manager._handle_lifecycle_event(
+        {
+            "type": "overlay_ready",
+            "overlay_instance_id": "overlay-current",
+            "generation": 1,
+            "runtime_generation": 1,
+            "capabilities": {
+                "execution_contract": OVERLAY_EXECUTION_CONTRACT,
+                "native_presentation_retry": native_retry_capability,
+                "speaker_identity_presentation": OVERLAY_SPEAKER_IDENTITY_CONTRACT,
+            },
+        },
+        allow_ready=True,
+        trusted_process_event=True,
+    )
+
+    assert outcome == "failed"
+    assert manager.failure_reason == "unsupported_binary"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "speaker_identity_contract",
+    (
+        {"version": 1, "policy": "temporary_turn_emphasis"},
+        {"version": 1, "policy": "immutable_first_readable_style"},
+    ),
+)
+async def test_overlay_ready_rejects_wrong_speaker_identity_policy(
+    speaker_identity_contract: dict[str, object],
+) -> None:
+    manager = OverlayProcessManager(
+        overlay_instance_id="overlay-current",
+        selected_target="steamvr",
+    )
+
+    outcome = await manager._handle_lifecycle_event(
+        {
+            "type": "overlay_ready",
+            "overlay_instance_id": "overlay-current",
+            "generation": 1,
+            "runtime_generation": 1,
+            "capabilities": {
+                "execution_contract": OVERLAY_EXECUTION_CONTRACT,
+                "native_presentation_retry": OVERLAY_NATIVE_RETRY_CONTRACT,
+                "speaker_identity_presentation": speaker_identity_contract,
+            },
+        },
+        allow_ready=True,
+        trusted_process_event=True,
+    )
+
+    assert outcome == "failed"
+    assert manager.failure_reason == "unsupported_binary"
+
+
+@pytest.mark.asyncio
+async def test_overlay_stop_drains_terminal_child_lifecycle_trace() -> None:
+    class DrainingProcess:
+        pid = 4321
+        returncode = 0
+
+        async def next_event(self) -> OverlayProcessEvent:
+            raise AssertionError("next_event should not be called")
+
+        async def wait_for_exit(self) -> int:
+            return self.returncode
+
+        async def finish_readers(self) -> None:
+            return None
+
+        async def terminate(self) -> None:
+            return None
+
+        def drain_events(self) -> list[OverlayProcessEvent]:
+            return [
+                _process_event(
+                    {
+                        "type": "overlay_trace",
+                        "component": "flet_view_process",
+                        "event": "pid_file_removed",
+                        "generation": 1,
+                        "monotonic_ms": 44.0,
+                    }
+                )
+            ]
+
+    manager = OverlayProcessManager(selected_target="desktop", geometry_authority="flet")
+    manager._process = DrainingProcess()
+
+    await manager.stop()
+
+    assert manager.diagnostics is not None
+    assert any(
+        event.get("trace_event") == "pid_file_removed"
+        for event in manager.diagnostics.process_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_connected_expected_exit_drains_all_terminal_child_traces() -> None:
+    class ExitedProcess:
+        pid = 4321
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.events = [
+                {
+                    "type": "overlay_trace",
+                    "component": "flet_view_process",
+                    "event": event,
+                    "generation": 3,
+                    "parent_pid": 9876,
+                    "monotonic_ms": monotonic_ms,
+                }
+                for event, monotonic_ms in (
+                    ("stop_requested", 41.0),
+                    ("process_exited", 42.0),
+                    ("pid_file_removed", 43.0),
+                )
+            ]
+
+        async def next_event(self) -> OverlayProcessEvent:
+            return _process_event(self.events.pop(0))
+
+        async def wait_for_exit(self) -> int:
+            return self.returncode
+
+        async def finish_readers(self) -> None:
+            return None
+
+        async def terminate(self) -> None:
+            return None
+
+        def drain_events(self) -> list[OverlayProcessEvent]:
+            events = [_process_event(event) for event in self.events]
+            self.events.clear()
+            return events
+
+    process = ExitedProcess()
+    manager = OverlayProcessManager(selected_target="desktop", geometry_authority="flet")
+    manager.state = "connected"
+    manager._process = process
+    manager.mark_shutdown_requested()
+
+    await manager._monitor_connected_process()
+    await manager.stop()
+
+    assert manager.diagnostics is not None
+    child_events = [
+        event.get("trace_event")
+        for event in manager.diagnostics.process_events
+        if event.get("trace_component") == "flet_view_process"
+    ]
+    assert child_events == ["stop_requested", "process_exited", "pid_file_removed"]
+    assert process.events == []
+
+
+@pytest.mark.asyncio
+async def test_window_bounds_event_rejects_generation_other_than_ready_generation() -> None:
+    events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    manager = OverlayProcessManager(
+        overlay_instance_id="overlay-current",
+        renderer_events=events,
+    )
+    await manager._handle_lifecycle_event(
+        {
+            "type": "overlay_ready",
+            "overlay_instance_id": "overlay-current",
+            "generation": 4,
+            "runtime_generation": 1,
+            "capabilities": {
+                "execution_contract": OVERLAY_EXECUTION_CONTRACT,
+                "native_presentation_retry": OVERLAY_NATIVE_RETRY_CONTRACT,
+                "speaker_identity_presentation": OVERLAY_SPEAKER_IDENTITY_CONTRACT,
+            },
+        },
+        allow_ready=True,
+    )
+
+    def bounds_event(generation: int) -> dict[str, object]:
+        return {
+            "type": "overlay_event",
+            "payload": {
+                "event": "window_bounds_changed",
+                "source": "user",
+                "persist": True,
+                "generation": generation,
+                "x": 100,
+                "y": 200,
+                "width": 900,
+                "height": 240,
+            },
+        }
+
+    await manager._handle_lifecycle_event(bounds_event(3), allow_ready=False)
+    assert events.empty()
+
+    current = bounds_event(4)
+    await manager._handle_lifecycle_event(current, allow_ready=False)
+    assert await events.get() == current
+
+
+@pytest.mark.asyncio
+async def test_owner_health_requires_validated_increasing_challenges_for_sixty_second_refill() -> (
+    None
+):
+    bridge = OverlayBridge(
+        session_token="token",
+        overlay_instance_id="overlay-current",
+        runtime_generation=1,
+    )
+    manager = OverlayProcessManager(overlay_instance_id="overlay-current")
+
+    def status(challenge_id: int | None) -> dict[str, object]:
+        return {
+            "type": "owner_status",
+            "overlay_instance_id": "overlay-current",
+            "runtime_generation": 1,
+            "health_challenge_id": challenge_id,
+            "classification": "healthy_idle",
+            "due_elapsed_ms": 0,
+            "current_covered_handoff": True,
+            "confirmed_hide": False,
+            "desired_visible": True,
+            "observed_runtime_visible": True,
+        }
+
+    unchallenged = bridge._session_health.handle_owner_status(status(None))
+    await manager._handle_lifecycle_event(unchallenged, allow_ready=False)
+    assert manager._qualified_health_started_at is None
+
+    bridge._session_health.record_challenge(1, bridge.clock.now())
+    first = bridge._session_health.handle_owner_status(status(1))
+    await manager._handle_lifecycle_event(first, allow_ready=False)
+    assert manager._qualified_health_started_at is not None
+    manager._qualified_health_started_at -= 60.0
+
+    replayed = dict(first)
+    await manager._handle_lifecycle_event(replayed, allow_ready=False)
+    assert manager.restart_refill_ready is False
+
+    bridge._session_health.record_challenge(2, bridge.clock.now())
+    second = bridge._session_health.handle_owner_status(status(2))
+    await manager._handle_lifecycle_event(second, allow_ready=False)
+    assert manager.restart_refill_ready is True
+
+
+@pytest.mark.asyncio
+async def test_cached_frame_experiment_never_qualifies_restart_refill() -> None:
+    manager = OverlayProcessManager(
+        overlay_instance_id="overlay-current",
+        handoff_experiment=process_module.HANDOFF_EXPERIMENT_CACHED_FRAME_REHANDOFF,
+    )
+
+    def status(challenge_id: int) -> dict[str, object]:
+        return {
+            "type": "owner_status",
+            "overlay_instance_id": "overlay-current",
+            "runtime_generation": 1,
+            "health_challenge_id": challenge_id,
+            "health_challenge_validated": True,
+            "classification": "healthy_idle",
+            "due_elapsed_ms": 0,
+            "current_covered_handoff": True,
+            "confirmed_hide": False,
+            "desired_visible": True,
+            "observed_runtime_visible": True,
+        }
+
+    await manager._handle_lifecycle_event(status(1), allow_ready=False)
+    assert manager._qualified_health_started_at is None
+    await manager._handle_lifecycle_event(status(2), allow_ready=False)
+    assert manager.restart_refill_ready is False
+
+
+@pytest.mark.asyncio
+async def test_failed_desktop_start_still_waits_for_authenticated_ack_after_exit() -> None:
+    process = FakeOverlayManagedProcess()
+    bridge_messages: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    exit_observed = asyncio.Event()
+
+    async def request_shutdown() -> None:
+        process._exit_future.set_result(0)
+        exit_observed.set()
+
+    manager = OverlayProcessManager(
+        bridge_messages=bridge_messages,
+        bridge_messages_authenticated=True,
+        graceful_shutdown_request=request_shutdown,
+        graceful_shutdown_timeout_s=60,
+        selected_target="desktop",
+    )
+    manager.state = "failed"
+    manager.failure_reason = "window_reveal_lost"
+    manager._process = process
+    task = asyncio.create_task(manager.stop())
+    try:
+        await asyncio.wait_for(exit_observed.wait(), timeout=1)
+        assert not task.done()
+        await bridge_messages.put(
+            {"type": "shutdown_ack", "overlay_instance_id": manager.overlay_instance_id}
+        )
+        await asyncio.wait_for(task, timeout=1)
+        assert manager.shutdown_receipt()["acknowledged"] is True
+        assert manager.shutdown_receipt()["exit_confirmed"] is True
+        assert manager.desktop_cleanup_complete is True
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_real_pipe_and_loopback_bridge_preserve_primary_cleanup_and_reject_stale_private_detail(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from puripuly_heart.core.diagnostics import DIAGNOSTIC_RECORD_ATTRIBUTE
+
+    script = tmp_path / "native_fault_fixture.py"
+    script.write_text(
+        "\n".join(
+            [
+                "import asyncio, json, sys, websockets",
+                "m=json.load(open(sys.argv[2], encoding='utf-8'))",
+                "async def run():",
+                "    global m",
+                "    ws=await websockets.connect(m['bridge_url'], ping_interval=None, proxy=None)",
+                "    await ws.send(json.dumps({'type':'auth','session_token':m['session_token']}))",
+                "    await ws.recv()",
+                "    for index in range(2048):",
+                "        print(json.dumps({'type':'overlay_trace','component':'probe','event':'pressure','index':index}), flush=True)",
+                "    " + _ready_script_line(),
+                "    await asyncio.sleep(0.1)",
+                "    record={'schema_version':1,'record_type':'renderer_event','event_type':'SYNTHETIC_PRIVATE_CHILD_JSON','renderer_revision':1,'actual_disposition':'SYNTHETIC_PRIVATE_CHILD_JSON','render_commit_acknowledged':False,'slot_count':1,'line_count':2,'surface_visible':True,'interaction_mode':'locked','window_width':1344,'window_height':336}",
+                "    print(json.dumps({'type':'desktop_renderer_diagnostic','overlay_instance_id':m['overlay_instance_id'],'runtime_generation':1,'record':record}), flush=True)",
+                "    await asyncio.sleep(0.05)",
+                "    fault={'type':'runtime_error','overlay_instance_id':m['overlay_instance_id'],'runtime_generation':1,'failure_reason':'render_failed','primary_failure_reason':'render_failed','cleanup_failure_reason':'openvr_failed','exception_class':'OSError','errno':5,'diagnostic_dropped':7,'reliable_delivery_failures':1,'detail':'SYNTHETIC_PRIVATE_CREDENTIAL_BODY_PERSONAL_PATH','evidence_state':'incomplete'}",
+                "    await ws.send(json.dumps(fault))",
+                "    print(json.dumps(fault), flush=True)",
+                "    stale={**fault,'runtime_generation':2,'failure_reason':'gpu_query_failed','primary_failure_reason':'gpu_query_failed'}",
+                "    print(json.dumps(stale), flush=True)",
+                "    await asyncio.sleep(0.1)",
+                "    await ws.close()",
+                "asyncio.run(run())",
+                "raise SystemExit(7)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    bridge = OverlayBridge(session_token="isolated-native-fault-fixture")
+    await bridge.start()
+    manager = OverlayProcessManager(
+        process_runner=DefaultOverlayProcessRunner(executable_path=script),
+        bridge_url=bridge.url,
+        bridge_messages=bridge.messages,
+        bridge_messages_authenticated=True,
+        session_token=bridge.session_token,
+        diagnostics_dir=tmp_path,
+        startup_timeout_ms=2000,
+    )
+    try:
+        await manager.start()
+        assert manager._monitor_task is not None
+        await asyncio.wait_for(asyncio.shield(manager._monitor_task), timeout=3)
+        assert manager.state == "failed"
+        await manager.stop()
+        receipt = manager.shutdown_receipt()
+        assert receipt["native_primary_failure_reason"] == "render_failed"
+        assert receipt["native_cleanup_failure_reason"] == "openvr_failed"
+        assert receipt["native_diagnostic_dropped"] == 7
+        assert receipt["native_reliable_delivery_failures"] == 1
+        assert receipt["native_evidence_state"] == "incomplete"
+        assert receipt["exit_confirmed"] is True
+        assert receipt["reader_cleanup"] == "complete"
+        assert "SYNTHETIC_PRIVATE" not in json.dumps(receipt)
+        assert "SYNTHETIC_PRIVATE" not in caplog.text
+        diagnostics = [
+            getattr(record, DIAGNOSTIC_RECORD_ATTRIBUTE)[0]
+            for record in caplog.records
+            if hasattr(record, DIAGNOSTIC_RECORD_ATTRIBUTE)
+        ]
+        primary = next(item for item in diagnostics if item.code == "render_failed")
+        cleanup = next(item for item in diagnostics if item.code == "openvr_failed")
+        assert cleanup.cause_id == primary.diagnostic_id
+        assert receipt["primary_diagnostic_id"] == primary.diagnostic_id
+        assert receipt["native_cleanup_diagnostic_id"] == cleanup.diagnostic_id
+        assert len([item for item in diagnostics if item.code == "render_failed"]) == 1
+        assert manager.diagnostics is not None
+        assert (
+            manager.diagnostics.evidence_summary()["input_rejected"]["desktop_diagnostic_invalid"]
+            == 1
+        )
+        artifact_receipt = manager.diagnostics.last_dump_receipt
+        assert artifact_receipt is not None
+        assert artifact_receipt["outcome"] == "written"
+        artifacts = list(tmp_path.glob("overlay-diagnostics-failure-*.jsonl"))
+        assert artifacts == [tmp_path / artifact_receipt["file_name"]]
+        for artifact in artifacts:
+            content = artifact.read_bytes()
+            assert b"SYNTHETIC_PRIVATE_CHILD_JSON" not in content
+            assert len(content) == artifact_receipt["bytes"]
+            assert hashlib.sha256(content).hexdigest() == artifact_receipt["sha256"]
+    finally:
+        await manager.stop()
+        await bridge.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["event_type", "actual_disposition"])
+async def test_desktop_child_diagnostic_rejects_arbitrary_values_before_artifact(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    marker = "PRIVATE_CHILD_JSON_SENTINEL"
+    manager = OverlayProcessManager(
+        overlay_instance_id="desktop-enum-fixture",
+        diagnostics_dir=tmp_path,
+    )
+    record = {
+        "schema_version": 1,
+        "record_type": "renderer_event",
+        "event_type": "render_commit",
+        "renderer_revision": 1,
+        "actual_disposition": "committed",
+        "render_commit_acknowledged": False,
+        "slot_count": 1,
+        "line_count": 2,
+        "surface_visible": True,
+        "interaction_mode": "locked",
+        "window_width": 1344,
+        "window_height": 336,
+    }
+    event = {
+        "type": "desktop_renderer_diagnostic",
+        "overlay_instance_id": manager.overlay_instance_id,
+        "runtime_generation": 1,
+        "record": {**record, field: marker},
+    }
+    manager._handle_desktop_renderer_diagnostic(event, trusted_process_event=True)
+    diagnostics = manager.diagnostics
+    assert diagnostics is not None
+    assert not diagnostics.process_events
+    assert diagnostics.evidence_summary()["input_rejected"]["desktop_diagnostic_invalid"] == 1
+
+    manager._handle_desktop_renderer_diagnostic(
+        {**event, "record": record},
+        trusted_process_event=True,
+    )
+    assert len(diagnostics.process_events) == 1
+    assert diagnostics.process_events[0]["event_type"] == "render_commit"
+    receipt = await diagnostics.dump_evidence(outcome="failure", failure_reason="render_failed")
+    assert receipt["outcome"] == "written"
+    persisted = (tmp_path / receipt["file_name"]).read_text(encoding="utf-8")
+    assert marker not in persisted
+    assert receipt["input_rejected"]["desktop_diagnostic_invalid"] == 1
+
+
+@pytest.mark.parametrize(
+    "event_type, disposition, acknowledged",
+    [
+        ("receipt", "committed", False),
+        ("receipt", "superseded", False),
+        ("receipt", "stale", False),
+        ("receipt", "failed", False),
+        ("supersession", "superseded", False),
+        ("stale", "stale", False),
+        ("failed", "failed", False),
+        ("render_start", "committed", False),
+        ("render_commit", "committed", False),
+        ("render_commit_acknowledgement", "committed", True),
+    ],
+)
+def test_desktop_child_diagnostic_retains_legitimate_renderer_outcomes(
+    tmp_path: Path,
+    event_type: str,
+    disposition: str,
+    acknowledged: bool,
+) -> None:
+    manager = OverlayProcessManager(
+        overlay_instance_id="desktop-enum-fixture",
+        diagnostics_dir=tmp_path,
+    )
+    manager._handle_desktop_renderer_diagnostic(
+        {
+            "type": "desktop_renderer_diagnostic",
+            "overlay_instance_id": manager.overlay_instance_id,
+            "runtime_generation": 1,
+            "record": {
+                "schema_version": 1,
+                "record_type": "renderer_event",
+                "event_type": event_type,
+                "renderer_revision": 1,
+                "actual_disposition": disposition,
+                "render_commit_acknowledged": acknowledged,
+                "slot_count": 1,
+                "line_count": 2,
+                "surface_visible": True,
+                "interaction_mode": "locked",
+                "window_width": 1344,
+                "window_height": 336,
+            },
+        },
+        trusted_process_event=True,
+    )
+    assert manager.diagnostics is not None
+    assert manager.diagnostics.process_events[0]["event_type"] == event_type
+    assert manager.diagnostics.process_events[0]["actual_disposition"] == disposition

@@ -1,0 +1,3217 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections import OrderedDict, deque
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field, replace
+from typing import Protocol, cast
+from uuid import UUID
+
+from puripuly_heart.core.clock import Clock
+from puripuly_heart.core.orchestrator.configuration import (
+    TranslationRuntimeConfig,
+    TranslationRuntimeConfigSnapshot,
+    translation_configs_match,
+)
+from puripuly_heart.core.orchestrator.context import ContextMode
+from puripuly_heart.core.orchestrator.translation_diagnostics import (
+    LatencyStageDiagnostic,
+    OverlayEmitDiagnostic,
+    RuntimeDiagnostic,
+    TranslationLatencyDiagnosticsOwner,
+    TranslationReadyDiagnostic,
+)
+from puripuly_heart.core.orchestrator.translation_turn import (
+    TranslationOutputSubmission,
+    TranslationTurnChild,
+    TranslationTurnOutcome,
+)
+from puripuly_heart.core.output.models import (
+    OUTPUT_ROUTING_DECISION_PUBLISHED,
+    OUTPUT_ROUTING_DECISION_SKIPPED,
+    OutputRoutingDecision,
+)
+from puripuly_heart.core.overlay.sink import (
+    OverlayEventAdapter,
+    OverlayEventUnion,
+    OverlayPublicationScope,
+    OverlaySink,
+)
+from puripuly_heart.core.overlay.state import ActiveSelfOverlayMetadata
+from puripuly_heart.core.runtime.output import OutputPublicationResult, OutputRuntime
+from puripuly_heart.domain.events import SelfTurnPresentation, UIEvent, UIEventType
+from puripuly_heart.domain.models import ChannelId, SpeakerAssignment, Transcript, Translation
+
+_SOFT_REUSE_PUNCT = {".", ",", "…", "。", "，", "、"}
+_SELF_CAPTION_LIMIT = 64
+_SELF_CAPTION_BYTE_LIMIT = 1024 * 1024
+
+
+def _self_sentence_complete(text: str) -> bool:
+    text = text.rstrip().rstrip("\"'”’」』】)")
+    if not text:
+        return False
+    if text[-1] in "!?。！？":
+        return True
+    if text[-1] != "." or text.endswith("..."):
+        return False
+    word = text.rsplit(maxsplit=1)[-1].lower()
+    if word in {"mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "vs.", "etc.", "e.g.", "i.e."}:
+        return False
+    stem = word[:-1]
+    return (
+        bool(stem)
+        and not stem[-1].isdigit()
+        and not (len(stem) == 1 and stem.isascii() and stem.isalpha())
+        and "." not in stem
+    )
+
+
+class TranslationUiMessagePort(Protocol):
+    async def publish(
+        self,
+        event: UIEvent,
+        *,
+        parent_utterance_id: UUID | None = None,
+        publication_generation: int | None = None,
+        source_order: int | None = None,
+        presentation_is_current: Callable[[], bool] | None = None,
+    ) -> OutputPublicationResult | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationUiMessage:
+    event_type: UIEventType
+    utterance_id: UUID | None = None
+    payload: object | None = None
+    source: str | None = None
+    channel: ChannelId | None = None
+    runtime_log_handled: bool = False
+    publication_generation: int | None = None
+    source_order: int | None = None
+    parent_utterance_id: UUID | None = None
+    operation_id: str | None = None
+    request_id: str | None = None
+    presentation_is_current: Callable[[], bool] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        if (
+            self.channel == "peer"
+            and self.event_type is UIEventType.ERROR
+            and (
+                self.parent_utterance_id is None
+                or self.publication_generation is None
+                or self.source_order is None
+            )
+        ):
+            raise ValueError("Peer error messages require publication identity")
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptOverlayProjection:
+    transcript: Transcript
+    source_language: str
+    target_language: str
+    event_kind: str | None = None
+    output_scope: OverlayPublicationScope | None = None
+    speaker_assignment: SpeakerAssignment | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationOverlayProjection:
+    translation: Translation
+    source_language: str
+    target_language: str
+    applied_context_mode: ContextMode | None
+    source_text: str = ""
+    record_peer_first_emit: bool = False
+    publication_generation: int | None = None
+    source_order: int | None = None
+    output_scope: OverlayPublicationScope | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ChatboxProjection:
+    utterance_id: UUID
+    channel: ChannelId
+    transcript_text: str
+    translation_text: str | None
+    include_source: bool
+    source: str | None
+    presentation_revision: int = 0
+    turn_generation: int | None = None
+    turn_order: int | None = None
+    target_indexes: tuple[int, ...] = ()
+    target_languages: tuple[str, ...] = ()
+    operation_id: str | None = None
+    request_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationResultProjectionReceipt:
+    clear_runtime_latency_bookkeeping: bool
+    complete_peer_logical_turn: bool = False
+    record_runtime_translation: bool = True
+    ui_publication_result: OutputPublicationResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SelfTranslationTurnSnapshot:
+    parent_utterance_id: UUID
+    turn_generation: int
+    turn_order: int
+    configured_targets: tuple[str, ...]
+    completed_translations_by_target: tuple[tuple[str, str], ...]
+    failed_targets: frozenset[str]
+    revision: int
+    terminal: bool
+    admitted_at: float = 0.0
+    first_success_at: float | None = None
+    all_targets_terminal_at: float | None = None
+    operation_id: str | None = None
+    request_id: str | None = None
+
+    @property
+    def text(self) -> str:
+        return "\n".join(text for _target, text in self.completed_translations_by_target)
+
+
+@dataclass(slots=True)
+class _SelfTranslationTurnAggregate:
+    parent_utterance_id: UUID
+    turn_generation: int
+    turn_order: int
+    configured_targets: tuple[str, ...]
+    expected_children_by_target: tuple[tuple[UUID, ...], ...]
+    child_target_indexes: dict[UUID, int]
+    child_sequences: dict[UUID, int]
+    admitted_at: float
+    translations_by_child: dict[UUID, Translation] = field(default_factory=dict)
+    terminal_child_ids: set[UUID] = field(default_factory=set)
+    failed_child_ids: set[UUID] = field(default_factory=set)
+    first_success_at: float | None = None
+    all_targets_terminal_at: float | None = None
+    revision: int = 0
+    visible_signature: tuple[tuple[str, str], ...] = ()
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    operation_id: str | None = None
+    request_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SelfProjectionUpdate:
+    accepted: bool
+    snapshot: SelfTranslationTurnSnapshot | None = None
+
+
+@dataclass(slots=True)
+class _PeerUiBatch:
+    publication_generation: int
+    source_order: int
+    parent_utterance_id: UUID
+    events: deque[tuple[UIEvent, str]] = field(default_factory=deque)
+    writing: bool = False
+
+
+@dataclass(slots=True)
+class _UiDeliveryAuthority:
+    owner: TranslationUiMessageQueue
+    destination_generation: int
+    sequence: int
+    self_generation: int | None
+    speech_generation: int | None
+    peer_generation: int | None
+    peer_source_order: int | None
+    presentation_is_current: Callable[[], bool] | None = None
+    claimed: bool = False
+
+    def is_current(self) -> bool:
+        owner = self.owner
+        return (
+            not owner._closed
+            and owner.output_runtime.state == "open"
+            and self.destination_generation == owner._destination_generation
+            and (self.self_generation is None or self.self_generation == owner._self_generation)
+            and (
+                self.speech_generation is None or self.speech_generation == owner._speech_generation
+            )
+            and (
+                self.peer_generation is None
+                or (
+                    self.peer_source_order is not None
+                    and owner.output_runtime.peer_publication_is_authorized(
+                        self.peer_generation, self.peer_source_order
+                    )
+                )
+            )
+        )
+
+    def claim_delivery(self) -> bool:
+        if self.claimed or not self.is_current():
+            return False
+        self.claimed = True
+        return True
+
+    def claim_presentation(self) -> bool:
+        if (
+            not self.is_current()
+            or (self.presentation_is_current is not None and not self.presentation_is_current())
+            or self.sequence < self.owner._presented_sequence
+        ):
+            return False
+        self.owner._presented_sequence = self.sequence
+        return True
+
+
+@dataclass(slots=True)
+class TranslationUiMessageQueue:
+    queue: asyncio.Queue[UIEvent] = field(repr=False)
+    output_runtime: OutputRuntime = field(repr=False)
+    peer_waiting_capacity: int = 8
+    write_timeout_s: float = 5.0
+    self_waiting_capacity: int = 32
+    peer_batch_event_capacity: int = 32
+    _self_events: deque[UIEvent] = field(default_factory=deque, init=False)
+    _active_self_event: UIEvent | None = field(default=None, init=False)
+    _self_worker: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
+    _destination_generation: int = field(default=0, init=False)
+    _self_generation: int = field(default=0, init=False)
+    _speech_generation: int = field(default=0, init=False)
+    _sequence: int = field(default=0, init=False)
+    _presented_sequence: int = field(default=-1, init=False)
+    dropped_peer_events: int = 0
+    _peer_batches: deque[_PeerUiBatch] = field(default_factory=deque, init=False)
+    _active_peer_batch: _PeerUiBatch | None = field(default=None, init=False)
+    _peer_worker: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
+    _writer_cancel_reason: str | None = field(default=None, init=False)
+    _in_flight_keys: set[tuple[int, str]] = field(default_factory=set, init=False)
+    _completed_keys: set[tuple[int, str]] = field(default_factory=set, init=False)
+    _completed_order: deque[tuple[int, str]] = field(default_factory=deque, init=False)
+    _peer_parent_identities: dict[tuple[int, UUID], int] = field(default_factory=dict, init=False)
+    _peer_parent_identity_order: deque[tuple[int, UUID]] = field(default_factory=deque, init=False)
+    _active_generation: int | None = field(default=None, init=False)
+    _latest_source_order: int = field(default=-1, init=False)
+    _closed: bool = field(default=False, init=False)
+    _replacing: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        if self.peer_waiting_capacity < 1:
+            raise ValueError("peer_waiting_capacity must be positive")
+        if self.self_waiting_capacity < 1:
+            raise ValueError("self_waiting_capacity must be positive")
+        if self.peer_batch_event_capacity < 1:
+            raise ValueError("peer_batch_event_capacity must be positive")
+        if self.write_timeout_s <= 0:
+            raise ValueError("write_timeout_s must be positive")
+        self.output_runtime.bind_ui_delivery(self)
+
+    @property
+    def has_resources(self) -> bool:
+        return (
+            self._peer_worker is not None
+            or bool(self._peer_batches)
+            or self._self_worker is not None
+            or bool(self._self_events)
+        )
+
+    async def publish(
+        self,
+        event: UIEvent,
+        *,
+        parent_utterance_id: UUID | None = None,
+        publication_generation: int | None = None,
+        source_order: int | None = None,
+        presentation_is_current: Callable[[], bool] | None = None,
+    ) -> OutputPublicationResult | None:
+        self._sequence += 1
+        event = replace(
+            event,
+            delivery_authority=_UiDeliveryAuthority(
+                self,
+                self._destination_generation,
+                self._sequence,
+                self._self_generation if event.channel != "peer" else None,
+                (
+                    self._speech_generation
+                    if event.channel != "peer" and event.source in {None, "Mic"}
+                    else None
+                ),
+                publication_generation if event.channel == "peer" else None,
+                source_order,
+                presentation_is_current,
+            ),
+        )
+        if self._replacing:
+            return self._record_self(event, "destination_replaced")
+        if event.channel != "peer":
+            return self._submit_self_event(event)
+        publication_id = self._publication_id(event, parent_utterance_id)
+        if parent_utterance_id is None or publication_generation is None or source_order is None:
+            if event.type is not UIEventType.SESSION_STATE_CHANGED:
+                return self._record(
+                    event,
+                    publication_id,
+                    parent_utterance_id=parent_utterance_id,
+                    publication_generation=publication_generation,
+                    source_order=source_order,
+                    status=OUTPUT_ROUTING_DECISION_SKIPPED,
+                    reason="missing_peer_publication_identity",
+                )
+            return self._submit_unscoped_peer_event(event, publication_id)
+        if self._closed or not self.output_runtime.peer_publication_is_authorized(
+            publication_generation,
+            source_order,
+        ):
+            return self._record(
+                event,
+                publication_id,
+                parent_utterance_id=parent_utterance_id,
+                publication_generation=publication_generation,
+                source_order=source_order,
+                status=OUTPUT_ROUTING_DECISION_SKIPPED,
+                reason="publication_generation_retired",
+            )
+        key = (publication_generation, publication_id)
+        if key in self._in_flight_keys or key in self._completed_keys:
+            return self._record(
+                event,
+                publication_id,
+                parent_utterance_id=parent_utterance_id,
+                publication_generation=publication_generation,
+                source_order=source_order,
+                status=OUTPUT_ROUTING_DECISION_SKIPPED,
+                reason="duplicate_publication",
+            )
+        if self._active_generation != publication_generation:
+            self._active_generation = publication_generation
+            self._latest_source_order = -1
+        parent_key = (publication_generation, parent_utterance_id)
+        known_source_order = self._peer_parent_identities.get(parent_key)
+        if (
+            known_source_order is not None
+            and known_source_order != source_order
+            or known_source_order is None
+            and source_order < self._latest_source_order
+        ):
+            return self._record(
+                event,
+                publication_id,
+                parent_utterance_id=parent_utterance_id,
+                publication_generation=publication_generation,
+                source_order=source_order,
+                status=OUTPUT_ROUTING_DECISION_SKIPPED,
+                reason="stale_source_order",
+            )
+        if known_source_order is None:
+            self._remember_parent_identity(parent_key, source_order)
+        batch = self._matching_batch(
+            publication_generation,
+            source_order,
+            parent_utterance_id,
+        )
+        if batch is None:
+            if len(self._peer_batches) >= self.peer_waiting_capacity:
+                self._reject_batch(self._peer_batches.popleft(), "output_overload")
+            batch = _PeerUiBatch(
+                publication_generation=publication_generation,
+                source_order=source_order,
+                parent_utterance_id=parent_utterance_id,
+            )
+            self._peer_batches.append(batch)
+        if len(batch.events) + int(batch.writing) >= self.peer_batch_event_capacity:
+            self.dropped_peer_events += 1
+            return self._record(
+                event,
+                publication_id,
+                parent_utterance_id=parent_utterance_id,
+                publication_generation=publication_generation,
+                source_order=source_order,
+                status=OUTPUT_ROUTING_DECISION_SKIPPED,
+                reason="output_overload",
+            )
+        batch.events.append((event, publication_id))
+        self._in_flight_keys.add(key)
+        self._latest_source_order = max(self._latest_source_order, source_order)
+        result = self._record(
+            event,
+            publication_id,
+            parent_utterance_id=parent_utterance_id,
+            publication_generation=publication_generation,
+            source_order=source_order,
+            status=OUTPUT_ROUTING_DECISION_PUBLISHED,
+            reason="accepted_handoff",
+            accepted_handoff=True,
+        )
+        self._ensure_peer_writer()
+        return result
+
+    def activate_peer_generation(self, generation: int) -> None:
+        if self._active_generation != generation:
+            self._active_generation = generation
+            self._latest_source_order = -1
+            self._discard_parent_identities_except(generation)
+
+    def retire_peer_generation(self, generation: int) -> None:
+        self._writer_cancel_reason = "publication_generation_retired"
+        worker = self._peer_worker
+        if (
+            worker is not None
+            and not worker.done()
+            and self._active_peer_batch is not None
+            and self._active_peer_batch.publication_generation == generation
+        ):
+            worker.cancel()
+        retained: deque[_PeerUiBatch] = deque()
+        for batch in self._peer_batches:
+            if batch.publication_generation == generation:
+                self._reject_batch(batch, "publication_generation_retired")
+            else:
+                retained.append(batch)
+        self._peer_batches = retained
+        self._discard_parent_generation(generation)
+        if self._active_generation == generation:
+            self._active_generation = None
+
+    async def wait_for_idle(self) -> None:
+        while True:
+            self_worker = self._self_worker
+            if self_worker is not None:
+                await asyncio.gather(self_worker, return_exceptions=True)
+                if self._self_worker is self_worker:
+                    self._self_worker = None
+                    self._ensure_self_writer()
+            worker = self._peer_worker
+            if worker is None and self._self_worker is None:
+                return
+            if worker is not None:
+                await asyncio.gather(worker, return_exceptions=True)
+                self._finish_peer_writer(worker)
+
+    async def wait_for_peer_idle(self) -> None:
+        while self._peer_worker is not None:
+            worker = self._peer_worker
+            await asyncio.gather(worker, return_exceptions=True)
+            self._finish_peer_writer(worker)
+
+    async def close(self) -> None:
+        self._closed = True
+        self._destination_generation += 1
+        self_worker = self._self_worker
+        if self_worker is not None and not self_worker.done():
+            self_worker.cancel()
+            await asyncio.gather(self_worker, return_exceptions=True)
+        self._self_worker = None
+        while self._self_events:
+            self._record_self(self._self_events.popleft(), "output_runtime_closing")
+        self._writer_cancel_reason = "output_runtime_closing"
+        worker = self._peer_worker
+        if worker is not None and not worker.done():
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        self._peer_worker = None
+        for batch in tuple(self._peer_batches):
+            self._reject_batch(batch, "output_runtime_closing")
+        self._peer_batches.clear()
+
+    def retire_self_generation(self, generation: int) -> None:
+        if generation <= self._self_generation:
+            return
+        self._self_generation = generation
+        self._reject_retired_self_events()
+
+    def retire_self_speech(self) -> None:
+        self._speech_generation += 1
+        self._reject_retired_self_events()
+
+    def _reject_retired_self_events(self) -> None:
+        retained = deque()
+        while self._self_events:
+            event = self._self_events.popleft()
+            if event.delivery_authority is not None and not event.delivery_authority.is_current():
+                self._record_self(event, "publication_generation_retired")
+            else:
+                retained.append(event)
+        self._self_events = retained
+        active = self._active_self_event
+        if (
+            active is not None
+            and active.delivery_authority is not None
+            and not active.delivery_authority.is_current()
+            and self._self_worker is not None
+        ):
+            self._self_worker.cancel()
+
+    def retire_destination(self) -> None:
+        self._destination_generation += 1
+        self._writer_cancel_reason = "destination_replaced"
+        while self._self_events:
+            self._record_self(self._self_events.popleft(), "destination_replaced")
+        while self._peer_batches:
+            self._reject_batch(self._peer_batches.popleft(), "destination_replaced")
+        for worker in (self._self_worker, self._peer_worker):
+            if worker is not None and not worker.done():
+                worker.cancel()
+
+    async def replace_destination(self, queue: asyncio.Queue[UIEvent]) -> None:
+        if self._closed or self.output_runtime.state != "open":
+            raise RuntimeError("UI destination is closed")
+        self._replacing = True
+        self.retire_destination()
+        try:
+            await self.wait_for_idle()
+            self.queue = queue
+        finally:
+            self._replacing = False
+
+    def _submit_self_event(self, event: UIEvent) -> OutputPublicationResult:
+        if self._closed or self.output_runtime.state != "open":
+            return self._record_self(event, "output_runtime_closing")
+        if event.type is UIEventType.SELF_TURN_UPDATED:
+            retained = deque()
+            for pending in self._self_events:
+                if pending.type is event.type and pending.utterance_id == event.utterance_id:
+                    self._record_self(pending, "output_superseded")
+                else:
+                    retained.append(pending)
+            self._self_events = retained
+        if not self._self_events and self._self_worker is None:
+            try:
+                self.queue.put_nowait(event)
+            except asyncio.QueueFull:
+                pass
+            else:
+                return self._record_self(event, "ui_queue_submitted")
+        if len(self._self_events) >= self.self_waiting_capacity:
+            return self._record_self(event, "output_overload")
+        self._self_events.append(event)
+        self._ensure_self_writer()
+        return self._record_self(event, "accepted_handoff")
+
+    def _ensure_self_writer(self) -> None:
+        if self._self_events and not self._closed and self._self_worker is None:
+            self._self_worker = asyncio.create_task(self._run_self_writer(), name="self-ui-writer")
+            self._self_worker.add_done_callback(self._finish_self_writer)
+
+    def _finish_self_writer(self, worker: asyncio.Task[None]) -> None:
+        if self._self_worker is worker:
+            self._active_self_event = None
+            self._self_worker = None
+            self._ensure_self_writer()
+
+    async def _run_self_writer(self) -> None:
+        try:
+            while self._self_events:
+                event = self._self_events.popleft()
+                self._active_self_event = event
+                if (
+                    event.delivery_authority is not None
+                    and not event.delivery_authority.is_current()
+                ):
+                    self._record_self(event, "publication_generation_retired")
+                    continue
+                try:
+                    await asyncio.wait_for(self.queue.put(event), timeout=self.write_timeout_s)
+                except TimeoutError:
+                    self._record_self(event, "destination_write_timeout")
+                except asyncio.CancelledError:
+                    authority = cast(_UiDeliveryAuthority, event.delivery_authority)
+                    reason = (
+                        "output_runtime_closing"
+                        if self._closed
+                        else (
+                            "destination_replaced"
+                            if authority.destination_generation != self._destination_generation
+                            else "publication_generation_retired"
+                        )
+                    )
+                    self._record_self(event, reason)
+                    raise
+                except Exception:
+                    self._record_self(event, "destination_publish_failed")
+                else:
+                    self._record_self(event, "ui_queue_submitted")
+                finally:
+                    self._active_self_event = None
+        finally:
+            if self._self_worker is asyncio.current_task():
+                self._active_self_event = None
+
+    def _record_self(self, event: UIEvent, reason: str) -> OutputPublicationResult:
+        accepted = reason in {"accepted_handoff", "ui_queue_submitted"}
+        authority = cast(_UiDeliveryAuthority, event.delivery_authority)
+        return self.output_runtime.record_ui_publication(
+            channel=event.channel,
+            status=(
+                OUTPUT_ROUTING_DECISION_PUBLISHED if accepted else OUTPUT_ROUTING_DECISION_SKIPPED
+            ),
+            publication_id=f"{self._publication_id(event, event.utterance_id)}:{authority.sequence}",
+            reason=reason,
+            publication_generation=authority.self_generation,
+            source_order=authority.sequence,
+            parent_utterance_id=event.utterance_id,
+            event_type=event.type.value,
+            accepted_handoff=accepted,
+            ui_queue_submitted=reason == "ui_queue_submitted",
+            operation_id=event.operation_id,
+            request_id=event.request_id,
+        )
+
+    def _ensure_peer_writer(self) -> None:
+        if self._peer_batches and not self._closed and self._peer_worker is None:
+            self._peer_worker = asyncio.create_task(self._run_peer_writer(), name="peer-ui-writer")
+            self._peer_worker.add_done_callback(self._finish_peer_writer)
+
+    def _finish_peer_writer(self, worker: asyncio.Task[None]) -> None:
+        if self._peer_worker is worker:
+            self._active_peer_batch = None
+            self._writer_cancel_reason = None
+            self._peer_worker = None
+            self._ensure_peer_writer()
+
+    async def _run_peer_writer(self) -> None:
+        try:
+            while self._peer_batches:
+                batch = self._peer_batches.popleft()
+                self._active_peer_batch = batch
+                while batch.events:
+                    event, publication_id = batch.events.popleft()
+                    batch.writing = True
+                    if not self.output_runtime.peer_publication_is_authorized(
+                        batch.publication_generation,
+                        batch.source_order,
+                    ):
+                        self._reject_event(
+                            batch,
+                            event,
+                            publication_id,
+                            "publication_generation_retired",
+                        )
+                        batch.writing = False
+                        continue
+                    try:
+                        await asyncio.wait_for(
+                            self.queue.put(event),
+                            timeout=self.write_timeout_s,
+                        )
+                    except TimeoutError:
+                        self._reject_event(
+                            batch,
+                            event,
+                            publication_id,
+                            "destination_write_timeout",
+                        )
+                    except asyncio.CancelledError:
+                        reason = self._writer_cancel_reason or "output_runtime_closing"
+                        self._reject_event(batch, event, publication_id, reason)
+                        for pending_event, pending_id in batch.events:
+                            self._reject_event(
+                                batch,
+                                pending_event,
+                                pending_id,
+                                reason,
+                            )
+                        batch.events.clear()
+                        raise
+                    except Exception:
+                        self._reject_event(
+                            batch, event, publication_id, "destination_publish_failed"
+                        )
+                    else:
+                        self._complete_key(batch.publication_generation, publication_id)
+                        self._record(
+                            event,
+                            publication_id,
+                            parent_utterance_id=batch.parent_utterance_id,
+                            publication_generation=batch.publication_generation,
+                            source_order=batch.source_order,
+                            status=OUTPUT_ROUTING_DECISION_PUBLISHED,
+                            reason="ui_queue_submitted",
+                            accepted_handoff=True,
+                            ui_queue_submitted=True,
+                        )
+                    finally:
+                        batch.writing = False
+                        event = None
+                self._active_peer_batch = None
+        finally:
+            self._active_peer_batch = None
+
+    def _submit_unscoped_peer_event(
+        self,
+        event: UIEvent,
+        publication_id: str,
+    ) -> OutputPublicationResult:
+        if self._closed or self.output_runtime.state != "open":
+            return self._record(
+                event,
+                publication_id,
+                parent_utterance_id=None,
+                publication_generation=None,
+                source_order=None,
+                status=OUTPUT_ROUTING_DECISION_SKIPPED,
+                reason="output_runtime_closing",
+            )
+        try:
+            self.queue.put_nowait(event)
+        except asyncio.QueueFull:
+            self.dropped_peer_events += 1
+            return self._record(
+                event,
+                publication_id,
+                parent_utterance_id=None,
+                publication_generation=None,
+                source_order=None,
+                status=OUTPUT_ROUTING_DECISION_SKIPPED,
+                reason="output_overload",
+            )
+        return self._record(
+            event,
+            publication_id,
+            parent_utterance_id=None,
+            publication_generation=None,
+            source_order=None,
+            status=OUTPUT_ROUTING_DECISION_PUBLISHED,
+            reason="ui_queue_submitted",
+            ui_queue_submitted=True,
+        )
+
+    def _matching_batch(
+        self,
+        publication_generation: int,
+        source_order: int,
+        parent_utterance_id: UUID,
+    ) -> _PeerUiBatch | None:
+        active = self._active_peer_batch
+        if (
+            active is not None
+            and active.publication_generation == publication_generation
+            and active.source_order == source_order
+            and active.parent_utterance_id == parent_utterance_id
+        ):
+            return active
+        return next(
+            (
+                batch
+                for batch in reversed(self._peer_batches)
+                if batch.publication_generation == publication_generation
+                and batch.source_order == source_order
+                and batch.parent_utterance_id == parent_utterance_id
+            ),
+            None,
+        )
+
+    def _remember_parent_identity(
+        self,
+        parent_key: tuple[int, UUID],
+        source_order: int,
+    ) -> None:
+        self._peer_parent_identities[parent_key] = source_order
+        self._peer_parent_identity_order.append(parent_key)
+        while len(self._peer_parent_identity_order) > 4096:
+            expired = self._peer_parent_identity_order.popleft()
+            self._peer_parent_identities.pop(expired, None)
+
+    def _discard_parent_generation(self, generation: int) -> None:
+        self._peer_parent_identities = {
+            key: value
+            for key, value in self._peer_parent_identities.items()
+            if key[0] != generation
+        }
+        self._peer_parent_identity_order = deque(
+            key for key in self._peer_parent_identity_order if key[0] != generation
+        )
+
+    def _discard_parent_identities_except(self, generation: int) -> None:
+        self._peer_parent_identities = {
+            key: value
+            for key, value in self._peer_parent_identities.items()
+            if key[0] == generation
+        }
+        self._peer_parent_identity_order = deque(
+            key for key in self._peer_parent_identity_order if key[0] == generation
+        )
+
+    def _reject_batch(self, batch: _PeerUiBatch, reason: str) -> None:
+        self.dropped_peer_events += len(batch.events)
+        for event, publication_id in batch.events:
+            self._reject_event(batch, event, publication_id, reason)
+
+    def _reject_event(
+        self,
+        batch: _PeerUiBatch,
+        event: UIEvent,
+        publication_id: str,
+        reason: str,
+    ) -> None:
+        self._in_flight_keys.discard((batch.publication_generation, publication_id))
+        self._record(
+            event,
+            publication_id,
+            parent_utterance_id=batch.parent_utterance_id,
+            publication_generation=batch.publication_generation,
+            source_order=batch.source_order,
+            status=OUTPUT_ROUTING_DECISION_SKIPPED,
+            reason=reason,
+        )
+
+    def _complete_key(self, generation: int, publication_id: str) -> None:
+        key = (generation, publication_id)
+        self._in_flight_keys.discard(key)
+        if key in self._completed_keys:
+            return
+        self._completed_keys.add(key)
+        self._completed_order.append(key)
+        while len(self._completed_order) > 4096:
+            self._completed_keys.discard(self._completed_order.popleft())
+
+    def _record(
+        self,
+        event: UIEvent,
+        publication_id: str,
+        *,
+        parent_utterance_id: UUID | None,
+        publication_generation: int | None,
+        source_order: int | None,
+        status,
+        reason: str,
+        accepted_handoff: bool = False,
+        ui_queue_submitted: bool = False,
+    ) -> OutputPublicationResult:
+        return self.output_runtime.record_ui_publication(
+            channel="peer",
+            status=status,
+            publication_id=publication_id,
+            reason=reason,
+            publication_generation=publication_generation,
+            source_order=source_order,
+            parent_utterance_id=parent_utterance_id,
+            event_type=event.type.value,
+            accepted_handoff=accepted_handoff,
+            ui_queue_submitted=ui_queue_submitted,
+            operation_id=event.operation_id,
+            request_id=event.request_id,
+        )
+
+    @staticmethod
+    def _publication_id(
+        event: UIEvent,
+        parent_utterance_id: UUID | None,
+    ) -> str:
+        identity = event.utterance_id or parent_utterance_id or "control"
+        return f"{event.type.value}:{identity}"
+
+
+@dataclass(frozen=True, slots=True)
+class _SelfPresentationAuthority:
+    order_watermark: tuple[int, int] | None
+    parent_utterance_id: UUID
+    source_pending: bool = False
+
+
+@dataclass(slots=True)
+class _SelfCaptionAssembly:
+    source_revision: int
+    source_text: str
+    source_closed: bool
+    translation: Translation | None
+    configuration: TranslationRuntimeConfigSnapshot
+    presentation_revision: int
+
+
+@dataclass(slots=True)
+class TranslationOutputProjectionOwner:
+    output_runtime: OutputRuntime
+    ui_messages: TranslationUiMessagePort = field(repr=False)
+    diagnostics: TranslationLatencyDiagnosticsOwner = field(repr=False)
+    clock: Clock
+    self_turn_tombstone_capacity: int = 4096
+    _self_turns: dict[UUID, _SelfTranslationTurnAggregate] = field(default_factory=dict)
+    _retired_self_turns: dict[tuple[int, UUID], _SelfTranslationTurnAggregate] = field(
+        default_factory=dict
+    )
+    _self_turn_tombstones: set[tuple[int, UUID]] = field(default_factory=set)
+    _self_turn_tombstone_order: deque[tuple[int, UUID]] = field(default_factory=deque)
+    _active_self_turn_generation: int = -1
+    _latest_visible_self_turn: tuple[int, int] | None = None
+    _latest_visible_self_revision: int = 0
+    _latest_presented_primary_self_turn: tuple[int, int] | None = None
+    _latest_visible_self_parent_utterance_id: UUID | None = None
+    _self_publish_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _self_surface_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _self_presentation_authority: _SelfPresentationAuthority | None = None
+    _self_captions: OrderedDict[tuple[int, UUID], _SelfCaptionAssembly] = field(
+        default_factory=OrderedDict
+    )
+    _self_caption_order: tuple[int, int] | None = None
+    _self_caption_retired: OrderedDict[tuple[int, UUID], None] = field(default_factory=OrderedDict)
+
+    def __post_init__(self) -> None:
+        if self.self_turn_tombstone_capacity < 1:
+            raise ValueError("self_turn_tombstone_capacity must be positive")
+        self.output_runtime.bind_peer_overlay_delivery_observer(self._observe_peer_overlay_delivery)
+        self.output_runtime.bind_self_stream_delivery_observer(self._observe_self_stream_delivery)
+
+    def _observe_peer_overlay_delivery(self, decision: OutputRoutingDecision) -> None:
+        if decision.reason == "destination_publish_failed":
+            self.diagnostics.record_overlay_sink_failure()
+        if decision.metadata.get("event_type") not in {
+            "peer_transcript_final",
+            "translation_final",
+        }:
+            return
+        raw_utterance_id = decision.metadata.get("utterance_id")
+        if not isinstance(raw_utterance_id, str):
+            return
+        try:
+            utterance_id = UUID(raw_utterance_id)
+        except ValueError:
+            return
+        if (
+            decision.decision == OUTPUT_ROUTING_DECISION_PUBLISHED
+            and decision.reason == "application_applied"
+        ):
+            self.diagnostics.record_output_latency_stage(
+                LatencyStageDiagnostic(
+                    channel="peer",
+                    utterance_id=utterance_id,
+                    stage="peer_overlay_applied",
+                    overwrite=False,
+                )
+            )
+            return
+        self.diagnostics.abandon_pending_latency_output("peer", utterance_id)
+
+    @property
+    def self_turn_aggregate_count(self) -> int:
+        return len(self._self_turns)
+
+    @property
+    def self_turn_tombstone_count(self) -> int:
+        return len(self._self_turn_tombstones)
+
+    def retire_turn_generation(self, channel: ChannelId, turn_generation: int) -> None:
+        if turn_generation < 0:
+            raise ValueError("turn_generation must be non-negative")
+        self.output_runtime.retire_turn_generation(channel, turn_generation)
+        if channel != "self" or turn_generation <= self._active_self_turn_generation:
+            return
+        self._active_self_turn_generation = turn_generation
+        self._self_captions.clear()
+        self._self_caption_order = None
+        self._self_caption_retired.clear()
+        for parent_utterance_id, aggregate in tuple(self._self_turns.items()):
+            key = (aggregate.turn_generation, parent_utterance_id)
+            self._retired_self_turns[key] = aggregate
+            self._remember_self_turn_tombstone(
+                aggregate.turn_generation,
+                aggregate.parent_utterance_id,
+            )
+        self._self_turns.clear()
+
+    def self_turn_presentation_revision(self, child: TranslationTurnChild) -> int:
+        aggregate = self._self_turns.get(child.parent_utterance_id)
+        if aggregate is None or not self._self_child_matches_aggregate(child, aggregate):
+            aggregate = self._retired_self_turns.get(
+                (child.turn_generation, child.parent_utterance_id)
+            )
+        if aggregate is None or not self._self_child_matches_aggregate(child, aggregate):
+            return 0
+        return aggregate.revision
+
+    def _self_presentation_is_current(
+        self,
+        key: tuple[int | None, int | None],
+        parent_utterance_id: UUID,
+    ) -> bool:
+        current = self._self_presentation_authority
+        return (
+            current is not None
+            and not current.source_pending
+            and current.order_watermark == key
+            and current.parent_utterance_id == parent_utterance_id
+        )
+
+    def admit_self_turn(self, children: tuple[TranslationTurnChild, ...]) -> bool:
+        if not children:
+            return False
+        first = children[0]
+        if first.channel != "self" or any(child.channel != "self" for child in children):
+            raise ValueError("self projection admission requires Self children")
+        key = (first.turn_generation, first.turn_order)
+        current = self._self_presentation_authority
+        if current is None or current.order_watermark is None or key > current.order_watermark:
+            self._self_presentation_authority = (
+                replace(current, order_watermark=key)
+                if current is not None
+                and current.source_pending
+                and current.parent_utterance_id != first.parent_utterance_id
+                else _SelfPresentationAuthority(key, first.parent_utterance_id)
+            )
+        elif (
+            key == current.order_watermark
+            and current.parent_utterance_id == first.parent_utterance_id
+        ):
+            self._self_presentation_authority = _SelfPresentationAuthority(
+                key, first.parent_utterance_id
+            )
+        if any(
+            (child.parent_utterance_id, child.turn_generation, child.turn_order)
+            != (first.parent_utterance_id, first.turn_generation, first.turn_order)
+            for child in children
+        ):
+            raise ValueError("self projection admission identity mismatch")
+        if first.turn_generation < self._active_self_turn_generation:
+            return False
+        if first.turn_generation > self._active_self_turn_generation:
+            self.retire_turn_generation("self", first.turn_generation)
+        target_pairs = tuple(
+            sorted({(child.target_index, child.target_language.strip()) for child in children})
+        )
+        if tuple(index for index, _target in target_pairs) != tuple(range(len(target_pairs))):
+            raise ValueError("self projection target indexes must be contiguous")
+        configured_targets = tuple(target for _index, target in target_pairs)
+        if len(configured_targets) < 2:
+            return True
+        tombstone_key = (first.turn_generation, first.parent_utterance_id)
+        if tombstone_key in self._self_turn_tombstones:
+            return False
+        existing = self._self_turns.get(first.parent_utterance_id)
+        if existing is not None:
+            return (
+                existing.turn_generation,
+                existing.turn_order,
+                existing.configured_targets,
+            ) == (
+                first.turn_generation,
+                first.turn_order,
+                configured_targets,
+            )
+        expected_children_by_target = tuple(
+            tuple(
+                child.utterance_id
+                for child in sorted(children, key=lambda item: item.sequence)
+                if child.target_index == target_index
+            )
+            for target_index in range(len(configured_targets))
+        )
+        aggregate = _SelfTranslationTurnAggregate(
+            parent_utterance_id=first.parent_utterance_id,
+            turn_generation=first.turn_generation,
+            turn_order=first.turn_order,
+            configured_targets=configured_targets,
+            expected_children_by_target=expected_children_by_target,
+            child_target_indexes={child.utterance_id: child.target_index for child in children},
+            child_sequences={child.utterance_id: child.sequence for child in children},
+            admitted_at=self.clock.now(),
+            operation_id=first.operation_id,
+            request_id=first.request_id,
+        )
+        self._self_turns[first.parent_utterance_id] = aggregate
+        self.diagnostics.emit(
+            RuntimeDiagnostic(
+                message=(
+                    "[Diagnostic][Translation] translation_turn_admitted "
+                    "parent_utterance_id=%s turn_generation=%s turn_order=%s "
+                    "target_indexes=%s target_languages=%s target_count=%s "
+                    "presentation_revision=0"
+                ),
+                args=(
+                    aggregate.parent_utterance_id,
+                    aggregate.turn_generation,
+                    aggregate.turn_order,
+                    tuple(range(len(aggregate.configured_targets))),
+                    aggregate.configured_targets,
+                    len(aggregate.configured_targets),
+                ),
+                diagnostic_only=True,
+            )
+        )
+        return True
+
+    async def admit_translation_parent(
+        self,
+        children: tuple[TranslationTurnChild, ...],
+    ) -> frozenset[str]:
+        if not children:
+            return frozenset()
+        first = children[0]
+        if any(
+            child.parent_utterance_id != first.parent_utterance_id
+            or child.channel != first.channel
+            or child.turn_generation != first.turn_generation
+            or child.turn_order != first.turn_order
+            or child.turn_kind != first.turn_kind
+            for child in children
+        ):
+            raise ValueError("translation output admission requires one parent scope")
+        origin = first.turn_kind
+        all_sequences = frozenset(child.sequence for child in children)
+        dual_target_self = (
+            first.channel == "self" and len(first.config_snapshot.value.self_target_languages) == 2
+        )
+        primary_sequences = frozenset(
+            child.sequence // 2 for child in children if child.target_index == 0
+        )
+        visible_sequences = primary_sequences if dual_target_self else all_sequences
+        destination_targets: dict[str, frozenset[int]] = {
+            "ui": visible_sequences,
+        }
+        if self.has_overlay_destination:
+            destination_targets["overlay"] = visible_sequences
+        if self.chatbox_is_eligible(first.channel):
+            destination_targets["chatbox"] = all_sequences
+        retained_payloads = tuple(
+            value
+            for child in children
+            for value in (
+                child.transcript.text,
+                child.detected_language or "",
+                child.target_language,
+                child.source,
+            )
+            if value
+        )
+        return await self.output_runtime.admit_translation_parent(
+            parent_id=str(first.parent_utterance_id),
+            channel=first.channel,
+            origin=origin,
+            turn_generation=first.turn_generation,
+            turn_order=first.turn_order,
+            retained_payloads=retained_payloads,
+            destination_targets=destination_targets,
+        )
+
+    async def await_translation_parent_output(
+        self,
+        submission: TranslationOutputSubmission,
+    ) -> set[str]:
+        if submission.turn_generation is None or submission.turn_order is None:
+            return set()
+        retained_payloads = self._translation_retained_payloads(submission)
+        dual_target_self = (
+            submission.channel == "self"
+            and len(submission.config_snapshot.value.self_target_languages) == 2
+        )
+        destination_indexes = self._translation_destination_indexes(
+            sequence=submission.sequence,
+            target_index=submission.target_index,
+            dual_target_self=dual_target_self,
+        )
+        origin = submission.turn_kind or submission.channel
+        resized = await self.output_runtime.resize_translation_parent_output(
+            parent_id=str(submission.parent_utterance_id),
+            origin=origin,
+            retained_payloads=retained_payloads,
+            destination_indexes=destination_indexes,
+        )
+        visible_destinations = resized.intersection({"overlay", "ui"})
+        visible_admitted = await self.output_runtime.await_translation_parent(
+            parent_id=str(submission.parent_utterance_id),
+            origin=origin,
+            destinations=visible_destinations,
+        )
+        admitted = visible_admitted | resized.difference(visible_destinations)
+        if not admitted:
+            raise RuntimeError("translation output admission was terminally rejected")
+        return set(admitted)
+
+    async def complete_translation_parent_output(
+        self,
+        *,
+        parent_utterance_id: UUID,
+        channel: ChannelId,
+        turn_kind: str,
+        sequence: int,
+        target_index: int,
+        dual_target_self: bool,
+        destinations: frozenset[str] | set[str] | None = None,
+    ) -> None:
+        destination_indexes = self._translation_destination_indexes(
+            sequence=sequence,
+            target_index=target_index,
+            dual_target_self=dual_target_self,
+        )
+        await self.output_runtime.complete_translation_parent_target(
+            parent_id=str(parent_utterance_id),
+            origin=turn_kind or channel,
+            destination_indexes=destination_indexes,
+            destinations=destinations,
+        )
+
+    async def _await_translation_destination(
+        self,
+        submission: TranslationOutputSubmission,
+        admitted_destinations: frozenset[str] | set[str] | None,
+        destination: str,
+    ) -> bool:
+        if admitted_destinations is None:
+            return True
+        if destination not in admitted_destinations:
+            return False
+        admitted = await self.output_runtime.await_translation_parent(
+            parent_id=str(submission.parent_utterance_id),
+            origin=submission.turn_kind or submission.channel,
+            destinations=(destination,),
+        )
+        return destination in admitted
+
+    async def _complete_visible_translation_destinations(
+        self,
+        submission: TranslationOutputSubmission,
+        admitted_destinations: set[str] | None,
+    ) -> None:
+        if admitted_destinations is None:
+            return
+        visible_destinations = admitted_destinations.intersection({"overlay", "ui"})
+        if not visible_destinations:
+            return
+        dual_target_self = (
+            submission.channel == "self"
+            and len(submission.config_snapshot.value.self_target_languages) == 2
+        )
+        await self.complete_translation_parent_output(
+            parent_utterance_id=submission.parent_utterance_id,
+            channel=submission.channel,
+            turn_kind=submission.turn_kind or submission.channel,
+            sequence=submission.sequence,
+            target_index=submission.target_index,
+            dual_target_self=dual_target_self,
+            destinations=visible_destinations,
+        )
+        admitted_destinations.difference_update(visible_destinations)
+
+    @staticmethod
+    def _translation_destination_indexes(
+        *,
+        sequence: int,
+        target_index: int,
+        dual_target_self: bool,
+    ) -> dict[str, int]:
+        destination_indexes: dict[str, int] = {"chatbox": sequence}
+        if not dual_target_self or target_index == 0:
+            visible_index = sequence // 2 if dual_target_self else sequence
+            destination_indexes["ui"] = visible_index
+            destination_indexes["overlay"] = visible_index
+        return destination_indexes
+
+    def set_clock(self, clock: Clock) -> None:
+        self.clock = clock
+        self.output_runtime.clock = clock
+        self.overlay_event_adapter.clock = clock
+
+    @property
+    def has_overlay_destination(self) -> bool:
+        return self.output_runtime.has_overlay_destination
+
+    @property
+    def overlay_sink(self) -> OverlaySink | None:
+        return self.output_runtime.overlay_sink
+
+    @property
+    def overlay_event_adapter(self) -> OverlayEventAdapter:
+        adapter = self.output_runtime.overlay_event_adapter
+        if adapter is None:
+            raise RuntimeError("OutputRuntime overlay event adapter is unavailable")
+        return adapter
+
+    @property
+    def routing_decisions(self) -> tuple[OutputRoutingDecision, ...]:
+        return self.output_runtime.routing_decisions
+
+    @property
+    def output_state(self) -> str:
+        return self.output_runtime.state
+
+    @property
+    def output_has_resources(self) -> bool:
+        return self.output_runtime.has_resources
+
+    @staticmethod
+    def chatbox_is_eligible(channel: ChannelId) -> bool:
+        return OutputRuntime.chatbox_is_eligible(channel)
+
+    @staticmethod
+    def chatbox_is_denied(channel: ChannelId) -> bool:
+        return OutputRuntime.chatbox_is_denied(channel)
+
+    def _observe_self_stream_delivery(self, decision: OutputRoutingDecision) -> None:
+        self.diagnostics.emit(
+            RuntimeDiagnostic(
+                message=(
+                    "[Diagnostic][Translation] self_stream_delivery parent_utterance_id=%s "
+                    "stage=%s disposition=%s presentation_revision=%s preview_revision=%s "
+                    "source_revision=%s reused_preview_send=%s queued_payload=%s"
+                ),
+                args=(
+                    decision.publication_id,
+                    decision.metadata.get("stage"),
+                    decision.reason,
+                    decision.metadata.get("presentation_revision"),
+                    decision.metadata.get("preview_revision"),
+                    decision.metadata.get("source_revision"),
+                    decision.metadata.get("reused_preview_send"),
+                    decision.metadata.get("queued_payload"),
+                ),
+                diagnostic_only=True,
+            )
+        )
+        if (
+            decision.reason == "status_promoted"
+            and decision.metadata.get("reused_preview_send") is True
+        ):
+            self.diagnostics.record_output_latency_stage(
+                LatencyStageDiagnostic(
+                    channel="self",
+                    utterance_id=UUID(decision.publication_id),
+                    stage="self_chatbox_final_accepted",
+                    overwrite=False,
+                )
+            )
+            return
+        if decision.reason not in {"status_promoted", "first_page_sent", "output_send_failed"}:
+            self.diagnostics.abandon_pending_latency_output("self", UUID(decision.publication_id))
+
+    async def project_self_turn(
+        self,
+        snapshot: SelfTurnPresentation,
+        config_snapshot: TranslationRuntimeConfigSnapshot,
+        *,
+        source: str,
+    ) -> None:
+        key = (snapshot.turn_generation, snapshot.turn_order)
+        parent_utterance_id = snapshot.utterance_id
+        if snapshot.status != "active" and (
+            snapshot.status != "complete" or not snapshot.source_closed
+        ):
+            self.diagnostics.abandon_pending_latency_output("self", snapshot.utterance_id)
+            self.diagnostics.clear_latency_timeline("self", snapshot.utterance_id)
+        await self._project_self_caption(snapshot, config_snapshot)
+        current = self._self_presentation_authority
+        if current is None or current.order_watermark is None or key > current.order_watermark:
+            self._self_presentation_authority = _SelfPresentationAuthority(key, parent_utterance_id)
+        await self.publish_ui(
+            TranslationUiMessage(
+                event_type=UIEventType.SELF_TURN_UPDATED,
+                utterance_id=snapshot.utterance_id,
+                payload=snapshot,
+                source=source,
+                channel="self",
+                runtime_log_handled=True,
+                presentation_is_current=lambda: self._self_presentation_is_current(
+                    key, parent_utterance_id
+                ),
+            )
+        )
+        self.diagnostics.retain_latency_until_output("self", snapshot.utterance_id)
+        await self.output_runtime.publish_self_turn(snapshot, config_snapshot.value)
+
+    async def _project_self_caption(
+        self,
+        snapshot: SelfTurnPresentation,
+        configuration: TranslationRuntimeConfigSnapshot,
+    ) -> None:
+        if (
+            not self.has_overlay_destination
+            or snapshot.turn_generation < self._active_self_turn_generation
+        ):
+            return
+        identity = (snapshot.turn_generation, snapshot.utterance_id)
+        if identity in self._self_caption_retired:
+            return
+        caption = self._self_captions.get(identity)
+        if caption is not None and (
+            snapshot.revision <= caption.presentation_revision
+            or configuration.revision < caption.configuration.revision
+        ):
+            return
+        target_language = configuration.value.target_language
+        ready = next(
+            (
+                target.translation
+                for target in snapshot.targets
+                if target.target_language == target_language
+                and target.status == "ready"
+                and target.source_revision == snapshot.source_revision
+                and target.translation is not None
+                and target.translation.text.strip()
+            ),
+            None,
+        )
+        cancelled = snapshot.status in {"cancelled", "expired"}
+        eligible = not cancelled and (
+            snapshot.source_closed
+            or (ready is not None and _self_sentence_complete(snapshot.source_text))
+        )
+        if (
+            len(snapshot.source_text.encode("utf-8"))
+            + (len(ready.text.encode("utf-8")) if ready is not None else 0)
+            > _SELF_CAPTION_BYTE_LIMIT
+        ):
+            return
+        if caption is None:
+            if not eligible:
+                if cancelled:
+                    self._retire_self_caption(identity)
+                return
+            caption = _SelfCaptionAssembly(
+                snapshot.source_revision,
+                snapshot.source_text,
+                snapshot.source_closed,
+                None,
+                configuration,
+                snapshot.revision,
+            )
+            self._self_captions[identity] = caption
+            while len(self._self_captions) > _SELF_CAPTION_LIMIT:
+                self._retire_self_caption(next(iter(self._self_captions)))
+        compatible = translation_configs_match(caption.configuration.value, configuration.value)
+        if not compatible:
+            caption.translation = None
+        caption.configuration = configuration
+        caption.presentation_revision = snapshot.revision
+        terminal = snapshot.status != "active"
+        if eligible and (ready is not None or caption.translation is None or terminal):
+            caption.source_revision = snapshot.source_revision
+            caption.source_text = snapshot.source_text
+            caption.source_closed = snapshot.source_closed
+            caption.translation = ready
+        elif snapshot.source_revision == caption.source_revision:
+            caption.source_closed = snapshot.source_closed
+        if cancelled:
+            caption.translation = None
+        order = (snapshot.turn_generation, snapshot.turn_order)
+        retained_only = self._self_caption_order is not None and order < self._self_caption_order
+        if not retained_only and not cancelled and eligible:
+            self._self_caption_order = order
+        translation = caption.translation
+        await self.publish_overlay_event(
+            self.overlay_event_adapter.self_active_update(
+                text=caption.source_text,
+                utterance_id=snapshot.utterance_id,
+                occupant_key=f"self:{snapshot.utterance_id}",
+                secondary_text=translation.text if translation is not None else "",
+                source_language=(
+                    translation.source_language
+                    if translation is not None
+                    else next(
+                        (
+                            target.translation.source_language
+                            for target in snapshot.targets
+                            if target.target_language == target_language
+                            and target.status == "ready"
+                            and target.source_revision == snapshot.source_revision
+                            and target.translation is not None
+                        ),
+                        snapshot.source_language,
+                    )
+                ),
+                target_language=(
+                    translation.target_language if translation is not None else target_language
+                ),
+                created_at=snapshot.created_at,
+                caption_source_closed=caption.source_closed,
+                caption_complete=terminal
+                and (cancelled or caption.source_revision == snapshot.source_revision),
+                caption_cancelled=cancelled,
+                caption_revision=snapshot.revision,
+                retained_only=retained_only,
+                turn_generation=snapshot.turn_generation,
+                turn_order=snapshot.turn_order,
+                **(self._translation_metadata(translation) if translation is not None else {}),
+            ),
+            handoff=True,
+        )
+        if cancelled:
+            self._retire_self_caption(identity)
+
+    def _retire_self_caption(self, identity: tuple[int, UUID]) -> None:
+        self._self_captions.pop(identity, None)
+        self._self_caption_retired[identity] = None
+        while len(self._self_caption_retired) > self.self_turn_tombstone_capacity:
+            self._self_caption_retired.popitem(last=False)
+
+    def record_final_self_submission(self, submission: TranslationOutputSubmission) -> None:
+        self._record_conversation_submission(submission)
+
+    async def publish_ui(
+        self,
+        message: TranslationUiMessage,
+    ) -> OutputPublicationResult | None:
+        channel = message.channel or getattr(message.payload, "channel", None)
+        publication_generation = message.publication_generation
+        source_order = message.source_order
+        scoped_peer_event = channel == "peer" and message.event_type in {
+            UIEventType.TRANSCRIPT_PARTIAL,
+            UIEventType.TRANSCRIPT_FINAL,
+            UIEventType.TRANSLATION_DONE,
+            UIEventType.ERROR,
+            UIEventType.OSC_SENT,
+        }
+        if scoped_peer_event:
+            if publication_generation is None:
+                publication_generation = getattr(
+                    message.payload,
+                    "publication_generation",
+                    None,
+                )
+            if source_order is None:
+                source_order = getattr(message.payload, "source_order", None)
+        parent_utterance_id = message.parent_utterance_id or message.utterance_id
+        presentation_is_current = message.presentation_is_current
+        if (
+            presentation_is_current is None
+            and channel == "self"
+            and parent_utterance_id is not None
+            and message.event_type in {UIEventType.TRANSCRIPT_PARTIAL, UIEventType.TRANSCRIPT_FINAL}
+        ):
+            current = self._self_presentation_authority
+            if message.parent_utterance_id is None and (
+                current is None or current.parent_utterance_id != parent_utterance_id
+            ):
+                self._self_presentation_authority = _SelfPresentationAuthority(
+                    current.order_watermark if current is not None else None,
+                    parent_utterance_id,
+                    source_pending=True,
+                )
+
+            def source_presentation_is_current() -> bool:
+                authority = self._self_presentation_authority
+                return (
+                    authority is not None and authority.parent_utterance_id == parent_utterance_id
+                )
+
+            presentation_is_current = source_presentation_is_current
+        event = UIEvent(
+            type=message.event_type,
+            utterance_id=message.utterance_id,
+            payload=message.payload,
+            source=message.source,
+            channel=message.channel,
+            runtime_log_handled=message.runtime_log_handled,
+            operation_id=message.operation_id,
+            request_id=message.request_id,
+        )
+        if (
+            scoped_peer_event
+            and publication_generation is not None
+            and source_order is not None
+            and not self.output_runtime.peer_publication_is_authorized(
+                publication_generation,
+                source_order,
+            )
+        ):
+            identity = message.utterance_id or parent_utterance_id or "control"
+            return self.output_runtime.record_ui_publication(
+                channel="peer",
+                status=OUTPUT_ROUTING_DECISION_SKIPPED,
+                publication_id=f"{message.event_type.value}:{identity}",
+                reason="publication_generation_retired",
+                publication_generation=publication_generation,
+                source_order=source_order,
+                parent_utterance_id=parent_utterance_id,
+                event_type=message.event_type.value,
+                accepted_handoff=False,
+                ui_queue_submitted=False,
+                operation_id=message.operation_id,
+                request_id=message.request_id,
+            )
+        return await self.ui_messages.publish(
+            event,
+            parent_utterance_id=parent_utterance_id,
+            publication_generation=publication_generation,
+            source_order=source_order,
+            presentation_is_current=presentation_is_current,
+        )
+
+    def retire_self_ui_speech(self) -> None:
+        if isinstance(self.ui_messages, TranslationUiMessageQueue):
+            self.ui_messages.retire_self_speech()
+
+    def publish_system_immediate(self, text: str) -> OutputPublicationResult:
+        return self.output_runtime.publish_system_immediate_chatbox(text=text)
+
+    def publish_system_disclosure(self, text: str) -> OutputPublicationResult:
+        self.diagnostics.emit(
+            RuntimeDiagnostic(
+                message="[Translation] OSC disclosure enqueue: channel=peer text_len=%s",
+                args=(len(text),),
+                fallback_level=logging.INFO,
+                diagnostic_only=True,
+            )
+        )
+        return self.output_runtime.publish_system_disclosure_chatbox(text=text)
+
+    def set_self_chatbox_typing_reason(
+        self,
+        reason: str,
+        active: bool,
+    ) -> None:
+        self.output_runtime.set_self_chatbox_typing_reason(reason, active)
+
+    def clear_self_chatbox_typing_reasons(self) -> None:
+        self.output_runtime.clear_self_chatbox_typing_reasons()
+
+    async def replace_overlay_sink(
+        self,
+        overlay_sink: OverlaySink | None,
+        *,
+        expected_current: OverlaySink | None = None,
+        require_match: bool = False,
+    ) -> bool:
+        return await self.output_runtime.replace_overlay_sink(
+            overlay_sink,
+            expected_current=expected_current,
+            require_match=require_match,
+        )
+
+    def active_self_overlay_metadata(self) -> ActiveSelfOverlayMetadata | None:
+        metadata = self.output_runtime.active_self_overlay_metadata()
+        if metadata is None:
+            return None
+        return cast(ActiveSelfOverlayMetadata, metadata)
+
+    async def emit_final_transcript(
+        self,
+        projection: TranscriptOverlayProjection,
+        *,
+        handoff: bool = False,
+    ) -> None:
+        if not self.has_overlay_destination:
+            return
+        if projection.event_kind is not None:
+            self._record_overlay_emit(
+                event_kind=projection.event_kind,
+                utterance_id=projection.transcript.utterance_id,
+                channel=projection.transcript.channel,
+                secondary_len=len(projection.transcript.text.strip()),
+            )
+        await self.publish_overlay_event(
+            self.overlay_event_adapter.transcript_final(
+                projection.transcript,
+                source_language=projection.source_language,
+                target_language=projection.target_language,
+                output_scope=projection.output_scope,
+                speaker_assignment=projection.speaker_assignment,
+            ),
+            publication_generation=projection.transcript.publication_generation,
+            source_order=projection.transcript.source_order,
+            handoff=handoff,
+        )
+
+    async def project_self_final_transcript(
+        self,
+        *,
+        transcript: Transcript,
+        source_language: str,
+        target_language: str,
+        translation_will_follow: bool,
+    ) -> bool:
+        source_language, target_language = self.self_overlay_languages_for_utterance(
+            utterance_id=transcript.utterance_id,
+            source_language=source_language,
+            target_language=target_language,
+        )
+        await self.emit_final_transcript(
+            TranscriptOverlayProjection(
+                transcript=transcript,
+                source_language=source_language,
+                target_language=target_language,
+            )
+        )
+        if translation_will_follow:
+            return False
+        return await self.close_overlay_utterance(
+            utterance_id=transcript.utterance_id,
+            channel=transcript.channel,
+            is_final=True,
+        )
+
+    @asynccontextmanager
+    async def self_transcript_presentation(
+        self,
+        *,
+        parent_utterance_id: UUID,
+    ) -> AsyncIterator[None]:
+        async with self._self_publish_lock:
+            async with self._self_surface_lock:
+                self._latest_visible_self_parent_utterance_id = parent_utterance_id
+                yield
+
+    async def project_peer_source_only(
+        self,
+        *,
+        transcript: Transcript,
+        source_language: str,
+        target_language: str,
+        close_is_final: bool,
+        finalize_latency: bool,
+        output_scope: OverlayPublicationScope | None = None,
+        speaker_assignment: SpeakerAssignment | None = None,
+    ) -> bool:
+        if self.has_overlay_destination:
+            self.diagnostics.retain_latency_until_output("peer", transcript.utterance_id)
+            await self.emit_final_transcript(
+                TranscriptOverlayProjection(
+                    transcript=transcript,
+                    source_language=source_language,
+                    target_language=target_language,
+                    event_kind="peer_transcript_final",
+                    output_scope=output_scope,
+                    speaker_assignment=speaker_assignment,
+                )
+            )
+        return await self.close_overlay_utterance(
+            utterance_id=transcript.utterance_id,
+            channel="peer",
+            is_final=close_is_final,
+            publication_generation=transcript.publication_generation,
+            source_order=transcript.source_order,
+            finalize_latency=finalize_latency,
+            output_scope=output_scope,
+        )
+
+    async def emit_translation(
+        self,
+        projection: TranslationOverlayProjection,
+    ) -> None:
+        if not self.has_overlay_destination:
+            return
+        translation = projection.translation
+        self._record_overlay_emit(
+            event_kind="translation_final",
+            utterance_id=translation.utterance_id,
+            channel=translation.channel,
+            secondary_len=len(translation.text.strip()),
+        )
+        if projection.record_peer_first_emit:
+            self.diagnostics.retain_latency_until_output(
+                "peer",
+                translation.utterance_id,
+            )
+        await self.publish_overlay_event(
+            self.overlay_event_adapter.translation_final(
+                utterance_id=translation.utterance_id,
+                channel=translation.channel,
+                text=translation.text,
+                source_text=projection.source_text,
+                source_language=projection.source_language,
+                target_language=projection.target_language,
+                applied_context_mode=projection.applied_context_mode,
+                created_at=translation.created_at,
+                output_scope=projection.output_scope,
+                **self._translation_metadata(translation),
+            ),
+            publication_generation=projection.publication_generation,
+            source_order=projection.source_order,
+        )
+
+    async def close_overlay_utterance(
+        self,
+        *,
+        utterance_id: UUID,
+        channel: ChannelId,
+        is_final: bool,
+        publication_generation: int | None = None,
+        source_order: int | None = None,
+        finalize_latency: bool | None = None,
+        output_scope: OverlayPublicationScope | None = None,
+        handoff: bool = False,
+    ) -> bool:
+        should_finalize = finalize_latency is True or (
+            finalize_latency is None and channel == "peer"
+        )
+        if self.has_overlay_destination:
+            await self.publish_overlay_event(
+                self.overlay_event_adapter.utterance_closed(
+                    utterance_id=utterance_id,
+                    channel=channel,
+                    is_final=is_final,
+                    output_scope=output_scope,
+                ),
+                publication_generation=publication_generation,
+                source_order=source_order,
+                handoff=handoff,
+            )
+        if should_finalize:
+            self.diagnostics.clear_latency_timeline(channel, utterance_id)
+        return should_finalize
+
+    async def publish_overlay_event(
+        self,
+        event: OverlayEventUnion,
+        *,
+        publication_generation: int | None = None,
+        source_order: int | None = None,
+        handoff: bool = False,
+    ) -> None:
+        if not self.has_overlay_destination:
+            return
+        if handoff:
+            await self.output_runtime.submit_self_overlay_event(
+                event, on_failure=self.diagnostics.record_overlay_sink_failure
+            )
+            return
+        result = await self.output_runtime.publish_overlay_event(
+            event,
+            publication_generation=publication_generation,
+            source_order=source_order,
+        )
+        if (
+            event.channel == "peer"
+            and event.EVENT_TYPE in {"peer_transcript_final", "translation_final"}
+            and result.decision.decision != OUTPUT_ROUTING_DECISION_PUBLISHED
+            and event.utterance_id is not None
+        ):
+            self.diagnostics.abandon_pending_latency_output("peer", event.utterance_id)
+        if result.decision.reason == "destination_publish_failed":
+            self.diagnostics.record_overlay_sink_failure()
+            return
+
+    def soft_reuse_mode(self, spec_text: str | None, final_text: str) -> str | None:
+        if spec_text is None:
+            return None
+        if spec_text == final_text:
+            return "exact"
+        normalized_spec = self.normalize_soft_reuse_text(spec_text)
+        normalized_final = self.normalize_soft_reuse_text(final_text)
+        if not normalized_spec or not normalized_final:
+            return None
+        if normalized_spec == normalized_final:
+            return "soft_boundary"
+        return None
+
+    async def reset_overlay_preview(self) -> None:
+        if self.active_self_overlay_metadata() is None or not self.has_overlay_destination:
+            return
+        await self.publish_overlay_event(self.overlay_event_adapter.self_active_clear())
+
+    def self_overlay_languages_for_utterance(
+        self,
+        *,
+        utterance_id: UUID,
+        source_language: str,
+        target_language: str,
+    ) -> tuple[str, str]:
+        metadata = self.active_self_overlay_metadata()
+        if (
+            metadata is None
+            or metadata.utterance_id != utterance_id
+            or metadata.occupant_key != f"self:{utterance_id}"
+        ):
+            return source_language, target_language
+        return (
+            self._language_or_fallback(metadata.primary_language, source_language),
+            self._language_or_fallback(metadata.secondary_language, target_language),
+        )
+
+    async def complete_self_target(
+        self,
+        child: TranslationTurnChild,
+        outcome: TranslationTurnOutcome,
+    ) -> None:
+        aggregate = self._self_turns.get(child.parent_utterance_id)
+        retired_key = (child.turn_generation, child.parent_utterance_id)
+        if aggregate is None or not self._self_child_matches_aggregate(child, aggregate):
+            aggregate = self._retired_self_turns.get(retired_key)
+        if aggregate is None or not self._self_child_matches_aggregate(child, aggregate):
+            return
+        async with aggregate.lock:
+            if not self._self_child_matches_aggregate(child, aggregate):
+                return
+            aggregate.terminal_child_ids.add(child.utterance_id)
+            if (
+                outcome != "translated"
+                and child.utterance_id not in aggregate.translations_by_child
+            ):
+                aggregate.failed_child_ids.add(child.utterance_id)
+            terminal = self._self_aggregate_terminal(aggregate)
+            if terminal and aggregate.all_targets_terminal_at is None:
+                aggregate.all_targets_terminal_at = self.clock.now()
+            self._refresh_self_snapshot(aggregate)
+            presentation_revision = aggregate.revision
+            first_success_elapsed_ms = self._elapsed_ms(
+                aggregate.admitted_at,
+                aggregate.first_success_at,
+            )
+            all_targets_terminal_elapsed_ms = self._elapsed_ms(
+                aggregate.admitted_at,
+                aggregate.all_targets_terminal_at,
+            )
+        self.diagnostics.emit(
+            RuntimeDiagnostic(
+                message=(
+                    "[Diagnostic][Translation] translation_target_completed "
+                    "parent_utterance_id=%s turn_generation=%s turn_order=%s "
+                    "target_index=%s target_language=%s outcome=%s "
+                    "presentation_revision=%s first_success_elapsed_ms=%s "
+                    "all_targets_terminal_elapsed_ms=%s"
+                ),
+                args=(
+                    child.parent_utterance_id,
+                    child.turn_generation,
+                    child.turn_order,
+                    child.target_index,
+                    child.target_language,
+                    outcome,
+                    presentation_revision,
+                    first_success_elapsed_ms,
+                    all_targets_terminal_elapsed_ms,
+                ),
+                diagnostic_only=True,
+            )
+        )
+        if terminal and self._self_turns.get(child.parent_utterance_id) is aggregate:
+            self._self_turns.pop(child.parent_utterance_id, None)
+            self._remember_self_turn_tombstone(
+                aggregate.turn_generation,
+                aggregate.parent_utterance_id,
+            )
+        if terminal and self._retired_self_turns.get(retired_key) is aggregate:
+            self._retired_self_turns.pop(retired_key, None)
+
+    async def _record_self_submission(
+        self,
+        submission: TranslationOutputSubmission,
+    ) -> _SelfProjectionUpdate:
+        aggregate = self._self_turns.get(submission.parent_utterance_id)
+        if aggregate is None:
+            retired = self._retired_self_turns.get(
+                (submission.turn_generation, submission.parent_utterance_id)
+            )
+            if retired is not None and self._self_submission_matches_aggregate(submission, retired):
+                self._emit_self_stale_submission(submission, retired.revision)
+            return _SelfProjectionUpdate(False)
+        async with aggregate.lock:
+            if (
+                submission.turn_generation != self._active_self_turn_generation
+                or not self._self_submission_matches_aggregate(submission, aggregate)
+                or submission.child_utterance_id in aggregate.terminal_child_ids
+            ):
+                if submission.turn_generation != self._active_self_turn_generation:
+                    self._emit_self_stale_submission(submission, aggregate.revision)
+                return _SelfProjectionUpdate(False)
+            aggregate.terminal_child_ids.add(submission.child_utterance_id)
+            if submission.outcome == "translated":
+                translation = submission.translation
+                if translation is None:
+                    return _SelfProjectionUpdate(False)
+                aggregate.translations_by_child[submission.child_utterance_id] = translation
+                aggregate.failed_child_ids.discard(submission.child_utterance_id)
+            else:
+                aggregate.failed_child_ids.add(submission.child_utterance_id)
+            if (
+                self._self_aggregate_terminal(aggregate)
+                and aggregate.all_targets_terminal_at is None
+            ):
+                aggregate.all_targets_terminal_at = self.clock.now()
+            snapshot = self._refresh_self_snapshot(aggregate)
+            if submission.turn_generation != self._active_self_turn_generation:
+                return _SelfProjectionUpdate(False)
+        return _SelfProjectionUpdate(True, snapshot)
+
+    def _refresh_self_snapshot(
+        self,
+        aggregate: _SelfTranslationTurnAggregate,
+    ) -> SelfTranslationTurnSnapshot | None:
+        completed: list[tuple[str, str]] = []
+        failed: set[str] = set()
+        for target_index, child_ids in enumerate(aggregate.expected_children_by_target):
+            if not set(child_ids).issubset(aggregate.terminal_child_ids):
+                continue
+            target = aggregate.configured_targets[target_index]
+            if any(child_id in aggregate.failed_child_ids for child_id in child_ids):
+                failed.add(target)
+                continue
+            if any(child_id not in aggregate.translations_by_child for child_id in child_ids):
+                failed.add(target)
+                continue
+            translated_parts = tuple(
+                aggregate.translations_by_child[child_id].text.strip()
+                for child_id in child_ids
+                if aggregate.translations_by_child[child_id].text.strip()
+            )
+            if translated_parts:
+                completed.append((target, " ".join(translated_parts)))
+            else:
+                failed.add(target)
+        signature = tuple(completed)
+        if signature == aggregate.visible_signature:
+            return None
+        aggregate.visible_signature = signature
+        aggregate.revision += 1
+        if signature and aggregate.first_success_at is None:
+            aggregate.first_success_at = self.clock.now()
+        return SelfTranslationTurnSnapshot(
+            parent_utterance_id=aggregate.parent_utterance_id,
+            turn_generation=aggregate.turn_generation,
+            turn_order=aggregate.turn_order,
+            configured_targets=aggregate.configured_targets,
+            completed_translations_by_target=signature,
+            failed_targets=frozenset(failed),
+            revision=aggregate.revision,
+            terminal=self._self_aggregate_terminal(aggregate),
+            admitted_at=aggregate.admitted_at,
+            first_success_at=aggregate.first_success_at,
+            all_targets_terminal_at=aggregate.all_targets_terminal_at,
+            operation_id=aggregate.operation_id,
+            request_id=aggregate.request_id,
+        )
+
+    async def _publish_self_snapshot(
+        self,
+        snapshot: SelfTranslationTurnSnapshot,
+        *,
+        source: str | None,
+    ) -> OutputPublicationResult | None:
+        if not snapshot.text:
+            return None
+        turn_key = (snapshot.turn_generation, snapshot.turn_order)
+        async with self._self_publish_lock:
+            if snapshot.turn_generation != self._active_self_turn_generation:
+                self._emit_self_stale_snapshot(snapshot)
+                return None
+            if (
+                self._latest_visible_self_parent_utterance_id is not None
+                and snapshot.parent_utterance_id != self._latest_visible_self_parent_utterance_id
+            ):
+                self._emit_self_stale_snapshot(snapshot)
+                return None
+            latest = self._latest_visible_self_turn
+            if latest is not None and turn_key < latest:
+                self._emit_self_stale_snapshot(snapshot)
+                return None
+            latest_primary = self._latest_presented_primary_self_turn
+            if latest_primary is not None and turn_key < latest_primary:
+                self._emit_self_stale_snapshot(snapshot)
+                return None
+            if latest == turn_key and snapshot.revision <= self._latest_visible_self_revision:
+                return None
+            target_languages = tuple(
+                target for target, _text in snapshot.completed_translations_by_target
+            )
+            target_indexes = tuple(
+                snapshot.configured_targets.index(target) for target in target_languages
+            )
+            stage = (
+                "translation_complete_result_published"
+                if len(snapshot.completed_translations_by_target)
+                == len(snapshot.configured_targets)
+                else "translation_first_result_published"
+            )
+            visible_elapsed_ms = self._elapsed_ms(snapshot.admitted_at, self.clock.now())
+            result = await self.publish_chatbox(
+                ChatboxProjection(
+                    utterance_id=snapshot.parent_utterance_id,
+                    channel="self",
+                    transcript_text="",
+                    translation_text=snapshot.text,
+                    include_source=False,
+                    source=source,
+                    presentation_revision=snapshot.revision,
+                    turn_generation=snapshot.turn_generation,
+                    turn_order=snapshot.turn_order,
+                    target_indexes=target_indexes,
+                    target_languages=target_languages,
+                    operation_id=snapshot.operation_id,
+                    request_id=snapshot.request_id,
+                )
+            )
+            if result.decision.decision != "published":
+                self.diagnostics.emit(
+                    RuntimeDiagnostic(
+                        message=(
+                            "[Diagnostic][Translation] %s parent_utterance_id=%s "
+                            "turn_generation=%s turn_order=%s target_indexes=%s "
+                            "target_languages=%s revision=%s terminal=%s reason=%s "
+                            "first_success_elapsed_ms=%s "
+                            "all_targets_terminal_elapsed_ms=%s "
+                            "publication_attempt_elapsed_ms=%s "
+                            "first_visible_elapsed_ms=None "
+                            "complete_visible_elapsed_ms=None"
+                        ),
+                        args=(
+                            stage.replace("_published", "_publication_denied"),
+                            snapshot.parent_utterance_id,
+                            snapshot.turn_generation,
+                            snapshot.turn_order,
+                            target_indexes,
+                            target_languages,
+                            snapshot.revision,
+                            snapshot.terminal,
+                            result.decision.reason,
+                            self._elapsed_ms(
+                                snapshot.admitted_at,
+                                snapshot.first_success_at,
+                            ),
+                            self._elapsed_ms(
+                                snapshot.admitted_at,
+                                snapshot.all_targets_terminal_at,
+                            ),
+                            visible_elapsed_ms,
+                        ),
+                        diagnostic_only=True,
+                    )
+                )
+                return result
+            self._latest_visible_self_turn = turn_key
+            self._latest_visible_self_revision = snapshot.revision
+            self.diagnostics.emit(
+                RuntimeDiagnostic(
+                    message=(
+                        "[Diagnostic][Translation] %s parent_utterance_id=%s "
+                        "turn_generation=%s turn_order=%s target_indexes=%s "
+                        "target_languages=%s revision=%s terminal=%s "
+                        "first_success_elapsed_ms=%s all_targets_terminal_elapsed_ms=%s "
+                        "first_visible_elapsed_ms=%s complete_visible_elapsed_ms=%s"
+                    ),
+                    args=(
+                        stage,
+                        snapshot.parent_utterance_id,
+                        snapshot.turn_generation,
+                        snapshot.turn_order,
+                        target_indexes,
+                        target_languages,
+                        snapshot.revision,
+                        snapshot.terminal,
+                        self._elapsed_ms(snapshot.admitted_at, snapshot.first_success_at),
+                        self._elapsed_ms(
+                            snapshot.admitted_at,
+                            snapshot.all_targets_terminal_at,
+                        ),
+                        (
+                            visible_elapsed_ms
+                            if stage == "translation_first_result_published"
+                            else None
+                        ),
+                        (
+                            visible_elapsed_ms
+                            if stage == "translation_complete_result_published"
+                            else None
+                        ),
+                    ),
+                    diagnostic_only=True,
+                )
+            )
+            return result
+
+    @asynccontextmanager
+    async def self_primary_presentation(
+        self,
+        *,
+        parent_utterance_id: UUID,
+        target_index: int,
+        turn_generation: int | None,
+        turn_order: int | None,
+    ) -> AsyncIterator[bool]:
+        if target_index != 0 or turn_generation is None or turn_order is None:
+            yield False
+            return
+        turn_key = (turn_generation, turn_order)
+        async with self._self_publish_lock:
+            async with self._self_surface_lock:
+                if turn_generation != self._active_self_turn_generation:
+                    yield False
+                    return
+                if (
+                    self._latest_visible_self_parent_utterance_id is not None
+                    and parent_utterance_id != self._latest_visible_self_parent_utterance_id
+                ):
+                    yield False
+                    return
+                if (
+                    self._latest_visible_self_turn is not None
+                    and turn_key < self._latest_visible_self_turn
+                ):
+                    yield False
+                    return
+                if (
+                    self._latest_presented_primary_self_turn is not None
+                    and turn_key < self._latest_presented_primary_self_turn
+                ):
+                    yield False
+                    return
+                self._latest_presented_primary_self_turn = turn_key
+                yield True
+
+    def _emit_self_stale_snapshot(self, snapshot: SelfTranslationTurnSnapshot) -> None:
+        target_languages = tuple(
+            target for target, _text in snapshot.completed_translations_by_target
+        )
+        self.diagnostics.emit(
+            RuntimeDiagnostic(
+                message=(
+                    "[Diagnostic][Translation] translation_result_suppressed_stale_turn "
+                    "parent_utterance_id=%s turn_generation=%s turn_order=%s "
+                    "target_indexes=%s target_languages=%s revision=%s"
+                ),
+                args=(
+                    snapshot.parent_utterance_id,
+                    snapshot.turn_generation,
+                    snapshot.turn_order,
+                    tuple(snapshot.configured_targets.index(target) for target in target_languages),
+                    target_languages,
+                    snapshot.revision,
+                ),
+                diagnostic_only=True,
+            )
+        )
+
+    def _emit_self_stale_submission(
+        self,
+        submission: TranslationOutputSubmission,
+        presentation_revision: int,
+    ) -> None:
+        self.diagnostics.emit(
+            RuntimeDiagnostic(
+                message=(
+                    "[Diagnostic][Translation] translation_result_suppressed_stale_turn "
+                    "parent_utterance_id=%s turn_generation=%s turn_order=%s "
+                    "target_indexes=%s target_languages=%s revision=%s"
+                ),
+                args=(
+                    submission.parent_utterance_id,
+                    submission.turn_generation,
+                    submission.turn_order,
+                    (submission.target_index,),
+                    (submission.target_language,),
+                    presentation_revision,
+                ),
+                diagnostic_only=True,
+            )
+        )
+
+    @staticmethod
+    def _self_submission_matches_aggregate(
+        submission: TranslationOutputSubmission,
+        aggregate: _SelfTranslationTurnAggregate,
+    ) -> bool:
+        target_index = aggregate.child_target_indexes.get(submission.child_utterance_id)
+        return (
+            submission.turn_generation == aggregate.turn_generation
+            and submission.turn_order == aggregate.turn_order
+            and target_index == submission.target_index
+            and target_index is not None
+            and aggregate.configured_targets[target_index] == submission.target_language.strip()
+        )
+
+    @staticmethod
+    def _self_child_matches_aggregate(
+        child: TranslationTurnChild,
+        aggregate: _SelfTranslationTurnAggregate,
+    ) -> bool:
+        return (
+            child.turn_generation == aggregate.turn_generation
+            and child.turn_order == aggregate.turn_order
+            and aggregate.child_target_indexes.get(child.utterance_id) == child.target_index
+        )
+
+    @staticmethod
+    def _self_aggregate_terminal(aggregate: _SelfTranslationTurnAggregate) -> bool:
+        return set(aggregate.child_target_indexes).issubset(aggregate.terminal_child_ids)
+
+    @staticmethod
+    def _elapsed_ms(started_at: float, completed_at: float | None) -> int | None:
+        if completed_at is None:
+            return None
+        return max(0, int((completed_at - started_at) * 1000))
+
+    def _remember_self_turn_tombstone(
+        self,
+        turn_generation: int,
+        parent_utterance_id: UUID,
+    ) -> None:
+        key = (turn_generation, parent_utterance_id)
+        if key in self._self_turn_tombstones:
+            return
+        if len(self._self_turn_tombstone_order) >= self.self_turn_tombstone_capacity:
+            evicted = self._self_turn_tombstone_order.popleft()
+            self._self_turn_tombstones.discard(evicted)
+            self._retired_self_turns.pop(evicted, None)
+        self._self_turn_tombstone_order.append(key)
+        self._self_turn_tombstones.add(key)
+
+    def emit_translation_ready(
+        self,
+        translation: Translation,
+        *,
+        parent_utterance_id: UUID | None = None,
+        target_index: int | None = None,
+        turn_generation: int | None = None,
+        turn_order: int | None = None,
+    ) -> bool:
+        return self.diagnostics.emit_translation_ready(
+            TranslationReadyDiagnostic(
+                channel=translation.channel,
+                utterance_id=translation.utterance_id,
+                update_id=translation.update_id,
+                origin_wall_clock_ms=translation.origin_wall_clock_ms,
+                session_scope=translation.session_scope,
+                source_text_hash=translation.source_text_hash,
+                source_text_len=translation.source_text_len,
+                logical_turn_key=translation.logical_turn_key,
+                translation_len=len(translation.text),
+                parent_utterance_id=parent_utterance_id,
+                target_index=target_index,
+                target_language=translation.target_language,
+                turn_generation=turn_generation,
+                turn_order=turn_order,
+            )
+        )
+
+    @staticmethod
+    def _translation_retained_payloads(
+        submission: TranslationOutputSubmission,
+    ) -> tuple[str, ...]:
+        translation = submission.translation
+        values = [
+            submission.source,
+            submission.source_text,
+            submission.source_language or "",
+            submission.target_language,
+            submission.failure_code or "",
+        ]
+        if translation is not None:
+            values.extend(
+                (
+                    translation.text,
+                    translation.source_text,
+                    translation.source_language or "",
+                    translation.target_language or "",
+                    translation.update_id or "",
+                    translation.session_scope or "",
+                    translation.source_text_hash or "",
+                    translation.logical_turn_key or "",
+                )
+            )
+        return tuple(value for value in values if value)
+
+    @classmethod
+    def _overlay_publication_scope(
+        cls,
+        submission: TranslationOutputSubmission,
+    ) -> OverlayPublicationScope:
+        retained_payload_bytes = OutputRuntime.retained_payload_bytes(
+            cls._translation_retained_payloads(submission)
+        )
+        configured_self_target_count = len(submission.config_snapshot.value.self_target_languages)
+        dual_target_self = submission.channel == "self" and configured_self_target_count == 2
+        eligible_target_index = (
+            submission.sequence // configured_self_target_count
+            if dual_target_self
+            else submission.sequence
+        )
+        eligible_target_count = (
+            max(1, submission.parent_output_count // configured_self_target_count)
+            if dual_target_self
+            else submission.parent_output_count
+        )
+        return OverlayPublicationScope(
+            turn_kind=submission.turn_kind or ("peer" if submission.channel == "peer" else "self"),
+            parent_utterance_id=submission.parent_utterance_id,
+            turn_generation=submission.turn_generation,
+            turn_order=submission.turn_order,
+            target_index=eligible_target_index,
+            target_count=eligible_target_count,
+            retained_payload_bytes=retained_payload_bytes,
+            operation_id=submission.operation_id,
+            request_id=submission.request_id,
+        )
+
+    async def project_translation_result(
+        self,
+        submission: TranslationOutputSubmission,
+        *,
+        admitted_destinations: set[str] | None = None,
+    ) -> TranslationResultProjectionReceipt:
+        configuration = submission.config_snapshot.value
+        utterance_id = submission.child_utterance_id
+        channel = submission.channel
+        output_scope = self._overlay_publication_scope(submission)
+        source_language = self._source_language_for(channel, configuration)
+        target_language = self._target_language_for(channel, configuration)
+        publish_to_chatbox = self.chatbox_is_eligible(channel)
+        deny_peer_chatbox_attempt = self.chatbox_is_denied(channel)
+        dual_target_self = channel == "self" and len(configuration.self_target_languages) == 2
+        ui_publication_result: OutputPublicationResult | None = None
+        self_update = _SelfProjectionUpdate(True)
+        if dual_target_self:
+            self_update = await self._record_self_submission(submission)
+            if not self_update.accepted:
+                return TranslationResultProjectionReceipt(
+                    True,
+                    record_runtime_translation=False,
+                )
+
+        self._record_conversation_submission(submission)
+
+        if submission.outcome == "source_only":
+            if channel == "peer":
+                await self.project_peer_source_only(
+                    transcript=Transcript(
+                        utterance_id=utterance_id,
+                        text=submission.source_text,
+                        is_final=True,
+                        created_at=self.clock.now(),
+                        channel="peer",
+                        publication_generation=submission.publication_generation,
+                        source_order=submission.source_order,
+                    ),
+                    source_language=source_language,
+                    target_language=target_language,
+                    close_is_final=True,
+                    finalize_latency=True,
+                    speaker_assignment=submission.speaker_assignment,
+                    output_scope=output_scope,
+                )
+                await self.publish_peer_chatbox_denial(utterance_id)
+            elif dual_target_self:
+                if (
+                    submission.target_index == 0
+                    and publish_to_chatbox
+                    and await self._await_translation_destination(
+                        submission,
+                        admitted_destinations,
+                        "chatbox",
+                    )
+                ):
+                    await self.publish_chatbox(
+                        ChatboxProjection(
+                            utterance_id=submission.parent_utterance_id,
+                            channel=channel,
+                            transcript_text=submission.source_text,
+                            translation_text=None,
+                            include_source=configuration.chatbox_include_source,
+                            source=submission.source,
+                            turn_generation=submission.turn_generation,
+                            turn_order=submission.turn_order,
+                            operation_id=submission.operation_id,
+                            request_id=submission.request_id,
+                        )
+                    )
+                else:
+                    self.diagnostics.clear_latency_timeline(channel, utterance_id)
+            elif publish_to_chatbox and await self._await_translation_destination(
+                submission,
+                admitted_destinations,
+                "chatbox",
+            ):
+                await self.publish_chatbox(
+                    ChatboxProjection(
+                        utterance_id=utterance_id,
+                        channel=channel,
+                        transcript_text=submission.source_text,
+                        translation_text=None,
+                        include_source=configuration.chatbox_include_source,
+                        source=submission.source,
+                        operation_id=submission.operation_id,
+                        request_id=submission.request_id,
+                    )
+                )
+            else:
+                self.diagnostics.clear_latency_timeline(channel, utterance_id)
+            return TranslationResultProjectionReceipt(True)
+
+        if submission.outcome == "failed":
+            if dual_target_self:
+                async with self.self_primary_presentation(
+                    parent_utterance_id=submission.parent_utterance_id,
+                    target_index=submission.target_index,
+                    turn_generation=submission.turn_generation,
+                    turn_order=submission.turn_order,
+                ) as present_self_result:
+                    if present_self_result:
+                        await self.close_overlay_utterance(
+                            utterance_id=utterance_id,
+                            channel=channel,
+                            is_final=False,
+                            finalize_latency=True,
+                            output_scope=output_scope,
+                        )
+                await self._complete_visible_translation_destinations(
+                    submission,
+                    admitted_destinations,
+                )
+                if self_update.snapshot is not None and await self._await_translation_destination(
+                    submission,
+                    admitted_destinations,
+                    "chatbox",
+                ):
+                    await self._publish_self_snapshot(
+                        self_update.snapshot,
+                        source=submission.source,
+                    )
+                return TranslationResultProjectionReceipt(True)
+            if submission.failure_code == "stale_provider_completion":
+                if channel == "peer":
+                    await self.publish_peer_chatbox_denial(utterance_id)
+                    return TranslationResultProjectionReceipt(
+                        True,
+                        complete_peer_logical_turn=True,
+                    )
+                await self.close_overlay_utterance(
+                    utterance_id=utterance_id,
+                    channel=channel,
+                    is_final=False,
+                    finalize_latency=True,
+                    output_scope=output_scope,
+                )
+                return TranslationResultProjectionReceipt(True)
+
+            fallback_to_chatbox = configuration.fallback_transcript_only and publish_to_chatbox
+            denied_fallback_to_chatbox = (
+                configuration.fallback_transcript_only and deny_peer_chatbox_attempt
+            )
+            if channel == "self":
+                await self.close_overlay_utterance(
+                    utterance_id=utterance_id,
+                    channel=channel,
+                    is_final=False,
+                    finalize_latency=not fallback_to_chatbox,
+                    output_scope=output_scope,
+                )
+            else:
+                await self.project_peer_source_only(
+                    transcript=Transcript(
+                        utterance_id=utterance_id,
+                        text=submission.source_text,
+                        is_final=True,
+                        created_at=self.clock.now(),
+                        channel="peer",
+                        publication_generation=submission.publication_generation,
+                        source_order=submission.source_order,
+                    ),
+                    source_language=source_language,
+                    target_language=target_language,
+                    close_is_final=False,
+                    finalize_latency=not denied_fallback_to_chatbox,
+                    speaker_assignment=submission.speaker_assignment,
+                    output_scope=output_scope,
+                )
+            if fallback_to_chatbox and await self._await_translation_destination(
+                submission,
+                admitted_destinations,
+                "chatbox",
+            ):
+                await self.publish_chatbox(
+                    ChatboxProjection(
+                        utterance_id=utterance_id,
+                        channel=channel,
+                        transcript_text=submission.source_text,
+                        translation_text=None,
+                        include_source=configuration.chatbox_include_source,
+                        source=submission.source,
+                        operation_id=submission.operation_id,
+                        request_id=submission.request_id,
+                    )
+                )
+            elif deny_peer_chatbox_attempt:
+                await self.publish_peer_chatbox_denial(utterance_id)
+            elif channel != "peer":
+                self.diagnostics.clear_latency_timeline(channel, utterance_id)
+            return TranslationResultProjectionReceipt(True)
+
+        translation = submission.translation
+        if translation is None:
+            raise ValueError("translated submission requires a translation")
+        self.emit_translation_ready(
+            translation,
+            parent_utterance_id=submission.parent_utterance_id,
+            target_index=submission.target_index,
+            turn_generation=submission.turn_generation,
+            turn_order=submission.turn_order,
+        )
+        if channel == "peer" and self.has_overlay_destination:
+            await self.emit_translation(
+                TranslationOverlayProjection(
+                    translation=translation,
+                    source_text=translation.source_text,
+                    source_language=self._language_or_fallback(
+                        translation.source_language,
+                        source_language,
+                    ),
+                    target_language=self._language_or_fallback(
+                        translation.target_language,
+                        target_language,
+                    ),
+                    applied_context_mode=submission.applied_context_mode,
+                    record_peer_first_emit=True,
+                    publication_generation=submission.publication_generation,
+                    source_order=submission.source_order,
+                    output_scope=output_scope,
+                )
+            )
+            await self.close_overlay_utterance(
+                utterance_id=utterance_id,
+                channel=channel,
+                is_final=True,
+                publication_generation=submission.publication_generation,
+                source_order=submission.source_order,
+                finalize_latency=not (publish_to_chatbox or deny_peer_chatbox_attempt),
+                output_scope=output_scope,
+            )
+        self_turn_key = (submission.turn_generation, submission.turn_order)
+        parent_utterance_id = submission.parent_utterance_id
+        if channel != "self":
+            ui_publication_result = await self.publish_ui(
+                TranslationUiMessage(
+                    event_type=UIEventType.TRANSLATION_DONE,
+                    runtime_log_handled=True,
+                    utterance_id=utterance_id,
+                    payload=translation,
+                    source=submission.source,
+                    publication_generation=submission.publication_generation,
+                    source_order=submission.source_order,
+                    parent_utterance_id=submission.parent_utterance_id,
+                    operation_id=submission.operation_id,
+                    request_id=submission.request_id,
+                )
+            )
+        elif dual_target_self:
+            async with self.self_primary_presentation(
+                parent_utterance_id=submission.parent_utterance_id,
+                target_index=submission.target_index,
+                turn_generation=submission.turn_generation,
+                turn_order=submission.turn_order,
+            ) as present_self_result:
+                if present_self_result:
+                    await self.publish_ui(
+                        TranslationUiMessage(
+                            event_type=UIEventType.TRANSLATION_DONE,
+                            runtime_log_handled=True,
+                            utterance_id=utterance_id,
+                            payload=translation,
+                            source=submission.source,
+                            operation_id=submission.operation_id,
+                            request_id=submission.request_id,
+                            presentation_is_current=lambda: self._self_presentation_is_current(
+                                self_turn_key, parent_utterance_id
+                            ),
+                        )
+                    )
+                    await self.emit_translation(
+                        TranslationOverlayProjection(
+                            translation=translation,
+                            source_language=self._language_or_fallback(
+                                translation.source_language,
+                                source_language,
+                            ),
+                            target_language=self._language_or_fallback(
+                                translation.target_language,
+                                target_language,
+                            ),
+                            applied_context_mode=submission.applied_context_mode,
+                            output_scope=output_scope,
+                        )
+                    )
+                    await self.close_overlay_utterance(
+                        utterance_id=utterance_id,
+                        channel=channel,
+                        is_final=True,
+                        finalize_latency=not publish_to_chatbox,
+                        output_scope=output_scope,
+                    )
+        else:
+            await self.publish_ui(
+                TranslationUiMessage(
+                    event_type=UIEventType.TRANSLATION_DONE,
+                    runtime_log_handled=True,
+                    utterance_id=utterance_id,
+                    payload=translation,
+                    source=submission.source,
+                    operation_id=submission.operation_id,
+                    request_id=submission.request_id,
+                    presentation_is_current=lambda: self._self_presentation_is_current(
+                        self_turn_key, parent_utterance_id
+                    ),
+                )
+            )
+            await self.emit_translation(
+                TranslationOverlayProjection(
+                    translation=translation,
+                    source_language=self._language_or_fallback(
+                        translation.source_language,
+                        source_language,
+                    ),
+                    target_language=self._language_or_fallback(
+                        translation.target_language,
+                        target_language,
+                    ),
+                    applied_context_mode=submission.applied_context_mode,
+                    output_scope=output_scope,
+                )
+            )
+            await self.close_overlay_utterance(
+                utterance_id=utterance_id,
+                channel=channel,
+                is_final=True,
+                finalize_latency=not publish_to_chatbox,
+                output_scope=output_scope,
+            )
+        if dual_target_self:
+            await self._complete_visible_translation_destinations(
+                submission,
+                admitted_destinations,
+            )
+            if submission.turn_generation != self._active_self_turn_generation:
+                return TranslationResultProjectionReceipt(
+                    True,
+                    record_runtime_translation=False,
+                )
+        if dual_target_self:
+            if self_update.snapshot is not None:
+                if await self._await_translation_destination(
+                    submission,
+                    admitted_destinations,
+                    "chatbox",
+                ):
+                    await self._publish_self_snapshot(
+                        self_update.snapshot,
+                        source=submission.source,
+                    )
+            else:
+                self.diagnostics.clear_latency_timeline(channel, utterance_id)
+        elif publish_to_chatbox and await self._await_translation_destination(
+            submission,
+            admitted_destinations,
+            "chatbox",
+        ):
+            await self.publish_chatbox(
+                ChatboxProjection(
+                    utterance_id=utterance_id,
+                    channel=channel,
+                    transcript_text=submission.source_text,
+                    translation_text=translation.text,
+                    include_source=configuration.chatbox_include_source,
+                    source=submission.source,
+                    turn_generation=submission.turn_generation,
+                    turn_order=submission.turn_order,
+                    target_indexes=(
+                        (submission.target_index,) if submission.turn_generation is not None else ()
+                    ),
+                    target_languages=(
+                        (submission.target_language,)
+                        if submission.turn_generation is not None
+                        else ()
+                    ),
+                    operation_id=submission.operation_id,
+                    request_id=submission.request_id,
+                )
+            )
+        elif deny_peer_chatbox_attempt:
+            await self.publish_peer_chatbox_denial(utterance_id)
+        else:
+            self.diagnostics.clear_latency_timeline(channel, utterance_id)
+        return TranslationResultProjectionReceipt(
+            True,
+            ui_publication_result=ui_publication_result,
+        )
+
+    def record_child_terminal_conversation(
+        self,
+        child: TranslationTurnChild,
+        outcome: TranslationTurnOutcome,
+        *,
+        context_texts: tuple[str, ...] | None = None,
+    ) -> None:
+        if outcome not in {"source_only", "failed", "cancelled"}:
+            return
+        segment_index = self._conversation_segment_index(
+            sequence=child.sequence,
+            channel=child.channel,
+            configuration=child.config_snapshot.value,
+        )
+        self._record_conversation(
+            utterance_id=child.parent_utterance_id,
+            parent_utterance_id=child.parent_utterance_id,
+            channel=child.channel,
+            source_text=child.transcript.text,
+            translation_text=None,
+            source_language=self._conversation_source_language(
+                child.channel,
+                child.detected_language,
+                child.config_snapshot.value,
+            ),
+            target_language=None,
+            source=child.source,
+            turn_kind=child.turn_kind,
+            segment_index=segment_index,
+            target_index=None,
+            failure_code=None,
+            disposition=outcome,
+            turn_generation=child.turn_generation,
+            turn_order=child.turn_order,
+            publication_generation=child.transcript.publication_generation,
+            source_order=child.transcript.source_order,
+            origin_wall_clock_ms=None,
+        )
+        self._record_request_context(
+            utterance_id=child.parent_utterance_id,
+            segment_index=segment_index,
+            context_texts=context_texts,
+        )
+
+    def _record_conversation_submission(
+        self,
+        submission: TranslationOutputSubmission,
+    ) -> None:
+        disposition = submission.outcome
+        if submission.failure_code == "stale_provider_completion":
+            disposition = "stale"
+        elif submission.failure_code == "translation_timeout":
+            disposition = "expired"
+        elif submission.failure_code == "translation_overload":
+            disposition = "overloaded"
+        translation = submission.translation
+        origin_wall_clock_ms = translation.origin_wall_clock_ms if translation is not None else None
+        segment_index = self._conversation_segment_index(
+            sequence=submission.sequence,
+            channel=submission.channel,
+            configuration=submission.config_snapshot.value,
+        )
+        source_language = self._conversation_source_language(
+            submission.channel,
+            submission.source_language,
+            submission.config_snapshot.value,
+        )
+        self._record_conversation(
+            utterance_id=submission.parent_utterance_id,
+            parent_utterance_id=submission.parent_utterance_id,
+            channel=submission.channel,
+            source_text=submission.source_text,
+            translation_text=None,
+            source_language=source_language,
+            target_language=None,
+            source=submission.source,
+            turn_kind=submission.turn_kind or submission.channel,
+            segment_index=segment_index,
+            target_index=None,
+            failure_code=submission.failure_code,
+            disposition=disposition,
+            turn_generation=submission.turn_generation,
+            turn_order=submission.turn_order,
+            publication_generation=submission.publication_generation,
+            source_order=submission.source_order,
+            origin_wall_clock_ms=origin_wall_clock_ms,
+        )
+        self._record_request_context(
+            utterance_id=submission.parent_utterance_id,
+            segment_index=segment_index,
+            context_texts=submission.context_texts,
+        )
+        if submission.outcome != "translated" or translation is None:
+            return
+        self._record_conversation(
+            utterance_id=submission.child_utterance_id,
+            parent_utterance_id=submission.parent_utterance_id,
+            channel=submission.channel,
+            source_text=None,
+            translation_text=translation.text,
+            source_language=translation.source_language or source_language,
+            target_language=translation.target_language or submission.target_language,
+            source=submission.source,
+            turn_kind=submission.turn_kind or submission.channel,
+            segment_index=segment_index,
+            target_index=submission.target_index,
+            failure_code=None,
+            disposition="translated",
+            turn_generation=submission.turn_generation,
+            turn_order=submission.turn_order,
+            publication_generation=submission.publication_generation,
+            source_order=submission.source_order,
+            origin_wall_clock_ms=translation.origin_wall_clock_ms,
+        )
+
+    @staticmethod
+    def _conversation_segment_index(
+        *,
+        sequence: int,
+        channel: ChannelId,
+        configuration: TranslationRuntimeConfig,
+    ) -> int:
+        if channel == "self":
+            return sequence // max(1, len(configuration.self_target_languages))
+        return sequence
+
+    def _record_conversation(
+        self,
+        *,
+        parent_utterance_id: UUID,
+        utterance_id: UUID,
+        channel: ChannelId,
+        source_text: str | None,
+        translation_text: str | None,
+        source_language: str | None,
+        target_language: str | None,
+        source: str,
+        turn_kind: str,
+        segment_index: int,
+        target_index: int | None,
+        failure_code: str | None,
+        disposition: str,
+        turn_generation: int | None,
+        turn_order: int | None,
+        publication_generation: int | None,
+        source_order: int | None,
+        origin_wall_clock_ms: int | None,
+    ) -> None:
+        runtime_logging = self.diagnostics.runtime_logging
+        record = getattr(runtime_logging, "record_conversation_observation", None)
+        if not callable(record):
+            return
+        metadata: dict[str, str | int | float | bool | None] = {
+            "source": source,
+            "turn_kind": turn_kind,
+            "parent_utterance_id": str(parent_utterance_id),
+            "segment_index": segment_index,
+            "disposition": disposition,
+            "failure_code": failure_code,
+            "turn_generation": turn_generation,
+            "turn_order": turn_order,
+            "publication_generation": publication_generation,
+            "source_order": source_order,
+            "origin_wall_clock_ms": origin_wall_clock_ms,
+        }
+        if target_index is not None:
+            metadata["target_index"] = target_index
+        record(
+            utterance_id=str(utterance_id),
+            speaker_channel=channel,
+            transcript_text=source_text,
+            translation_text=translation_text,
+            source_language=source_language,
+            target_language=target_language,
+            metadata=metadata,
+            correlation_id=(
+                f"conversation:{channel}:{utterance_id}:{segment_index}:{target_index}"
+            ),
+        )
+
+    def _record_request_context(
+        self,
+        *,
+        utterance_id: UUID,
+        segment_index: int,
+        context_texts: tuple[str, ...] | None,
+    ) -> None:
+        if context_texts is None:
+            return
+        runtime_logging = self.diagnostics.runtime_logging
+        record = getattr(runtime_logging, "record_request_context", None)
+        if not callable(record):
+            return
+        record(
+            utterance_id=str(utterance_id),
+            context_texts=context_texts,
+            segment_index=segment_index,
+        )
+
+    async def publish_chatbox(
+        self,
+        projection: ChatboxProjection,
+    ) -> OutputPublicationResult:
+        if projection.channel == "self":
+            self.diagnostics.retain_latency_until_output(
+                "self",
+                projection.utterance_id,
+            )
+        result = await self.output_runtime.publish_chatbox(
+            publication_id=projection.utterance_id,
+            channel=projection.channel,
+            transcript_text=projection.transcript_text,
+            translation_text=projection.translation_text,
+            include_source=projection.include_source,
+            presentation_revision=projection.presentation_revision,
+            turn_generation=projection.turn_generation,
+            turn_order=projection.turn_order,
+            target_indexes=projection.target_indexes,
+            target_languages=projection.target_languages,
+            self_speech=projection.channel == "self" and projection.source == "Mic",
+            operation_id=projection.operation_id,
+            request_id=projection.request_id,
+        )
+        if result.decision.decision != "published":
+            self.diagnostics.emit(
+                RuntimeDiagnostic(
+                    message="[Translation] OSC enqueue skipped: channel=%s route=%s reason=%s",
+                    args=(
+                        projection.channel,
+                        result.decision.route,
+                        result.decision.reason,
+                    ),
+                    fallback_level=logging.INFO,
+                    diagnostic_only=True,
+                )
+            )
+            self.diagnostics.abandon_pending_latency_output(
+                projection.channel,
+                projection.utterance_id,
+            )
+            self.diagnostics.clear_latency_timeline(
+                projection.channel,
+                projection.utterance_id,
+            )
+            return result
+        message = result.message
+        assert message is not None
+        self.diagnostics.emit(
+            RuntimeDiagnostic(
+                message=(
+                    "[Translation] OSC enqueue preview: channel=%s text_len=%s "
+                    "translation_text_present=%s include_source=%s"
+                ),
+                args=(
+                    projection.channel,
+                    len(message.text),
+                    projection.translation_text is not None,
+                    projection.include_source,
+                ),
+                fallback_level=logging.INFO,
+                diagnostic_only=True,
+            )
+        )
+        await self.publish_ui(
+            TranslationUiMessage(
+                event_type=UIEventType.OSC_SENT,
+                utterance_id=projection.utterance_id,
+                payload=message,
+                source=projection.source,
+                channel=projection.channel,
+                operation_id=projection.operation_id,
+                request_id=projection.request_id,
+            )
+        )
+        self.diagnostics.clear_latency_timeline(
+            projection.channel,
+            projection.utterance_id,
+        )
+        return result
+
+    async def publish_peer_chatbox_denial(
+        self,
+        utterance_id: UUID,
+    ) -> OutputPublicationResult:
+        result = await self.output_runtime.publish_chatbox(
+            publication_id=utterance_id,
+            channel="peer",
+            transcript_text="",
+            translation_text=None,
+            include_source=False,
+        )
+        self.diagnostics.emit(
+            RuntimeDiagnostic(
+                message="[Translation] OSC enqueue skipped: channel=%s route=%s reason=%s",
+                args=("peer", result.decision.route, result.decision.reason),
+                fallback_level=logging.INFO,
+                diagnostic_only=True,
+            )
+        )
+        self.diagnostics.clear_latency_timeline("peer", utterance_id)
+        return result
+
+    @staticmethod
+    def _translation_metadata(translation: Translation) -> dict[str, object]:
+        metadata: dict[str, object] = {
+            "update_id": translation.update_id,
+            "origin_wall_clock_ms": translation.origin_wall_clock_ms,
+            "session_scope": translation.session_scope,
+            "source_text_hash": translation.source_text_hash,
+            "source_text_len": translation.source_text_len,
+            "logical_turn_key": translation.logical_turn_key,
+        }
+        if translation.channel == "peer":
+            metadata["speaker_assignment"] = translation.speaker_assignment
+        return metadata
+
+    @staticmethod
+    def _language_or_fallback(language: str | None, fallback: str) -> str:
+        if language is not None and language.strip():
+            return language
+        return fallback
+
+    @classmethod
+    def _conversation_source_language(
+        cls,
+        channel: ChannelId,
+        detected_language: str | None,
+        configuration: TranslationRuntimeConfig,
+    ) -> str | None:
+        if detected_language is not None and detected_language.strip():
+            return detected_language
+        if channel == "peer" and configuration.peer_source_mode == "auto":
+            return None
+        return cls._source_language_for(channel, configuration)
+
+    @staticmethod
+    def _source_language_for(
+        channel: ChannelId,
+        configuration: TranslationRuntimeConfig,
+    ) -> str:
+        if channel == "peer" and configuration.peer_source_language:
+            return configuration.peer_source_language
+        return configuration.source_language
+
+    @staticmethod
+    def _target_language_for(
+        channel: ChannelId,
+        configuration: TranslationRuntimeConfig,
+    ) -> str:
+        if channel == "peer" and configuration.peer_target_language:
+            return configuration.peer_target_language
+        return configuration.target_language
+
+    @staticmethod
+    def normalize_soft_reuse_text(text: str) -> str:
+        start = 0
+        end = len(text)
+        while start < end and TranslationOutputProjectionOwner._is_soft_reuse_boundary_char(
+            text[start]
+        ):
+            start += 1
+        while end > start and TranslationOutputProjectionOwner._is_soft_reuse_boundary_char(
+            text[end - 1]
+        ):
+            end -= 1
+        return text[start:end]
+
+    @staticmethod
+    def _is_soft_reuse_boundary_char(character: str) -> bool:
+        return character.isspace() or character in _SOFT_REUSE_PUNCT
+
+    def _record_overlay_emit(
+        self,
+        *,
+        event_kind: str,
+        utterance_id: UUID,
+        channel: ChannelId,
+        secondary_len: int,
+    ) -> None:
+        self.diagnostics.record_overlay_emit(
+            OverlayEmitDiagnostic(
+                event_kind=event_kind,
+                utterance_id=utterance_id,
+                channel=channel,
+                secondary_len=secondary_len,
+                sink_type=(
+                    type(self.output_runtime.overlay_sink).__name__
+                    if self.has_overlay_destination
+                    else None
+                ),
+            )
+        )
+
+
+__all__ = [
+    "ChatboxProjection",
+    "SelfTranslationTurnSnapshot",
+    "TranscriptOverlayProjection",
+    "TranslationOutputProjectionOwner",
+    "TranslationOverlayProjection",
+    "TranslationResultProjectionReceipt",
+    "TranslationUiMessage",
+    "TranslationUiMessagePort",
+    "TranslationUiMessageQueue",
+]

@@ -1,0 +1,890 @@
+from __future__ import annotations
+
+import asyncio
+import io
+import logging
+from dataclasses import dataclass, field
+from uuid import UUID, uuid4
+
+import numpy as np
+import pytest
+
+from puripuly_heart.core.clock import FakeClock
+from puripuly_heart.core.messages import UserErrorReport
+from puripuly_heart.core.openrouter.managed_openrouter_release import (
+    ManagedOpenRouterReleaseDiagnostics,
+    ManagedOpenRouterReleaseError,
+    ManagedOpenRouterUserFacingError,
+)
+from puripuly_heart.core.orchestrator.channel_runtime import (
+    ContextEntry,
+    _MergeBuffer,
+)
+from puripuly_heart.core.orchestrator.translation_output_projection import (
+    ChatboxProjection,
+)
+from puripuly_heart.core.orchestrator.translation_request import DirectTranslationRequest
+from puripuly_heart.core.overlay.state import ActiveSelfOverlayMetadata
+from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
+from puripuly_heart.core.stt.backend import (
+    STTBackendTranscriptEvent,
+)
+from puripuly_heart.core.vad.gating import SpeechChunk, SpeechEnd
+from puripuly_heart.domain.events import (
+    STTErrorEvent,
+    STTFinalEvent,
+    STTPartialEvent,
+    STTSessionState,
+    STTSessionStateEvent,
+    UIEventType,
+)
+from puripuly_heart.domain.models import Transcript, Translation
+from tests.helpers.fakes import RecordingOscQueue
+from tests.helpers.translation_owners import (
+    compose_translation_test_harness,
+)
+
+
+@dataclass(slots=True)
+class StubLLM:
+    should_fail: bool = False
+    calls: list[tuple[UUID, str, str]] = field(default_factory=list)
+    closed: bool = False
+
+    async def translate(
+        self,
+        *,
+        utterance_id: UUID,
+        text: str,
+        system_prompt: str,
+        source_language: str,
+        target_language: str,
+        context: str = "",
+        scene_participant_count: int | None = None,
+    ) -> Translation:
+        _ = (system_prompt, source_language, target_language)
+        self.calls.append((utterance_id, text, context))
+        if self.should_fail:
+            raise RuntimeError("llm failed")
+        return Translation(utterance_id=utterance_id, text=f"T:{text}")
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@dataclass(slots=True)
+class RecordingLanguageLLM:
+    calls: list[dict[str, str]] = field(default_factory=list)
+
+    async def translate(
+        self,
+        *,
+        utterance_id: UUID,
+        text: str,
+        system_prompt: str,
+        source_language: str,
+        target_language: str,
+        context: str = "",
+        scene_participant_count: int | None = None,
+    ) -> Translation:
+        _ = system_prompt
+        self.calls.append(
+            {
+                "text": text,
+                "source_language": source_language,
+                "target_language": target_language,
+                "context": context,
+            }
+        )
+        return Translation(utterance_id=utterance_id, text=f"{target_language}:{text}")
+
+    async def close(self) -> None:
+        return None
+
+
+@dataclass(slots=True)
+class ManagedAuthFailingLLM:
+    diagnostics: ManagedOpenRouterReleaseDiagnostics
+    closed: bool = False
+
+    async def translate(
+        self,
+        *,
+        utterance_id: UUID,
+        text: str,
+        system_prompt: str,
+        source_language: str,
+        target_language: str,
+        context: str = "",
+        scene_participant_count: int | None = None,
+    ) -> Translation:
+        _ = (utterance_id, text, system_prompt, source_language, target_language, context)
+        raise ManagedOpenRouterUserFacingError(
+            message_key="managed_release.retry_after_ms",
+            message_kwargs={"retry_after_ms": 9000},
+            diagnostics=self.diagnostics,
+        )
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@dataclass(slots=True)
+class StubSTT:
+    handled: list[object] = field(default_factory=list)
+    closed: bool = False
+
+    async def handle_vad_event(self, event: object) -> None:
+        self.handled.append(event)
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def events(self):
+        while True:
+            await asyncio.sleep(60.0)
+            yield STTBackendTranscriptEvent(text="", is_final=False)
+
+
+@dataclass(slots=True)
+class QueueingSTT:
+    handled: list[object] = field(default_factory=list)
+    closed: bool = False
+    queue: asyncio.Queue[object | None] = field(default_factory=asyncio.Queue)
+
+    async def handle_vad_event(self, event: object) -> None:
+        self.handled.append(event)
+
+    async def close(self) -> None:
+        self.closed = True
+        await self.queue.put(None)
+
+    async def emit(self, event: object) -> None:
+        await self.queue.put(event)
+
+    async def events(self):
+        while True:
+            item = await self.queue.get()
+            if item is None:
+                return
+            yield item
+
+
+@dataclass(slots=True)
+class BlockingOverlaySink:
+    events: list[object] = field(default_factory=list)
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+    active_self_metadata: ActiveSelfOverlayMetadata | None = None
+
+    async def emit(self, event: object) -> None:
+        self.events.append(event)
+        self._capture_active_self_metadata(event)
+        self.started.set()
+        await self.release.wait()
+
+    def _capture_active_self_metadata(self, event: object) -> None:
+        if getattr(event, "type", None) != "self_active_update":
+            return
+        utterance_id = getattr(event, "utterance_id", None)
+        if not isinstance(utterance_id, UUID):
+            return
+        self.active_self_metadata = ActiveSelfOverlayMetadata(
+            text=getattr(event, "text", ""),
+            secondary_text=getattr(event, "secondary_text", ""),
+            utterance_id=utterance_id,
+            occupant_key=getattr(event, "occupant_key", ""),
+            update_id=getattr(event, "update_id", None),
+            origin_wall_clock_ms=getattr(event, "origin_wall_clock_ms", None),
+            session_scope=getattr(event, "session_scope", None),
+            source_text_hash=getattr(event, "source_text_hash", None),
+            source_text_len=getattr(event, "source_text_len", None),
+            logical_turn_key=getattr(event, "logical_turn_key", None),
+        )
+
+    def active_self_overlay_metadata(self) -> ActiveSelfOverlayMetadata | None:
+        return self.active_self_metadata
+
+
+@dataclass(slots=True)
+class MetadataOverlaySink:
+    active_self_metadata: ActiveSelfOverlayMetadata | None = None
+    events: list[object] = field(default_factory=list)
+
+    async def emit(self, event: object) -> None:
+        self.events.append(event)
+        event_type = getattr(event, "type", None)
+        if event_type == "self_active_clear":
+            self.active_self_metadata = None
+        elif event_type == "self_transcript_final" and self.active_self_metadata is not None:
+            if self.active_self_metadata.utterance_id == getattr(event, "utterance_id", None):
+                self.active_self_metadata = None
+
+    def active_self_overlay_metadata(self) -> ActiveSelfOverlayMetadata | None:
+        return self.active_self_metadata
+
+
+def active_self_metadata_for_merge(
+    merge_id: UUID,
+    *,
+    text: str,
+    secondary_text: str,
+) -> ActiveSelfOverlayMetadata:
+    return ActiveSelfOverlayMetadata(
+        text=text,
+        secondary_text=secondary_text,
+        utterance_id=merge_id,
+        occupant_key=f"self:{merge_id}",
+        update_id=None,
+        origin_wall_clock_ms=None,
+        session_scope=None,
+        source_text_hash=None,
+        source_text_len=None,
+        logical_turn_key=None,
+    )
+
+
+@dataclass(slots=True)
+class _RuntimeLogSinks:
+    stream_handler: logging.Handler
+    file_handler: logging.Handler
+    log_file: object
+    file_queue_handler: object | None = None
+    file_queue_listener: object | None = None
+    file_queue: object | None = None
+    abandoned_records: int = 0
+    _closed: bool = False
+
+
+def _make_runtime_logging_capture() -> tuple[SessionRuntimeLoggingService, io.StringIO]:
+    stream = io.StringIO()
+    stream_handler = logging.StreamHandler(stream)
+    stream_handler.setFormatter(logging.Formatter("%(message)s"))
+
+    root_logger = logging.getLogger(f"test.translation.runtime.root.{uuid4()}")
+    root_logger.handlers.clear()
+    root_logger.propagate = False
+
+    session_logger = logging.getLogger(f"test.translation.runtime.session.{uuid4()}")
+    session_logger.handlers.clear()
+    session_logger.propagate = False
+
+    runtime_logging = SessionRuntimeLoggingService(
+        root_logger=root_logger,
+        session_logger=session_logger,
+        sinks=_RuntimeLogSinks(
+            stream_handler=stream_handler,
+            file_handler=logging.NullHandler(),
+            log_file="runtime.log",
+        ),
+    )
+    return runtime_logging, stream
+
+
+def _runtime_log_messages(stream: io.StringIO) -> list[str]:
+    return [line for line in stream.getvalue().splitlines() if line]
+
+
+def test_peer_translation_disclosure_enqueues_chatbox_notice_without_context_history() -> None:
+    osc = RecordingOscQueue()
+    harness = compose_translation_test_harness(stt=None, llm=None, osc=osc, clock=FakeClock(12.0))
+    harness.self_runtime.remember_context(
+        "existing context",
+        timestamp=10.0,
+        source_language="ko",
+        target_language="en",
+    )
+    before_history = list(harness.self_runtime.translation_history)
+
+    harness.output_projection.publish_system_disclosure("Peer translation is on")
+
+    assert [message.text for message in osc.messages] == ["Peer translation is on"]
+    assert osc.messages[0].created_at == 12.0
+    assert harness.self_runtime.translation_history == before_history
+
+
+@pytest.mark.asyncio
+async def test_translation_drops_stale_partial_and_keeps_final_order() -> None:
+    harness = compose_translation_test_harness(
+        stt=None, llm=None, osc=RecordingOscQueue(), clock=FakeClock()
+    )
+    buffer = _MergeBuffer(merge_id=uuid4())
+    utterance_id = uuid4()
+
+    harness.self_owner._upsert_merge_part(buffer, utterance_id, "hello world")
+    harness.self_owner._upsert_merge_part(buffer, utterance_id, "hello")
+    harness.self_owner._upsert_merge_part(buffer, utterance_id, "hello world!!!")
+
+    partial = Transcript(utterance_id=utterance_id, text="he", is_final=False, created_at=1.0)
+    final = Transcript(
+        utterance_id=utterance_id, text="hello world!!!", is_final=True, created_at=2.0
+    )
+
+    await harness.dispatch_self_transcript(partial, is_final=False, source="Mic")
+    await harness.dispatch_self_transcript(final, is_final=True, source="Mic")
+    await harness.dispatch_self_transcript(partial, is_final=False, source="Mic")
+
+    bundle = harness.bundle_for(utterance_id)
+    assert buffer.parts == ["hello world!!!"]
+    assert harness.self_owner._merge_text(buffer.parts) == "hello world!!!"
+    assert bundle.final is not None
+    assert bundle.final.text == "hello world!!!"
+    assert bundle.partial is None
+
+
+@pytest.mark.asyncio
+async def test_provider_and_output_owners_start_once_and_deliver_after_repeated_start() -> None:
+    class ObservedSTT(QueueingSTT):
+        event_stream_starts = 0
+
+        async def events(self):
+            self.event_stream_starts += 1
+            async for event in super().events():
+                yield event
+
+    stt = ObservedSTT()
+    osc = RecordingOscQueue()
+    harness = compose_translation_test_harness(stt=stt, llm=None, osc=osc, clock=FakeClock())
+    output = harness.output_runtime
+    providers = harness.local_asr_runtime
+    try:
+        await output.start(auto_flush_chatbox=True)
+        await providers.start()
+        await asyncio.sleep(0)
+        flush_task = output.chatbox_flush_task
+        assert flush_task is not None and not flush_task.done()
+
+        await output.start(auto_flush_chatbox=True)
+        await providers.start()
+        await stt.emit(STTSessionStateEvent(STTSessionState.STREAMING))
+        event = await asyncio.wait_for(harness.ui_events.get(), timeout=1)
+
+        assert event.type == UIEventType.SESSION_STATE_CHANGED
+        assert event.payload == STTSessionState.STREAMING
+        assert stt.event_stream_starts == 1
+        assert output.chatbox_flush_task is flush_task
+        async with asyncio.timeout(1):
+            while not osc.process_due_calls:
+                await asyncio.sleep(0)
+    finally:
+        await harness.stop()
+    assert stt.closed
+    assert output.state == "closed"
+    assert flush_task.done()
+
+
+@pytest.mark.asyncio
+async def test_clear_language_runtime_state_self_preserves_stt_task_and_clears_overlay_preview() -> (
+    None
+):
+    preview_merge_id = uuid4()
+    overlay_sink = MetadataOverlaySink(
+        active_self_metadata=active_self_metadata_for_merge(
+            preview_merge_id,
+            text="preview",
+            secondary_text="secondary",
+        )
+    )
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=None,
+        osc=RecordingOscQueue(),
+        overlay_sink=overlay_sink,
+        clock=FakeClock(),
+    )
+    self_id = uuid4()
+    standalone_id = uuid4()
+    peer_id = uuid4()
+    stt_task = asyncio.create_task(asyncio.sleep(60.0))
+    translation_task = asyncio.create_task(asyncio.sleep(60.0))
+    standalone_translation_task = asyncio.create_task(asyncio.sleep(60.0))
+    finalize_wait_task = asyncio.create_task(asyncio.sleep(60.0))
+    awaiting_vad_timeout_task = asyncio.create_task(asyncio.sleep(60.0))
+    resume_end_timeout_task = asyncio.create_task(asyncio.sleep(60.0))
+    all_tasks = [
+        stt_task,
+        translation_task,
+        standalone_translation_task,
+        finalize_wait_task,
+        awaiting_vad_timeout_task,
+        resume_end_timeout_task,
+    ]
+
+    harness.self_runtime.stt_task = stt_task
+    harness.self_runtime.translation_tasks[self_id] = translation_task
+    harness.self_runtime.translation_tasks[standalone_id] = standalone_translation_task
+    harness.self_runtime.get_or_create_bundle(self_id)
+    harness.self_runtime.get_or_create_bundle(standalone_id)
+    harness.self_runtime.utterance_sources[self_id] = "Mic"
+    harness.self_runtime.utterance_sources[standalone_id] = "Mic"
+    harness.self_runtime.utterance_start_times[self_id] = 1.0
+    harness.self_runtime.utterance_start_times[standalone_id] = 1.5
+    harness.self_runtime.speech_ended_ids.add(self_id)
+    harness.self_runtime.speech_ended_ids.add(standalone_id)
+    harness.self_runtime.translation_history.append(ContextEntry("history", "ko", "en", 1.0))
+    harness.self_runtime.merge_buffer = _MergeBuffer(
+        merge_id=preview_merge_id,
+        utterance_ids=[self_id],
+        finalize_wait_task=finalize_wait_task,
+        awaiting_vad_timeout_task=awaiting_vad_timeout_task,
+        resume_end_timeout_task=resume_end_timeout_task,
+    )
+    harness.peer_owner._record_latency_stage(
+        channel="self",
+        utterance_id=self_id,
+        stage="speech_end",
+        timestamp=1.0,
+        publish_now=False,
+    )
+    harness.peer_owner._record_latency_stage(
+        channel="peer",
+        utterance_id=peer_id,
+        stage="speech_end",
+        timestamp=2.0,
+        publish_now=False,
+    )
+
+    try:
+        await harness.clear_channel_language_state(channel="self")
+
+        assert harness.self_runtime.stt_task is stt_task
+        assert harness.self_owner.runtime.stt_task is stt_task
+        assert harness.self_runtime.translation_tasks == {}
+        assert harness.self_runtime.merge_buffer is None
+        assert standalone_id in harness.self_runtime.utterances
+        assert harness.self_runtime.utterance_sources == {standalone_id: "Mic"}
+        assert harness.self_runtime.utterance_start_times == {}
+        assert harness.self_runtime.speech_ended_ids == set()
+        assert harness.self_runtime.translation_history == [
+            ContextEntry("history", "ko", "en", 1.0)
+        ]
+        assert overlay_sink.active_self_overlay_metadata() is None
+        timeline_keys = harness.translation_diagnostics.snapshot().timeline_keys
+        assert ("self", self_id) not in timeline_keys
+        assert ("peer", peer_id) in timeline_keys
+        assert translation_task.cancelled() is True
+        assert standalone_translation_task.cancelled() is True
+        assert finalize_wait_task.cancelled() is True
+        assert awaiting_vad_timeout_task.cancelled() is True
+        assert resume_end_timeout_task.cancelled() is True
+        assert stt_task.done() is False
+    finally:
+        for task in all_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*all_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_language_change_updates_next_self_translation_request_target() -> None:
+    llm = RecordingLanguageLLM()
+    harness = compose_translation_test_harness(
+        stt=None, llm=llm, osc=RecordingOscQueue(), clock=FakeClock()
+    )
+
+    await harness.translation_requests.translate(
+        DirectTranslationRequest(utterance_id=uuid4(), text="hello")
+    )
+    harness.replace_configuration(target_language="ja")
+    await harness.clear_channel_language_state(channel="self")
+    await harness.translation_requests.translate(
+        DirectTranslationRequest(utterance_id=uuid4(), text="world")
+    )
+
+    assert llm.calls == [
+        {
+            "text": "hello",
+            "source_language": "ko",
+            "target_language": "en",
+            "context": "",
+        },
+        {
+            "text": "world",
+            "source_language": "ko",
+            "target_language": "ja",
+            "context": "",
+        },
+    ]
+
+
+def test_send_stt_connected_notification_respects_eligibility_and_interval() -> None:
+    clock = FakeClock()
+    osc = RecordingOscQueue(immediate_result=True)
+    harness = compose_translation_test_harness(stt=None, llm=None, osc=osc, clock=clock)
+
+    harness.self_owner._send_stt_connected_notification()
+    assert osc.immediate_messages == []
+
+    harness.self_owner.mark_promo_eligible()
+    harness.self_owner._send_stt_connected_notification()
+    assert osc.immediate_messages == ["PuriPuly ON!"]
+    assert harness.self_owner._last_promo_time == 0.0
+
+    clock.advance(30.0)
+    harness.self_owner.mark_promo_eligible()
+    harness.self_owner._send_stt_connected_notification()
+    assert osc.immediate_messages == ["PuriPuly ON!"]
+
+    clock.advance(301.0)
+    harness.self_owner.mark_promo_eligible()
+    harness.self_owner._send_stt_connected_notification()
+    assert osc.immediate_messages == ["PuriPuly ON!", "PuriPuly ON!"]
+
+
+def test_send_stt_connected_notification_does_not_update_time_on_failed_send() -> None:
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=None,
+        osc=RecordingOscQueue(immediate_result=False),
+        clock=FakeClock(),
+    )
+
+    harness.self_owner.mark_promo_eligible()
+    harness.self_owner._send_stt_connected_notification()
+    assert harness.self_owner._last_promo_time is None
+
+
+@pytest.mark.asyncio
+async def test_handle_stt_event_logs_basic_channel_state_breadcrumb() -> None:
+    runtime_logging, log_stream = _make_runtime_logging_capture()
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=None,
+        osc=RecordingOscQueue(),
+        clock=FakeClock(),
+        runtime_logging=runtime_logging,
+    )
+
+    try:
+        await harness.dispatch_stt_event(
+            STTSessionStateEvent(state=STTSessionState.STREAMING, channel="peer")
+        )
+
+        event = await harness.ui_events.get()
+        assert event.type == UIEventType.SESSION_STATE_CHANGED
+        assert event.channel == "peer"
+        assert "[Translation] STT state: channel=peer state=STREAMING" in _runtime_log_messages(
+            log_stream
+        )
+    finally:
+        runtime_logging.close()
+
+
+@pytest.mark.asyncio
+async def test_publish_chatbox_candidate_after_translation_stop_skips_without_user_text() -> None:
+    osc = RecordingOscQueue()
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=None,
+        osc=osc,
+        clock=FakeClock(),
+    )
+    utterance_id = uuid4()
+
+    await harness.start(auto_flush_osc=True)
+    await harness.stop()
+    await harness.output_projection.publish_chatbox(
+        ChatboxProjection(
+            utterance_id=utterance_id,
+            channel="self",
+            transcript_text="closed secret transcript",
+            translation_text="closed secret translation",
+            include_source=True,
+            source=None,
+        )
+    )
+
+    assert osc.messages == []
+    assert harness.ui_events.empty()
+    decision = harness.output_runtime.routing_decisions[-1]
+    assert decision.decision == "skipped"
+    assert decision.reason == "output_runtime_closed"
+    assert "closed secret transcript" not in repr(decision)
+    assert "closed secret translation" not in repr(decision)
+
+
+@pytest.mark.asyncio
+async def test_handle_stt_event_routes_non_low_latency_events() -> None:
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=None,
+        osc=RecordingOscQueue(),
+        clock=FakeClock(),
+    )
+    harness.self_owner.mark_promo_eligible()
+    utterance_id = uuid4()
+    partial = Transcript(utterance_id=utterance_id, text="hel", is_final=False, created_at=1.0)
+    final = Transcript(utterance_id=utterance_id, text="hello", is_final=True, created_at=2.0)
+
+    await harness.dispatch_stt_event(STTSessionStateEvent(state=STTSessionState.STREAMING))
+    await harness.dispatch_stt_event(STTErrorEvent(message="boom"))
+    await harness.dispatch_stt_event(STTPartialEvent(utterance_id=utterance_id, transcript=partial))
+    await harness.dispatch_stt_event(STTFinalEvent(utterance_id=utterance_id, transcript=final))
+
+    events = [await harness.ui_events.get() for _ in range(5)]
+    assert [event.type for event in events] == [
+        UIEventType.SESSION_STATE_CHANGED,
+        UIEventType.ERROR,
+        UIEventType.TRANSCRIPT_PARTIAL,
+        UIEventType.TRANSCRIPT_FINAL,
+        UIEventType.OSC_SENT,
+    ]
+    assert events[1].runtime_log_handled is False
+    assert harness.osc.immediate_messages == ["PuriPuly ON!"]
+    assert len(harness.osc.messages) == 1
+    assert harness.osc.messages[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_handle_stt_event_ignores_partial_in_low_latency_mode() -> None:
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=None,
+        osc=RecordingOscQueue(),
+        clock=FakeClock(),
+        low_latency_mode=True,
+    )
+    utterance_id = uuid4()
+    partial = Transcript(utterance_id=utterance_id, text="hel", is_final=False, created_at=1.0)
+
+    await harness.dispatch_stt_event(STTPartialEvent(utterance_id=utterance_id, transcript=partial))
+
+    assert harness.ui_events.empty()
+
+
+@pytest.mark.asyncio
+async def test_translate_and_enqueue_emits_error_and_fallback_transcript() -> None:
+    llm = StubLLM(should_fail=True)
+    runtime_logging, log_stream = _make_runtime_logging_capture()
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=llm,
+        osc=RecordingOscQueue(),
+        clock=FakeClock(),
+        fallback_transcript_only=True,
+        runtime_logging=runtime_logging,
+    )
+    utterance_id = uuid4()
+
+    try:
+        await harness.process_translation(utterance_id, "hello")
+
+        events = [await harness.ui_events.get() for _ in range(2)]
+        assert [event.type for event in events] == [UIEventType.ERROR, UIEventType.OSC_SENT]
+        assert events[0].runtime_log_handled is True
+        assert harness.osc.messages[0].text == "hello"
+        assert "llm failed" not in "\n".join(_runtime_log_messages(log_stream))
+    finally:
+        runtime_logging.close()
+
+
+@pytest.mark.asyncio
+async def test_peer_stt_failure_surfaces_status_without_conversation_publication() -> None:
+    harness = compose_translation_test_harness(
+        stt=None, llm=None, osc=RecordingOscQueue(), clock=FakeClock()
+    )
+
+    await harness.dispatch_stt_event(
+        STTSessionStateEvent(
+            state=STTSessionState.DISCONNECTED,
+            channel="peer",
+        )
+    )
+    status = await harness.ui_events.get()
+    decisions_before_error = len(harness.output_runtime.routing_decisions)
+
+    await harness.dispatch_stt_event(
+        STTErrorEvent(message="session failed", channel="peer", runtime_log_handled=True)
+    )
+
+    assert status.type == UIEventType.SESSION_STATE_CHANGED
+    assert status.payload is STTSessionState.DISCONNECTED
+    assert harness.ui_events.empty()
+    assert len(harness.output_runtime.routing_decisions) == decisions_before_error
+
+
+@pytest.mark.asyncio
+async def test_peer_stt_event_loop_failure_without_runtime_logging_is_safe(
+    caplog,
+) -> None:
+    harness = compose_translation_test_harness(
+        stt=None, llm=None, osc=RecordingOscQueue(), clock=FakeClock()
+    )
+
+    with caplog.at_level(logging.ERROR, logger="puripuly_heart.core.orchestrator.translation"):
+        await harness.dispatch_stt_failure(
+            RuntimeError("loop boom"),
+            channel="peer",
+        )
+
+    assert "loop boom" not in "\n".join(caplog.messages)
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_peer_stt_event_loop_failure_with_runtime_logging_is_safe() -> None:
+    raw_detail = "stt event loop socket failed token=translation-stt-secret-123"
+    runtime_logging, log_stream = _make_runtime_logging_capture()
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=None,
+        osc=RecordingOscQueue(),
+        clock=FakeClock(),
+        runtime_logging=runtime_logging,
+    )
+
+    try:
+        await harness.dispatch_stt_failure(
+            ConnectionError(raw_detail),
+            channel="peer",
+        )
+
+        runtime_log = "\n".join(_runtime_log_messages(log_stream))
+        evidence = runtime_logging.diagnostic_history({})["records"]
+        assert any(item["code"] == "stt.network" and item["channel"] == "peer" for item in evidence)
+        assert raw_detail not in runtime_log
+        assert "translation-stt-secret-123" not in runtime_log
+        assert "Traceback (most recent call last):" not in runtime_log
+    finally:
+        runtime_logging.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_stt_event_loop_exception_with_runtime_logging_uses_safe_stt_report() -> None:
+    raw_detail = "stt owner task socket failed token=translation-stt-secret-456"
+    runtime_logging, log_stream = _make_runtime_logging_capture()
+    harness = compose_translation_test_harness(
+        stt=None,
+        llm=None,
+        osc=RecordingOscQueue(),
+        clock=FakeClock(),
+        runtime_logging=runtime_logging,
+    )
+
+    try:
+        await harness.dispatch_stt_failure(ConnectionError(raw_detail))
+
+        runtime_log = "\n".join(_runtime_log_messages(log_stream))
+        evidence = runtime_logging.diagnostic_history({})["records"]
+        assert any(item["code"] == "stt.network" for item in evidence)
+        assert raw_detail not in runtime_log
+        assert "translation-stt-secret-456" not in runtime_log
+        assert "Traceback (most recent call last):" not in runtime_log
+    finally:
+        runtime_logging.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_vad_event_speech_end_tracks_timing_and_forwards_to_stt() -> None:
+    stt = StubSTT()
+    clock = FakeClock(_now=10.0)
+    harness = compose_translation_test_harness(
+        stt=stt, llm=None, osc=RecordingOscQueue(), clock=clock, low_latency_mode=True
+    )
+    utterance_id = uuid4()
+
+    await harness.self_owner.handle_vad_event(SpeechEnd(utterance_id))
+
+    assert harness.osc.typing == [True]
+    assert harness.self_runtime.utterance_start_times[utterance_id] == 10.0
+    assert utterance_id in harness.self_runtime.speech_ended_ids
+    assert stt.handled == [SpeechEnd(utterance_id)]
+
+
+@pytest.mark.asyncio
+async def test_blocked_translated_sentence_overlay_does_not_block_stt_or_translation() -> None:
+    stt = StubSTT()
+    llm = StubLLM()
+    sink = BlockingOverlaySink()
+    harness = compose_translation_test_harness(
+        stt=stt,
+        llm=llm,
+        osc=RecordingOscQueue(),
+        overlay_sink=sink,
+        clock=FakeClock(_now=10.0),
+        low_latency_mode=True,
+        low_latency_finalize_wait_ms=0,
+    )
+    source_id = uuid4()
+    source = asyncio.create_task(
+        harness.self_owner.handle_stt_event(
+            STTFinalEvent(
+                source_id, Transcript(utterance_id=source_id, text="hello live.", is_final=True)
+            )
+        )
+    )
+    try:
+        await asyncio.wait_for(sink.started.wait(), timeout=1.0)
+        assert sink.events[0].text == "hello live."
+        assert sink.events[0].secondary_text == "T:hello live."
+        assert not sink.events[0].caption_source_closed
+        chunk = SpeechChunk(uuid4(), chunk=np.zeros((1,), dtype=np.float32))
+        await asyncio.wait_for(harness.self_owner.handle_vad_event(chunk), timeout=1.0)
+        assert stt.handled == [chunk]
+        await asyncio.wait_for(source, timeout=1.0)
+        await asyncio.wait_for(
+            harness.self_owner.handle_stt_event(
+                STTFinalEvent(
+                    source_id,
+                    Transcript(
+                        utterance_id=source_id,
+                        text="hello live. again",
+                        is_final=True,
+                    ),
+                )
+            ),
+            timeout=1.0,
+        )
+        async with asyncio.timeout(1.0):
+            while not any(
+                "T:hello live. again" in message.text for message in harness.osc.messages
+            ):
+                await asyncio.sleep(0)
+        assert [text for _, text, _ in llm.calls] == ["hello live.", "hello live. again"]
+        await asyncio.wait_for(
+            harness.self_owner.handle_vad_event(SpeechEnd(source_id)), timeout=1.0
+        )
+        await asyncio.wait_for(harness.translation_turns.wait_for_idle(), timeout=1.0)
+        assert harness.self_owner.merge_buffer is None
+        assert len(sink.events) == 1
+        assert not sink.release.is_set()
+    finally:
+        sink.release.set()
+        await source
+        async with asyncio.timeout(1.0):
+            while harness.output_runtime.has_active_overlay_deliveries:
+                await asyncio.sleep(0)
+        await harness.stop()
+
+
+@pytest.mark.asyncio
+async def test_submit_text_validates_input_and_enqueues_without_llm() -> None:
+    harness = compose_translation_test_harness(
+        stt=None, llm=None, osc=RecordingOscQueue(), clock=FakeClock()
+    )
+
+    with pytest.raises(ValueError, match="text must be non-empty"):
+        await harness.self_owner.submit_text("   ")
+
+    admission = await harness.self_owner.submit_text("hello", source="You")
+    utterance_id = admission.turn_id
+    events = [await harness.ui_events.get(), await harness.ui_events.get()]
+    assert [event.type for event in events] == [UIEventType.TRANSCRIPT_FINAL, UIEventType.OSC_SENT]
+    assert harness.osc.messages[-1].utterance_id == utterance_id
+    assert harness.osc.messages[-1].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_submit_text_clipboard_source_uses_manual_fallback_without_llm() -> None:
+    osc = RecordingOscQueue()
+    harness = compose_translation_test_harness(stt=None, llm=None, osc=osc, clock=FakeClock())
+    harness.replace_configuration(translation_enabled=False)
+
+    admission = await harness.self_owner.submit_text("clipboard fallback", source="Clipboard")
+    utterance_id = admission.turn_id
+    events = [await harness.ui_events.get(), await harness.ui_events.get()]
+
+    assert [event.type for event in events] == [UIEventType.TRANSCRIPT_FINAL, UIEventType.OSC_SENT]
+    assert events[0].source == "Clipboard"
+    assert osc.messages[-1].utterance_id == utterance_id
+    assert osc.messages[-1].text == "clipboard fallback"

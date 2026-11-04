@@ -1,0 +1,714 @@
+from __future__ import annotations
+
+import copy
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+
+from puripuly_heart.app.ports.desktop_overlay import DesktopOverlayRuntimeEffectsPort
+from puripuly_heart.app.ports.overlay_calibration import (
+    OverlayCalibrationRuntimeEffectsPort,
+)
+from puripuly_heart.app.ports.settings_runtime_effects import (
+    SettingsRuntimeState,
+    SettingsRuntimeTransition,
+)
+from puripuly_heart.app.ports.ui_presentation import UiPresentationPort
+from puripuly_heart.app.services.application_runtime_logging import (
+    ApplicationRuntimeLoggingOwner,
+)
+from puripuly_heart.app.services.canonical_settings_persistence import SettingsOwner
+from puripuly_heart.app.services.clipboard_auto_translation import (
+    ClipboardAutoTranslationOwner,
+)
+from puripuly_heart.app.services.github_star_prompt import GithubStarPromptOwner
+from puripuly_heart.app.services.gpu_runtime_interaction import GpuRuntimeInteractionOwner
+from puripuly_heart.app.services.local_asr.local_asr_diagnostics import LocalASRDiagnosticsOwner
+from puripuly_heart.app.services.osc.control_runtime import OscControlIntegrationOwner
+from puripuly_heart.app.services.overlay.overlay_application import (
+    OverlayApplicationOwner,
+    OverlayApplicationState,
+)
+from puripuly_heart.app.services.provider.provider_runtime_apply import (
+    ProviderRuntimeConvergenceError,
+)
+from puripuly_heart.app.wiring.wiring_audio_test import AudioTestRuntime
+from puripuly_heart.app.wiring.wiring_peer_application import PeerApplicationRuntime
+from puripuly_heart.app.wiring.wiring_provider_runtime import (
+    ProviderRuntimeSignatures,
+    project_translation_runtime_settings_from_vnext,
+)
+from puripuly_heart.app.wiring.wiring_runtime_pipeline import RuntimePipelineHandle
+from puripuly_heart.app.wiring.wiring_stt_factory import (
+    build_peer_capture_session_config_from_vnext,
+    build_peer_stt_runtime_signature_from_vnext,
+    build_self_capture_session_config_from_vnext,
+    build_self_capture_vad_signature_from_vnext,
+    build_self_stt_runtime_signature_from_vnext,
+)
+from puripuly_heart.app.wiring.wiring_translation_runtime_configuration import (
+    replace_translation_runtime_settings,
+)
+from puripuly_heart.config.prompts import resolve_system_prompt
+from puripuly_heart.config.provider_values import LLMProviderName
+from puripuly_heart.config.resolved import OVERLAY_TARGET_DESKTOP
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.config.translation_values import (
+    MANAGED_GEMMA_MODELS,
+    TranslationModel,
+    provider_llm_for_translation,
+)
+from puripuly_heart.core.local_asr.local_asr_provisioning import LocalASRProvisioningPort
+from puripuly_heart.core.orchestrator.configuration import (
+    TranslationRuntimeConfigChange,
+)
+from puripuly_heart.core.runtime.self_capture import SelfCaptureSessionOwner
+
+from .settings_projection import SettingsProjectionOwner
+
+
+@dataclass(slots=True)
+class SettingsRuntimeEffectsState:
+    audio_test_signature: object | None = None
+
+
+def managed_gemma_prefix_refresh_required(
+    transition: SettingsRuntimeTransition[object],
+) -> bool:
+    settings = transition.settings
+    model = settings.intent.translation.model
+    if model not in MANAGED_GEMMA_MODELS:
+        return False
+    previous = transition.previous_settings
+    return bool(
+        previous is None
+        or previous.intent.translation.model != model
+        or transition.source_language_changed
+        or transition.target_language_changed
+        or resolve_system_prompt(previous.intent.prompts.system_prompt_override)
+        != resolve_system_prompt(settings.intent.prompts.system_prompt_override)
+    )
+
+
+async def refresh_managed_gemma_prefix(
+    transition: SettingsRuntimeTransition[object],
+    *,
+    rebuild: Callable[[], Awaitable[bool]],
+) -> None:
+    if not managed_gemma_prefix_refresh_required(transition):
+        return
+    if not await rebuild():
+        raise RuntimeError("managed Gemma prefix rebuild failed")
+
+
+class SettingsRuntimeEffectsAdapter:
+    def __init__(
+        self,
+        *,
+        state: SettingsRuntimeEffectsState,
+        settings: SettingsOwner,
+        presentation: UiPresentationPort,
+        runtime_logging: ApplicationRuntimeLoggingOwner,
+        asr_diagnostics: LocalASRDiagnosticsOwner,
+        pipeline: RuntimePipelineHandle,
+        runtime_signatures: ProviderRuntimeSignatures,
+        audio_test: AudioTestRuntime,
+        clipboard: ClipboardAutoTranslationOwner,
+        provisioning: LocalASRProvisioningPort,
+        gpu: GpuRuntimeInteractionOwner,
+        vrc_mic_sync: OscControlIntegrationOwner,
+        projection: SettingsProjectionOwner,
+        github_prompt: Callable[[], GithubStarPromptOwner],
+        desktop_overlay: DesktopOverlayRuntimeEffectsPort[object],
+        calibration: OverlayCalibrationRuntimeEffectsPort,
+        overlay: OverlayApplicationOwner,
+        overlay_state_provider: Callable[..., OverlayApplicationState],
+        peer: PeerApplicationRuntime,
+        self_capture: Callable[[], SelfCaptureSessionOwner | None],
+        clear_local_pending: Callable[[], None],
+        replace_self_stt: Callable[[bool], Awaitable[None]],
+        rebuild_managed_gemma: Callable[[], Awaitable[bool]],
+    ) -> None:
+        self._state = state
+        self._settings = settings
+        self._presentation = presentation
+        self._runtime_logging = runtime_logging
+        self._asr_diagnostics = asr_diagnostics
+        self._pipeline = pipeline
+        self._runtime_signatures = runtime_signatures
+        self._audio_test = audio_test
+        self._clipboard = clipboard
+        self._provisioning = provisioning
+        self._gpu = gpu
+        self._vrc_mic_sync = vrc_mic_sync
+        self._projection = projection
+        self._github_prompt = github_prompt
+        self._desktop_overlay = desktop_overlay
+        self._calibration = calibration
+        self._overlay = overlay
+        self._overlay_state_provider = overlay_state_provider
+        self._peer = peer
+        self._self_capture = self_capture
+        self._clear_local_pending = clear_local_pending
+        self._replace_self_stt = replace_self_stt
+        self._rebuild_managed_gemma = rebuild_managed_gemma
+
+    async def preserve_before_replace(self, settings: AppSettingsVNext) -> AppSettingsVNext:
+        preserved = await self._github_prompt().preserve_before_settings_replace(settings)
+        return settings if preserved is None else preserved
+
+    def capture_runtime_signatures(self) -> None:
+        settings = self._settings.canonical
+        if settings is None:
+            return
+        self._runtime_signatures.capture_peer_before_canonical_mutation(
+            settings,
+            canonical=self._canonical_settings(settings),
+            peer=self._peer.owner,
+        )
+
+    async def prepare(
+        self,
+        current_settings: AppSettingsVNext | None,
+        next_settings: AppSettingsVNext,
+    ) -> SettingsRuntimeTransition[AppSettingsVNext]:
+        previous_audio_test_signature = (
+            self._state.audio_test_signature or self._audio_test.audio_signature(current_settings)
+        )
+        next_audio_test_signature = self._audio_test.audio_signature(next_settings)
+        if (
+            previous_audio_test_signature is not None
+            and previous_audio_test_signature != next_audio_test_signature
+        ):
+            await self._audio_test.stop()
+
+        previous_locale = self._presentation.current_locale()
+        previous_overlay_enabled = self._settings.overlay_enabled()
+        previous_settings = (
+            copy.deepcopy(current_settings) if current_settings is not None else None
+        )
+        previous_settings_overlay_target = self._overlay.target_for_state(
+            self._overlay_state_provider(
+                None if current_settings is None else self._canonical_settings(current_settings),
+                overlay_enabled=self._settings.overlay_enabled(),
+            )
+        )
+        next_overlay_target = self._overlay.target_for_state(
+            self._overlay_state_provider(
+                self._canonical_settings(next_settings),
+                overlay_enabled=self._settings.overlay_enabled(),
+            )
+        )
+        if self._overlay.snapshot.fallback_active:
+            previous_overlay_target = previous_settings_overlay_target
+        else:
+            previous_overlay_target = self._overlay.previous_target_for_apply()
+        if next_overlay_target == OVERLAY_TARGET_DESKTOP:
+            self._overlay.clear_fallback()
+        if (
+            previous_overlay_target != next_overlay_target
+            and previous_overlay_enabled
+            and self._settings.overlay_enabled()
+            and self._overlay.runtime_is_active()
+        ):
+            self._runtime_logging.emit_basic(
+                "[Overlay] Target changed while running; stopping current overlay before switch"
+            )
+            self._settings.set_overlay_enabled(False)
+            self._overlay.clear_fallback()
+        desktop_runtime_controls = tuple(
+            self._desktop_overlay.prepare_settings_update(
+                previous_settings,
+                next_settings,
+            )
+        )
+        peer = self._peer.owner
+        previous_peer_translation_enabled = (
+            peer.last_intent_enabled
+            if peer.last_intent_enabled is not None
+            else (
+                self._settings.peer_translation_enabled() if current_settings is not None else False
+            )
+        )
+        previous_peer_activation_requested = (
+            peer.last_activation_requested
+            if peer.last_activation_requested is not None
+            else (
+                peer.activation_requested(
+                    intent_enabled=self._settings.peer_translation_enabled(),
+                    eula_accepted=current_settings.state.peer_translation.eula_accepted,
+                )
+                if current_settings is not None
+                else False
+            )
+        )
+        previous_self_signature = self._runtime_signatures.last_self_runtime
+        previous_peer_signature = peer.last_runtime_signature
+        output_projection = self._pipeline.translation_output_projection
+        config_owner = self._pipeline.translation_runtime_configuration
+        previous_configuration = config_owner.snapshot().value if config_owner is not None else None
+        previous_source_language = (
+            previous_configuration.source_language if previous_configuration is not None else None
+        )
+        previous_target_language = (
+            previous_configuration.target_language if previous_configuration is not None else None
+        )
+        previous_peer_source_language = (
+            previous_configuration.peer_source_language
+            if previous_configuration is not None
+            else None
+        )
+        previous_peer_target_language = (
+            previous_configuration.peer_target_language
+            if previous_configuration is not None
+            else None
+        )
+        previous_peer_source_mode = (
+            previous_settings.intent.languages.peer_source_mode
+            if previous_settings is not None
+            else None
+        )
+        previous_effective_peer_source = (
+            self._effective_peer_language(
+                previous_source_language,
+                previous_peer_source_language,
+            )
+            if previous_source_language is not None and previous_peer_source_language is not None
+            else None
+        )
+        previous_effective_peer_target = (
+            self._effective_peer_language(
+                previous_target_language,
+                previous_peer_target_language,
+            )
+            if previous_target_language is not None and previous_peer_target_language is not None
+            else None
+        )
+        source_language_changed = (
+            previous_source_language is not None
+            and previous_source_language != next_settings.intent.languages.source_language
+        )
+        target_language_changed = (
+            previous_target_language is not None
+            and previous_target_language != next_settings.intent.languages.target_language
+        )
+        effective_peer_source_changed = (
+            previous_effective_peer_source is not None
+            and previous_effective_peer_source
+            != self._effective_peer_language(
+                next_settings.intent.languages.source_language,
+                next_settings.intent.languages.peer_source_language,
+            )
+        )
+        effective_peer_target_changed = (
+            previous_effective_peer_target is not None
+            and previous_effective_peer_target
+            != self._effective_peer_language(
+                next_settings.intent.languages.target_language,
+                next_settings.intent.languages.peer_target_language,
+            )
+        )
+        peer_source_language_changed = (
+            previous_peer_source_language is not None
+            and previous_peer_source_language != next_settings.intent.languages.peer_source_language
+        )
+        peer_target_language_changed = (
+            previous_peer_target_language is not None
+            and previous_peer_target_language != next_settings.intent.languages.peer_target_language
+        )
+        peer_source_mode_changed = (
+            previous_peer_source_mode is not None
+            and previous_peer_source_mode != next_settings.intent.languages.peer_source_mode
+        )
+        if source_language_changed or target_language_changed:
+            presenter = self._overlay.current_presenter()
+            bridge = self._overlay.current_bridge()
+            self._runtime_logging.emit_basic(
+                "[Settings] Applying languages: "
+                f"source={previous_source_language}->{next_settings.intent.languages.source_language} "
+                f"target={previous_target_language}->{next_settings.intent.languages.target_language}"
+            )
+            self._runtime_logging.emit_diagnostic(
+                "[Settings] Language apply detail: "
+                f"overlay_state={self._overlay.snapshot.state} "
+                f"presenter_attached={presenter is not None} "
+                f"bridge_attached={bridge is not None} "
+                "overlay_sink_matches_presenter="
+                f"{output_projection is not None and presenter is not None and output_projection.overlay_sink is presenter}"
+            )
+        return SettingsRuntimeTransition(
+            settings=next_settings,
+            previous_settings=previous_settings,
+            previous_locale=previous_locale,
+            previous_overlay_enabled=previous_overlay_enabled,
+            previous_self_signature=previous_self_signature,
+            previous_peer_signature=previous_peer_signature,
+            previous_peer_translation_enabled=previous_peer_translation_enabled,
+            previous_peer_activation_requested=previous_peer_activation_requested,
+            source_language_changed=source_language_changed,
+            target_language_changed=target_language_changed,
+            effective_peer_source_changed=effective_peer_source_changed,
+            effective_peer_target_changed=effective_peer_target_changed,
+            peer_source_language_changed=peer_source_language_changed,
+            peer_target_language_changed=peer_target_language_changed,
+            peer_source_mode_changed=peer_source_mode_changed,
+            desktop_runtime_controls=desktop_runtime_controls,
+        )
+
+    def activate_before_persist(
+        self,
+        transition: SettingsRuntimeTransition[object],
+    ) -> None:
+        settings = transition.settings
+        self._state.audio_test_signature = self._audio_test.audio_signature(settings)
+        self._calibration.sync_from_settings(settings)
+        self._desktop_overlay.sync_from_settings(settings)
+
+    async def prepare_overlay_persistence(
+        self,
+        previous_settings: AppSettingsVNext,
+        next_settings: AppSettingsVNext,
+    ) -> None:
+        await self._desktop_overlay.prepare_persistence(
+            previous_settings,
+            next_settings,
+        )
+
+    def apply_activation_notice(self, settings: AppSettingsVNext) -> None:
+        output_runtime = self._pipeline.output_runtime
+        if output_runtime is not None:
+            output_runtime.activation_notice_enabled = settings.intent.osc.activation_notice_enabled
+
+    def restore_memory(self, settings: AppSettingsVNext) -> None:
+        restored_settings = copy.deepcopy(settings)
+        self.apply_activation_notice(restored_settings)
+        self._calibration.sync_from_settings(restored_settings)
+        config_owner = self._pipeline.translation_runtime_configuration
+        if config_owner is not None:
+            peer_enabled = self._peer.owner.effective_enabled(self._peer.state_for(None))
+            replace_translation_runtime_settings(
+                config_owner,
+                project_translation_runtime_settings_from_vnext(
+                    self._canonical_settings(restored_settings)
+                ),
+                peer_translation_enabled=peer_enabled,
+                integrated_context_enabled=peer_enabled,
+            )
+        self._sync_stt_signatures(restored_settings)
+
+    def sync_stt_signatures(self, settings: AppSettingsVNext) -> None:
+        self._sync_stt_signatures(settings)
+
+    def _self_runtime_converged(self, settings: AppSettingsVNext) -> bool | None:
+        capture_provider = getattr(self, "_self_capture", None)
+        capture = capture_provider() if callable(capture_provider) else None
+        if capture is None:
+            return None
+        expected = build_self_capture_session_config_from_vnext(self._canonical_settings(settings))
+        if not capture.snapshot.desired_active:
+            runtime = getattr(self._pipeline, "local_asr_runtime", None)
+            channel = runtime.snapshot.channel_for("self") if runtime is not None else None
+            return (
+                False
+                if (
+                    capture.snapshot.failure_reason is not None
+                    and (channel is None or channel.provider_id != expected.provider_id)
+                )
+                else None
+            )
+        local_asr_runtime = getattr(self._pipeline, "local_asr_runtime", None)
+        if local_asr_runtime is None:
+            return False
+        snapshot = capture.snapshot
+        channel = local_asr_runtime.snapshot.channel_for("self")
+        provider_status = getattr(snapshot.provider_status, "value", snapshot.provider_status)
+        return bool(
+            channel.provider_id == expected.provider_id
+            and channel.has_resources
+            and not channel.pending_handoff
+            and channel.phase in {"dormant", "ready", "running"}
+            and snapshot.provider_id == expected.provider_id
+            and snapshot.runtime_signature == expected.runtime_signature
+            and provider_status == "ready"
+            and snapshot.failure_reason is None
+            and snapshot.desired_active
+            == (snapshot.effective_active if snapshot.desired_active else False)
+        )
+
+    def _peer_runtime_converged(self, settings: AppSettingsVNext) -> bool | None:
+        owner = self._peer.owner
+        state = self._peer.state_for(None)
+        config = build_peer_capture_session_config_from_vnext(self._canonical_settings(settings))
+        capture_convergence = owner.capture_runtime_convergence(config, state)
+        if capture_convergence is not True:
+            return capture_convergence
+        local_asr_runtime = self._pipeline.local_asr_runtime
+        if local_asr_runtime is None:
+            return False
+        channel = local_asr_runtime.snapshot.channel_for("peer")
+        return bool(
+            channel.provider_id == config.provider_id
+            and channel.has_resources
+            and channel.provider_live
+            and not channel.pending_handoff
+            and channel.phase in {"dormant", "ready", "running"}
+        )
+
+    def state(self, settings: AppSettingsVNext) -> SettingsRuntimeState:
+        local_asr_runtime = self._pipeline.local_asr_runtime
+        llm_runtime = self._pipeline.llm_runtime
+        self_capture = self._self_capture()
+        return SettingsRuntimeState(
+            runtime_available=(local_asr_runtime is not None and llm_runtime is not None),
+            self_stt_desired=bool(
+                self_capture is not None and self_capture.snapshot.desired_active
+            ),
+            self_stt_available=(
+                local_asr_runtime is not None
+                and local_asr_runtime.snapshot.channel_for("self").provider_id is not None
+            ),
+            peer_stt_desired=self._peer.owner.desired_active(self._peer.state_for(None)),
+            peer_stt_available=(
+                local_asr_runtime is not None
+                and local_asr_runtime.snapshot.channel_for("peer").provider_id is not None
+            ),
+            qwen_llm_desired=(
+                settings.intent.translation.model != TranslationModel.CUSTOM_HTTP.value
+                and provider_llm_for_translation(
+                    settings.intent.translation.model,
+                    settings.intent.translation.connection,
+                )
+                == LLMProviderName.QWEN.value
+            ),
+            llm_available=llm_runtime is not None and llm_runtime.provider is not None,
+        )
+
+    async def apply_after_persist(
+        self,
+        transition: SettingsRuntimeTransition[object],
+        *,
+        strict_runtime_errors: bool,
+        reload_settings_view: bool,
+        rebuild_managed_gemma: bool = True,
+    ) -> None:
+        settings = transition.settings
+        self.apply_activation_notice(settings)
+        await self._desktop_overlay.apply_controls(transition.desktop_runtime_controls)
+        previous_strict_runtime_errors = self._clipboard.strict_runtime_errors
+        self._clipboard.strict_runtime_errors = strict_runtime_errors
+        try:
+            await self._clipboard.sync(
+                enabled=settings.intent.clipboard.auto_translate_enabled,
+            )
+        finally:
+            self._clipboard.strict_runtime_errors = previous_strict_runtime_errors
+        await self._provisioning.inspect_gpu(
+            explicit_intent=self._gpu.state_provider().selected_provider_requires_model,
+        )
+        self._clear_local_pending()
+
+        config_owner = self._pipeline.translation_runtime_configuration
+        config_change: TranslationRuntimeConfigChange | None = None
+        if config_owner is not None:
+            peer_enabled = self._peer.owner.effective_enabled(self._peer.state_for(None))
+            config_change = replace_translation_runtime_settings(
+                config_owner,
+                project_translation_runtime_settings_from_vnext(self._canonical_settings(settings)),
+                peer_translation_enabled=peer_enabled,
+                integrated_context_enabled=peer_enabled,
+            )
+
+        if config_change is not None and config_change.self_language_changed:
+            await self._clear_language_runtime_state(
+                "self",
+                strict_runtime_errors=strict_runtime_errors,
+            )
+        if config_change is not None and config_change.peer_language_changed:
+            await self._clear_language_runtime_state(
+                "peer",
+                strict_runtime_errors=strict_runtime_errors,
+            )
+
+        if rebuild_managed_gemma:
+            await refresh_managed_gemma_prefix(
+                transition,
+                rebuild=self._rebuild_managed_gemma,
+            )
+
+        presenter = self._overlay.current_presenter()
+        if presenter is not None:
+            await presenter.update_display_preferences(
+                show_translation=settings.intent.overlay.show_translation,
+                show_peer_original=settings.intent.overlay.show_peer_original,
+            )
+
+        if transition.previous_overlay_enabled != self._settings.overlay_enabled():
+            await self._overlay.set_enabled(self._settings.overlay_enabled())
+
+        configure_connection = getattr(self._vrc_mic_sync, "configure_connection", None)
+        if callable(configure_connection):
+            await configure_connection(
+                mode=settings.intent.osc.connection_mode,
+                send_port=settings.intent.osc.send_port or settings.intent.osc.port,
+                receive_port=settings.intent.osc.receive_port,
+                host=settings.intent.osc.host,
+            )
+
+        if self._vrc_mic_sync.last_enabled != settings.intent.osc.vrc_mic_intercept:
+            self._runtime_logging.emit_diagnostic(
+                f"[Settings] VRC mic sync enabled: {settings.intent.osc.vrc_mic_intercept}"
+            )
+            await self._vrc_mic_sync.configure(enabled=settings.intent.osc.vrc_mic_intercept)
+
+        canonical = self._canonical_settings(settings)
+        current_self_signature = build_self_stt_runtime_signature_from_vnext(canonical)
+        self_runtime_converged = self._self_runtime_converged(canonical)
+        peer_runtime_converged = self._peer_runtime_converged(canonical)
+        current_peer_signature = build_peer_stt_runtime_signature_from_vnext(canonical)
+        next_peer_activation_requested = self._peer.owner.activation_requested(
+            intent_enabled=self._settings.peer_translation_enabled(),
+            eula_accepted=settings.state.peer_translation.eula_accepted,
+        )
+        should_restart_stt = (
+            transition.previous_self_signature is not None
+            and current_self_signature != transition.previous_self_signature
+        ) or self_runtime_converged is False
+        peer_activation_changed = (
+            transition.previous_peer_activation_requested != next_peer_activation_requested
+        )
+        should_refresh_peer = peer_activation_changed or (
+            next_peer_activation_requested
+            and (
+                transition.previous_peer_signature is None
+                or current_peer_signature != transition.previous_peer_signature
+                or transition.previous_peer_translation_enabled
+                != self._settings.peer_translation_enabled()
+                or peer_runtime_converged is False
+            )
+        )
+
+        if transition.source_language_changed or transition.target_language_changed:
+            self._runtime_logging.emit_diagnostic(
+                "[Settings] Language runtime impact: "
+                f"should_restart_stt={should_restart_stt} "
+                f"should_refresh_peer={should_refresh_peer} "
+                f"prev_overlay_enabled={transition.previous_overlay_enabled} "
+                f"next_overlay_enabled={self._settings.overlay_enabled()}"
+            )
+
+        if should_refresh_peer and self._pipeline.peer_translation_channel is not None:
+            await self._peer.owner.refresh_runtime()
+            self._sync_effective_translation_flags(settings)
+            peer_runtime_converged = self._peer_runtime_converged(canonical)
+        if peer_runtime_converged is False:
+            raise ProviderRuntimeConvergenceError(
+                "Peer STT runtime did not converge to requested settings",
+            )
+
+        if should_restart_stt:
+            smooth_local = bool(
+                transition.previous_settings is not None
+                and build_self_capture_vad_signature_from_vnext(
+                    self._canonical_settings(transition.previous_settings)
+                )
+                == build_self_capture_vad_signature_from_vnext(canonical)
+            )
+            await self._replace_self_stt(smooth_local)
+            self_runtime_converged = self._self_runtime_converged(canonical)
+        if self_runtime_converged is False:
+            raise ProviderRuntimeConvergenceError(
+                "Self STT runtime did not converge to requested settings",
+            )
+
+        self._sync_stt_signatures(settings)
+        if transition.source_language_changed:
+            selected = build_self_capture_session_config_from_vnext(canonical)
+            self._asr_diagnostics.selection_applied(
+                channel="self",
+                provider_id=selected.provider_id,
+                model_id=selected.model_id,
+                source_language=canonical.intent.languages.source_language,
+            )
+        if (
+            transition.effective_peer_source_changed
+            and next_peer_activation_requested
+            and self._pipeline.peer_translation_channel is not None
+        ):
+            selected_peer = build_peer_capture_session_config_from_vnext(canonical)
+            self._asr_diagnostics.selection_applied(
+                channel="peer",
+                provider_id=selected_peer.provider_id,
+                model_id=selected_peer.model_id,
+                source_language=self._effective_peer_language(
+                    canonical.intent.languages.source_language,
+                    canonical.intent.languages.peer_source_language,
+                ),
+            )
+
+        if reload_settings_view and (
+            transition.source_language_changed
+            or transition.target_language_changed
+            or transition.peer_source_language_changed
+            or transition.peer_target_language_changed
+            or transition.peer_source_mode_changed
+        ):
+            self._projection.render(
+                settings,
+                preserve_custom_vocab_draft=True,
+            )
+
+        if transition.previous_locale != settings.intent.ui.locale:
+            self._presentation.set_locale(settings.intent.ui.locale)
+            self._presentation.apply_locale()
+
+        self._overlay.publish_presentation()
+        publish_delta = getattr(self._vrc_mic_sync, "publish_delta", None)
+        if callable(publish_delta):
+            publish_delta()
+
+    async def _clear_language_runtime_state(
+        self,
+        channel: str,
+        *,
+        strict_runtime_errors: bool,
+    ) -> None:
+        owner = (
+            self._pipeline.self_translation_channel
+            if channel == "self"
+            else self._pipeline.peer_translation_channel
+        )
+        if owner is None:
+            return
+        if channel == "self":
+            await owner.clear_language_runtime_state()
+        else:
+            await owner.clear_language_runtime_state(channel=channel)
+
+    def _canonical_settings(self, settings: AppSettingsVNext) -> AppSettingsVNext:
+        return self._settings.project(
+            settings,
+            authoritative=self._settings.authoritative,
+        )
+
+    def _sync_stt_signatures(self, settings: AppSettingsVNext) -> None:
+        self._runtime_signatures.sync_stt(
+            settings,
+            canonical=self._canonical_settings(settings),
+            peer=self._peer.owner,
+            peer_translation_enabled=self._settings.peer_translation_enabled(),
+        )
+        self._state.audio_test_signature = self._audio_test.audio_signature(settings)
+
+    def _sync_effective_translation_flags(self, settings: AppSettingsVNext) -> None:
+        self._peer.owner.sync_effective_flags(self._peer.state_for(None))
+
+    @staticmethod
+    def _effective_peer_language(language: str, peer_language: str) -> str:
+        return peer_language or language
+
+
+__all__ = [
+    "SettingsRuntimeEffectsAdapter",
+    "SettingsRuntimeEffectsState",
+    "managed_gemma_prefix_refresh_required",
+    "refresh_managed_gemma_prefix",
+]

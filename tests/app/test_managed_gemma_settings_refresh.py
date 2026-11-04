@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from puripuly_heart.app.ports.settings_runtime_effects import SettingsRuntimeTransition
+from puripuly_heart.app.services.settings.settings_runtime_effects import (
+    managed_gemma_prefix_refresh_required,
+    refresh_managed_gemma_prefix,
+)
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.config.translation_values import TranslationModel
+
+
+def _with_model(settings: AppSettingsVNext, model: str) -> AppSettingsVNext:
+    return replace(
+        settings,
+        intent=replace(
+            settings.intent,
+            translation=replace(settings.intent.translation, model=model),
+        ),
+    )
+
+
+def _with_prompt(settings: AppSettingsVNext, prompt: str) -> AppSettingsVNext:
+    return replace(
+        settings,
+        intent=replace(
+            settings.intent,
+            prompts=replace(settings.intent.prompts, system_prompt_override=prompt),
+        ),
+    )
+
+
+def _transition(
+    previous: AppSettingsVNext | None,
+    current: AppSettingsVNext,
+    *,
+    source_changed: bool = False,
+    target_changed: bool = False,
+) -> SettingsRuntimeTransition[AppSettingsVNext]:
+    return SettingsRuntimeTransition(
+        settings=current,
+        previous_settings=previous,
+        previous_locale="en",
+        previous_overlay_enabled=False,
+        previous_self_signature=None,
+        previous_peer_signature=None,
+        previous_peer_translation_enabled=False,
+        previous_peer_activation_requested=False,
+        source_language_changed=source_changed,
+        target_language_changed=target_changed,
+        effective_peer_source_changed=False,
+        effective_peer_target_changed=False,
+        peer_source_language_changed=False,
+        peer_target_language_changed=False,
+        peer_source_mode_changed=False,
+        desktop_runtime_controls=(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["source", "target", "prompt"])
+@pytest.mark.parametrize("model", ["managed_gemma", "managed_gemma_26b"])
+async def test_managed_gemma_language_or_prompt_change_rebuilds_prefix(
+    change: str, model: str
+) -> None:
+    previous = _with_model(AppSettingsVNext(), model)
+    current = previous
+    if change == "prompt":
+        current = _with_prompt(previous, "changed prompt")
+    transition = _transition(
+        previous,
+        current,
+        source_changed=change == "source",
+        target_changed=change == "target",
+    )
+    rebuilds = 0
+
+    async def rebuild() -> bool:
+        nonlocal rebuilds
+        rebuilds += 1
+        return True
+
+    assert managed_gemma_prefix_refresh_required(transition) is True
+    await refresh_managed_gemma_prefix(transition, rebuild=rebuild)
+    assert rebuilds == 1
+
+
+@pytest.mark.asyncio
+async def test_non_managed_prompt_change_does_not_rebuild_managed_prefix() -> None:
+    previous = AppSettingsVNext()
+    current = _with_prompt(previous, "changed prompt")
+    transition = _transition(previous, current)
+    rebuilds = 0
+
+    async def rebuild() -> bool:
+        nonlocal rebuilds
+        rebuilds += 1
+        return True
+
+    assert managed_gemma_prefix_refresh_required(transition) is False
+    await refresh_managed_gemma_prefix(transition, rebuild=rebuild)
+    assert rebuilds == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_managed_prefix_rebuild_reports_runtime_apply_failure() -> None:
+    previous = _with_model(AppSettingsVNext(), TranslationModel.MANAGED_GEMMA.value)
+    transition = _transition(previous, previous, target_changed=True)
+
+    async def rebuild() -> bool:
+        return False
+
+    with pytest.raises(RuntimeError, match="prefix rebuild failed"):
+        await refresh_managed_gemma_prefix(transition, rebuild=rebuild)

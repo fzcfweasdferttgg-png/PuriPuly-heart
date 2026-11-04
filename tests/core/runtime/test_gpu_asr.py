@@ -1,0 +1,1630 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable
+from pathlib import Path
+from uuid import uuid4
+
+import numpy as np
+import pytest
+
+import puripuly_heart.core.runtime.gpu_asr as gpu_asr_module
+from puripuly_heart.app.ports.asr_worker import (
+    ASRWorkerActivation,
+    ASRWorkerClosedError,
+    ASRWorkerDevice,
+    ASRWorkerEvent,
+    ASRWorkerMode,
+    ASRWorkerRequestError,
+    ASRWorkerTranscription,
+)
+from puripuly_heart.core.audio.ownership import (
+    AudioSegmentIdentity,
+    AudioSegmentSettingsSnapshot,
+)
+from puripuly_heart.core.clock import FakeClock
+from puripuly_heart.core.runtime.gpu_asr import (
+    GpuASRChannel,
+    GpuASRDecodeDropped,
+    GpuASRManualRetryRequired,
+    GpuASRRuntimeState,
+    GpuASRWorkDiscarded,
+    GpuASRWorkExpired,
+    GpuDiscoveryState,
+    SharedGpuASRRuntime,
+)
+from puripuly_heart.core.stt.backend import (
+    STTProviderTurnIdentity,
+    STTProviderTurnRequest,
+    STTSessionProjection,
+)
+from puripuly_heart.providers.stt.local_gpu import LocalGpuSTTBackend
+
+_GPU_OWNERS = {"self": object(), "peer": object()}
+
+DEVICE = ASRWorkerDevice(
+    device_id="vulkan:0",
+    registry_index=0,
+    name="Test GPU",
+    description="Test GPU",
+    device_type="discrete",
+    memory_total_bytes=8_000_000_000,
+    memory_free_bytes=4_000_000_000,
+)
+ACTIVATION = ASRWorkerActivation(
+    device=DEVICE,
+    model_load_seconds=1.25,
+    warmup_seconds=0.5,
+)
+
+
+class FakeASRWorkerClient:
+    def __init__(
+        self,
+        *,
+        activation_error: ASRWorkerRequestError | None = None,
+        activation_gate: asyncio.Event | None = None,
+        discovery_gate: asyncio.Event | None = None,
+        transcribe_gate: asyncio.Event | None = None,
+        transcribe_error: BaseException | None = None,
+        send_error: BaseException | None = None,
+    ) -> None:
+        self.activation_error = activation_error
+        self.activation_gate = activation_gate
+        self.discovery_gate = discovery_gate
+        self.transcribe_gate = transcribe_gate
+        self.transcribe_error = transcribe_error
+        self.send_error = send_error
+        self.activate_calls: list[tuple[Path, str]] = []
+        self.transcribe_calls: list[tuple[str, str, str | None]] = []
+        self.cancel_calls: list[str] = []
+        self.close_calls = 0
+        self.force_close_calls = 0
+        self.started = asyncio.Event()
+        self.transcribe_returning = asyncio.Event()
+        self.activation_started = asyncio.Event()
+        self._events: asyncio.Queue[ASRWorkerEvent | None] = asyncio.Queue()
+        self._closed = False
+        self._cancelled_request_ids: set[str] = set()
+
+    @property
+    def pid(self) -> int | None:
+        return 1234
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    async def discover(self) -> tuple[ASRWorkerDevice, ...]:
+        if self.discovery_gate is not None:
+            await self.discovery_gate.wait()
+        return (DEVICE,)
+
+    async def activate(
+        self, *, model_path: Path, device_id: str, backend: str = "vulkan"
+    ) -> ASRWorkerActivation:
+        _ = backend
+        self.activate_calls.append((model_path, device_id))
+        self.activation_started.set()
+        if self.activation_gate is not None:
+            await self.activation_gate.wait()
+        if self.activation_error is not None:
+            raise self.activation_error
+        return ACTIVATION
+
+    async def transcribe(
+        self,
+        *,
+        request_id: str,
+        channel: str,
+        audio_path: Path,
+        language_hint: str | None = None,
+        on_request_sent: Callable[[], None] | None = None,
+    ) -> ASRWorkerTranscription:
+        assert audio_path.is_file()
+        if self.send_error is not None:
+            raise self.send_error
+        if on_request_sent is not None:
+            on_request_sent()
+        self.transcribe_calls.append((request_id, channel, language_hint))
+        self.started.set()
+        if self.transcribe_gate is not None:
+            await self.transcribe_gate.wait()
+        if request_id in self._cancelled_request_ids:
+            raise ASRWorkerRequestError(
+                "cancelled",
+                {
+                    "audio_seconds": 0.1,
+                    "decode_seconds": 0.025,
+                    "rtf": 0.25,
+                },
+                attempt_started=True,
+            )
+        if self._closed:
+            raise ASRWorkerClosedError("closed")
+        if self.transcribe_error is not None:
+            raise self.transcribe_error
+        self.transcribe_returning.set()
+        return ASRWorkerTranscription(
+            text=f"{channel}-{len(self.transcribe_calls)}",
+            detected_language="en",
+            audio_seconds=0.1,
+            decode_seconds=0.05,
+            rtf=0.5,
+        )
+
+    async def cancel(self, target_request_id: str) -> None:
+        self.cancel_calls.append(target_request_id)
+        self._cancelled_request_ids.add(target_request_id)
+        if self.transcribe_gate is not None:
+            self.transcribe_gate.set()
+
+    async def next_event(self) -> ASRWorkerEvent:
+        event = await self._events.get()
+        if event is None:
+            raise ASRWorkerClosedError("closed")
+        return event
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        if self._closed:
+            return
+        self._closed = True
+        if self.transcribe_gate is not None:
+            self.transcribe_gate.set()
+        await self._events.put(None)
+
+    async def force_close(self) -> None:
+        self.force_close_calls += 1
+        await self.close()
+
+
+class FakeASRWorkerFactory:
+    def __init__(self, clients: list[FakeASRWorkerClient]) -> None:
+        self.clients = clients
+        self.modes: list[ASRWorkerMode] = []
+
+    async def start(
+        self,
+        *,
+        mode: ASRWorkerMode,
+        operation_id: str | None = None,
+        request_id: str | None = None,
+    ) -> FakeASRWorkerClient:
+        self.modes.append(mode)
+        return self.clients.pop(0)
+
+    async def close_pending_startups(self) -> None:
+        return None
+
+    def startup_cleanup_snapshot(self) -> dict[str, object]:
+        return {"pending_startups": 0, "close_complete": True, "cleanup_failures": []}
+
+
+async def _activate(
+    runtime: SharedGpuASRRuntime, channel: GpuASRChannel = "self"
+) -> ASRWorkerActivation:
+    return await runtime.activate_channel(
+        channel,
+        owner=_GPU_OWNERS[channel],
+        model_path=Path("model.gguf"),
+        model_id="qwen-gpu",
+        device_id="vulkan:0",
+    )
+
+
+async def test_one_worker_and_model_are_shared_until_last_channel_deactivates() -> None:
+    client = FakeASRWorkerClient()
+    factory = FakeASRWorkerFactory([client])
+    runtime = SharedGpuASRRuntime(process_factory=factory)
+
+    first = await _activate(runtime, "self")
+    second = await _activate(runtime, "peer")
+
+    assert first == second == ACTIVATION
+    assert factory.modes == ["persistent"]
+    assert len(client.activate_calls) == 1
+    assert runtime.active_channels == frozenset({"self", "peer"})
+
+    await runtime.deactivate_channel("self", owner=_GPU_OWNERS["self"])
+    assert client.close_calls == 0
+    assert runtime.state == GpuASRRuntimeState.READY
+
+    await runtime.deactivate_channel("peer", owner=_GPU_OWNERS["peer"])
+    assert client.close_calls == 1
+    assert runtime.state == GpuASRRuntimeState.STOPPED
+    await runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("stop_order", "restore_order"),
+    [
+        (("self", "peer"), ("self", "peer")),
+        (("self", "peer"), ("peer", "self")),
+        (("peer", "self"), ("self", "peer")),
+        (("peer", "self"), ("peer", "self")),
+    ],
+)
+async def test_device_change_after_full_quiesce_accepts_both_channel_orders(
+    stop_order: tuple[GpuASRChannel, GpuASRChannel],
+    restore_order: tuple[GpuASRChannel, GpuASRChannel],
+) -> None:
+    old_client = FakeASRWorkerClient()
+    new_client = FakeASRWorkerClient()
+    runtime = SharedGpuASRRuntime(process_factory=FakeASRWorkerFactory([old_client, new_client]))
+    await _activate(runtime, "self")
+    await _activate(runtime, "peer")
+
+    for channel in stop_order:
+        await runtime.deactivate_channel(channel, owner=_GPU_OWNERS[channel])
+    for channel in restore_order:
+        await runtime.activate_channel(
+            channel,
+            owner=_GPU_OWNERS[channel],
+            model_path=Path("model.gguf"),
+            model_id="qwen-gpu",
+            device_id="vulkan:1",
+        )
+
+    assert old_client.close_calls == 1
+    assert new_client.activate_calls == [(Path("model.gguf").resolve(), "vulkan:1")]
+    assert runtime.active_channels == frozenset({"self", "peer"})
+    assert runtime.configured_device_id == "vulkan:1"
+    await runtime.close()
+
+
+async def test_concurrent_channels_share_one_owned_activation_task() -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(activation_gate=gate)
+    factory = FakeASRWorkerFactory([client])
+    runtime = SharedGpuASRRuntime(process_factory=factory)
+
+    self_activation = asyncio.create_task(_activate(runtime, "self"))
+    await client.activation_started.wait()
+    peer_activation = asyncio.create_task(_activate(runtime, "peer"))
+    await asyncio.sleep(0)
+
+    assert factory.modes == ["persistent"]
+    assert len(client.activate_calls) == 1
+    assert runtime.active_channels == frozenset({"self", "peer"})
+
+    gate.set()
+    assert await self_activation == ACTIVATION
+    assert await peer_activation == ACTIVATION
+    await runtime.close()
+
+
+async def test_close_cancels_and_awaits_in_progress_activation() -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(activation_gate=gate)
+    runtime = SharedGpuASRRuntime(process_factory=FakeASRWorkerFactory([client]))
+
+    activation = asyncio.create_task(_activate(runtime))
+    await client.activation_started.wait()
+
+    await asyncio.wait_for(runtime.close(), timeout=0.5)
+
+    with pytest.raises(asyncio.CancelledError):
+        await activation
+    assert client.close_calls == 1
+
+
+async def test_last_disable_drains_loading_without_readiness_before_retry() -> None:
+    gate = asyncio.Event()
+
+    class LoadingClient(FakeASRWorkerClient):
+        async def close(self) -> None:
+            await gate.wait()
+            await super().close()
+
+        async def force_close(self) -> None:
+            self.force_close_calls += 1
+            await FakeASRWorkerClient.close(self)
+
+    client = LoadingClient(activation_gate=gate)
+    replacement = FakeASRWorkerClient()
+    factory = FakeASRWorkerFactory([client, replacement])
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(
+        process_factory=factory,
+        diagnostic_sink=diagnostics.append,
+        force_close_seconds=10,
+    )
+    activation = asyncio.create_task(_activate(runtime))
+    await asyncio.wait_for(client.activation_started.wait(), timeout=1)
+    try:
+        stopping = asyncio.create_task(
+            runtime.deactivate_channel("self", owner=_GPU_OWNERS["self"])
+        )
+        await asyncio.sleep(0.02)
+        assert not stopping.done()
+        assert not client.is_closed
+        assert client.force_close_calls == 0
+        gate.set()
+        await stopping
+        with pytest.raises(asyncio.CancelledError):
+            await activation
+        assert client.is_closed
+        assert client.force_close_calls == 0
+        assert runtime.worker_pid is None
+        assert runtime.active_channels == frozenset()
+        assert runtime.state == GpuASRRuntimeState.STOPPED
+        assert not any(event.kind == "activation_ready" for event in diagnostics)
+
+        assert await _activate(runtime) == ACTIVATION
+        assert factory.modes == ["persistent", "persistent"]
+        assert runtime.state == GpuASRRuntimeState.READY
+    finally:
+        gate.set()
+        await runtime.close()
+        await asyncio.gather(activation, return_exceptions=True)
+
+
+@pytest.mark.parametrize("remaining_channel", ["self", "peer"])
+async def test_revoked_pending_owner_cannot_receive_shared_activation_readiness(
+    remaining_channel: GpuASRChannel,
+) -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(activation_gate=gate)
+    factory = FakeASRWorkerFactory([client])
+    runtime = SharedGpuASRRuntime(process_factory=factory)
+    remaining_owner = object()
+    activation = asyncio.create_task(_activate(runtime))
+    await asyncio.wait_for(client.activation_started.wait(), timeout=1)
+    remaining = asyncio.create_task(
+        runtime.activate_channel(
+            remaining_channel,
+            owner=remaining_owner,
+            model_path=Path("model.gguf"),
+            model_id="qwen-gpu",
+            device_id="vulkan:0",
+        )
+    )
+    await asyncio.sleep(0)
+    try:
+        await asyncio.wait_for(
+            runtime.deactivate_channel("self", owner=_GPU_OWNERS["self"]), timeout=1
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(activation, timeout=1)
+        assert runtime.active_channels == frozenset({remaining_channel})
+        assert runtime.state == GpuASRRuntimeState.STARTING
+        assert not client.is_closed
+        assert not remaining.done()
+
+        gate.set()
+        assert await asyncio.wait_for(remaining, timeout=1) == ACTIVATION
+        assert client.force_close_calls == 0
+        assert factory.modes == ["persistent"]
+    finally:
+        gate.set()
+        await runtime.close()
+        await asyncio.gather(activation, remaining, return_exceptions=True)
+
+
+async def test_activation_progress_is_observed_before_activation_completes() -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(activation_gate=gate)
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        diagnostic_sink=diagnostics.append,
+    )
+
+    activation = asyncio.create_task(_activate(runtime))
+    await client.activation_started.wait()
+    await client._events.put(
+        ASRWorkerEvent(
+            name="activation_progress",
+            request_id=None,
+            fields={"phase": "loading", "progress": 0.25},
+        )
+    )
+    for _ in range(20):
+        if diagnostics:
+            break
+        await asyncio.sleep(0)
+
+    assert diagnostics[-1].kind == "worker_lifecycle"
+    assert diagnostics[-1].fields["phase"] == "loading"
+    assert activation.done() is False
+
+    gate.set()
+    await activation
+    await runtime.close()
+    assert runtime.state == GpuASRRuntimeState.CLOSED
+
+
+async def test_global_speech_end_fifo_has_finite_per_channel_public_admission() -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(transcribe_gate=gate)
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        clock=FakeClock(_now=100.0),
+    )
+    await _activate(runtime)
+    await _activate(runtime, "peer")
+    samples = np.zeros(1600, dtype=np.float32)
+
+    blocker = asyncio.create_task(runtime.submit("self", samples, speech_end_at=99.0))
+    await client.started.wait()
+    queued = [
+        asyncio.create_task(
+            runtime.submit(
+                "peer" if index % 2 == 0 else "self",
+                samples,
+                speech_end_at=99.5 + index * 0.001,
+            )
+        )
+        for index in range(16)
+    ]
+    await asyncio.sleep(0)
+    assert runtime.pending_count == 16
+    with pytest.raises(GpuASRWorkDiscarded, match="pending_capacity"):
+        await runtime.submit("self", samples, speech_end_at=100.0)
+    with pytest.raises(GpuASRWorkDiscarded, match="pending_capacity"):
+        await runtime.submit("peer", samples, speech_end_at=100.0)
+
+    gate.set()
+    await asyncio.gather(blocker, *queued)
+
+    assert len(client.transcribe_calls) == 17
+    assert [channel for _request, channel, _hint in client.transcribe_calls[1:4]] == [
+        "peer",
+        "self",
+        "peer",
+    ]
+    await runtime.close()
+
+
+async def test_shared_queue_preserves_per_utterance_language_hints() -> None:
+    client = FakeASRWorkerClient()
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        clock=FakeClock(_now=2.0),
+    )
+    await _activate(runtime)
+    await _activate(runtime, "peer")
+    samples = np.zeros(1600, dtype=np.float32)
+
+    await asyncio.gather(
+        runtime.submit("self", samples, speech_end_at=1.0, language_hint="ko"),
+        runtime.submit("peer", samples, speech_end_at=2.0, language_hint=None),
+    )
+
+    assert [(channel, hint) for _request, channel, hint in client.transcribe_calls] == [
+        ("self", "ko"),
+        ("peer", None),
+    ]
+    await runtime.close()
+
+
+async def test_pending_work_expires_exactly_at_twelve_seconds_before_start() -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(transcribe_gate=gate)
+    clock = FakeClock(_now=100.0)
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        clock=clock,
+        diagnostic_sink=diagnostics.append,
+    )
+    await _activate(runtime)
+    await _activate(runtime, "peer")
+    samples = np.zeros(1600, dtype=np.float32)
+
+    active = asyncio.create_task(runtime.submit("self", samples, speech_end_at=99.0))
+    await client.started.wait()
+    expires = asyncio.create_task(runtime.submit("peer", samples, speech_end_at=88.0))
+    survives = asyncio.create_task(runtime.submit("self", samples, speech_end_at=88.001))
+    await asyncio.sleep(0)
+    gate.set()
+
+    await active
+    with pytest.raises(GpuASRWorkExpired):
+        await expires
+    await survives
+
+    assert len(client.transcribe_calls) == 2
+    expiry = [item for item in diagnostics if item.kind == "work_expired"]
+    assert len(expiry) == 1
+    assert expiry[0].fields["channel"] == "peer"
+    assert "rtf" not in expiry[0].fields
+    await runtime.close()
+
+
+async def test_active_decode_survives_ttl() -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(transcribe_gate=gate)
+    clock = FakeClock(_now=10.0)
+    runtime = SharedGpuASRRuntime(process_factory=FakeASRWorkerFactory([client]), clock=clock)
+    await _activate(runtime)
+    work = asyncio.create_task(
+        runtime.submit("self", np.zeros(1600, dtype=np.float32), speech_end_at=10.0)
+    )
+    await client.started.wait()
+    clock.advance(30.0)
+    gate.set()
+
+    assert (await work).text == "self-1"
+    await runtime.close()
+
+
+async def test_last_disable_cancels_active_work_and_awaits_worker_close() -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(transcribe_gate=gate)
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        clock=FakeClock(_now=10.0),
+    )
+    await _activate(runtime)
+    work = asyncio.create_task(
+        runtime.submit("self", np.zeros(1600, dtype=np.float32), speech_end_at=10.0)
+    )
+    await client.started.wait()
+
+    await runtime.deactivate_channel("self", owner=_GPU_OWNERS["self"])
+
+    with pytest.raises(GpuASRWorkDiscarded):
+        await work
+    assert len(client.cancel_calls) == 1
+    assert client.close_calls == 1
+    assert runtime.state == GpuASRRuntimeState.STOPPED
+    await runtime.close()
+
+
+@pytest.mark.parametrize("shutdown", ["last_disable", "application_close"])
+async def test_terminal_shutdown_drains_noninterruptible_worker(shutdown: str) -> None:
+    drained = asyncio.Event()
+
+    class NonInterruptibleClient(FakeASRWorkerClient):
+        async def cancel(self, target_request_id: str) -> None:
+            self.cancel_calls.append(target_request_id)
+
+        async def close(self) -> None:
+            await drained.wait()
+            await super().close()
+
+    client = NonInterruptibleClient(transcribe_gate=asyncio.Event())
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]), clock=FakeClock(_now=10.0)
+    )
+    await _activate(runtime)
+    work = asyncio.create_task(
+        runtime.submit("self", np.zeros(1600, dtype=np.float32), speech_end_at=10.0)
+    )
+    await client.started.wait()
+    stopping = asyncio.create_task(
+        runtime.close()
+        if shutdown == "application_close"
+        else runtime.deactivate_channel("self", owner=_GPU_OWNERS["self"])
+    )
+    await asyncio.sleep(0.02)
+    assert not stopping.done()
+    assert not client.is_closed
+    assert client.force_close_calls == 0
+    drained.set()
+    await stopping
+    with pytest.raises(GpuASRWorkDiscarded):
+        await work
+    assert client.is_closed
+    assert runtime.state == (
+        GpuASRRuntimeState.CLOSED if shutdown == "application_close" else GpuASRRuntimeState.STOPPED
+    )
+    assert runtime.worker_pid is None
+    assert runtime._temporary_directory is None
+    await runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("disabled_channel", "surviving_channel"),
+    [("self", "peer"), ("peer", "self")],
+)
+async def test_channel_disable_discards_only_its_work_and_retains_shared_worker(
+    disabled_channel: GpuASRChannel,
+    surviving_channel: GpuASRChannel,
+) -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(transcribe_gate=gate)
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        clock=FakeClock(_now=100.0),
+        diagnostic_sink=diagnostics.append,
+    )
+    await _activate(runtime, "self")
+    await _activate(runtime, "peer")
+    samples = np.zeros(1600, dtype=np.float32)
+
+    active = asyncio.create_task(runtime.submit(disabled_channel, samples, speech_end_at=99.0))
+    await client.started.wait()
+    discarded_pending = asyncio.create_task(
+        runtime.submit(disabled_channel, samples, speech_end_at=99.1)
+    )
+    surviving_pending = asyncio.create_task(
+        runtime.submit(surviving_channel, samples, speech_end_at=99.2)
+    )
+    await asyncio.sleep(0)
+
+    await runtime.deactivate_channel(disabled_channel, owner=_GPU_OWNERS[disabled_channel])
+    await _activate(runtime, disabled_channel)
+
+    with pytest.raises(GpuASRWorkDiscarded, match="channel_disabled"):
+        await active
+    with pytest.raises(GpuASRWorkDiscarded, match="channel_disabled"):
+        await discarded_pending
+    fresh = await runtime.submit(disabled_channel, samples, speech_end_at=100.0)
+    assert fresh.text == f"{disabled_channel}-3"
+    assert (await surviving_pending).text == f"{surviving_channel}-2"
+    assert runtime.active_channels == frozenset({"self", "peer"})
+    assert runtime.state == GpuASRRuntimeState.READY
+    assert client.close_calls == 0
+    assert len(client.cancel_calls) == 1
+    lifecycle = [item for item in diagnostics if item.kind == "channel_deactivated"]
+    assert lifecycle[-1].fields == {
+        "channel": disabled_channel,
+        "pending_discarded": 1,
+        "active_cancelled": True,
+        "worker_retained": True,
+    }
+    await runtime.close()
+
+
+async def test_channel_disable_rejects_unresolved_worker_result() -> None:
+    client = FakeASRWorkerClient(transcribe_gate=asyncio.Event())
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        clock=FakeClock(_now=100.0),
+    )
+    await _activate(runtime, "self")
+    await _activate(runtime, "peer")
+    work = asyncio.create_task(
+        runtime.submit(
+            "self",
+            np.zeros(1600, dtype=np.float32),
+            speech_end_at=99.0,
+        )
+    )
+    await client.started.wait()
+    await runtime.deactivate_channel("self", owner=_GPU_OWNERS["self"])
+
+    with pytest.raises(GpuASRWorkDiscarded, match="channel_disabled"):
+        await work
+    assert runtime.state == GpuASRRuntimeState.READY
+    assert runtime.active_channels == frozenset({"peer"})
+    assert client.close_calls == 0
+    await runtime.close()
+
+
+async def test_partial_channel_cancel_drains_without_destroying_peer_resource() -> None:
+    class NonInterruptibleClient(FakeASRWorkerClient):
+        async def cancel(self, target_request_id: str) -> None:
+            self.cancel_calls.append(target_request_id)
+
+    gate = asyncio.Event()
+    client = NonInterruptibleClient(transcribe_gate=gate)
+    factory = FakeASRWorkerFactory([client])
+    runtime = SharedGpuASRRuntime(process_factory=factory, clock=FakeClock(_now=100.0))
+    await _activate(runtime, "self")
+    await _activate(runtime, "peer")
+    active = asyncio.create_task(
+        runtime.submit("self", np.zeros(1600, dtype=np.float32), speech_end_at=99.0)
+    )
+    await client.started.wait()
+    pending = asyncio.create_task(
+        runtime.submit("peer", np.zeros(1600, dtype=np.float32), speech_end_at=99.1)
+    )
+    await asyncio.sleep(0)
+    stopping = asyncio.create_task(runtime.deactivate_channel("self", owner=_GPU_OWNERS["self"]))
+    await asyncio.sleep(0.02)
+    with pytest.raises(GpuASRWorkDiscarded):
+        await active
+    assert not stopping.done()
+    assert not pending.done()
+    assert not client.is_closed
+    gate.set()
+    await stopping
+    assert (await pending).text == "peer-2"
+    assert (
+        await runtime.submit("peer", np.zeros(1600, dtype=np.float32), speech_end_at=100.0)
+    ).text == "peer-3"
+    assert client.force_close_calls == client.close_calls == 0
+    assert runtime.active_channels == frozenset({"peer"})
+    assert runtime.state == GpuASRRuntimeState.READY
+    assert factory.modes == ["persistent"]
+    await runtime.close()
+
+
+async def test_ttl_is_rechecked_after_wav_staging_before_worker_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeASRWorkerClient()
+    clock = FakeClock(_now=100.0)
+    diagnostics = []
+    staged_paths: list[Path] = []
+    original_write = gpu_asr_module._write_pcm16_wav
+
+    def stage_and_advance(path: Path, samples: np.ndarray) -> None:
+        original_write(path, samples)
+        staged_paths.append(path)
+        clock.advance(2.0)
+
+    monkeypatch.setattr(gpu_asr_module, "_write_pcm16_wav", stage_and_advance)
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        clock=clock,
+        diagnostic_sink=diagnostics.append,
+    )
+    await _activate(runtime)
+
+    with pytest.raises(GpuASRWorkExpired):
+        await runtime.submit(
+            "self",
+            np.zeros(1600, dtype=np.float32),
+            speech_end_at=90.0,
+        )
+
+    assert client.transcribe_calls == []
+    assert len(staged_paths) == 1
+    expiry = [item for item in diagnostics if item.kind == "work_expired"]
+    assert expiry[-1].fields["queue_wait_seconds"] == 12.0
+    assert "rtf" not in expiry[-1].fields
+    assert [item for item in diagnostics if item.kind == "decode_attempt"] == []
+    await runtime.close()
+    assert not staged_paths[0].exists()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("staging failed"),
+        ASRWorkerClosedError("send failed"),
+        ASRWorkerRequestError(
+            "audio_invalid",
+            {"channel": "self", "backend": "Vulkan"},
+            attempt_started=False,
+        ),
+    ],
+)
+async def test_prestart_failures_emit_no_attempt_or_rtf(
+    failure: BaseException,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeASRWorkerClient(
+        send_error=failure if isinstance(failure, ASRWorkerClosedError) else None,
+        transcribe_error=(failure if isinstance(failure, ASRWorkerRequestError) else None),
+    )
+    if isinstance(failure, OSError):
+        monkeypatch.setattr(
+            gpu_asr_module,
+            "_write_pcm16_wav",
+            lambda _path, _samples: (_ for _ in ()).throw(failure),
+        )
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]),
+        clock=FakeClock(_now=10.0),
+        diagnostic_sink=diagnostics.append,
+    )
+    await _activate(runtime)
+
+    with pytest.raises(type(failure)):
+        await runtime.submit(
+            "self",
+            np.zeros(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+
+    assert [item for item in diagnostics if item.kind == "decode_attempt"] == []
+    prestart = [item for item in diagnostics if item.kind == "work_prestart_failed"]
+    assert len(prestart) == 1
+    assert "rtf" not in prestart[0].fields
+    await runtime.close()
+
+
+async def test_started_native_failure_retains_worker_decode_only_timing() -> None:
+    native_failure = ASRWorkerRequestError(
+        "decode_failure",
+        {
+            "audio_seconds": 0.1,
+            "decode_seconds": 0.04,
+            "rtf": 0.4,
+        },
+        attempt_started=True,
+    )
+    diagnostics = []
+    recovered = FakeASRWorkerClient()
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory(
+            [FakeASRWorkerClient(transcribe_error=native_failure), recovered]
+        ),
+        clock=FakeClock(_now=10.0),
+        diagnostic_sink=diagnostics.append,
+    )
+    await _activate(runtime)
+
+    with pytest.raises(GpuASRDecodeDropped, match="decode_failure"):
+        await runtime.submit(
+            "self",
+            np.zeros(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+
+    attempts = [item for item in diagnostics if item.kind == "decode_attempt"]
+    assert attempts[-1].fields == {
+        "channel": "self",
+        "model": "qwen-gpu",
+        "backend": "Vulkan",
+        "result": "decode_failure",
+        "queue_wait_seconds": 0.0,
+        "audio_seconds": 0.1,
+        "decode_seconds": 0.04,
+        "rtf": 0.4,
+    }
+    await asyncio.wait_for(recovered.activation_started.wait(), timeout=0.5)
+    await runtime.close()
+
+
+async def test_decode_failure_restarts_once_without_replaying_failed_utterance() -> None:
+    native_failure = ASRWorkerRequestError(
+        "decode_failure",
+        {
+            "audio_seconds": 7.5,
+            "decode_seconds": 2.9,
+            "rtf": 0.386,
+        },
+        attempt_started=True,
+    )
+    activation_gate = asyncio.Event()
+    failed = FakeASRWorkerClient(transcribe_error=native_failure)
+    recovered = FakeASRWorkerClient(activation_gate=activation_gate)
+    factory = FakeASRWorkerFactory([failed, recovered])
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(
+        process_factory=factory,
+        clock=FakeClock(_now=10.0),
+        diagnostic_sink=diagnostics.append,
+    )
+    await _activate(runtime, "peer")
+
+    with pytest.raises(GpuASRDecodeDropped, match="decode_failure"):
+        await runtime.submit(
+            "peer",
+            np.zeros(120_000, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+
+    await asyncio.wait_for(recovered.activation_started.wait(), timeout=0.5)
+    next_utterance = asyncio.create_task(
+        runtime.submit(
+            "peer",
+            np.ones(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+    )
+    await asyncio.sleep(0)
+    assert len(failed.transcribe_calls) == 1
+    assert recovered.transcribe_calls == []
+    assert runtime.pending_count == 1
+
+    activation_gate.set()
+    result = await asyncio.wait_for(next_utterance, timeout=0.5)
+
+    assert result.text == "peer-1"
+    assert len(failed.transcribe_calls) == 1
+    assert len(recovered.transcribe_calls) == 1
+    assert failed.transcribe_calls[0][0] != recovered.transcribe_calls[0][0]
+    assert factory.modes == ["persistent", "persistent"]
+    assert [item.kind for item in diagnostics].count("worker_recovery_started") == 1
+    assert [item.kind for item in diagnostics].count("worker_recovery_ready") == 1
+    recovery = next(item for item in diagnostics if item.kind == "worker_recovery_started")
+    assert recovery.fields["utterance_retry"] is False
+    await runtime.close()
+
+
+async def test_second_decode_failure_before_success_requires_manual_retry() -> None:
+    failure = ASRWorkerRequestError("decode_failure", attempt_started=True)
+    first = FakeASRWorkerClient(transcribe_error=failure)
+    second = FakeASRWorkerClient(transcribe_error=failure)
+    factory = FakeASRWorkerFactory([first, second])
+    runtime = SharedGpuASRRuntime(
+        process_factory=factory,
+        clock=FakeClock(_now=10.0),
+    )
+    await _activate(runtime)
+
+    with pytest.raises(GpuASRDecodeDropped):
+        await runtime.submit(
+            "self",
+            np.zeros(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+    await asyncio.wait_for(second.activation_started.wait(), timeout=0.5)
+    while runtime.state != GpuASRRuntimeState.READY:
+        await asyncio.sleep(0)
+
+    with pytest.raises(ASRWorkerRequestError, match="decode_failure"):
+        await runtime.submit(
+            "self",
+            np.ones(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+
+    assert runtime.state == GpuASRRuntimeState.FAILED
+    assert factory.modes == ["persistent", "persistent"]
+    with pytest.raises(GpuASRManualRetryRequired, match="decode_failure"):
+        await _activate(runtime)
+    await runtime.close()
+
+
+async def test_started_out_of_memory_failure_does_not_auto_restart() -> None:
+    failure = ASRWorkerRequestError("out_of_memory", attempt_started=True)
+    factory = FakeASRWorkerFactory(
+        [FakeASRWorkerClient(transcribe_error=failure), FakeASRWorkerClient()]
+    )
+    runtime = SharedGpuASRRuntime(
+        process_factory=factory,
+        clock=FakeClock(_now=10.0),
+    )
+    await _activate(runtime)
+
+    with pytest.raises(ASRWorkerRequestError, match="out_of_memory"):
+        await runtime.submit(
+            "self",
+            np.zeros(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+
+    assert runtime.state == GpuASRRuntimeState.FAILED
+    assert factory.modes == ["persistent"]
+    await runtime.close()
+
+
+async def test_recovery_activation_failure_discards_new_pending_work() -> None:
+    decode_failure = ASRWorkerRequestError("decode_failure", attempt_started=True)
+    activation_gate = asyncio.Event()
+    failed = FakeASRWorkerClient(transcribe_error=decode_failure)
+    replacement = FakeASRWorkerClient(
+        activation_gate=activation_gate,
+        activation_error=ASRWorkerRequestError("out_of_memory"),
+    )
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([failed, replacement]),
+        clock=FakeClock(_now=10.0),
+        diagnostic_sink=diagnostics.append,
+    )
+    await _activate(runtime)
+
+    with pytest.raises(GpuASRDecodeDropped):
+        await runtime.submit(
+            "self",
+            np.zeros(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+    await asyncio.wait_for(replacement.activation_started.wait(), timeout=0.5)
+    pending = asyncio.create_task(
+        runtime.submit(
+            "self",
+            np.ones(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+    )
+    await asyncio.sleep(0)
+    activation_gate.set()
+
+    with pytest.raises(GpuASRWorkDiscarded, match="worker_recovery_failed"):
+        await asyncio.wait_for(pending, timeout=0.5)
+    assert runtime.state == GpuASRRuntimeState.FAILED
+    assert runtime.last_failure_code == "out_of_memory"
+    terminal = [item for item in diagnostics if item.kind == "worker_failed"]
+    assert terminal[-1].fields["failure"] == "out_of_memory"
+    assert terminal[-1].fields["retry"] == "manual"
+    await runtime.close()
+
+
+async def test_close_cancels_and_awaits_decode_recovery_activation() -> None:
+    decode_failure = ASRWorkerRequestError("decode_failure", attempt_started=True)
+    activation_gate = asyncio.Event()
+    failed = FakeASRWorkerClient(transcribe_error=decode_failure)
+    replacement = FakeASRWorkerClient(activation_gate=activation_gate)
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([failed, replacement]),
+        clock=FakeClock(_now=10.0),
+    )
+    await _activate(runtime)
+
+    with pytest.raises(GpuASRDecodeDropped):
+        await runtime.submit(
+            "self",
+            np.zeros(1600, dtype=np.float32),
+            speech_end_at=10.0,
+        )
+    await asyncio.wait_for(replacement.activation_started.wait(), timeout=0.5)
+
+    await asyncio.wait_for(runtime.close(), timeout=0.5)
+
+    assert runtime.state == GpuASRRuntimeState.CLOSED
+    assert failed.close_calls >= 1
+    assert replacement.close_calls >= 1
+
+
+async def test_gpu_failure_requires_manual_retry_and_never_starts_fallback() -> None:
+    failed = FakeASRWorkerClient(activation_error=ASRWorkerRequestError("out_of_memory"))
+    recovered = FakeASRWorkerClient()
+    factory = FakeASRWorkerFactory([failed, recovered])
+    runtime = SharedGpuASRRuntime(process_factory=factory)
+
+    with pytest.raises(GpuASRManualRetryRequired, match="out_of_memory"):
+        await _activate(runtime, "self")
+    assert runtime.state == GpuASRRuntimeState.FAILED
+    assert runtime.last_failure_code == "out_of_memory"
+    assert factory.modes == ["persistent"]
+
+    with pytest.raises(GpuASRManualRetryRequired):
+        await _activate(runtime, "peer")
+    assert factory.modes == ["persistent"]
+
+    await runtime.retry()
+    assert runtime.state == GpuASRRuntimeState.READY
+    assert factory.modes == ["persistent", "persistent"]
+    assert runtime.active_channels == frozenset({"self", "peer"})
+    await runtime.close()
+
+
+async def test_discovery_reports_pending_without_loading_a_model() -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(discovery_gate=gate)
+    factory = FakeASRWorkerFactory([client])
+    runtime = SharedGpuASRRuntime(
+        process_factory=factory,
+        discovery_pending_seconds=0.01,
+    )
+
+    discovery = asyncio.create_task(runtime.discover_devices())
+    await asyncio.sleep(0.02)
+    assert runtime.discovery_state == GpuDiscoveryState.PENDING
+    assert client.activate_calls == []
+    gate.set()
+
+    assert await discovery == (DEVICE,)
+    assert runtime.discovery_state == GpuDiscoveryState.READY
+    assert factory.modes == ["discovery"]
+    assert client.close_calls == 1
+    await runtime.close()
+
+
+def _scoped_gpu_request(channel: GpuASRChannel, epoch: str) -> STTProviderTurnRequest:
+    return STTProviderTurnRequest(
+        identity=STTProviderTurnIdentity(
+            segment=AudioSegmentIdentity(
+                activation_generation=1,
+                segment_order=1,
+                segment_id=uuid4(),
+                capture_epoch=1,
+            ),
+            provider_epoch_id=epoch,
+            provider_turn_id=f"{epoch}-turn",
+        ),
+        settings=AudioSegmentSettingsSnapshot(
+            provider_id="local_qwen_gpu",
+            provider_signature=("local_qwen_gpu",),
+            runtime_signature=("local_qwen_gpu",),
+            source_mode="desktop",
+            source_language="en",
+            expected_languages=("en",),
+            target_sample_rate_hz=16000,
+            vad_speech_threshold=0.4,
+            vad_hangover_ms=800,
+            vad_pre_roll_ms=500,
+        ),
+        channel=channel,
+    )
+
+
+async def test_real_shared_gpu_runtime_serves_two_scoped_concrete_adapters(
+    tmp_path: Path,
+) -> None:
+    gate = asyncio.Event()
+    client = FakeASRWorkerClient(transcribe_gate=gate)
+    runtime = SharedGpuASRRuntime(process_factory=FakeASRWorkerFactory([client]))
+    self_backend = LocalGpuSTTBackend(
+        runtime=runtime,
+        channel="self",
+        model_path=tmp_path / "model.gguf",
+        model_id="qwen-gpu",
+        device_id="vulkan:0",
+        source_mode="manual",
+    )
+    peer_backend = LocalGpuSTTBackend(
+        runtime=runtime,
+        channel="peer",
+        model_path=tmp_path / "model.gguf",
+        model_id="qwen-gpu",
+        device_id="vulkan:0",
+        source_mode="manual",
+    )
+    self_session = await self_backend.open_session(
+        projection=STTSessionProjection("scoped", "self-epoch")
+    )
+    peer_session = await peer_backend.open_session(
+        projection=STTSessionProjection("scoped", "peer-epoch")
+    )
+    self_request = _scoped_gpu_request("self", "self-epoch")
+    peer_request = _scoped_gpu_request("peer", "peer-epoch")
+    for session, request in (
+        (self_session, self_request),
+        (peer_session, peer_request),
+    ):
+        await session.begin_turn(request)
+        await session.send_turn_audio(
+            request.identity,
+            b"\x00\x40" * 160,
+            payload_sequence=1,
+            source_ranges=(),
+            context_only=False,
+        )
+        await session.seal_turn(
+            request.identity,
+            sealed_content_ranges=(),
+            seal_reason="silence",
+            observed_trailing_silence_ms=800,
+        )
+
+    await client.started.wait()
+    for _ in range(100):
+        if runtime.pending_count == 1:
+            break
+        await asyncio.sleep(0)
+    await self_session.abort_turn(self_request.identity, reason="self_off")
+    self_terminal = await asyncio.wait_for(anext(self_session.turn_events()), timeout=0.5)
+    assert (self_terminal.outcome, self_terminal.failure_reason) == (
+        "cancelled",
+        "self_off",
+    )
+    assert runtime.active_channels == frozenset({"self", "peer"})
+    assert runtime.pending_count == 1
+    assert runtime.worker_pid == 1234
+
+    gate.set()
+    peer_terminal = await asyncio.wait_for(anext(peer_session.turn_events()), timeout=0.5)
+    assert (peer_terminal.outcome, peer_terminal.text) == ("final", "peer-2")
+    assert [call[1] for call in client.transcribe_calls] == ["self", "peer"]
+
+    await self_session.close()
+    await self_backend.close()
+    assert runtime.active_channels == frozenset({"peer"})
+    assert runtime.worker_pid == 1234
+    await peer_session.close()
+    await peer_backend.close()
+    assert runtime.state == GpuASRRuntimeState.STOPPED
+    await runtime.close()
+
+
+@pytest.mark.parametrize("delete_fails", [False, True])
+async def test_scoped_gpu_transcript_precedes_owned_file_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delete_fails: bool
+) -> None:
+    import threading
+    import wave
+
+    class InspectingClient(FakeASRWorkerClient):
+        wav_samples: bytes | None = None
+
+        async def transcribe(self, *, audio_path: Path, **kwargs):
+            with wave.open(str(audio_path), "rb") as wav:
+                self.wav_samples = wav.readframes(wav.getnframes())
+            return await super().transcribe(audio_path=audio_path, **kwargs)
+
+    client = InspectingClient()
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]), diagnostic_sink=diagnostics.append
+    )
+    backend = LocalGpuSTTBackend(
+        runtime=runtime,
+        channel="self",
+        model_path=tmp_path / "model.gguf",
+        model_id="qwen-gpu",
+        device_id="vulkan:0",
+    )
+    session = await backend.open_session(projection=STTSessionProjection("scoped", "probe"))
+    request = _scoped_gpu_request("self", "probe")
+    raw = bytearray(np.array([-32768, -16385, -1, 0, 1, 16385, 32767], dtype="<i2").tobytes())
+    original = bytes(raw)
+    await session.begin_turn(request)
+    await session.send_turn_audio(
+        request.identity, raw, payload_sequence=1, source_ranges=(), context_only=False
+    )
+    raw[:] = b"\0" * len(raw)
+    await session.seal_turn(
+        request.identity,
+        sealed_content_ranges=(),
+        seal_reason="end",
+        observed_trailing_silence_ms=800,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    original_unlink = Path.unlink
+
+    def blocked_unlink(path: Path, *args, **kwargs):
+        if path.suffix == ".wav":
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("deletion gate expired")
+            if delete_fails:
+                raise OSError("injected unlink failure")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", blocked_unlink)
+    try:
+        terminal = asyncio.create_task(anext(session.turn_events()))
+        await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+        result = await asyncio.wait_for(terminal, timeout=0.5)
+        assert result.identity == request.identity
+        assert (result.outcome, result.text) == ("final", "self-1")
+        assert (
+            client.wav_samples
+            == np.rint(
+                np.clip(np.frombuffer(original, dtype="<i2").astype(np.float32) / 32768.0, -1, 1)
+                * 32767.0
+            )
+            .astype("<i2")
+            .tobytes()
+        )
+        shutdown = asyncio.create_task(backend.close())
+        await asyncio.sleep(0)
+        assert not shutdown.done()
+        release.set()
+        await asyncio.wait_for(shutdown, timeout=3)
+        await runtime.close()
+        cleanup = [event for event in diagnostics if event.kind == "file_cleanup"]
+        assert len(cleanup) == 1
+        assert cleanup[0].fields["failure"] == ("OSError" if delete_fails else None)
+        timing = [event for event in diagnostics if event.kind == "decode_timing"]
+        assert len(timing) == 1
+        assert set(timing[0].fields) >= {
+            "gpu_queue_wait_seconds",
+            "wav_stage_seconds",
+            "worker_request_to_response_seconds",
+            "worker_response_to_transcript_publish_seconds",
+        }
+    finally:
+        release.set()
+        monkeypatch.setattr(Path, "unlink", original_unlink)
+        await session.close()
+        await runtime.close()
+
+
+@pytest.mark.parametrize("delete_fails", [False, True])
+async def test_gpu_cleanup_debt_blocks_next_dispatch_without_blocking_first_result(
+    monkeypatch: pytest.MonkeyPatch, delete_fails: bool
+) -> None:
+    import threading
+
+    client = FakeASRWorkerClient()
+    runtime = SharedGpuASRRuntime(
+        process_factory=FakeASRWorkerFactory([client]), clock=FakeClock(_now=100.0)
+    )
+    await _activate(runtime, "self")
+    await _activate(runtime, "peer")
+    entered = threading.Event()
+    release = threading.Event()
+    original_unlink = Path.unlink
+
+    def gated_unlink(path: Path, *args, **kwargs):
+        if path.suffix == ".wav" and not entered.is_set():
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("deletion gate expired")
+            if delete_fails:
+                raise OSError("injected unlink failure")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", gated_unlink)
+    try:
+        first = asyncio.create_task(
+            runtime.submit("self", np.zeros(1600, dtype=np.float32), speech_end_at=99.0)
+        )
+        await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+        assert (await asyncio.wait_for(first, timeout=0.5)).text == "self-1"
+        second = asyncio.create_task(
+            runtime.submit("peer", np.ones(1600, dtype=np.float32), speech_end_at=99.1)
+        )
+        await asyncio.sleep(0)
+        assert runtime.pending_count == 1
+        assert len(client.transcribe_calls) == 1
+        release.set()
+        if delete_fails:
+            with pytest.raises(GpuASRWorkDiscarded, match="worker_failed"):
+                await asyncio.wait_for(second, timeout=3)
+            assert runtime.state == GpuASRRuntimeState.FAILED
+            assert len(client.transcribe_calls) == 1
+        else:
+            assert (await asyncio.wait_for(second, timeout=3)).text == "peer-2"
+    finally:
+        release.set()
+        monkeypatch.setattr(Path, "unlink", original_unlink)
+        await runtime.close()
+
+
+async def test_published_gpu_result_releases_runtime_pcm_while_unlink_is_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    import weakref
+
+    worker_gate = asyncio.Event()
+    client = FakeASRWorkerClient(transcribe_gate=worker_gate)
+    runtime = SharedGpuASRRuntime(process_factory=FakeASRWorkerFactory([client]))
+    await _activate(runtime)
+    unlink_entered = threading.Event()
+    unlink_release = threading.Event()
+    original_unlink = Path.unlink
+    original_write = gpu_asr_module._write_pcm16_wav
+    stage_entered = threading.Event()
+    stage_release = threading.Event()
+
+    def gated_writer(path: Path, samples: np.ndarray) -> None:
+        original_write(path, samples)
+        stage_entered.set()
+        if not stage_release.wait(3):
+            raise TimeoutError("WAV staging gate expired")
+
+    def gated_unlink(path: Path, *args, **kwargs):
+        if path.suffix == ".wav":
+            unlink_entered.set()
+            if not unlink_release.wait(3):
+                raise TimeoutError("unlink gate expired")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", gated_unlink)
+    monkeypatch.setattr(gpu_asr_module, "_write_pcm16_wav", gated_writer)
+    try:
+        samples = np.ones(320_000, dtype=np.float32)
+        pending = asyncio.create_task(
+            runtime.submit("self", samples, speech_end_at=runtime._clock.now())
+        )
+        await asyncio.wait_for(asyncio.to_thread(stage_entered.wait, 2), timeout=3)
+        assert runtime._active_work is not None
+        allocation = weakref.ref(runtime._active_work.audio_payload)
+        stage_release.set()
+        await asyncio.wait_for(client.started.wait(), timeout=3)
+        worker_gate.set()
+        await asyncio.wait_for(asyncio.to_thread(unlink_entered.wait, 2), timeout=3)
+        assert (await asyncio.wait_for(pending, timeout=0.5)).text == "self-1"
+        assert allocation() is None
+    finally:
+        unlink_release.set()
+        stage_release.set()
+        monkeypatch.setattr(Path, "unlink", original_unlink)
+        await runtime.close()
+
+
+@pytest.mark.parametrize("rejoin", [False, True])
+async def test_cancelled_close_waiter_does_not_abandon_gpu_shutdown(
+    monkeypatch: pytest.MonkeyPatch, rejoin: bool
+) -> None:
+    import threading
+
+    client = FakeASRWorkerClient()
+    runtime = SharedGpuASRRuntime(process_factory=FakeASRWorkerFactory([client]))
+    await _activate(runtime)
+    entered = threading.Event()
+    release = threading.Event()
+    original_unlink = Path.unlink
+
+    def gated_unlink(path: Path, *args, **kwargs):
+        if path.suffix == ".wav":
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("unlink gate expired")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", gated_unlink)
+    try:
+        assert (
+            await runtime.submit(
+                "self", np.ones(1600, dtype=np.float32), speech_end_at=runtime._clock.now()
+            )
+        ).text == "self-1"
+        await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+        waiter = asyncio.create_task(runtime.close())
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        another = asyncio.create_task(runtime.close()) if rejoin else runtime._shutdown_task
+        assert another is not None
+        await asyncio.sleep(0)
+        assert not another.done()
+        release.set()
+        await asyncio.wait_for(asyncio.shield(another), timeout=3)
+        assert runtime.state == GpuASRRuntimeState.CLOSED
+        assert client.close_calls == 1
+        assert runtime._scope.is_closed
+    finally:
+        release.set()
+        monkeypatch.setattr(Path, "unlink", original_unlink)
+        await runtime.close()
+
+
+async def test_cancelled_last_channel_waiter_retains_cleanup_before_reactivation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    old_client = FakeASRWorkerClient()
+    replacement = FakeASRWorkerClient()
+    factory = FakeASRWorkerFactory([old_client, replacement])
+    runtime = SharedGpuASRRuntime(process_factory=factory)
+    await _activate(runtime)
+    entered = threading.Event()
+    release = threading.Event()
+    original_unlink = Path.unlink
+
+    def gated_unlink(path: Path, *args, **kwargs):
+        if path.suffix == ".wav":
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("unlink gate expired")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", gated_unlink)
+    try:
+        assert (
+            await runtime.submit(
+                "self", np.ones(1600, dtype=np.float32), speech_end_at=runtime._clock.now()
+            )
+        ).text == "self-1"
+        await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+        waiter = asyncio.create_task(runtime.deactivate_channel("self", owner=_GPU_OWNERS["self"]))
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        with pytest.raises(RuntimeError, match="stopping"):
+            await _activate(runtime)
+        release.set()
+        assert runtime._shutdown_task is not None
+        await asyncio.wait_for(asyncio.shield(runtime._shutdown_task), timeout=3)
+        assert runtime.state == GpuASRRuntimeState.STOPPED
+        await _activate(runtime)
+        assert old_client.close_calls == 1
+        assert len(factory.modes) == 2
+        assert runtime.worker_pid == replacement.pid
+    finally:
+        release.set()
+        monkeypatch.setattr(Path, "unlink", original_unlink)
+        await runtime.close()
+
+
+async def test_membership_owner_is_idempotent_and_only_last_owner_cancels_work() -> None:
+    client = FakeASRWorkerClient(transcribe_gate=asyncio.Event())
+    factory = FakeASRWorkerFactory([client])
+    runtime = SharedGpuASRRuntime(process_factory=factory, clock=FakeClock())
+    owners = (object(), object())
+    work = None
+    try:
+        for owner in (owners[0], owners[0], owners[1]):
+            await runtime.activate_channel(
+                "self",
+                owner=owner,
+                model_path=Path("model.gguf"),
+                model_id="qwen-gpu",
+                device_id=DEVICE.device_id,
+            )
+        assert factory.modes == ["persistent"]
+        assert len(client.activate_calls) == 1
+        work = asyncio.create_task(
+            runtime.submit("self", np.ones(1600, dtype=np.float32), speech_end_at=0)
+        )
+        await asyncio.wait_for(client.started.wait(), timeout=1)
+        await runtime.deactivate_channel("self", owner=object())
+        await runtime.deactivate_channel("self", owner=owners[0])
+        await runtime.deactivate_channel("self", owner=owners[0])
+        assert runtime.active_channels == frozenset({"self"})
+        assert runtime.state == GpuASRRuntimeState.READY
+        assert not work.done()
+        assert client.cancel_calls == []
+        assert client.close_calls == 0
+        await runtime.deactivate_channel("self", owner=owners[1])
+        with pytest.raises(GpuASRWorkDiscarded):
+            await work
+        assert runtime.active_channels == frozenset()
+        assert client.close_calls == 1
+    finally:
+        client.transcribe_gate.set()
+        if work is not None:
+            await asyncio.gather(work, return_exceptions=True)
+        await runtime.close()
+
+
+@pytest.mark.parametrize("recovery", ["retry", "close"])
+async def test_activation_primary_survives_temporary_cleanup_debt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    recovery: str,
+) -> None:
+    denied = True
+    directories: list[object] = []
+
+    class OwnedDirectory:
+        def __init__(self, **_kwargs: object) -> None:
+            self.name = str(tmp_path / f"owned-audio-{len(directories)}")
+            self.cleanup_complete = False
+            directories.append(self)
+
+        def cleanup(self) -> None:
+            if denied:
+                raise PermissionError(13, "private temporary cleanup credential body")
+            self.cleanup_complete = True
+
+    monkeypatch.setattr(gpu_asr_module.tempfile, "TemporaryDirectory", OwnedDirectory)
+    primary = ASRWorkerRequestError("out_of_memory")
+    failed_client = FakeASRWorkerClient(activation_error=primary)
+    factory = FakeASRWorkerFactory([failed_client, FakeASRWorkerClient()])
+    diagnostics = []
+    runtime = SharedGpuASRRuntime(process_factory=factory, diagnostic_sink=diagnostics.append)
+    from puripuly_heart.core.diagnostics import DIAGNOSTIC_RECORD_ATTRIBUTE
+
+    operation_id, request_id = uuid4().hex, uuid4().hex
+    try:
+        with pytest.raises(GpuASRManualRetryRequired) as caught:
+            await runtime.activate_channel(
+                "self",
+                owner=_GPU_OWNERS["self"],
+                model_path=tmp_path / "model.gguf",
+                model_id="qwen-gpu",
+                device_id=DEVICE.device_id,
+                operation_id=operation_id,
+                request_id=request_id,
+            )
+        assert caught.value.code == "out_of_memory"
+        assert caught.value.__cause__ is primary
+        assert caught.value.failure_diagnostics is not None
+        first_cause = caught.value.failure_diagnostics
+        assert first_cause.fields["native_classification"] == "out_of_memory"
+        assert first_cause.operation_id == operation_id
+        assert first_cause.request_id == request_id
+        assert runtime.state == GpuASRRuntimeState.FAILED
+        assert runtime.last_failure_code == "out_of_memory"
+        assert runtime.startup_cleanup_snapshot["pending_temporary_directories"] == 1
+        assert runtime.startup_cleanup_snapshot["temporary_cleanup_diagnostic_id"] is not None
+        assert [
+            event.fields["failure"] for event in diagnostics if event.kind == "activation_failed"
+        ] == ["out_of_memory"]
+        assert failed_client.is_closed
+        secondary = next(
+            getattr(record, DIAGNOSTIC_RECORD_ATTRIBUTE)[0]
+            for record in caplog.records
+            if hasattr(record, DIAGNOSTIC_RECORD_ATTRIBUTE)
+            and getattr(record, DIAGNOSTIC_RECORD_ATTRIBUTE)[0].diagnostic_id
+            == runtime.startup_cleanup_snapshot["temporary_cleanup_diagnostic_id"]
+        )
+        assert secondary.cause_id == first_cause.diagnostic_id
+        assert secondary.fields["exception_class"] == "PermissionError"
+        assert secondary.fields["errno"] == 13
+        assert "private temporary cleanup credential body" not in caplog.text
+
+        with pytest.raises(PermissionError):
+            if recovery == "retry":
+                await runtime.retry()
+            else:
+                await runtime.close()
+        assert factory.modes == ["persistent"]
+        assert runtime.state == GpuASRRuntimeState.FAILED
+        assert runtime.startup_cleanup_snapshot["pending_temporary_directories"] == 1
+        denied = False
+        if recovery == "retry":
+            await runtime.retry()
+            assert runtime.state == GpuASRRuntimeState.READY
+        else:
+            await runtime.close()
+            assert runtime.state == GpuASRRuntimeState.CLOSED
+        assert runtime.startup_cleanup_snapshot["pending_temporary_directories"] == 0
+        assert directories[0].cleanup_complete
+    finally:
+        denied = False
+        await runtime.close()

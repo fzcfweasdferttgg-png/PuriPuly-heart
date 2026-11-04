@@ -1,0 +1,425 @@
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal, Protocol
+
+import numpy as np
+
+from puripuly_heart.config.resolved import ResolvedSTTConfig
+from puripuly_heart.core.asr_worker import (
+    ASRWorkerActivation,
+    ASRWorkerDevice,
+    ASRWorkerTranscription,
+)
+from puripuly_heart.core.audio.ownership import OwnedStreamInput, OwnedVadEvent
+from puripuly_heart.core.messages import ErrorDiagnostics
+from puripuly_heart.core.runtime.local_asr_transition import LocalASRSessionOptions
+from puripuly_heart.core.stt.backend import STTProviderTurnEvent
+from puripuly_heart.domain.recognition import RecognitionStreamIdentity
+
+ProviderRuntimeChannel = Literal["self", "peer"]
+ProviderRuntimeChannelPhase = Literal[
+    "inactive",
+    "building",
+    "dormant",
+    "ready",
+    "running",
+    "failed",
+    "closed",
+]
+ProviderRuntimeGpuPhase = Literal[
+    "inactive",
+    "idle",
+    "discovering",
+    "discovery_pending",
+    "unsupported",
+    "not_installed",
+    "installing",
+    "invalid",
+    "available",
+    "validating",
+    "loading",
+    "warming",
+    "ready",
+    "failed",
+    "closed",
+]
+ProviderRuntimeMutationStatus = Literal["applied", "failed", "cancelled"]
+ProviderRuntimeReleaseMode = Literal["drain", "dormant", "abort"]
+
+ProviderRuntimeEventHandler = Callable[[object], Awaitable[None]]
+ProviderRuntimePeerEventHandler = Callable[[STTProviderTurnEvent], Awaitable[None]]
+ProviderRuntimeExceptionHandler = Callable[[Exception], Awaitable[None] | None]
+ProviderRuntimeTerminalFailureSink = Callable[[Exception | ErrorDiagnostics], Awaitable[None]]
+ProviderRuntimeRecoveryQuiesce = Callable[
+    [tuple[ProviderRuntimeChannel, ...]],
+    Awaitable[None],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class LocalASRProviderRuntimeCallbacks:
+    self_event_handler: ProviderRuntimeEventHandler
+    peer_event_handler: ProviderRuntimePeerEventHandler
+    retired_event_handler: ProviderRuntimeEventHandler
+    self_exception_handler: ProviderRuntimeExceptionHandler
+    peer_exception_handler: ProviderRuntimeExceptionHandler
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntimeBuildRequest:
+    config: ResolvedSTTConfig
+    gpu_device_id: str = "auto"
+    warmup: bool = False
+    model_id: str | None = None
+    session_options: LocalASRSessionOptions | None = None
+    provider_signature: tuple[object, ...] | None = None
+    runtime_signature: tuple[object, ...] | None = None
+    recognition_projection: Literal["auto", "legacy", "scoped"] = "auto"
+    operation_id: str | None = None
+    request_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.config.channel not in {"self", "peer"}:
+            raise ValueError("provider runtime channel must be self or peer")
+        if not self.gpu_device_id.strip():
+            raise ValueError("gpu_device_id must be non-empty")
+        if self.recognition_projection == "scoped" and (
+            self.provider_signature is None or self.runtime_signature is None
+        ):
+            raise ValueError("scoped provider request requires configuration scope signatures")
+        if self.recognition_projection not in {"auto", "legacy", "scoped"}:
+            raise ValueError("unknown recognition projection")
+
+    @property
+    def channel(self) -> ProviderRuntimeChannel:
+        return self.config.channel
+
+    @property
+    def provider_id(self) -> str:
+        return self.config.provider
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntimeRecoveryChannel:
+    request: ProviderRuntimeBuildRequest
+    start: bool
+    on_terminal_failure: ProviderRuntimeTerminalFailureSink | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntimeGpuRecoveryRequest:
+    device_id: str
+    channels: tuple[ProviderRuntimeRecoveryChannel, ...]
+    reason: Literal["manual_retry", "settings_restart"]
+
+    def __post_init__(self) -> None:
+        if not self.device_id.strip():
+            raise ValueError("GPU recovery device_id must be non-empty")
+        channel_ids = tuple(item.request.channel for item in self.channels)
+        if len(frozenset(channel_ids)) != len(channel_ids):
+            raise ValueError("GPU recovery channels must be unique")
+        for item in self.channels:
+            if item.request.provider_id != "local_qwen_gpu":
+                raise ValueError("GPU recovery accepts only local_qwen_gpu requests")
+            if item.request.gpu_device_id != self.device_id:
+                raise ValueError("GPU recovery channel device_id must match the recovery device")
+            if not item.request.warmup:
+                raise ValueError("GPU recovery channels must request warmup")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntimeChannelSnapshot:
+    channel: ProviderRuntimeChannel
+    provider_id: str | None
+    model_id: str | None
+    phase: ProviderRuntimeChannelPhase
+    generation: int
+    pending_handoff: bool
+    has_resources: bool
+    provider_live: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntimeGpuSnapshot:
+    phase: ProviderRuntimeGpuPhase
+    devices: tuple[ASRWorkerDevice, ...]
+    active_channels: frozenset[ProviderRuntimeChannel]
+    pending_count: int
+    worker_pid: int | None
+    configured_device_id: str | None
+    model_resident: bool
+    retry_required: bool
+    failure_code: str | None
+    startup_cleanup: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LocalASRProviderRuntimeSnapshot:
+    channels: tuple[ProviderRuntimeChannelSnapshot, ...]
+    gpu: ProviderRuntimeGpuSnapshot
+    revision: int = 0
+    closed: bool = False
+
+    def channel_for(self, channel: ProviderRuntimeChannel) -> ProviderRuntimeChannelSnapshot:
+        return next(state for state in self.channels if state.channel == channel)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntimeDiagnostic:
+    event: str
+    outcome: str | None = None
+    channel: ProviderRuntimeChannel | None = None
+    provider_id: str | None = None
+    phase: str | None = None
+    model_id: str | None = None
+    device_id: str | None = None
+    failure_code: str | None = None
+    failure_type: str | None = None
+    progress_percent: int | None = None
+    model_load_seconds: float | None = None
+    warmup_seconds: float | None = None
+    audio_seconds: float | None = None
+    decode_seconds: float | None = None
+    rtf: float | None = None
+    queue_wait_seconds: float | None = None
+    worker_exit_code: int | None = None
+    failure_diagnostics: ErrorDiagnostics | None = None
+    previous_provider_id: str | None = None
+    previous_model_id: str | None = None
+    source_language: str | None = None
+    previous_source_language: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntimeMutationResult:
+    status: ProviderRuntimeMutationStatus
+    request: ProviderRuntimeBuildRequest
+    previous_provider_id: str | None
+    snapshot: LocalASRProviderRuntimeSnapshot
+    failure_type: str | None = None
+    failure_code: str | None = None
+    failure_stage: str | None = None
+    failure_diagnostics: ErrorDiagnostics | None = None
+
+
+class ProviderGpuRuntimePort(Protocol):
+    @property
+    def state(self) -> object: ...
+
+    @property
+    def discovery_state(self) -> object: ...
+
+    @property
+    def active_channels(self) -> frozenset[ProviderRuntimeChannel]: ...
+
+    @property
+    def pending_count(self) -> int: ...
+
+    @property
+    def worker_pid(self) -> int | None: ...
+
+    @property
+    def last_failure_code(self) -> str | None: ...
+
+    @property
+    def configured_device_id(self) -> str | None: ...
+
+    @property
+    def startup_cleanup_snapshot(self) -> Mapping[str, object]: ...
+
+    async def discover_devices(self) -> tuple[ASRWorkerDevice, ...]: ...
+
+    async def activate_channel(
+        self,
+        channel: ProviderRuntimeChannel,
+        *,
+        owner: object,
+        model_path: Path,
+        model_id: str,
+        device_id: str,
+        operation_id: str | None = None,
+        request_id: str | None = None,
+    ) -> ASRWorkerActivation: ...
+
+    async def retry(self) -> ASRWorkerActivation: ...
+
+    async def submit(
+        self,
+        channel: ProviderRuntimeChannel,
+        samples_f32: np.ndarray,
+        *,
+        speech_end_at: float,
+        language_hint: str | None = None,
+    ) -> ASRWorkerTranscription: ...
+
+    async def deactivate_channel(
+        self, channel: ProviderRuntimeChannel, *, owner: object
+    ) -> None: ...
+
+    async def close(self) -> None: ...
+
+
+class ProviderRuntimeProviderFactoryPort(Protocol):
+    async def create(
+        self,
+        request: ProviderRuntimeBuildRequest,
+        *,
+        gpu_runtime: ProviderGpuRuntimePort,
+        on_terminal_failure: ProviderRuntimeTerminalFailureSink | None = None,
+    ) -> object: ...
+
+
+class LocalASRProviderRuntimePort(Protocol):
+    @property
+    def snapshot(self) -> LocalASRProviderRuntimeSnapshot: ...
+
+    @property
+    def diagnostics(self) -> tuple[ProviderRuntimeDiagnostic, ...]: ...
+
+    async def start(self) -> None: ...
+
+    async def discover_gpu(self, *, force: bool = False) -> LocalASRProviderRuntimeSnapshot: ...
+
+    async def inspect_gpu_readiness(
+        self,
+        *,
+        explicit_intent: bool,
+        device_id: str,
+    ) -> LocalASRProviderRuntimeSnapshot: ...
+
+    async def replace_provider(
+        self,
+        request: ProviderRuntimeBuildRequest,
+        *,
+        start: bool,
+        on_terminal_failure: ProviderRuntimeTerminalFailureSink | None = None,
+    ) -> ProviderRuntimeMutationResult: ...
+
+    async def handoff_provider(
+        self,
+        request: ProviderRuntimeBuildRequest,
+        *,
+        start: bool,
+        on_terminal_failure: ProviderRuntimeTerminalFailureSink | None = None,
+    ) -> ProviderRuntimeMutationResult: ...
+
+    async def commit_handoff(self, channel: ProviderRuntimeChannel) -> None: ...
+
+    async def cancel_handoff(self, channel: ProviderRuntimeChannel) -> bool: ...
+
+    async def release_channel(
+        self,
+        channel: ProviderRuntimeChannel,
+        *,
+        mode: ProviderRuntimeReleaseMode,
+        release_backend_after: float | None = None,
+    ) -> None: ...
+
+    async def start_channel(self, channel: ProviderRuntimeChannel) -> None: ...
+
+    async def warmup_channel(
+        self,
+        channel: ProviderRuntimeChannel,
+        *,
+        operation_id: str | None = None,
+        request_id: str | None = None,
+    ) -> None: ...
+
+    async def handle_vad_event(
+        self,
+        channel: ProviderRuntimeChannel,
+        event: object,
+    ) -> None: ...
+    async def observe_source_activity(
+        self,
+        channel: ProviderRuntimeChannel,
+        *,
+        speech_observed: bool,
+        observed_at_monotonic_s: float,
+    ) -> None: ...
+    async def observe_pending_source_work(
+        self,
+        channel: ProviderRuntimeChannel,
+        *,
+        pending: bool,
+    ) -> None: ...
+
+    async def handle_owned_vad_event(
+        self,
+        channel: ProviderRuntimeChannel,
+        event: OwnedVadEvent,
+    ) -> None: ...
+    async def handle_stream_input(
+        self,
+        channel: ProviderRuntimeChannel,
+        event: OwnedStreamInput,
+    ) -> None: ...
+
+    def is_current_recognition_stream(
+        self,
+        channel: ProviderRuntimeChannel,
+        stream: RecognitionStreamIdentity,
+    ) -> bool: ...
+
+    async def reject_owned_segment(
+        self,
+        channel: ProviderRuntimeChannel,
+        event: OwnedVadEvent,
+        *,
+        reason: str,
+        outcome: str,
+    ) -> None: ...
+
+    async def fail_owned_segment(
+        self,
+        channel: ProviderRuntimeChannel,
+        event: OwnedVadEvent,
+        *,
+        reason: str,
+    ) -> None: ...
+
+    async def recover_gpu(
+        self,
+        request: ProviderRuntimeGpuRecoveryRequest,
+        *,
+        quiesce: ProviderRuntimeRecoveryQuiesce | None = None,
+    ) -> LocalASRProviderRuntimeSnapshot: ...
+
+    async def close(self) -> None: ...
+
+
+class LocalASRProviderRuntimeFactoryPort(Protocol):
+    def create(
+        self,
+        callbacks: LocalASRProviderRuntimeCallbacks,
+    ) -> LocalASRProviderRuntimePort: ...
+
+
+__all__ = [
+    "LocalASRProviderRuntimeCallbacks",
+    "LocalASRProviderRuntimeFactoryPort",
+    "LocalASRProviderRuntimePort",
+    "LocalASRProviderRuntimeSnapshot",
+    "ProviderGpuRuntimePort",
+    "ProviderRuntimeBuildRequest",
+    "ProviderRuntimeChannel",
+    "ProviderRuntimeChannelPhase",
+    "ProviderRuntimeChannelSnapshot",
+    "ProviderRuntimeDiagnostic",
+    "ProviderRuntimeEventHandler",
+    "ProviderRuntimePeerEventHandler",
+    "ProviderRuntimeExceptionHandler",
+    "ProviderRuntimeGpuPhase",
+    "ProviderRuntimeGpuRecoveryRequest",
+    "ProviderRuntimeGpuSnapshot",
+    "ProviderRuntimeMutationResult",
+    "ProviderRuntimeMutationStatus",
+    "ProviderRuntimeProviderFactoryPort",
+    "ProviderRuntimeRecoveryChannel",
+    "ProviderRuntimeRecoveryQuiesce",
+    "ProviderRuntimeReleaseMode",
+    "ProviderRuntimeTerminalFailureSink",
+]

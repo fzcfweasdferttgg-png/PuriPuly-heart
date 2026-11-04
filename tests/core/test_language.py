@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+import pytest
+
+import puripuly_heart.core.language as language_module
+from puripuly_heart.core.language import (
+    SUPPORTED_LANGUAGES,
+    get_all_language_options,
+    get_deepgram_language,
+    get_language_info,
+    get_llm_language_name,
+    get_qwen3_asr_language,
+    get_soniox_language_hints,
+    get_stt_compatibility_warning,
+    is_deepgram_supported,
+    is_qwen3_asr_supported,
+    is_qwen_audio_asr_supported,
+    is_soniox_supported,
+    is_supported_language,
+    map_detected_language_for_llm,
+)
+
+
+def test_get_language_info_handles_exact_and_regional_codes() -> None:
+    assert get_language_info("ko").name == "Korean"
+    assert get_language_info("ko-KR").code == "ko"
+    assert get_language_info("zh-CN").name == "Chinese (Simplified)"
+    assert get_language_info("xx") is None
+
+
+def test_language_helpers_fallback_for_unknown() -> None:
+    assert get_deepgram_language("xx") == "en"
+    assert get_llm_language_name("xx") == "English"
+    assert get_qwen3_asr_language("xx") == "en"
+    assert get_soniox_language_hints("xx") == ["en"]
+
+
+def test_detected_language_mapper_preserves_generic_chinese() -> None:
+    chinese = map_detected_language_for_llm("zh")
+    japanese = map_detected_language_for_llm("ja")
+
+    assert chinese is not None
+    assert (chinese.code, chinese.name) == ("zh", "Chinese")
+    assert japanese is not None
+    assert (japanese.code, japanese.name) == ("ja", "Japanese")
+    assert map_detected_language_for_llm("xx") is None
+
+
+def test_qwen3_asr_language_normalization() -> None:
+    assert get_qwen3_asr_language("zh-TW") == "zh"
+    assert get_qwen3_asr_language("ko-KR") == "ko"
+
+
+def test_qwen_audio_hint_mapping_drops_unsupported_dedupes_and_limits() -> None:
+    from puripuly_heart.core.language import qwen_audio_asr_language_hints
+
+    assert qwen_audio_asr_language_hints(["ko", "ja", "zh-CN", "zh-TW", "en"]) == (
+        "ko",
+        "ja",
+        "zh",
+        "en",
+    )
+    assert qwen_audio_asr_language_hints(["ko", "xx", "et"]) == ("ko",)
+    assert qwen_audio_asr_language_hints(["ja", "ja", "ja-JP"]) == ("ja",)
+    assert qwen_audio_asr_language_hints(["ja", "ko"], limit=0) == ()
+    assert qwen_audio_asr_language_hints(["ko", "ja", "zh-CN", "zh-TW", "en", "fr"], limit=4) == (
+        "ko",
+        "ja",
+        "zh",
+        "en",
+    )
+    assert qwen_audio_asr_language_hints([]) == ()
+    assert qwen_audio_asr_language_hints(["xx"]) == ()
+
+
+def test_gemini_transcribe_language_hint_maps_primary_locales() -> None:
+    from puripuly_heart.core.language import gemini_transcribe_language_hint
+
+    assert gemini_transcribe_language_hint("ko") == "ko-KR"
+    assert gemini_transcribe_language_hint("ja") == "ja-JP"
+    assert gemini_transcribe_language_hint("en") == "en-US"
+    assert gemini_transcribe_language_hint("zh") == "zh-CN"
+    assert gemini_transcribe_language_hint("en-US") == "en-US"
+    assert gemini_transcribe_language_hint("zh-CN") == "zh-CN"
+    assert gemini_transcribe_language_hint("zh-TW") == "zh-TW"
+    assert gemini_transcribe_language_hint("pt") == "pt-BR"
+    assert gemini_transcribe_language_hint("no") == "nb-NO"
+    assert gemini_transcribe_language_hint("ar") == "ar"
+    assert gemini_transcribe_language_hint("auto") is None
+    assert gemini_transcribe_language_hint(" AUTO ") is None
+    assert gemini_transcribe_language_hint("") is None
+    assert gemini_transcribe_language_hint("   ") is None
+    assert gemini_transcribe_language_hint("xx") is None
+    assert gemini_transcribe_language_hint("et") is None
+
+
+def test_gemini_transcribe_hint_mapping_drops_unsupported_dedupes_and_limits() -> None:
+    from puripuly_heart.core.language import gemini_transcribe_language_hints
+
+    assert gemini_transcribe_language_hints(["ko", "ja", "en-US", "zh-TW", "en"]) == (
+        "ko-KR",
+        "ja-JP",
+        "en-US",
+        "zh-TW",
+    )
+    assert gemini_transcribe_language_hints(["ko", "xx", "et"]) == ("ko-KR",)
+    assert gemini_transcribe_language_hints(["ja", "ja", "  "]) == ("ja-JP",)
+    assert gemini_transcribe_language_hints(["ja", "ko"], limit=0) == ()
+    many = ["ko", "ja", "en", "zh", "fr", "de", "es", "it"] * 5
+    assert gemini_transcribe_language_hints(many, limit=32) == (
+        "ko-KR",
+        "ja-JP",
+        "en-US",
+        "zh-CN",
+        "fr-FR",
+        "de-DE",
+        "es-ES",
+        "it-IT",
+    )
+    assert len(gemini_transcribe_language_hints(many)) == 8
+    assert gemini_transcribe_language_hints([]) == ()
+    assert gemini_transcribe_language_hints(["xx"]) == ()
+
+
+def test_local_qwen_language_hint_normalization_is_conservative() -> None:
+    assert hasattr(language_module, "get_local_qwen_language_hint")
+
+    assert language_module.get_local_qwen_language_hint("ko-KR") == "ko"
+    assert language_module.get_local_qwen_language_hint("zh-TW") == "zh"
+    assert language_module.get_local_qwen_language_hint("en") == "en"
+    assert language_module.get_local_qwen_language_hint("ar") is None
+    assert language_module.get_local_qwen_language_hint("xx") is None
+
+
+def test_get_all_language_options_sorted_by_name() -> None:
+    options = list(get_all_language_options())
+    names = [name for _, name in options]
+    assert names == sorted(names)
+    assert ("ko", "Korean") in options
+
+
+def test_supported_language_checks() -> None:
+    assert is_supported_language("en") is True
+    assert is_supported_language("xx") is False
+    assert is_deepgram_supported("en") is True
+    assert is_deepgram_supported("ar") is False
+    assert is_qwen3_asr_supported("tr") is True
+    assert is_qwen_audio_asr_supported("tr") is False
+    assert is_soniox_supported("ja") is True
+
+
+def test_stt_compatibility_warning_variants() -> None:
+    warning = get_stt_compatibility_warning("ar", "deepgram")
+    assert warning is not None
+    assert warning.key == "warning.deepgram_suggest_qwen"
+    assert warning.language_code == "ar"
+
+    warning = get_stt_compatibility_warning("tr", "qwen_audio")
+    assert warning is not None
+    assert warning.key == "warning.qwen_suggest_deepgram"
+    assert warning.language_code == "tr"
+
+    warning = get_stt_compatibility_warning("bg", "qwen_audio")
+    assert warning is None
+
+    warning = get_stt_compatibility_warning("ar", "soniox")
+    assert warning is None
+
+
+def test_every_selectable_language_has_a_suggesting_stt_provider() -> None:
+    uncovered = [
+        code
+        for code in SUPPORTED_LANGUAGES
+        if not is_deepgram_supported(code) and not is_qwen_audio_asr_supported(code)
+    ]
+
+    assert uncovered == []
+
+
+@pytest.mark.parametrize("code", ["en", "ko", "zh-CN"])
+def test_get_language_info_returns_supported(code: str) -> None:
+    info = get_language_info(code)
+    assert info is not None
+    assert info.code
+    assert info.name

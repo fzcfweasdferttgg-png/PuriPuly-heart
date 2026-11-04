@@ -614,6 +614,9 @@ def model_index_to_eval_results(model_index: list[dict[str, Any]]) -> tuple[str,
         ```
     """
 
+    if not model_index:
+        raise ValueError("`model_index` must be a non-empty list.")
+
     eval_results = []
     for elem in model_index:
         name = elem["name"]
@@ -627,8 +630,9 @@ def model_index_to_eval_results(model_index: list[dict[str, Any]]) -> tuple[str,
             dataset_split = result["dataset"].get("split")
             dataset_revision = result["dataset"].get("revision")
             dataset_args = result["dataset"].get("args")
-            source_name = result.get("source", {}).get("name")
-            source_url = result.get("source", {}).get("url")
+            source = result.get("source") or {}
+            source_name = source.get("name")
+            source_url = source.get("url")
 
             for metric in result["metrics"]:
                 metric_type = metric["type"]
@@ -769,6 +773,8 @@ def eval_results_to_model_index(model_name: str, eval_results: list[EvalResult])
 def _to_unique_list(tags: list[str] | None) -> list[str] | None:
     if tags is None:
         return tags
+    if isinstance(tags, str):
+        tags = [tags]
     unique_tags = []  # make tags unique + keep order explicitly
     for tag in tags:
         if tag not in unique_tags:

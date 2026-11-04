@@ -1,0 +1,570 @@
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from puripuly_heart.app.services.application_shutdown import (
+    ApplicationIntentRejectedError,
+    ApplicationShutdownCallback,
+    ApplicationShutdownCoordinator,
+    ApplicationShutdownRegistrationError,
+    ApplicationShutdownRuntimeState,
+    application_shutdown_callback,
+)
+from puripuly_heart.core.lifecycle import (
+    LIFECYCLE_SHUTDOWN_PHASE_ORDER,
+    SHUTDOWN_PHASE_CLOSE_LOGGING_DIAGNOSTICS,
+    SHUTDOWN_PHASE_CLOSE_PROVIDERS_OUTPUT_ADAPTERS,
+    SHUTDOWN_PHASE_FINAL_DIAGNOSTICS,
+    SHUTDOWN_PHASE_FREEZE_INGRESS,
+    SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
+    SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
+)
+
+
+def test_on_demand_stall_diagnostic_is_safe_outside_event_loop() -> None:
+    def fail_supplier():
+        raise RuntimeError("private owner state")
+
+    diagnostic = ApplicationShutdownCoordinator(
+        runtime_state_supplier=fail_supplier,
+    ).capture_stall_diagnostic()
+
+    assert diagnostic.task_await_graphs == {}
+    assert diagnostic.runtime_states == (
+        ApplicationShutdownRuntimeState(
+            owner_name="ApplicationShutdownCoordinator",
+            active_native_operations=("runtime-state-unavailable:RuntimeError",),
+        ),
+    )
+    assert "private owner state" not in repr(diagnostic)
+
+
+@pytest.mark.asyncio
+async def test_application_shutdown_owns_admission_order_and_terminal_completion() -> None:
+    calls: list[str] = []
+    coordinator = ApplicationShutdownCoordinator(
+        tuple(
+            application_shutdown_callback(
+                phase=phase,
+                owner_name=f"owner-{index}",
+                callback_name="close",
+                callback=lambda phase=phase: calls.append(phase),
+            )
+            for index, phase in enumerate(LIFECYCLE_SHUTDOWN_PHASE_ORDER)
+        )
+    )
+
+    coordinator.admit_intent("manual_translation")
+    snapshot = await coordinator.shutdown()
+
+    assert calls == list(LIFECYCLE_SHUTDOWN_PHASE_ORDER)
+    assert snapshot.state == "completed"
+    assert snapshot.accepting_intents is False
+    assert snapshot.terminal is True
+    assert snapshot.phase_history == LIFECYCLE_SHUTDOWN_PHASE_ORDER
+    with pytest.raises(ApplicationIntentRejectedError):
+        coordinator.admit_intent("late_provider_transition")
+
+
+@pytest.mark.asyncio
+async def test_application_shutdown_continues_after_failure_and_closes_logging_last() -> None:
+    calls: list[str] = []
+    diagnostics = []
+    raw_failure = RuntimeError("secret-token raw provider payload")
+
+    async def fail_owner() -> None:
+        calls.append("owner-failed")
+        raise raw_failure
+
+    async def close_provider() -> None:
+        calls.append("provider-closed")
+
+    def close_logging(context) -> None:
+        calls.append(
+            "logging-closed:"
+            + ",".join(type(exception).__name__ for exception in context.cleanup_exceptions)
+        )
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
+                owner_name="SelfCaptureSessionOwner",
+                callback_name="close",
+                callback=fail_owner,
+            ),
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_CLOSE_PROVIDERS_OUTPUT_ADAPTERS,
+                owner_name="ProviderRuntime",
+                callback_name="close",
+                callback=close_provider,
+            ),
+            ApplicationShutdownCallback(
+                phase=SHUTDOWN_PHASE_CLOSE_LOGGING_DIAGNOSTICS,
+                owner_name="RuntimeLoggingService",
+                callback_name="close",
+                callback=close_logging,
+            ),
+        ),
+        diagnostics_sink=lambda diagnostic: diagnostics.append(diagnostic),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await coordinator.shutdown()
+
+    assert exc_info.value is raw_failure
+    assert calls == ["owner-failed", "provider-closed", "logging-closed:RuntimeError"]
+    assert coordinator.snapshot.state == "completed_with_failures"
+    assert coordinator.snapshot.terminal is True
+    assert len(diagnostics) == 1
+    assert diagnostics[0].exception_class == "RuntimeError"
+    assert "secret-token" not in repr(diagnostics[0])
+    assert "provider payload" not in repr(diagnostics[0])
+
+
+@pytest.mark.asyncio
+async def test_application_shutdown_times_out_one_callback_and_continues() -> None:
+    calls: list[str] = []
+    suppressed = asyncio.Event()
+    released = asyncio.Event()
+
+    async def blocked() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            suppressed.set()
+            await released.wait()
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
+                owner_name="ExternalProducer",
+                callback_name="stop",
+                callback=blocked,
+                timeout_seconds=0.01,
+            ),
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_FINAL_DIAGNOSTICS,
+                owner_name="Diagnostics",
+                callback_name="terminal",
+                callback=lambda: calls.append("continued"),
+            ),
+        )
+    )
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(coordinator.shutdown(), timeout=0.1)
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert calls == ["continued"]
+    assert elapsed < 0.1
+    assert coordinator.snapshot.failures[0].timed_out is True
+    await suppressed.wait()
+    assert coordinator.snapshot.terminal is True
+    assert coordinator.snapshot.outstanding_task_names == ()
+    assert not any(
+        task.get_name().startswith("application-shutdown:")
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task()
+    )
+    released.set()
+    assert calls == ["continued"]
+
+
+@pytest.mark.asyncio
+async def test_application_shutdown_bounds_stalled_diagnostic_delivery_and_continues() -> None:
+    calls: list[str] = []
+    diagnostic_cancelled = asyncio.Event()
+    release_diagnostic = asyncio.Event()
+
+    async def fail_owner() -> None:
+        raise RuntimeError("owner failed")
+
+    async def stalled_diagnostic(_diagnostic) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            diagnostic_cancelled.set()
+            await release_diagnostic.wait()
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
+                owner_name="BlockedOwner",
+                callback_name="close",
+                callback=fail_owner,
+            ),
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_CLOSE_LOGGING_DIAGNOSTICS,
+                owner_name="RuntimeLoggingService",
+                callback_name="close",
+                callback=lambda: calls.append("logging-closed"),
+            ),
+        ),
+        diagnostics_sink=stalled_diagnostic,
+        diagnostics_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(ExceptionGroup):
+        await asyncio.wait_for(coordinator.shutdown(), timeout=0.1)
+
+    assert calls == ["logging-closed"]
+    assert coordinator.snapshot.state == "completed_with_failures"
+    assert coordinator.snapshot.terminal is True
+    assert [failure.callback_name for failure in coordinator.snapshot.failures] == [
+        "close",
+        "emit_diagnostic",
+    ]
+    assert coordinator.snapshot.failures[-1].timed_out is True
+    await diagnostic_cancelled.wait()
+    assert coordinator.snapshot.outstanding_task_names == ()
+    assert not any(
+        task.get_name() == "application-shutdown:emit-diagnostic" for task in asyncio.all_tasks()
+    )
+    release_diagnostic.set()
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_terminal_waits_for_repeated_cancellation_suppression_to_settle() -> None:
+    release = asyncio.Event()
+    stopped = asyncio.Event()
+    cancellation_count = 0
+
+    async def stubborn() -> None:
+        nonlocal cancellation_count
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancellation_count += 1
+        stopped.set()
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
+                owner_name="StubbornOwner",
+                callback_name="close",
+                callback=stubborn,
+                timeout_seconds=0.01,
+            ),
+        ),
+        task_settle_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(coordinator.shutdown(), timeout=0.1)
+
+    assert cancellation_count == 2
+    assert coordinator.snapshot.state == "shutting_down"
+    assert coordinator.snapshot.terminal is False
+    assert coordinator.snapshot.outstanding_task_names == (
+        "application-shutdown:stop_external_producers:StubbornOwner:close",
+    )
+
+    release.set()
+    await stopped.wait()
+    await asyncio.sleep(0)
+
+    assert coordinator.snapshot.state == "completed_with_failures"
+    assert coordinator.snapshot.terminal is True
+    assert coordinator.snapshot.outstanding_task_names == ()
+
+
+@pytest.mark.asyncio
+async def test_on_demand_stall_diagnostic_reports_owner_await_graph_and_retained_native_work() -> (
+    None
+):
+    entered = asyncio.Event()
+    release_native = asyncio.Event()
+
+    async def close_owner() -> None:
+        entered.set()
+        await release_native.wait()
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
+                owner_name="PeerCaptureSessionOwner",
+                callback_name="close",
+                callback=close_owner,
+            ),
+        ),
+        runtime_state_supplier=lambda: (
+            ApplicationShutdownRuntimeState(
+                owner_name="PeerCaptureSessionOwner",
+                generation=7,
+                active_native_operations=("proctap-stop",),
+                child_states=("capture-helper:stopping",),
+            ),
+        ),
+    )
+
+    first_close = asyncio.create_task(coordinator.shutdown(), name="first-close-request")
+    repeated_close = asyncio.create_task(coordinator.shutdown(), name="repeated-close-request")
+    await entered.wait()
+
+    diagnostic = coordinator.capture_stall_diagnostic()
+
+    assert diagnostic.phase == SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL
+    assert diagnostic.active_owner_name == "PeerCaptureSessionOwner"
+    assert diagnostic.active_callback_name == "close"
+    assert diagnostic.runtime_states[0].generation == 7
+    assert diagnostic.runtime_states[0].active_native_operations == ("proctap-stop",)
+    assert diagnostic.runtime_states[0].child_states == ("capture-helper:stopping",)
+    assert diagnostic.native_stack_available is False
+    callback_task_name = (
+        f"application-shutdown:{SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL}:PeerCaptureSessionOwner:close"
+    )
+    assert callback_task_name in diagnostic.task_await_graphs
+    assert "release_native" not in repr(diagnostic.runtime_states)
+
+    release_native.set()
+    first_snapshot, repeated_snapshot = await asyncio.gather(first_close, repeated_close)
+    assert first_snapshot == repeated_snapshot
+    assert first_snapshot.terminal is True
+    assert diagnostic.coordinator_state == "shutting_down"
+    assert diagnostic.coordinator_terminal is False
+    assert diagnostic.coordinator_failure_count == 0
+
+
+@pytest.mark.asyncio
+async def test_timeout_diagnostic_captures_stall_before_cancelling_owner() -> None:
+    release = asyncio.Event()
+    diagnostics = []
+
+    async def blocked() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await release.wait()
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
+                owner_name="NativeOwner",
+                callback_name="close",
+                callback=blocked,
+                timeout_seconds=0.01,
+            ),
+        ),
+        diagnostics_sink=diagnostics.append,
+        task_settle_timeout_seconds=0.005,
+        runtime_state_supplier=lambda: (
+            ApplicationShutdownRuntimeState(
+                owner_name="NativeOwner",
+                generation=11,
+                active_native_operations=("decode",),
+                child_states=("gpu-worker:pid=42:ready",),
+            ),
+        ),
+    )
+
+    with pytest.raises(TimeoutError):
+        await coordinator.shutdown()
+
+    diagnostic = diagnostics[0].stall_diagnostic
+    assert diagnostic is not None
+    assert diagnostic.active_owner_name == "NativeOwner"
+    assert diagnostic.coordinator_state == "shutting_down"
+    assert diagnostic.coordinator_terminal is False
+    assert diagnostic.coordinator_failure_count == 1
+    assert diagnostic.runtime_states[0].generation == 11
+    assert any(name.startswith("application-shutdown:") for name in diagnostic.task_await_graphs)
+    release.set()
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_application_shutdown_invokes_sync_ingress_before_awaiting_cleanup() -> None:
+    ingress_stopped = False
+    release = asyncio.Event()
+
+    def stop_ingress() -> None:
+        nonlocal ingress_stopped
+        ingress_stopped = True
+
+    async def cleanup() -> None:
+        await release.wait()
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_FREEZE_INGRESS,
+                owner_name="IngressOwner",
+                callback_name="stop_ingress",
+                callback=stop_ingress,
+            ),
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
+                owner_name="CleanupOwner",
+                callback_name="close",
+                callback=cleanup,
+            ),
+        )
+    )
+
+    shutdown_task = asyncio.create_task(coordinator.shutdown())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert ingress_stopped is True
+    assert shutdown_task.done() is False
+
+    release.set()
+    await shutdown_task
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_does_not_abandon_owned_shutdown_task() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+
+    async def slow_close() -> None:
+        entered.set()
+        await release.wait()
+        calls.append("closed")
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
+                owner_name="ProviderRuntime",
+                callback_name="close",
+                callback=slow_close,
+            ),
+        )
+    )
+    caller = asyncio.create_task(coordinator.shutdown())
+    await entered.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+
+    assert coordinator.snapshot.state == "shutting_down"
+    release.set()
+    first, second = await asyncio.gather(coordinator.shutdown(), coordinator.shutdown())
+
+    assert first == second
+    assert calls == ["closed"]
+    assert coordinator.snapshot.state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_registration_closes_when_shutdown_starts() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def freeze() -> None:
+        entered.set()
+        await release.wait()
+
+    coordinator = ApplicationShutdownCoordinator(
+        (
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_FREEZE_INGRESS,
+                owner_name="Application",
+                callback_name="freeze",
+                callback=freeze,
+            ),
+        )
+    )
+    task = asyncio.create_task(coordinator.shutdown())
+    await entered.wait()
+
+    with pytest.raises(ApplicationShutdownRegistrationError):
+        coordinator.register_callback(
+            application_shutdown_callback(
+                phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
+                owner_name="LateOwner",
+                callback_name="close",
+                callback=lambda: None,
+            )
+        )
+
+    release.set()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_composed_application_exposes_live_owner_snapshots_and_repeated_close(
+    tmp_path,
+) -> None:
+    from types import SimpleNamespace
+
+    from puripuly_heart.composition.application_runtime import compose_application_runtime
+    from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+    from puripuly_heart.core.local_asr.local_stt_assets import DEFAULT_LOCAL_STT_MODEL_ID
+    from puripuly_heart.domain.events import STTSessionState, STTSessionStateEvent
+    from puripuly_heart.ui.presentation_adapter import FletUiPresentationAdapter
+
+    projected_statuses: list[str] = []
+    status_projected = asyncio.Event()
+
+    def set_status(value: str) -> None:
+        projected_statuses.append(value)
+        status_projected.set()
+
+    production_access = []
+    app = compose_application_runtime(
+        presentation=FletUiPresentationAdapter(
+            SimpleNamespace(
+                debug_ui_preview=False,
+                view_dashboard=SimpleNamespace(set_status=set_status),
+            ),
+        ),
+        config_path=tmp_path / "settings.json",
+        local_asr_evidence_sink=production_access.append,
+    )
+    from dataclasses import replace
+
+    defaults = AppSettingsVNext()
+    configured = replace(
+        defaults,
+        intent=replace(
+            defaults.intent,
+            stt=replace(
+                defaults.intent.stt,
+                provider="local_qwen_gpu",
+                model=DEFAULT_LOCAL_STT_MODEL_ID,
+            ),
+        ),
+    )
+    await production_access[0].initialize(configured)
+    access = production_access[0]
+    await access.start_callbacks.start_output(False)
+    await access.start_application_events()
+    await access.start_callbacks.open_self_ingress()
+    await access.self_vad.handle_stt_event(
+        STTSessionStateEvent(state=STTSessionState.STREAMING, channel="self")
+    )
+    await asyncio.wait_for(status_projected.wait(), timeout=1.0)
+
+    assert projected_statuses == ["connected"]
+
+    diagnostic = app.capture_application_shutdown_stall_diagnostic()
+    states = {state.owner_name: state for state in diagnostic.runtime_states}
+
+    assert states["SelfCaptureSessionOwner"].generation == 0
+    assert states["PeerCaptureSessionOwner"].generation == 0
+    assert states["LocalASRProviderRuntimeOwner:self"].generation == 0
+    assert states["LocalASRProviderRuntimeOwner:peer"].generation == 0
+    assert diagnostic.coordinator_state == "running"
+    assert diagnostic.coordinator_terminal is False
+    assert diagnostic.native_stack_available is False
+
+    await asyncio.gather(app.stop(), app.stop())
+    first_terminal = app.application_lifecycle().snapshot
+    await app.stop()
+
+    assert app.application_lifecycle().snapshot == first_terminal
+    assert first_terminal.state == "completed"

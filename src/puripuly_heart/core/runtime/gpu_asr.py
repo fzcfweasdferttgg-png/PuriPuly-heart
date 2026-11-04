@@ -1,0 +1,1547 @@
+from __future__ import annotations
+
+import asyncio
+import heapq
+import inspect
+import logging
+import tempfile
+import wave
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Literal
+from uuid import uuid4
+
+import numpy as np
+
+from puripuly_heart.core.asr_worker import (
+    ASRWorkerActivation,
+    ASRWorkerClientPort,
+    ASRWorkerClosedError,
+    ASRWorkerDevice,
+    ASRWorkerEvent,
+    ASRWorkerProcessFactoryPort,
+    ASRWorkerRequestError,
+    ASRWorkerTranscription,
+)
+from puripuly_heart.core.audio.format import pcm16le_bytes_to_float32
+from puripuly_heart.core.clock import Clock, SystemClock
+from puripuly_heart.core.diagnostic_validation import stt_startup_failure_code
+from puripuly_heart.core.diagnostics import (
+    current_diagnostic_operation,
+    emit_failure,
+    safe_exception_fields,
+)
+from puripuly_heart.core.lifecycle import LifecycleScope, start_lifecycle_task
+from puripuly_heart.core.messages import ErrorDiagnostics
+from puripuly_heart.core.owned_thread import run_owned_thread_call
+
+GPU_PENDING_TTL_SECONDS = 12.0
+GPU_PENDING_LIMIT_PER_CHANNEL = 8
+GPU_DISCOVERY_PENDING_SECONDS = 2.0
+GPU_SAMPLE_RATE_HZ = 16_000
+GPU_FORCE_CLOSE_SECONDS = 2.0
+GpuASRChannel = Literal["self", "peer"]
+GpuASRDiagnosticSink = Callable[["GpuASRDiagnostic"], Awaitable[None] | None]
+
+logger = logging.getLogger(__name__)
+
+
+class GpuASRRuntimeState(str, Enum):
+    STOPPED = "stopped"
+    STARTING = "starting"
+    READY = "ready"
+    FAILED = "failed"
+    STOPPING = "stopping"
+    CLOSED = "closed"
+
+
+class GpuDiscoveryState(str, Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    PENDING = "pending"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class GpuASRRuntimeError(RuntimeError):
+    pass
+
+
+class GpuASRManualRetryRequired(GpuASRRuntimeError):
+    def __init__(self, code: str, diagnostics: ErrorDiagnostics | None = None) -> None:
+        self.code = code
+        self.failure_diagnostics = diagnostics
+        super().__init__(code)
+
+
+class GpuASRDecodeDropped(GpuASRRuntimeError):
+    pass
+
+
+class GpuASRWorkExpired(GpuASRRuntimeError):
+    pass
+
+
+class GpuASRWorkDiscarded(GpuASRRuntimeError):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+@dataclass(frozen=True, slots=True)
+class GpuASRDiagnostic:
+    kind: str
+    fields: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationConfig:
+    model_path: Path
+    model_id: str
+    device_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationOutcome:
+    activation: ASRWorkerActivation | None = None
+    failure_code: str | None = None
+    failure: BaseException | None = None
+    failure_diagnostics: ErrorDiagnostics | None = None
+
+
+@dataclass(order=True, slots=True)
+class _PendingWork:
+    speech_end_at: float
+    sequence: int
+    request_id: str = field(compare=False)
+    channel: GpuASRChannel = field(compare=False)
+    audio_payload: np.ndarray | bytes | None = field(compare=False)
+    language_hint: str | None = field(compare=False)
+    future: asyncio.Future[ASRWorkerTranscription] = field(compare=False)
+    queued_at: float = field(compare=False)
+    request_sent: asyncio.Event = field(
+        compare=False,
+        default_factory=asyncio.Event,
+    )
+    settled: asyncio.Event = field(
+        compare=False,
+        default_factory=asyncio.Event,
+    )
+    discard_reason: str | None = field(compare=False, default=None)
+
+
+class SharedGpuASRRuntime:
+    def __init__(
+        self,
+        *,
+        process_factory: ASRWorkerProcessFactoryPort,
+        clock: Clock | None = None,
+        diagnostic_sink: GpuASRDiagnosticSink | None = None,
+        pending_ttl_seconds: float = GPU_PENDING_TTL_SECONDS,
+        discovery_pending_seconds: float = GPU_DISCOVERY_PENDING_SECONDS,
+        force_close_seconds: float = GPU_FORCE_CLOSE_SECONDS,
+        pending_limit_per_channel: int = GPU_PENDING_LIMIT_PER_CHANNEL,
+        pending_reaper_interval_seconds: float | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self._process_factory = process_factory
+        self._clock = clock or SystemClock()
+        self._diagnostic_sink = diagnostic_sink
+        self._pending_ttl_seconds = pending_ttl_seconds
+        self._discovery_pending_seconds = discovery_pending_seconds
+        self._force_close_seconds = force_close_seconds
+        if pending_limit_per_channel < 1:
+            raise ValueError("pending_limit_per_channel must be positive")
+        self._pending_limit_per_channel = pending_limit_per_channel
+        self._pending_reaper_interval_seconds = (
+            min(0.25, max(0.01, pending_ttl_seconds / 2.0))
+            if pending_reaper_interval_seconds is None
+            else pending_reaper_interval_seconds
+        )
+        if self._pending_reaper_interval_seconds <= 0:
+            raise ValueError("pending_reaper_interval_seconds must be > 0")
+        self._sleep = sleep
+        self._scope = LifecycleScope("shared-gpu-asr-runtime")
+        self._lock = asyncio.Lock()
+        self._discovery_lock = asyncio.Lock()
+        self._queue_event = asyncio.Event()
+        self._queue: list[_PendingWork] = []
+        self._active_channels: dict[GpuASRChannel, set[object]] = {}
+        self._client: ASRWorkerClientPort | None = None
+        self._retired_clients: list[ASRWorkerClientPort] = []
+        self._activation: ASRWorkerActivation | None = None
+        self._config: _ActivationConfig | None = None
+        self._active_work: _PendingWork | None = None
+        self._sequence = 0
+        self._generation = 0
+        self._dispatcher_task: asyncio.Task[None] | None = None
+        self._event_task: asyncio.Task[None] | None = None
+        self._reaper_task: asyncio.Task[None] | None = None
+        self._activation_task: asyncio.Task[_ActivationOutcome] | None = None
+        self._activation_waiters: dict[tuple[GpuASRChannel, object], set[asyncio.Future[None]]] = {}
+        self._temporary_directory: tempfile.TemporaryDirectory[str] | None = None
+        self._temporary_cleanup_debt: list[
+            tuple[tempfile.TemporaryDirectory[str], ErrorDiagnostics | None, int]
+        ] = []
+        self._temporary_cleanup_diagnostics: ErrorDiagnostics | None = None
+        self._activation_failure_diagnostics: ErrorDiagnostics | None = None
+        self._file_cleanup_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._close_requested = False
+        self._file_cleanup_failure: str | None = None
+        self._state = GpuASRRuntimeState.STOPPED
+        self._discovery_state = GpuDiscoveryState.IDLE
+        self._last_failure_code: str | None = None
+        self._decode_recovery_armed = False
+        self._closed = False
+
+    @property
+    def state(self) -> GpuASRRuntimeState:
+        return self._state
+
+    @property
+    def discovery_state(self) -> GpuDiscoveryState:
+        return self._discovery_state
+
+    @property
+    def active_channels(self) -> frozenset[GpuASRChannel]:
+        return frozenset(self._active_channels)
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._queue)
+
+    @property
+    def worker_pid(self) -> int | None:
+        return self._client.pid if self._client is not None else None
+
+    @property
+    def last_failure_code(self) -> str | None:
+        return self._last_failure_code
+
+    @property
+    def startup_cleanup_snapshot(self) -> Mapping[str, object]:
+        snapshot = dict(self._process_factory.startup_cleanup_snapshot())
+        snapshot["pending_temporary_directories"] = len(self._temporary_cleanup_debt)
+        snapshot["temporary_cleanup_diagnostic_id"] = (
+            self._temporary_cleanup_diagnostics.diagnostic_id
+            if self._temporary_cleanup_diagnostics is not None
+            else None
+        )
+        snapshot["close_complete"] = (
+            bool(snapshot.get("close_complete")) and not self._temporary_cleanup_debt
+        )
+        return snapshot
+
+    @property
+    def configured_device_id(self) -> str | None:
+        return self._config.device_id if self._config is not None else None
+
+    async def discover_devices(self) -> tuple[ASRWorkerDevice, ...]:
+        async with self._discovery_lock:
+            self._ensure_open()
+            self._discovery_state = GpuDiscoveryState.RUNNING
+            client: ASRWorkerClientPort | None = None
+            primary: BaseException | None = None
+            try:
+                client = await self._process_factory.start(
+                    mode="discovery",
+                    **current_diagnostic_operation(),
+                )
+                task = start_lifecycle_task(
+                    self._scope,
+                    client.discover(),
+                    name=f"discovery-{uuid4().hex}",
+                )
+                done, _pending = await asyncio.wait({task}, timeout=self._discovery_pending_seconds)
+                if not done:
+                    self._discovery_state = GpuDiscoveryState.PENDING
+                    await self._emit("discovery_pending", {})
+                devices = await task
+                self._discovery_state = GpuDiscoveryState.READY
+                await self._emit("discovery_ready", {"device_count": len(devices)})
+                return devices
+            except BaseException as exc:
+                primary = exc
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                self._discovery_state = GpuDiscoveryState.FAILED
+                await self._emit("discovery_failed", {"failure": _failure_code(exc)})
+                raise
+            finally:
+                if client is not None:
+                    try:
+                        await self._close_unowned_client(client)
+                    except Exception:
+                        self._retain_client_cleanup(client)
+                        if primary is None:
+                            self._discovery_state = GpuDiscoveryState.FAILED
+                            raise
+
+    async def activate_channel(
+        self,
+        channel: GpuASRChannel,
+        *,
+        owner: object,
+        model_path: Path,
+        model_id: str,
+        device_id: str,
+        operation_id: str | None = None,
+        request_id: str | None = None,
+    ) -> ASRWorkerActivation:
+        if self._shutdown_task is not None and not self._shutdown_task.done():
+            raise GpuASRRuntimeError("GPU runtime is stopping")
+        config = _ActivationConfig(
+            model_path=model_path.resolve(),
+            model_id=model_id,
+            device_id=device_id,
+        )
+        async with self._lock:
+            self._ensure_open()
+            if self._state == GpuASRRuntimeState.STOPPING:
+                raise GpuASRRuntimeError("GPU runtime is stopping")
+            if self._config is not None and self._config != config:
+                raise GpuASRRuntimeError("active GPU channels must share one model and device")
+            self._active_channels.setdefault(channel, set()).add(owner)
+            self._config = config
+            if self._state == GpuASRRuntimeState.READY:
+                if self._activation is None:
+                    raise GpuASRRuntimeError("GPU activation state is inconsistent")
+                return self._activation
+            if self._state == GpuASRRuntimeState.FAILED:
+                raise GpuASRManualRetryRequired(
+                    self._last_failure_code or "manual_retry_required",
+                    self._activation_failure_diagnostics,
+                )
+            if self._state == GpuASRRuntimeState.STOPPED:
+                task = self._begin_activation_locked(
+                    config,
+                    {"operation_id": operation_id, "request_id": request_id},
+                )
+            elif self._state == GpuASRRuntimeState.STARTING and self._activation_task is not None:
+                task = self._activation_task
+            else:
+                raise GpuASRRuntimeError(f"GPU runtime is {self._state.value}")
+            key = (channel, owner)
+            revoked: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            self._activation_waiters.setdefault(key, set()).add(revoked)
+        try:
+            await asyncio.wait({task, revoked}, return_when=asyncio.FIRST_COMPLETED)
+            if revoked.done():
+                raise asyncio.CancelledError
+            return await self._await_activation(task)
+        finally:
+            waiters = self._activation_waiters.get(key)
+            if waiters is not None:
+                waiters.discard(revoked)
+                if not waiters:
+                    self._activation_waiters.pop(key)
+
+    async def retry(self) -> ASRWorkerActivation:
+        async with self._lock:
+            self._ensure_open()
+            if self._state != GpuASRRuntimeState.FAILED:
+                raise GpuASRRuntimeError("GPU runtime is not awaiting manual retry")
+            if not self._active_channels or self._config is None:
+                raise GpuASRRuntimeError("no active GPU channel remains")
+            if self._temporary_directory is not None or self._temporary_cleanup_debt:
+                await self._cleanup_temporary_directory_locked()
+            task = self._begin_activation_locked(self._config, current_diagnostic_operation())
+        return await self._await_activation(task)
+
+    async def submit(
+        self,
+        channel: GpuASRChannel,
+        samples_f32: np.ndarray,
+        *,
+        speech_end_at: float,
+        language_hint: str | None = None,
+    ) -> ASRWorkerTranscription:
+        samples = np.asarray(samples_f32, dtype=np.float32)
+        if samples.ndim != 1 or samples.size == 0:
+            raise ValueError("GPU ASR audio must be a non-empty mono array")
+        return await self._submit_owned(
+            channel, samples, speech_end_at=speech_end_at, language_hint=language_hint
+        )
+
+    async def submit_pcm16(
+        self,
+        channel: GpuASRChannel,
+        pcm16le: bytes,
+        *,
+        speech_end_at: float,
+        language_hint: str | None = None,
+    ) -> ASRWorkerTranscription:
+        if len(pcm16le) < 2 or len(pcm16le) % 2:
+            raise ValueError("GPU ASR PCM16 must contain non-empty complete mono samples")
+        return await self._submit_owned(
+            channel,
+            pcm16le if type(pcm16le) is bytes else bytes(pcm16le),
+            speech_end_at=speech_end_at,
+            language_hint=language_hint,
+        )
+
+    async def _submit_owned(
+        self,
+        channel: GpuASRChannel,
+        payload: np.ndarray | bytes,
+        *,
+        speech_end_at: float,
+        language_hint: str | None,
+    ) -> ASRWorkerTranscription:
+        async with self._lock:
+            self._ensure_open()
+            if channel not in self._active_channels:
+                raise GpuASRRuntimeError(f"GPU channel is not active: {channel}")
+            if self._state == GpuASRRuntimeState.FAILED:
+                raise GpuASRManualRetryRequired(
+                    self._last_failure_code or "manual_retry_required",
+                    self._activation_failure_diagnostics,
+                )
+            recovery_starting = (
+                self._state == GpuASRRuntimeState.STARTING
+                and self._decode_recovery_armed
+                and self._activation_task is not None
+            )
+            if self._state != GpuASRRuntimeState.READY and not recovery_starting:
+                raise GpuASRRuntimeError(f"GPU runtime is {self._state.value}")
+            channel_pending = sum(work.channel == channel for work in self._queue)
+            if channel_pending >= self._pending_limit_per_channel:
+                raise GpuASRWorkDiscarded("pending_capacity")
+            samples = (
+                np.ascontiguousarray(payload).copy() if isinstance(payload, np.ndarray) else payload
+            )
+            self._sequence += 1
+            future: asyncio.Future[ASRWorkerTranscription] = (
+                asyncio.get_running_loop().create_future()
+            )
+            work = _PendingWork(
+                speech_end_at=speech_end_at,
+                sequence=self._sequence,
+                request_id=uuid4().hex,
+                channel=channel,
+                audio_payload=samples,
+                language_hint=language_hint,
+                future=future,
+                queued_at=self._clock.now(),
+            )
+            heapq.heappush(self._queue, work)
+            self._queue_event.set()
+        return await future
+
+    async def deactivate_channel(self, channel: GpuASRChannel, *, owner: object) -> None:
+        active: _PendingWork | None = None
+        client: ASRWorkerClientPort | None = None
+        pending_discarded = 0
+        shutdown: asyncio.Task[None] | None = None
+        async with self._lock:
+            owners = self._active_channels.get(channel)
+            if owners is not None and owner in owners:
+                owners.remove(owner)
+                for waiter in self._activation_waiters.pop((channel, owner), ()):
+                    if not waiter.done():
+                        waiter.set_result(None)
+                if owners:
+                    return
+                self._active_channels.pop(channel)
+            elif self._active_channels or self._state in {
+                GpuASRRuntimeState.STOPPED,
+                GpuASRRuntimeState.CLOSED,
+            }:
+                return
+            if self._shutdown_task is not None and not self._shutdown_task.done():
+                shutdown = self._shutdown_task
+            else:
+                pending_discarded = self._discard_channel_pending_locked(
+                    channel, "channel_disabled"
+                )
+                if self._active_channels or self._state in {
+                    GpuASRRuntimeState.STOPPED,
+                    GpuASRRuntimeState.CLOSED,
+                }:
+                    candidate = self._active_work
+                    if candidate is not None and candidate.channel == channel:
+                        candidate.discard_reason = "channel_disabled"
+                        if not candidate.future.done():
+                            candidate.future.set_exception(GpuASRWorkDiscarded("channel_disabled"))
+                        active = candidate
+                        client = self._client
+                else:
+                    shutdown = self._begin_shutdown("last_channel_disabled")
+        if shutdown is not None:
+            await asyncio.shield(shutdown)
+            return
+        active_cancelled = False
+        if active is not None and client is not None:
+            active_cancelled = await self._cancel_channel_work(active, client)
+        await self._emit(
+            "channel_deactivated",
+            {
+                "channel": channel,
+                "pending_discarded": pending_discarded,
+                "active_cancelled": active_cancelled,
+                "worker_retained": bool(self._active_channels),
+            },
+        )
+
+    async def close(self) -> None:
+        self._close_requested = True
+        self._closed = True
+        shutdown = self._shutdown_task
+        if shutdown is None or (shutdown.done() and self._state != GpuASRRuntimeState.CLOSED):
+            shutdown = self._begin_shutdown("application_shutdown")
+        await asyncio.shield(shutdown)
+
+    def _begin_shutdown(self, reason: str) -> asyncio.Task[None]:
+        self._state = GpuASRRuntimeState.STOPPING
+        task = asyncio.create_task(self._run_shutdown(reason), name="shared-gpu-asr-shutdown")
+        self._shutdown_task = task
+        task.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+        return task
+
+    async def _run_shutdown(self, reason: str) -> None:
+        async with self._lock:
+            if self._close_requested:
+                self._active_channels.clear()
+            tasks, stop_error, terminal = await self._stop_locked(
+                final_state=GpuASRRuntimeState.STOPPED, reason=reason
+            )
+            self._config = None
+            if terminal:
+                self._last_failure_code = None
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if self._close_requested:
+            for client in tuple(self._retired_clients):
+                try:
+                    await self._close_unowned_client(client)
+                except Exception as exc:
+                    terminal = False
+                    stop_error = (
+                        ExceptionGroup("GPU independent cleanup failed", [stop_error, exc])
+                        if stop_error
+                        else exc
+                    )
+                else:
+                    self._retired_clients.remove(client)
+            if terminal:
+                try:
+                    async with self._lock:
+                        await self._cleanup_temporary_directory_locked()
+                except Exception as exc:
+                    terminal = False
+                    stop_error = exc
+                    self._state = GpuASRRuntimeState.FAILED
+            try:
+                await asyncio.wait_for(
+                    self._process_factory.close_pending_startups(),
+                    timeout=self._force_close_seconds,
+                )
+            except Exception as exc:
+                terminal = False
+                stop_error = (
+                    ExceptionGroup("GPU shutdown and startup cleanup failed", [stop_error, exc])
+                    if stop_error is not None
+                    else exc
+                )
+                self._state = GpuASRRuntimeState.FAILED
+                if self._last_failure_code is None:
+                    self._last_failure_code = "startup_cleanup_failed"
+        if self._close_requested and terminal:
+            async with self._lock:
+                self._active_channels.clear()
+                self._state = GpuASRRuntimeState.CLOSED
+            await self._scope.close()
+        if stop_error is not None:
+            if not terminal:
+                self._closed = False
+            raise stop_error
+
+    def _begin_activation_locked(
+        self,
+        config: _ActivationConfig,
+        origin: dict[str, str | None],
+    ) -> asyncio.Task[_ActivationOutcome]:
+        self._retired_clients = [client for client in self._retired_clients if not client.is_closed]
+        if self._retired_clients or self._temporary_cleanup_debt:
+            raise GpuASRManualRetryRequired(
+                "worker_cleanup_failed", self._activation_failure_diagnostics
+            )
+        self._state = GpuASRRuntimeState.STARTING
+        self._last_failure_code = None
+        self._activation_failure_diagnostics = None
+        self._file_cleanup_failure = None
+        self._decode_recovery_armed = False
+        self._generation += 1
+        generation = self._generation
+        task = start_lifecycle_task(
+            self._scope,
+            self._run_activation(generation, config, origin),
+            name=f"activation-{generation}",
+        )
+        self._activation_task = task
+        return task
+
+    async def _await_activation(
+        self,
+        task: asyncio.Task[_ActivationOutcome],
+    ) -> ASRWorkerActivation:
+        outcome = await asyncio.shield(task)
+        if outcome.activation is not None:
+            return outcome.activation
+        raise GpuASRManualRetryRequired(
+            outcome.failure_code or "manual_retry_required",
+            outcome.failure_diagnostics,
+        ) from outcome.failure
+
+    async def _run_activation(
+        self,
+        generation: int,
+        config: _ActivationConfig,
+        origin: dict[str, str | None],
+    ) -> _ActivationOutcome:
+        client: ASRWorkerClientPort | None = None
+        event_task: asyncio.Task[None] | None = None
+        temporary_directory = tempfile.TemporaryDirectory(prefix="puripuly-gpu-asr-audio-")
+        try:
+            client = await self._process_factory.start(mode="persistent", **origin)
+            async with self._lock:
+                if generation != self._generation or self._state != GpuASRRuntimeState.STARTING:
+                    raise GpuASRRuntimeError("GPU activation was superseded")
+                self._client = client
+                event_task = start_lifecycle_task(
+                    self._scope,
+                    self._consume_events(generation, client),
+                    name=f"worker-events-{generation}",
+                )
+                self._event_task = event_task
+            activation = await client.activate(
+                model_path=config.model_path,
+                device_id=config.device_id,
+                backend=("cpu" if config.device_id == "cpu" else "vulkan"),
+            )
+        except BaseException as exc:
+            primary = getattr(exc, "failure_diagnostics", None)
+            if not isinstance(primary, ErrorDiagnostics):
+                primary = ErrorDiagnostics(
+                    component="asr_worker",
+                    operation="process_lifecycle",
+                    code=(
+                        "worker_startup_cancelled"
+                        if isinstance(exc, asyncio.CancelledError)
+                        else "worker_activation_failed"
+                    ),
+                    category="lifecycle",
+                    visibility="basic",
+                    content_policy="metadata_only",
+                    status_code=None,
+                    retry_after_ms=None,
+                    fields={
+                        "native_classification": stt_startup_failure_code(_failure_code(exc)),
+                        **safe_exception_fields(exc),
+                    },
+                    generation=generation,
+                    **origin,
+                )
+                emit_failure(
+                    logger,
+                    primary,
+                    stage="activation",
+                    severity="info" if isinstance(exc, asyncio.CancelledError) else "error",
+                    disposition=(
+                        "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
+                    ),
+                )
+            if event_task is not None:
+                event_task.cancel()
+            if (
+                client is not None
+                and not client.is_closed
+                and (self._client is not client or generation == self._generation)
+            ):
+                try:
+                    await self._close_unowned_client(client)
+                except Exception:
+                    self._retain_client_cleanup(client)
+            if event_task is not None:
+                await asyncio.gather(event_task, return_exceptions=True)
+            await self._cleanup_activation_directory(temporary_directory, primary, generation)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            failure_code = _failure_code(exc)
+            async with self._lock:
+                if generation != self._generation:
+                    return _ActivationOutcome(
+                        failure_code=failure_code,
+                        failure=exc,
+                        failure_diagnostics=primary,
+                    )
+                self._activation_task = None
+                if self._client is client and (client is None or client.is_closed):
+                    self._client = None
+                self._event_task = None
+                self._state = GpuASRRuntimeState.FAILED
+                self._last_failure_code = failure_code
+                self._activation_failure_diagnostics = primary
+            await self._emit(
+                "activation_failed",
+                {
+                    "model": config.model_id,
+                    "backend": "Vulkan",
+                    **_failure_diagnostic_fields(exc),
+                },
+            )
+            return _ActivationOutcome(
+                failure_code=failure_code,
+                failure=exc,
+                failure_diagnostics=primary,
+            )
+        async with self._lock:
+            if (
+                generation != self._generation
+                or self._state != GpuASRRuntimeState.STARTING
+                or not self._active_channels
+            ):
+                stale = True
+            else:
+                stale = False
+                self._client = client
+                self._activation = activation
+                self._temporary_directory = temporary_directory
+                self._activation_task = None
+                self._state = GpuASRRuntimeState.READY
+                self._last_failure_code = None
+                self._dispatcher_task = start_lifecycle_task(
+                    self._scope,
+                    self._dispatch(generation, client),
+                    name=f"dispatcher-{generation}",
+                )
+                self._reaper_task = start_lifecycle_task(
+                    self._scope,
+                    self._reap_pending_work(generation, client),
+                    name=f"pending-ttl-reaper-{generation}",
+                )
+        if stale:
+            if event_task is not None:
+                event_task.cancel()
+            if not client.is_closed:
+                try:
+                    await self._close_unowned_client(client)
+                except Exception:
+                    self._retain_client_cleanup(client)
+            if event_task is not None:
+                await asyncio.gather(event_task, return_exceptions=True)
+            await self._cleanup_activation_directory(temporary_directory, None, generation)
+            return _ActivationOutcome(failure_code="activation_cancelled")
+        await self._emit(
+            "activation_ready",
+            {
+                "model": config.model_id,
+                "backend": "Vulkan",
+                "device": activation.device.device_id,
+                "model_load_seconds": activation.model_load_seconds,
+                "warmup_seconds": activation.warmup_seconds,
+            },
+        )
+        return _ActivationOutcome(activation=activation)
+
+    async def _close_unowned_client(self, client: ASRWorkerClientPort) -> None:
+        await client.close()
+
+    def _retain_client_cleanup(self, client: ASRWorkerClientPort) -> None:
+        if client not in self._retired_clients:
+            self._retired_clients.append(client)
+
+    async def _cleanup_activation_directory(
+        self,
+        directory: tempfile.TemporaryDirectory[str],
+        cause: ErrorDiagnostics | None,
+        generation: int,
+    ) -> None:
+        debt = (directory, cause, generation)
+        async with self._lock:
+            self._temporary_cleanup_debt.append(debt)
+        try:
+            await run_owned_thread_call(directory.cleanup)
+        except Exception as exc:
+            self._record_temporary_cleanup_failure(exc, cause, generation)
+        else:
+            async with self._lock:
+                self._temporary_cleanup_debt.remove(debt)
+
+    def _record_temporary_cleanup_failure(
+        self,
+        exception: Exception,
+        cause: ErrorDiagnostics | None,
+        generation: int,
+    ) -> None:
+        diagnostics = ErrorDiagnostics(
+            component="asr_worker",
+            operation="process_lifecycle",
+            code="worker_cleanup_failed",
+            category="lifecycle",
+            visibility="basic",
+            content_policy="metadata_only",
+            status_code=None,
+            retry_after_ms=None,
+            fields={
+                "cleanup_stage": "cleanup",
+                "cleanup_complete": False,
+                "count": len(self._temporary_cleanup_debt),
+                **safe_exception_fields(exception),
+            },
+            generation=generation,
+            cause_id=cause.diagnostic_id if cause is not None else None,
+            operation_id=cause.operation_id if cause is not None else None,
+            request_id=cause.request_id if cause is not None else None,
+        )
+        if self._temporary_cleanup_diagnostics is None:
+            self._temporary_cleanup_diagnostics = diagnostics
+        emit_failure(
+            logger, diagnostics, severity="warning", disposition="degraded", stage="temp_cleanup"
+        )
+
+    async def _reap_pending_work(
+        self,
+        generation: int,
+        client: ASRWorkerClientPort,
+    ) -> None:
+        while True:
+            await self._sleep(self._pending_reaper_interval_seconds)
+            expired: list[tuple[_PendingWork, float, str]] = []
+            async with self._lock:
+                if not self._is_current_ready(generation, client):
+                    return
+                now = self._clock.now()
+                model_id = self._config.model_id if self._config is not None else "gpu"
+                retained: list[_PendingWork] = []
+                while self._queue:
+                    work = heapq.heappop(self._queue)
+                    queue_wait = max(0.0, now - work.speech_end_at)
+                    if queue_wait >= self._pending_ttl_seconds:
+                        work.discard_reason = "speech_end_ttl"
+                        if not work.future.done():
+                            work.future.set_exception(GpuASRWorkExpired("speech_end_ttl"))
+                        work.settled.set()
+                        expired.append((work, queue_wait, model_id))
+                    else:
+                        retained.append(work)
+                self._queue = retained
+                heapq.heapify(self._queue)
+            for work, queue_wait, model_id in expired:
+                await self._emit_work_expired(
+                    work,
+                    model_id=model_id,
+                    queue_wait=queue_wait,
+                )
+
+    async def _stop_locked(
+        self,
+        *,
+        final_state: GpuASRRuntimeState,
+        reason: str,
+    ) -> tuple[tuple[asyncio.Task[None], ...], Exception | None, bool]:
+        self._state = GpuASRRuntimeState.STOPPING
+        self._generation += 1
+        self._discard_pending_locked(reason)
+        active = self._active_work
+        if active is not None and not active.future.done():
+            active.future.set_exception(GpuASRWorkDiscarded(reason))
+        client = self._client
+        tasks = tuple(
+            task
+            for task in (
+                self._activation_task,
+                self._dispatcher_task,
+                self._event_task,
+                self._reaper_task,
+            )
+            if task is not None and task is not asyncio.current_task()
+        )
+        for task in tasks:
+            task.cancel()
+        stop_error: Exception | None = None
+        terminal = True
+        forced = False
+        if client is not None:
+            stop_error, terminal = await self._stop_client(
+                client,
+                request_id=active.request_id if active is not None else None,
+            )
+        if not terminal:
+            self._state = GpuASRRuntimeState.FAILED
+            self._last_failure_code = "worker_shutdown_failed"
+            self._queue_event.set()
+            await self._emit(
+                "worker_failed",
+                {
+                    "backend": "Vulkan",
+                    "failure": self._last_failure_code,
+                    "retry": "manual",
+                    "fallback": "none",
+                },
+            )
+            return tasks, stop_error, False
+        try:
+            await self._cleanup_temporary_directory_locked()
+        except Exception as exc:
+            self._state = GpuASRRuntimeState.FAILED
+            return tasks, exc, False
+        self._client = None
+        self._activation = None
+        self._active_work = None
+        self._dispatcher_task = None
+        self._event_task = None
+        self._activation_task = None
+        self._reaper_task = None
+        self._decode_recovery_armed = False
+        self._queue_event.set()
+        self._state = final_state
+        await self._emit("worker_stopped", {"outcome": reason, "forced": forced})
+        return tasks, stop_error, True
+
+    async def _stop_client(
+        self, client: ASRWorkerClientPort, *, request_id: str | None
+    ) -> tuple[Exception | None, bool]:
+        errors: list[Exception] = []
+        if request_id is not None:
+            try:
+                await client.cancel(request_id)
+            except Exception as exc:
+                errors.append(exc)
+        try:
+            await client.close()
+        except Exception as exc:
+            errors.append(exc)
+        if len(errors) == 1:
+            return errors[0], client.is_closed
+        if errors:
+            return ExceptionGroup("ASR worker shutdown failed", errors), client.is_closed
+        return None, client.is_closed
+
+    async def _dispatch(self, generation: int, client: ASRWorkerClientPort) -> None:
+        while True:
+            await self._queue_event.wait()
+            self._queue_event.clear()
+            while True:
+                await self._await_file_cleanup()
+                if self._file_cleanup_failure is not None:
+                    await self._fail_worker(
+                        generation, client, GpuASRRuntimeError("wav_cleanup_failed")
+                    )
+                    return
+                initial_expiry: tuple[_PendingWork, float, str] | None = None
+                async with self._lock:
+                    if not self._is_current_ready(generation, client):
+                        return
+                    if not self._queue:
+                        break
+                    work = heapq.heappop(self._queue)
+                    dequeued_at = self._clock.now()
+                    queue_wait = max(0.0, dequeued_at - work.speech_end_at)
+                    gpu_queue_wait = max(0.0, dequeued_at - work.queued_at)
+                    if queue_wait >= self._pending_ttl_seconds:
+                        if not work.future.done():
+                            work.future.set_exception(GpuASRWorkExpired("speech_end_ttl"))
+                        config = self._config
+                        initial_expiry = (
+                            work,
+                            queue_wait,
+                            config.model_id if config else "gpu",
+                        )
+                    else:
+                        self._active_work = work
+                        config = self._config
+                        temporary_directory = self._temporary_directory
+                if initial_expiry is not None:
+                    expired_work, expired_wait, expired_model = initial_expiry
+                    await self._emit_work_expired(
+                        expired_work,
+                        model_id=expired_model,
+                        queue_wait=expired_wait,
+                    )
+                    expired_work.settled.set()
+                    continue
+                if config is None or temporary_directory is None:
+                    await self._fail_worker(
+                        generation, client, GpuASRRuntimeError("GPU resources missing")
+                    )
+                    return
+                audio_path = Path(temporary_directory.name) / f"{work.request_id}.wav"
+                stage_started = self._clock.now()
+                worker_started = stage_started
+                worker_responded = stage_started
+                stage_seconds = 0.0
+                payload = work.audio_payload
+                transcription: ASRWorkerTranscription | None = None
+                published = False
+                expired_after_staging = False
+                restart_failure: ASRWorkerRequestError | None = None
+                terminal_failure: BaseException | None = None
+                try:
+                    await run_owned_thread_call(lambda: _write_pcm16_wav(audio_path, payload))
+                    payload = None
+                    work.audio_payload = None
+                    worker_started = self._clock.now()
+                    stage_seconds = max(0.0, worker_started - stage_started)
+                    staged_age = max(0.0, worker_started - work.speech_end_at)
+                    if work.discard_reason is not None:
+                        continue
+                    if staged_age >= self._pending_ttl_seconds:
+                        expired_after_staging = True
+                        await self._emit_work_expired(
+                            work,
+                            model_id=config.model_id,
+                            queue_wait=staged_age,
+                        )
+                        continue
+                    transcription = await client.transcribe(
+                        request_id=work.request_id,
+                        channel=work.channel,
+                        audio_path=audio_path,
+                        language_hint=work.language_hint,
+                        on_request_sent=work.request_sent.set,
+                    )
+                    worker_responded = self._clock.now()
+                except BaseException as exc:
+                    if isinstance(exc, asyncio.CancelledError):
+                        if not work.future.done():
+                            work.future.set_exception(GpuASRWorkDiscarded("dispatcher_cancelled"))
+                        raise
+                    expected_discard = (
+                        work.discard_reason is not None
+                        and isinstance(exc, ASRWorkerRequestError)
+                        and exc.code == "cancelled"
+                    )
+                    if isinstance(exc, ASRWorkerRequestError) and exc.attempt_started:
+                        await self._emit_attempt_failure(
+                            work=work,
+                            model_id=config.model_id,
+                            queue_wait=queue_wait,
+                            exception=exc,
+                        )
+                    elif work.discard_reason is None:
+                        await self._emit(
+                            "work_prestart_failed",
+                            {
+                                "channel": work.channel,
+                                "model": config.model_id,
+                                "provider": "gpu_qwen",
+                                **_failure_diagnostic_fields(exc),
+                                "queue_wait_seconds": queue_wait,
+                            },
+                        )
+                    recoverable_decode_failure = (
+                        not expected_discard
+                        and isinstance(exc, ASRWorkerRequestError)
+                        and exc.attempt_started
+                        and exc.code == "decode_failure"
+                        and not self._decode_recovery_armed
+                    )
+                    if recoverable_decode_failure:
+                        restart_failure = exc
+                    elif not expected_discard:
+                        terminal_failure = exc
+                    elif not work.future.done():
+                        work.future.set_exception(exc)
+                finally:
+                    async with self._lock:
+                        if transcription is not None and self._is_current_ready(generation, client):
+                            self._decode_recovery_armed = False
+                        if transcription is not None and not work.future.done():
+                            if (
+                                self._is_current_ready(generation, client)
+                                and work.discard_reason is None
+                                and work.channel in self._active_channels
+                            ):
+                                work.future.set_result(transcription)
+                                published = True
+                            else:
+                                work.future.set_exception(
+                                    GpuASRWorkDiscarded(work.discard_reason or "channel_disabled")
+                                )
+                        if expired_after_staging and not work.future.done():
+                            work.future.set_exception(GpuASRWorkExpired("speech_end_ttl"))
+                        if (
+                            self._active_work is work
+                            and restart_failure is None
+                            and terminal_failure is None
+                        ):
+                            self._active_work = None
+                    published_at = self._clock.now()
+                    work.settled.set()
+                    self._file_cleanup_task = start_lifecycle_task(
+                        self._scope,
+                        self._cleanup_audio_file(audio_path, work.channel),
+                        name=f"wav-cleanup-{work.request_id}",
+                    )
+                if restart_failure is not None:
+                    await self._restart_after_decode_failure(
+                        generation,
+                        client,
+                        work,
+                        restart_failure,
+                    )
+                    return
+                if terminal_failure is not None:
+                    await self._fail_worker(generation, client, terminal_failure)
+                    return
+                if transcription is not None:
+                    await self._emit(
+                        "decode_attempt",
+                        {
+                            "channel": work.channel,
+                            "model": config.model_id,
+                            "backend": "Vulkan",
+                            "audio_seconds": transcription.audio_seconds,
+                            "decode_seconds": transcription.decode_seconds,
+                            "rtf": transcription.rtf,
+                            "result": (
+                                "success" if published else work.discard_reason or "discarded"
+                            ),
+                            "queue_wait_seconds": queue_wait,
+                        },
+                    )
+                    await self._emit(
+                        "decode_timing",
+                        {
+                            "channel": work.channel,
+                            "gpu_queue_wait_seconds": gpu_queue_wait,
+                            "speech_end_to_dequeue_seconds": queue_wait,
+                            "wav_stage_seconds": stage_seconds,
+                            "worker_request_to_response_seconds": max(
+                                0.0, worker_responded - worker_started
+                            ),
+                            "worker_response_to_transcript_publish_seconds": (
+                                max(0.0, published_at - worker_responded) if published else None
+                            ),
+                            "published": published,
+                        },
+                    )
+
+    async def _restart_after_decode_failure(
+        self,
+        generation: int,
+        client: ASRWorkerClientPort,
+        work: _PendingWork,
+        exception: ASRWorkerRequestError,
+    ) -> None:
+        async with self._lock:
+            if not self._is_current_generation(generation, client):
+                return
+            config = self._config
+            temporary_directory = self._temporary_directory
+            if config is None:
+                terminal_failure: BaseException | None = GpuASRRuntimeError(
+                    "GPU recovery configuration is missing"
+                )
+            else:
+                terminal_failure = None
+                self._state = GpuASRRuntimeState.STARTING
+                self._last_failure_code = exception.code
+                self._decode_recovery_armed = True
+                self._generation += 1
+                recovery_generation = self._generation
+                stale_tasks = tuple(
+                    task
+                    for task in (self._event_task, self._reaper_task)
+                    if task is not None and task is not asyncio.current_task()
+                )
+                for task in stale_tasks:
+                    task.cancel()
+                self._activation = None
+                self._active_work = None
+                self._dispatcher_task = None
+                self._event_task = None
+                self._reaper_task = None
+                self._temporary_directory = None
+                recovery_task = start_lifecycle_task(
+                    self._scope,
+                    self._run_decode_recovery(
+                        recovery_generation,
+                        config,
+                        client,
+                        stale_tasks,
+                        temporary_directory,
+                        exception,
+                    ),
+                    name=f"decode-recovery-{recovery_generation}",
+                )
+                self._activation_task = recovery_task
+                if not work.future.done():
+                    dropped = GpuASRDecodeDropped(exception.code)
+                    dropped.__cause__ = exception
+                    work.future.set_exception(dropped)
+                if self._active_work is work:
+                    self._active_work = None
+        if terminal_failure is not None:
+            await self._fail_worker(generation, client, terminal_failure)
+            return
+        await self._emit(
+            "worker_recovery_started",
+            {
+                "backend": "Vulkan",
+                **_failure_diagnostic_fields(exception),
+                "retry": "restart_only",
+                "utterance_retry": False,
+            },
+        )
+
+    async def _run_decode_recovery(
+        self,
+        generation: int,
+        config: _ActivationConfig,
+        previous_client: ASRWorkerClientPort,
+        stale_tasks: tuple[asyncio.Task[None], ...],
+        temporary_directory: tempfile.TemporaryDirectory[str] | None,
+        exception: ASRWorkerRequestError,
+    ) -> _ActivationOutcome:
+        try:
+            await self._close_unowned_client(previous_client)
+            if stale_tasks:
+                await asyncio.gather(*stale_tasks, return_exceptions=True)
+            if temporary_directory is not None:
+                await self._await_file_cleanup()
+                await run_owned_thread_call(temporary_directory.cleanup)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as cleanup_exception:
+            if not previous_client.is_closed:
+                self._retain_client_cleanup(previous_client)
+            return await self._finish_decode_recovery_failure(
+                generation,
+                config,
+                cleanup_exception,
+            )
+        outcome = await self._run_activation(generation, config, {})
+        if outcome.activation is None:
+            await self._finish_decode_recovery_failure(
+                generation,
+                config,
+                GpuASRRuntimeError(outcome.failure_code or "worker_recovery_failed"),
+                failure_code=outcome.failure_code,
+            )
+            return outcome
+        await self._emit(
+            "worker_recovery_ready",
+            {
+                "backend": "Vulkan",
+                "failure": exception.code,
+                "device": outcome.activation.device.device_id,
+                "utterance_retry": False,
+            },
+        )
+        return outcome
+
+    async def _finish_decode_recovery_failure(
+        self,
+        generation: int,
+        config: _ActivationConfig,
+        exception: BaseException,
+        *,
+        failure_code: str | None = None,
+    ) -> _ActivationOutcome:
+        resolved_failure_code = failure_code or _failure_code(exception)
+        async with self._lock:
+            if generation != self._generation:
+                return _ActivationOutcome(failure_code=resolved_failure_code, failure=exception)
+            self._activation_task = None
+            self._client = None
+            self._activation = None
+            self._event_task = None
+            self._dispatcher_task = None
+            self._reaper_task = None
+            self._state = GpuASRRuntimeState.FAILED
+            self._last_failure_code = resolved_failure_code
+            self._discard_pending_locked("worker_recovery_failed")
+            self._queue_event.set()
+        diagnostic_fields = _failure_diagnostic_fields(exception)
+        diagnostic_fields["failure"] = resolved_failure_code
+        await self._emit(
+            "worker_recovery_failed",
+            {
+                "model": config.model_id,
+                "backend": "Vulkan",
+                **diagnostic_fields,
+                "retry": "manual",
+                "fallback": "none",
+                "utterance_retry": False,
+            },
+        )
+        await self._emit(
+            "worker_failed",
+            {
+                "backend": "Vulkan",
+                **diagnostic_fields,
+                "retry": "manual",
+                "fallback": "none",
+            },
+        )
+        return _ActivationOutcome(failure_code=resolved_failure_code, failure=exception)
+
+    async def _consume_events(self, generation: int, client: ASRWorkerClientPort) -> None:
+        try:
+            while self._is_current_generation(generation, client):
+                event = await client.next_event()
+                await self._emit_worker_event(event)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            await self._fail_worker(generation, client, exc)
+
+    async def _fail_worker(
+        self,
+        generation: int,
+        client: ASRWorkerClientPort,
+        exception: BaseException,
+    ) -> None:
+        async with self._lock:
+            if not self._is_current_generation(generation, client):
+                return
+            self._state = GpuASRRuntimeState.FAILED
+            self._last_failure_code = _failure_code(exception)
+            self._discard_pending_locked("worker_failed")
+            active = self._active_work
+            if active is not None and not active.future.done():
+                active.future.set_exception(exception)
+            self._active_work = None
+            self._activation = None
+            try:
+                await self._close_unowned_client(client)
+            except Exception:
+                self._retain_client_cleanup(client)
+            else:
+                self._client = None
+                await self._cleanup_temporary_directory_locked()
+            self._queue_event.set()
+            await self._emit(
+                "worker_failed",
+                {
+                    "backend": "Vulkan",
+                    **_failure_diagnostic_fields(exception),
+                    "retry": "manual",
+                    "fallback": "none",
+                },
+            )
+
+    async def _emit_attempt_failure(
+        self,
+        *,
+        work: _PendingWork,
+        model_id: str,
+        queue_wait: float,
+        exception: BaseException,
+    ) -> None:
+        if not isinstance(exception, ASRWorkerRequestError):
+            return
+        fields: dict[str, object] = {
+            "channel": work.channel,
+            "model": model_id,
+            "backend": "Vulkan",
+            "result": _failure_code(exception),
+            "queue_wait_seconds": queue_wait,
+        }
+        for key in ("audio_seconds", "decode_seconds", "rtf"):
+            value = exception.fields.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                fields[key] = float(value)
+        await self._emit("decode_attempt", fields)
+
+    async def _emit_work_expired(
+        self,
+        work: _PendingWork,
+        *,
+        model_id: str,
+        queue_wait: float,
+    ) -> None:
+        await self._emit(
+            "work_expired",
+            {
+                "channel": work.channel,
+                "model": model_id,
+                "provider": "gpu_qwen",
+                "expiry_reason": "speech_end_ttl",
+                "queue_wait_seconds": queue_wait,
+            },
+        )
+
+    async def _cancel_channel_work(self, work: _PendingWork, client: ASRWorkerClientPort) -> bool:
+        if work.settled.is_set():
+            return False
+        request_sent = start_lifecycle_task(
+            self._scope, work.request_sent.wait(), name=f"cancel-request-sent:{work.request_id}"
+        )
+        settled = start_lifecycle_task(
+            self._scope, work.settled.wait(), name=f"cancel-settled:{work.request_id}"
+        )
+        try:
+            await asyncio.wait({request_sent, settled}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (request_sent, settled):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(request_sent, settled, return_exceptions=True)
+        if work.settled.is_set():
+            return False
+        try:
+            await client.cancel(work.request_id)
+        except ASRWorkerClosedError:
+            pass
+        await work.settled.wait()
+        return True
+
+    async def _emit_worker_event(self, event: ASRWorkerEvent) -> None:
+        fields: dict[str, object] = {"event": event.name}
+        for key in (
+            "phase",
+            "progress",
+            "channel",
+            "backend",
+            "outcome",
+            "active",
+        ):
+            value = event.fields.get(key)
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                fields[key] = value
+        await self._emit("worker_lifecycle", fields)
+
+    def _discard_pending_locked(self, reason: str) -> None:
+        while self._queue:
+            work = heapq.heappop(self._queue)
+            work.discard_reason = reason
+            if not work.future.done():
+                work.future.set_exception(GpuASRWorkDiscarded(reason))
+            work.settled.set()
+
+    def _discard_channel_pending_locked(
+        self,
+        channel: GpuASRChannel,
+        reason: str,
+    ) -> int:
+        discarded = [work for work in self._queue if work.channel == channel]
+        if not discarded:
+            return 0
+        self._queue = [work for work in self._queue if work.channel != channel]
+        heapq.heapify(self._queue)
+        for work in discarded:
+            work.discard_reason = reason
+            if not work.future.done():
+                work.future.set_exception(GpuASRWorkDiscarded(reason))
+            work.settled.set()
+        return len(discarded)
+
+    async def _cleanup_audio_file(self, path: Path, channel: GpuASRChannel) -> None:
+        started = self._clock.now()
+        failure: str | None = None
+        try:
+            await run_owned_thread_call(lambda: path.unlink(missing_ok=True))
+        except Exception as exc:
+            failure = type(exc).__name__
+            self._file_cleanup_failure = failure
+        try:
+            await self._emit(
+                "file_cleanup",
+                {
+                    "channel": channel,
+                    "file_cleanup_seconds": max(0.0, self._clock.now() - started),
+                    "failure": failure,
+                },
+            )
+        except Exception:
+            pass
+
+    async def _await_file_cleanup(self) -> None:
+        task = self._file_cleanup_task
+        if task is not None:
+            await asyncio.shield(task)
+            if self._file_cleanup_task is task:
+                self._file_cleanup_task = None
+
+    async def _cleanup_temporary_directory_locked(self) -> None:
+        await self._await_file_cleanup()
+        temporary_directory = self._temporary_directory
+        if temporary_directory is not None:
+            await run_owned_thread_call(temporary_directory.cleanup)
+            if self._temporary_directory is temporary_directory:
+                self._temporary_directory = None
+        failures: list[Exception] = []
+        for directory, cause, generation in tuple(self._temporary_cleanup_debt):
+            try:
+                await run_owned_thread_call(directory.cleanup)
+            except Exception as exc:
+                failures.append(exc)
+                self._record_temporary_cleanup_failure(exc, cause, generation)
+            else:
+                self._temporary_cleanup_debt.remove((directory, cause, generation))
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise ExceptionGroup("GPU temporary directory cleanup failed", failures)
+
+    def _is_current_generation(self, generation: int, client: ASRWorkerClientPort) -> bool:
+        return generation == self._generation and self._client is client
+
+    def _is_current_ready(self, generation: int, client: ASRWorkerClientPort) -> bool:
+        return (
+            self._is_current_generation(generation, client)
+            and self._state == GpuASRRuntimeState.READY
+        )
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise GpuASRRuntimeError("GPU runtime is closed")
+
+    async def _emit(self, kind: str, fields: Mapping[str, object]) -> None:
+        if self._diagnostic_sink is None:
+            return
+        result = self._diagnostic_sink(GpuASRDiagnostic(kind=kind, fields=fields))
+        if inspect.isawaitable(result):
+            await result
+
+
+def _write_pcm16_wav(path: Path, samples_f32: np.ndarray | bytes) -> None:
+    if isinstance(samples_f32, bytes):
+        samples_f32 = pcm16le_bytes_to_float32(samples_f32)
+    pcm16 = np.rint(np.clip(samples_f32, -1.0, 1.0) * 32767.0).astype("<i2")
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(GPU_SAMPLE_RATE_HZ)
+        wav_file.writeframes(pcm16.tobytes())
+
+
+def _failure_code(exception: BaseException) -> str:
+    if isinstance(exception, ASRWorkerRequestError):
+        return exception.code
+    if isinstance(exception, ASRWorkerClosedError):
+        return exception.code
+    return type(exception).__name__
+
+
+def _failure_diagnostic_fields(exception: BaseException) -> dict[str, object]:
+    fields: dict[str, object] = {"failure": _failure_code(exception)}
+    if isinstance(exception, ASRWorkerClosedError):
+        if exception.exit_code is not None:
+            fields["exit_code"] = exception.exit_code
+        if exception.failure_type is not None:
+            fields["failure_type"] = exception.failure_type
+    return fields
+
+
+__all__ = [
+    "GPU_DISCOVERY_PENDING_SECONDS",
+    "GPU_PENDING_TTL_SECONDS",
+    "GPU_SAMPLE_RATE_HZ",
+    "GpuASRChannel",
+    "GpuASRDecodeDropped",
+    "GpuASRDiagnostic",
+    "GpuASRManualRetryRequired",
+    "GpuASRRuntimeError",
+    "GpuASRRuntimeState",
+    "GpuASRWorkDiscarded",
+    "GpuASRWorkExpired",
+    "GpuDiscoveryState",
+    "SharedGpuASRRuntime",
+]

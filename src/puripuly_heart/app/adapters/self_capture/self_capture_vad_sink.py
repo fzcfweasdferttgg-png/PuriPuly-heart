@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from puripuly_heart.app.ports.capture_vad_runtime import (
+    SelfCaptureVadEventRuntime,
+    SelfCaptureVadEventRuntimeProvider,
+)
+from puripuly_heart.core.audio.ownership import AudioSegmentTerminalReceipt, OwnedStreamInput
+
+
+@dataclass(frozen=True, slots=True)
+class SelfCaptureVadSinkAdapter:
+    runtime_provider: SelfCaptureVadEventRuntimeProvider
+
+    async def handle_vad_event(self, event: object) -> None:
+        runtime = self._require_runtime()
+        await runtime.handle_vad_event(event)
+
+    async def handle_stream_input(self, event: OwnedStreamInput) -> None:
+        await self._require_runtime().handle_stream_input(event)
+
+    async def handle_source_segment_retired(self, receipt: AudioSegmentTerminalReceipt) -> None:
+        await self._require_runtime().handle_source_segment_retired(receipt)
+
+    async def observe_source_activity(
+        self,
+        *,
+        speech_observed: bool,
+        observed_at_monotonic_s: float,
+    ) -> None:
+        runtime = self._require_runtime()
+        await runtime.observe_source_activity(
+            speech_observed=speech_observed,
+            observed_at_monotonic_s=observed_at_monotonic_s,
+        )
+
+    async def observe_pending_source_work(self, *, pending: bool) -> None:
+        runtime = self._require_runtime()
+        observe = getattr(runtime, "observe_pending_source_work", None)
+        if callable(observe):
+            await observe(pending=pending)
+
+    async def reject_owned_segment(
+        self,
+        event: object,
+        *,
+        reason: str,
+        outcome: str,
+    ) -> None:
+        runtime = self._require_runtime()
+        await runtime.reject_owned_segment(event, reason=reason, outcome=outcome)
+
+    async def fail_owned_segment(self, event: object, *, reason: str) -> None:
+        runtime = self._require_runtime()
+        await runtime.fail_owned_segment(event, reason=reason)
+
+    def _require_runtime(self) -> SelfCaptureVadEventRuntime:
+        runtime = self.runtime_provider()
+        if runtime is None:
+            raise RuntimeError("Self VAD sink requires the Self translation owner")
+        return runtime
+
+
+__all__ = [
+    "SelfCaptureVadEventRuntime",
+    "SelfCaptureVadEventRuntimeProvider",
+    "SelfCaptureVadSinkAdapter",
+]

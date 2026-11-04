@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field, replace
+
+from puripuly_heart.app.services.canonical_settings_persistence import SettingsOwner
+from puripuly_heart.app.services.settings.settings_application import SettingsApplicationOwner
+from puripuly_heart.config.overlay_calibration import OverlayCalibration
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+
+from .overlay_application import OverlayApplicationOwner
+from .overlay_calibration import OverlayCalibrationOwner
+
+
+@dataclass(slots=True)
+class OverlayCalibrationApplicationOwner:
+    settings: SettingsOwner
+    settings_application_provider: Callable[[], SettingsApplicationOwner]
+    overlay_provider: Callable[[], OverlayApplicationOwner]
+    log_diagnostic: Callable[..., object]
+    ingress_available: Callable[[], bool]
+    schedule_task: Callable[[Callable[[], Awaitable[None]]], bool] | None = None
+    _owner: OverlayCalibrationOwner = field(init=False, repr=False)
+    _tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._owner = OverlayCalibrationOwner(
+            schedule_task=self._schedule_owned,
+            persist=self._persist,
+            emit=self._emit,
+            can_persist=lambda: self.settings.canonical is not None,
+            can_emit=lambda: (
+                self.ingress_available() and self.overlay_provider().current_presenter() is not None
+            ),
+            log_diagnostic=self.log_diagnostic,
+        )
+
+    def _schedule_owned(self, factory: Callable[[], Awaitable[None]]) -> bool:
+        task = asyncio.create_task(factory(), name="overlay-calibration")
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+        return True
+
+    def _task_done(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled():
+            try:
+                task.result()
+            except Exception as exc:
+                self.log_diagnostic(
+                    "[Overlay] Calibration task failed",
+                    level=logging.WARNING,
+                    exception=exc,
+                )
+
+    async def wait_pending(self) -> None:
+        while self._tasks:
+            await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+
+    @property
+    def current(self) -> OverlayCalibration:
+        return self._owner.current
+
+    @property
+    def draft(self) -> OverlayCalibration | None:
+        return self._owner.draft
+
+    def replace_current(self, calibration: OverlayCalibration) -> None:
+        self._owner.replace_current(calibration)
+
+    def replace_draft(self, calibration: OverlayCalibration | None) -> None:
+        self._owner.replace_draft(calibration)
+
+    def begin(self) -> OverlayCalibration:
+        return self._owner.begin()
+
+    def set_field(self, field_name: str, value: object) -> OverlayCalibration:
+        return self._owner.set_field(field_name, value)
+
+    def apply(self) -> OverlayCalibration:
+        return self._owner.apply()
+
+    def cancel(self) -> OverlayCalibration:
+        return self._owner.cancel()
+
+    def schedule_emit(self) -> None:
+        self._owner.schedule_emit()
+
+    async def emit_current(self) -> None:
+        await self._owner.emit_current()
+
+    def sync_from_settings(self, settings: AppSettingsVNext | None = None) -> None:
+        resolved = settings if settings is not None else self.settings.canonical
+        if resolved is None:
+            return
+        calibration = resolved.intent.overlay.calibration
+        if isinstance(calibration, OverlayCalibration):
+            self._owner.replace_current(calibration)
+
+    async def _persist(self, calibration: OverlayCalibration) -> None:
+        current = self.settings.canonical
+        if current is None:
+            return
+        updated = replace(
+            current,
+            intent=replace(
+                current.intent,
+                overlay=replace(current.intent.overlay, calibration=calibration.copy()),
+            ),
+        )
+        await self.settings_application_provider().apply_overlay_osc_output(updated)
+
+    async def _emit(self, calibration: OverlayCalibration) -> None:
+        presenter = self.overlay_provider().current_presenter()
+        if presenter is not None:
+            await presenter.update_calibration(calibration.copy())
+
+
+__all__ = ["OverlayCalibrationApplicationOwner"]

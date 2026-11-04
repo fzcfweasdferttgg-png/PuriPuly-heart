@@ -1,0 +1,513 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, TypeAlias
+
+from puripuly_heart.config.alibaba_connection import (
+    AlibabaConnection,
+    AlibabaEndpointMode,
+    AlibabaRegion,
+)
+from puripuly_heart.config.provider_values import (
+    LLMProviderName,
+    OpenRouterCredentialSource,
+    OpenRouterLLMModel,
+    OpenRouterSelectionAlias,
+    QwenRegion,
+    STTProviderName,
+)
+from puripuly_heart.config.translation_values import TranslationConnection, TranslationModel
+from puripuly_heart.core.messages import TransactionResult
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsApplyOutcome:
+    saved: bool | None
+    applied: bool
+    transaction: TransactionResult | None = None
+    reverted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class LoopbackCaptureSettingsIntent:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetrySettingsIntent:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AlibabaCapabilityEvidence:
+    capability: Literal["asr", "translation"]
+    model: str
+    state: Literal["incomplete", "unverified", "checking", "verified", "failed", "invalidated"]
+    failure_kind: str | None = None
+    credential_revision: str | None = None
+    credential_saved: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AlibabaConnectionDraftSnapshot:
+    token: str
+    scope: Literal["draft", "active"]
+    active_region: AlibabaRegion
+    region: AlibabaRegion
+    endpoint_mode: AlibabaEndpointMode
+    api_host: str
+    key_present: bool
+    connection: AlibabaConnection | None
+    asr: AlibabaCapabilityEvidence
+    translation: AlibabaCapabilityEvidence
+    affected_consumers: tuple[str, ...]
+    recommended_endpoint_mode: AlibabaEndpointMode = "workspace_dedicated"
+    shared_domain_maintenance_not_shutdown: bool = True
+    api_host_source: Literal["workspace_management"] = "workspace_management"
+    workspace_region_key_match_required: bool = True
+    verification_may_consume_usage: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class AlibabaConnectionApplyResult:
+    committed: bool
+    affected_consumers: tuple[str, ...]
+    transaction: TransactionResult | None
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationSelectionSnapshot:
+    model: TranslationModel
+    connection: TranslationConnection
+    connection_history: tuple[tuple[TranslationModel, TranslationConnection], ...]
+    http_extension_id: str | None
+    previous_llm_model: TranslationModel | None
+    gpu_device_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderVerificationSnapshot:
+    deepgram: bool
+    gemini_transcribe: bool
+    elevenlabs_scribe: bool
+    soniox: bool
+    google: bool
+    openrouter: bool
+    openai: bool
+    deepseek: bool
+    alibaba_beijing: bool
+    alibaba_singapore: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSettingsSnapshot:
+    stt_provider: STTProviderName
+    peer_stt_provider: STTProviderName
+    cloud_free_tier_providers: tuple[STTProviderName, ...]
+    soniox_speaker_diarization_enabled: bool
+    llm_provider: LLMProviderName
+    translation: TranslationSelectionSnapshot
+    stt_gpu_device_id: str
+    qwen_region: QwenRegion
+    local_llm_base_url: str
+    local_llm_model: str
+    local_llm_extra_body_json: str
+    custom_stt_mode: str
+    custom_stt_compatibility: str
+    custom_stt_endpoint: str
+    custom_stt_model: str
+    custom_stt_extra_json: str
+    openrouter_llm_model: OpenRouterLLMModel
+    openrouter_selected_source: OpenRouterCredentialSource
+    openrouter_selection_alias: OpenRouterSelectionAlias | None
+    verified: ProviderVerificationSnapshot
+    qwen_api_host_beijing: str = ""
+    qwen_api_host_singapore: str = ""
+    stt_local_model: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class GeneralSettingsSnapshot:
+    locale: str
+    effective_peer_source_language: str
+    input_host_api: str
+    input_device: str
+    output_device: str
+    self_vad_speech_threshold: float
+    peer_vad_speech_threshold: float
+    peer_vad_hangover_ms: int
+    peer_vad_pre_roll_ms: int
+    osc_connection_mode: str
+    osc_port: int
+    osc_send_port: int | None
+    osc_receive_port: int
+    vrc_mic_intercept: bool
+    chatbox_include_source: bool
+    activation_notice_enabled: bool
+    clipboard_auto_translate_enabled: bool
+    telemetry_enabled: bool
+    peer_expected_languages: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PromptSettingsSnapshot:
+    active_provider_key: str
+    source_language: str
+    system_prompt: str
+    custom_vocabulary_enabled: bool
+    custom_vocabulary_terms: tuple[str, ...]
+    custom_vocabulary_other_languages_have_terms: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayCalibrationSnapshot:
+    anchor: str
+    distance: float
+    offset_x: float
+    offset_y: float
+    text_scale: float
+
+
+@dataclass(frozen=True, slots=True)
+class OverlaySettingsSnapshot:
+    target: str
+    show_translation: bool
+    show_peer_original: bool
+    desktop_size_preset: str
+    desktop_background_alpha: float
+    desktop_swap_caption_languages: bool
+    calibration: OverlayCalibrationSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class LocaleSettingsIntent:
+    locale: str
+
+
+@dataclass(frozen=True, slots=True)
+class AudioInputSettingsIntent:
+    input_host_api: str
+    input_device: str
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopAudioOutputSettingsIntent:
+    output_device: str
+
+
+AudioSettingsChange: TypeAlias = AudioInputSettingsIntent | DesktopAudioOutputSettingsIntent
+
+
+@dataclass(frozen=True, slots=True)
+class AudioSettingsIntent:
+    changes: tuple[AudioSettingsChange, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SelfVadSettingsIntent:
+    speech_threshold: float
+
+
+@dataclass(frozen=True, slots=True)
+class PeerVadSpeechThresholdIntent:
+    speech_threshold: float
+
+
+@dataclass(frozen=True, slots=True)
+class PeerVadHangoverIntent:
+    hangover_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class PeerVadPreRollIntent:
+    pre_roll_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class OscConnectionSettingsIntent:
+    connection_mode: str
+    send_port: int | None
+    receive_port: int
+
+
+@dataclass(frozen=True, slots=True)
+class VrcMicInterceptSettingsIntent:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ChatboxSourceSettingsIntent:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ActivationNoticeSettingsIntent:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ClipboardSettingsIntent:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PeerExpectedLanguagesIntent:
+    languages: tuple[str, ...]
+    recent_languages: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CustomVocabularySettingsIntent:
+    source_language: str
+    terms: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayTargetSettingsIntent:
+    target: str
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayTranslationSettingsIntent:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayPeerOriginalSettingsIntent:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopOverlayBackgroundAlphaIntent:
+    background_alpha: float
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopOverlaySwapCaptionLanguagesIntent:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopOverlaySizeIntent:
+    size_preset: str
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopOverlayPositionResetIntent:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayCalibrationSettingsIntent:
+    calibration: OverlayCalibrationSnapshot
+
+
+ImmediateSettingsIntent: TypeAlias = (
+    LocaleSettingsIntent
+    | AudioSettingsIntent
+    | SelfVadSettingsIntent
+    | PeerVadSpeechThresholdIntent
+    | PeerVadHangoverIntent
+    | PeerVadPreRollIntent
+    | OscConnectionSettingsIntent
+    | VrcMicInterceptSettingsIntent
+    | ChatboxSourceSettingsIntent
+    | ActivationNoticeSettingsIntent
+    | ClipboardSettingsIntent
+    | PeerExpectedLanguagesIntent
+    | CustomVocabularySettingsIntent
+    | OverlayTargetSettingsIntent
+    | OverlayTranslationSettingsIntent
+    | OverlayPeerOriginalSettingsIntent
+    | DesktopOverlayBackgroundAlphaIntent
+    | DesktopOverlaySwapCaptionLanguagesIntent
+    | DesktopOverlaySizeIntent
+    | DesktopOverlayPositionResetIntent
+    | OverlayCalibrationSettingsIntent
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SelfSttProviderEdit:
+    provider: STTProviderName
+
+
+@dataclass(frozen=True, slots=True)
+class CloudFreeTierProvidersEdit:
+    providers: tuple[STTProviderName, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SonioxSpeakerDiarizationEdit:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PeerSttProviderEdit:
+    provider: STTProviderName
+
+
+@dataclass(frozen=True, slots=True)
+class SttGpuDeviceEdit:
+    device_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class LlmGpuDeviceEdit:
+    device_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationSelectionEdit:
+    selection: TranslationSelectionSnapshot
+    history_updates: tuple[tuple[TranslationModel, TranslationConnection], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationHttpExtensionEdit:
+    extension_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class QwenRegionEdit:
+    region: QwenRegion
+
+
+@dataclass(frozen=True, slots=True)
+class QwenBeijingApiHostEdit:
+    api_host: str
+
+
+@dataclass(frozen=True, slots=True)
+class QwenSingaporeApiHostEdit:
+    api_host: str
+
+
+@dataclass(frozen=True, slots=True)
+class LocalLlmBaseUrlEdit:
+    base_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class LocalLlmModelEdit:
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
+class LocalLlmExtraBodyEdit:
+    extra_body_json: str
+
+
+@dataclass(frozen=True, slots=True)
+class CustomSttEndpointEdit:
+    endpoint: str
+
+
+@dataclass(frozen=True, slots=True)
+class CustomSttModelEdit:
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
+class CustomSttExtraEdit:
+    extra_json: str
+
+
+@dataclass(frozen=True, slots=True)
+class SystemPromptEdit:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class SttLocalModelEdit:
+    model: str
+
+
+ProviderSettingsEdit: TypeAlias = (
+    SelfSttProviderEdit
+    | CloudFreeTierProvidersEdit
+    | SonioxSpeakerDiarizationEdit
+    | PeerSttProviderEdit
+    | SttGpuDeviceEdit
+    | SttLocalModelEdit
+    | LlmGpuDeviceEdit
+    | TranslationSelectionEdit
+    | TranslationHttpExtensionEdit
+    | QwenRegionEdit
+    | QwenBeijingApiHostEdit
+    | QwenSingaporeApiHostEdit
+    | LocalLlmBaseUrlEdit
+    | LocalLlmModelEdit
+    | LocalLlmExtraBodyEdit
+    | CustomSttEndpointEdit
+    | CustomSttModelEdit
+    | CustomSttExtraEdit
+    | SystemPromptEdit
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderApplyIntent:
+    edits: tuple[ProviderSettingsEdit, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PromptApplyIntent:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class OpenRouterPkceTarget:
+    selection_alias: OpenRouterSelectionAlias
+    provider_intent: ProviderApplyIntent = ProviderApplyIntent(())
+    system_prompt: str | None = None
+
+
+__all__ = [
+    "ActivationNoticeSettingsIntent",
+    "AlibabaCapabilityEvidence",
+    "AlibabaConnectionApplyResult",
+    "AlibabaConnectionDraftSnapshot",
+    "AudioInputSettingsIntent",
+    "AudioSettingsChange",
+    "AudioSettingsIntent",
+    "ChatboxSourceSettingsIntent",
+    "CloudFreeTierProvidersEdit",
+    "SonioxSpeakerDiarizationEdit",
+    "ClipboardSettingsIntent",
+    "CustomSttEndpointEdit",
+    "CustomSttExtraEdit",
+    "CustomSttModelEdit",
+    "CustomVocabularySettingsIntent",
+    "DesktopAudioOutputSettingsIntent",
+    "DesktopOverlayBackgroundAlphaIntent",
+    "DesktopOverlaySizeIntent",
+    "DesktopOverlayPositionResetIntent",
+    "DesktopOverlaySwapCaptionLanguagesIntent",
+    "GeneralSettingsSnapshot",
+    "ImmediateSettingsIntent",
+    "LlmGpuDeviceEdit",
+    "LocalLlmBaseUrlEdit",
+    "LocalLlmExtraBodyEdit",
+    "LocalLlmModelEdit",
+    "LocaleSettingsIntent",
+    "LoopbackCaptureSettingsIntent",
+    "OpenRouterPkceTarget",
+    "OscConnectionSettingsIntent",
+    "OverlayCalibrationSnapshot",
+    "OverlayCalibrationSettingsIntent",
+    "OverlayPeerOriginalSettingsIntent",
+    "OverlaySettingsSnapshot",
+    "OverlayTargetSettingsIntent",
+    "SelfSttProviderEdit",
+    "SelfVadSettingsIntent",
+    "SettingsApplyOutcome",
+    "SttGpuDeviceEdit",
+    "SttLocalModelEdit",
+    "SystemPromptEdit",
+    "TelemetrySettingsIntent",
+    "TranslationSelectionSnapshot",
+    "TranslationSelectionEdit",
+    "TranslationHttpExtensionEdit",
+    "VrcMicInterceptSettingsIntent",
+]

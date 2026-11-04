@@ -1,0 +1,543 @@
+PuriPuly Heart license and third-party notices
+
+PuriPuly Heart's own source code is licensed under AGPL-3.0-or-later.
+Full project license text is provided in the root LICENSE file.
+The third-party components listed below remain under their respective upstream licenses.
+This notice file is provided for source and binary distributions of PuriPuly Heart.
+
+----
+
+Shipped/runtime component license summary
+
+This notice file focuses on components that are bundled, shipped, installed, or used by the runtime/broker service. Build-only and test-only dependency inventory is recorded in the AGPL transition ADR and verification log instead of being treated as shipped notice text.
+
+The technical metadata review performed for the AGPL transition found no obvious license blocker to licensing PuriPuly Heart's own code under AGPL-3.0-or-later. This is a repository metadata review, not legal advice.
+
+Notable shipped/runtime license families include MIT, Apache-2.0, BSD-3-Clause, MPL-2.0, LGPL-2.1-or-later, SIL Open Font License 1.1, CC-BY-4.0, CC-BY-SA-4.0, and the FunASR Model Open Source License Agreement v1.1.
+
+Runtime/bundled notice-sensitive components:
+- huggingface-hub 2.3.0: Apache-2.0.
+- hf-xet 1.7.0 and its Windows native extension: Apache-2.0.
+- httpx2 2.16.0 and httpcore2 2.16.0: BSD-3-Clause. Their upstream license payloads remain in the packaged distribution metadata.
+- Flet 1.0.5 and serious_python 5.0.0: Apache-2.0. Native Windows releases retain Flutter's generated dependency notices under data\flutter_assets\NOTICES.Z; the locked Python Flet wheel retains its upstream license metadata.
+- dart-bridge 1.10.0: MIT. The unmodified upstream license is packaged under puripuly_heart\data\licenses\DART-BRIDGE-1.10.0-LICENSE.txt. Source: https://github.com/flet-dev/dart-bridge/tree/v1.10.0 .
+- soxr / libsoxr: LGPL-2.1-or-later. Windows releases include the LGPL compliance bundle described below. The source-tree license text is `src/puripuly_heart/data/licenses/COPYING.LGPL-2.1.txt`; installed releases stage it under the soxr compliance bundle.
+- python-zeroconf 0.150.0 and its Windows native extension modules: LGPL-2.1-or-later. The exact PyPI source distribution is included in the installed LGPL source bundle described below.
+- certifi: MPL-2.0.
+- NumPy and SciPy binary wheels bundle OpenBLAS, LAPACK, and compiler runtime notices. NumPy carries its wheel-provided notices in the packaged distribution; SciPy's wheel-provided license bundle is included under `puripuly_heart\data\licenses\SCIPY-1.18.0-LICENSE.txt`.
+- CPython 3.14.10: the official distribution LICENSE.txt is packaged under `puripuly_heart\data\licenses\PYTHON-3.14.10-LICENSE.txt`.
+- Microsoft Visual C++ Runtime: native Windows builds include the x64 Microsoft.VC143.CRT DLLs from the selected Visual Studio toolchain's official redist directory, deployed app-locally under Microsoft's Visual Studio license and redistribution terms. Exact versions, source paths, and SHA256 hashes are recorded in the build's `vc-runtime.json`; redistribution guidance: https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files?view=msvc-170 .
+- Native Python wheels: LICENSE, COPYING, NOTICE, AUTHORS, and third-party notice payloads from the locked distributions are retained under their upstream package or `.dist-info` paths as detailed below.
+- sounddevice 0.5.5: releases retain its standard PortAudio runtime and upstream license metadata, but intentionally omit the ASIO-only DLL. `SD_ENABLE_ASIO=1` is unsupported in this distribution.
+- OpenVR runtime DLL: BSD-3-Clause.
+- llama.cpp CPU and Vulkan runtime: MIT.
+- Native Rust overlay/ASR worker dependencies and the Rust standard library retain their upstream licenses. Supplemental aggregate notices are not bundled.
+- Noto Sans CJK Medium TTC: SIL Open Font License 1.1.
+- Silero VAD ONNX model: MIT.
+- Smart Turn v3.2 CPU ONNX model: BSD-2-Clause.
+- Bundled fonts: SIL Open Font License 1.1.
+
+Broker runtime direct dependency:
+- Hono: MIT.
+
+----
+
+License text pointers for package-managed/runtime components
+
+For package-managed dependencies, the authoritative license texts are distributed with their source or wheel/npm/crate packages. Key upstream license references include:
+- AGPL-3.0-or-later: https://www.gnu.org/licenses/agpl-3.0.txt
+- Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
+- BSD-2-Clause and BSD-3-Clause: https://opensource.org/license/bsd-2-clause/ , https://opensource.org/license/bsd-3-clause/
+- MIT: https://opensource.org/license/mit/
+- ISC: https://opensource.org/license/isc-license-txt/
+- MPL-2.0: https://www.mozilla.org/en-US/MPL/2.0/
+- LGPL-2.1-or-later: source-tree copy at src/puripuly_heart/data/licenses/COPYING.LGPL-2.1.txt; installed release copy in third_party\soxr\ next to the LGPL source bundle.
+- SIL Open Font License 1.1: included below for bundled fonts.
+- CC-BY-4.0: https://creativecommons.org/licenses/by/4.0/legalcode.en
+- CC-BY-SA-4.0: https://creativecommons.org/licenses/by-sa/4.0/legalcode.en
+- FunASR Model Open Source License Agreement v1.1: pinned model-specific sources are listed below; this is not Apache-2.0.
+
+----
+
+llama.cpp CPU and Vulkan runtime
+Source: https://github.com/ggml-org/llama.cpp
+Pinned release: https://github.com/ggml-org/llama.cpp/releases/tag/b11537
+Pinned commit: 8e2d31e0eb658d0382d3106a61369dff81f0c080
+License: MIT
+
+Bundled LLVM OpenMP runtime (libomp.dll): Apache-2.0 WITH LLVM-exception.
+The complete upstream LICENSE-LLVM-OpenMP, including its additional legacy notices, is installed alongside libomp.dll in each llama.cpp backend directory.
+
+Windows releases contain the pinned llama.cpp server runtime required for managed local translation. The application installer does not contain Gemma model weights. The complete llama.cpp license is installed at third_party/llama.cpp/LICENSE.
+
+----
+
+transcribe.cpp CPU and Vulkan ASR runtime
+Source: https://github.com/handy-computer/transcribe.cpp/tree/8facde6fcd8fb9caa585a5788ab450df6e8ec7db
+Rust bindings and native source version: 0.4.1
+License: MIT
+
+The authenticated native ASR worker bundles matching transcribe.cpp and ggml
+dynamic backends. CPU channels use independent workers; GPU channels share one
+resident Model. Model weights are downloaded separately and retain the model
+licenses below, independently of the runtime's MIT license.
+
+Modifications: PuriPuly applies a build-time Fun-ASR prompt overlay that maps
+validated ISO language codes to the checkpoint's documented Chinese language
+names. The overlay is maintained in native/asr_worker/cmake and is compiled
+into transcribe.dll. It does not modify the downloaded model weights.
+
+----
+
+Gemma 4 E4B local translation model assets
+Upstream model source: https://huggingface.co/google/gemma-4-E4B-it
+Manifest distribution sources used by the app: https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF , https://www.modelscope.cn/models/unsloth/gemma-4-E4B-it-qat-GGUF
+License: Apache-2.0
+
+Gemma 4 models are released by Google under the Apache License 2.0
+(see https://www.apache.org/licenses/LICENSE-2.0 and
+https://ai.google.dev/gemma/apache_2).
+
+The managed local translation runtime downloads the pinned quantization of the
+Gemma 4 E4B instruction-tuned model on demand from the pinned Hugging Face
+revision or its byte-identical ModelScope distribution listed below. The
+application installer does not contain model weights. Files are verified against
+the pinned size and SHA-256 before installation; the installed-manifest retains
+the canonical model identity, Hugging Face revision, and license fields regardless
+of which download source succeeds.
+
+- Manifest mirror repo: unsloth/gemma-4-E4B-it-qat-GGUF
+- Pinned revision: 8c5a9e4fd5482e2be20fe0bf013b4c262a8f4265
+- ModelScope distribution revision: b6fb3d3c190d41c1b92d6e9f1e03f34c5b49a134
+- Target model: gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf
+  - size: 4,215,695,776 bytes
+  - sha256: df0fd4ee07072c607c29a0a1cb4f98918426cca12f45a2776bdd6ee6d09a4de3
+- MTP drafter: mtp-gemma-4-E4B-it.gguf
+  - size: 59,678,016 bytes
+  - sha256: 423074e537504b4f9ec5eafed5c639fac82c96631626efccacdd3c4039b20605
+
+The upstream google/gemma-4-E4B-it repository is Apache-2.0. The mirror or
+converted assets referenced by the manifest may not expose complete license
+metadata, so pinned mirror provenance and license metadata must be verified
+before release.
+
+----
+
+Gemma 4 26B A4B local translation model asset
+Upstream model source: https://huggingface.co/google/gemma-4-26B-A4B-it
+Manifest distribution sources: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF , https://www.modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-qat-GGUF
+License: Apache-2.0
+Pinned Hugging Face revision: 7b92b5b28818151e8669af2e45e88d6086f490dd
+Pinned ModelScope revision: f5f82bed79bc0bc49b01e0e577bb3dc949ebc564
+Target model: gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf
+Size: 14,249,047,104 bytes
+SHA-256: a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891
+
+This optional managed model is downloaded on demand and is not included in the
+application installer. It uses the same size, integrity, provenance, and license
+requirements as the E4B assets.
+
+----
+
+Hugging Face Hub and Xet download runtime
+Sources: https://github.com/huggingface/huggingface_hub , https://github.com/huggingface/xet-core
+Pinned packages: huggingface-hub 2.3.0 ; hf-xet 1.7.0
+License: Apache-2.0
+Bundled native runtime: hf_xet\hf_xet.pyd on Windows
+
+Embedded native dependencies retain their own licenses. The original upstream
+wheel, parent license and CycloneDX inventory are preserved without modification.
+They do not provide complete embedded-native attribution. Supply the applicable
+copyright, license, NOTICE and source-access materials before redistributing
+native builds.
+
+Native Xet transfers are enabled where compatible with the inherited transfer
+preference and application TLS/proxy policy. Explicit custom CAs, incompatible
+proxy bypass policies and mirrors retain HTTP; a failed native attempt retains
+the existing HTTP fallback. The worker sets HF_HUB_DISABLE_TELEMETRY=1 and
+HF_XET_TELEMETRY_ENABLED=0 to prevent Hub agent-harness discovery and native
+transfer telemetry. These opt-outs do not disable native Xet; the inherited
+HF_HUB_DISABLE_XET transfer preference remains independent. Downloads remain
+staged and checked against pinned size/SHA-256 before installation.
+These package updates do not fix all bundled native TLS advisories; see
+https://github.com/kapitalismho/PuriPuly-heart/issues/307 for remaining risks.
+File-integrity checks do not repair TLS validation.
+
+----
+
+Qwen3-ASR-1.7B GGUF model asset (optional GPU download)
+Official upstream source: https://huggingface.co/Qwen/Qwen3-ASR-1.7B
+Manifest mirror source used by the app: https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf
+Additional HTTPS distribution mirror: https://hf-mirror.net/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/92282af1610a2db19d66f2bef1e260f5deca782d/Qwen3-ASR-1.7B-Q6_K.gguf
+License: Apache-2.0
+
+The local GPU Qwen ASR GGUF model is not committed directly to this repository. The app manifest identifies the pinned downloadable GGUF asset for GPU-based local ASR setup. The GGUF mirror is the official transcribe.cpp port of Qwen3-ASR-1.7B and its model card inherits Apache-2.0 from the upstream Qwen model (see https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/qwen3-asr-1.7b.md).
+
+----
+
+Smart Turn v3.2 CPU model asset
+Source: https://huggingface.co/pipecat-ai/smart-turn-v3
+Artifact: smart-turn-v3.2-cpu.onnx
+License: BSD-2-Clause
+
+The listen endpoint model is bundled at data/models/smart-turn-v3.2-cpu.onnx and loaded directly from the installed package, like Silero VAD. Neither model is copied to or loaded from a user cache, and neither is downloaded at runtime. An eligible peer activation requests background preparation; the session is reused until its owner closes.
+Pinned model repository revision: f766f81d3cfdf7737ac64aad813d91bbfd56bf93
+Size: 8,679,182 bytes
+SHA-256: 2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f
+License source: https://github.com/pipecat-ai/smart-turn/blob/main/LICENSE
+
+BSD 2-Clause License
+
+Copyright (c) 2024–2025, Daily
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+----
+
+Silero VAD (v6.2.1)
+Source: https://github.com/snakers4/silero-vad
+License: MIT
+
+This application bundles the Silero VAD ONNX model file for offline Voice Activity Detection.
+
+Bundled artifact: silero_vad.onnx
+- size: 2,327,524 bytes
+- sha256: 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
+
+The bundled artifact identity is also pinned in
+src/puripuly_heart/core/vad/bundled.py (SILERO_VAD_RESOURCE_SHA256) and
+verified by tests/core/test_vad_bundled.py.
+
+----
+
+MIT License
+
+Copyright (c) 2020-present Silero Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----
+
+SciPy 1.18.0, OpenBLAS, LAPACK, and GCC runtime
+Wheel: https://files.pythonhosted.org/packages/93/3e/902d836831474b0ab5a37d16404f7bc5fafd9efba632890e271ba952635f/scipy-1.18.0-cp314-cp314-win_amd64.whl
+Wheel SHA-256: 2d8bbdc6c817f5b4006a54d799d4f5bab6f910193cbb9a1ff310833d4d270f61
+License member: scipy-1.18.0.dist-info/LICENSE.txt
+Packaged license path: puripuly_heart\data\licenses\SCIPY-1.18.0-LICENSE.txt
+
+The packaged SciPy native modules and
+scipy.libs\libscipy_openblas-197ee2fc9b4d071f7e048078cac74115.dll
+come from the ordinary CPython 3.14 Windows wheel pinned in uv.lock. The packaged
+license file contains the wheel's complete LICENSE.txt member. It includes
+the notices and full license text the wheel supplies for
+SciPy and, depending on the wheel build, its bundled OpenBLAS, LAPACK, and GCC
+runtime components, including the GCC Runtime Library Exception. The wheel's
+additional component-specific license files under `scipy\_lib`,
+`scipy\fft`, `scipy\integrate`, and `scipy\spatial` are also retained at
+their original package-relative paths.
+
+----
+
+CPython 3.14.10 runtime
+Distribution archive: https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip
+Distribution archive SHA-256: 90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159
+Full standard library and runtime: https://api.nuget.org/v3-flatcontainer/python/3.14.10/python.3.14.10.nupkg
+NuGet package SHA-256: f54ba67c9951c3d773ea47d2bb095150c037c399f0423a968bcda22809241784
+License member: tools/LICENSE.txt
+Packaged license path: puripuly_heart\data\licenses\PYTHON-3.14.10-LICENSE.txt
+
+The official NuGet distribution supplies the complete GIL-enabled CPython 3.14.10
+standard library, core DLLs, and extension modules. Every runtime binary shared
+with the official embedded distribution is checked for byte identity before
+building the native shell. Its complete LICENSE.txt is included at the packaged
+path above, including OpenSSL and the runtime's other incorporated software.
+The native embedded runtime retains its existing reduced-standard-library policy:
+tests, optional GUI tools, bundled package installers, and Lib executables are
+omitted. All selected runtime files come from this same patched distribution.
+
+----
+
+Frozen native Python package license payloads
+
+Windows packaging retains the complete metadata directories for the exact
+locked distributions below. This preserves their upstream LICENSE, COPYING,
+NOTICE, and AUTHORS payloads at the original `.dist-info` paths:
+
+
+- cffi 2.0.0, including LICENSE and AUTHORS.
+- charset-normalizer 3.4.4.
+- msgpack 1.2.1.
+
+- psutil 7.2.2.
+- PyAudioWPatch 0.2.12.8.
+- PyYAML 6.0.3.
+- sounddevice 0.5.5.
+
+- python-zeroconf 0.150.0.
+
+ONNX Runtime 1.28.0 supplies its license payloads in the package directory
+rather than `.dist-info`. Packaging therefore also retains
+`onnxruntime\LICENSE` and `onnxruntime\ThirdPartyNotices.txt`.
+
+The standard sounddevice runtime
+`_sounddevice_data\portaudio-binaries\libportaudio64bit.dll` is retained.
+The ASIO-specific sibling `libportaudio64bit-asio.dll` is intentionally not
+distributed. This preserves normal non-ASIO PortAudio host APIs while making
+`SD_ENABLE_ASIO=1` an intentionally unsupported environment option; packaging
+does not unset or special-case that variable at runtime.
+
+----
+
+Python-SoXR / libsoxr runtime pair
+Sources: https://pypi.org/project/soxr/ , https://sourceforge.net/projects/soxr/
+License: LGPL-2.1-or-later
+Bundled runtime: soxr.dll
+Installed compliance bundle: third_party\soxr\
+Installed compliance files: COPYING.LGPL-2.1.txt ; PuriPulyHeart-soxr-third-party-source-bundle.zip
+
+Windows release packaging stages a custom system-linked Python-SoXR 1.1.0 extension
+module together with a matching soxr.dll runtime under soxr/.
+
+Installed releases include an LGPL compliance bundle under third_party\soxr\ in the installed app tree.
+That installed bundle includes COPYING.LGPL-2.1.txt and the
+PuriPulyHeart-soxr-third-party-source-bundle.zip source bundle.
+
+The bundled source bundle provides the pristine python-soxr 1.1.0 and libsoxr
+0.1.3 source archives used to build the packaged soxr.dll runtime pair. It also
+contains the applied python-soxr build patch, the exact build-tool versions and
+arguments, and the pristine python-zeroconf 0.150.0 source distribution
+supplied as corresponding source for the redistributed upstream wheel binaries.
+The manifest records every source URL and SHA-256 so recipients can verify the
+preserved upstream bytes and reconstruct the modified python-soxr source tree.
+
+----
+
+python-zeroconf
+Source: https://files.pythonhosted.org/packages/09/ea/34bb185645ecaa18d34e5883bffea71aa9bffbbb994634884e8b2f3ad0c4/zeroconf-0.150.0.tar.gz
+Source SHA-256: a5fe7feab1de6ef5e541e0a3d07e534fd91629b813fc27281593584100f63164
+Upstream repository: https://github.com/python-zeroconf/python-zeroconf
+Upstream tag: 0.150.0
+Upstream commit: 4f3fa73c504f7dc10d9f3ad5846b5db4805928cd
+License: LGPL-2.1-or-later
+Bundled runtime: zeroconf 0.150.0 Python package and Windows native extension modules
+Corresponding source: PuriPulyHeart-soxr-third-party-source-bundle.zip
+
+The release consumes the ordinary CPython 3.14 Windows wheel pinned in uv.lock. The
+source bundle preserves the release's exact PyPI source distribution; its hash
+is pinned in uv.lock and re-verified while preparing release inputs.
+
+----
+
+OpenVR client binding library (openvr_api.dll)
+Upstream pin: ValveSoftware/openvr@v2.15.6
+DLL source: https://raw.githubusercontent.com/ValveSoftware/openvr/v2.15.6/bin/win64/openvr_api.dll
+LICENSE source: https://raw.githubusercontent.com/ValveSoftware/openvr/v2.15.6/LICENSE
+License: BSD-3-Clause
+Bundled runtime: openvr_api.dll
+Packaging source bundle: third_party\openvr\
+Packaging source files: LICENSE ; README.md ; win64\openvr_api.dll ; win64\openvr_api.dll.sha256
+
+This application bundles the Windows x64 OpenVR client binding library as an app-private dependency for the packaged overlay/runtime path.
+
+Installed builds load this DLL from the application's own tree. The vendored bundle pinned from ValveSoftware/openvr@v2.15.6 under third_party\openvr\ is the packaging source for that app-private DLL, so packaged and installed builds do not depend on a shared SteamVR system copy.
+
+----
+
+BSD 3-Clause License
+
+Copyright (c) 2015, Valve Corporation
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+----
+
+Noto Sans CJK Medium TTC
+Upstream repository: notofonts/noto-cjk (GitHub may redirect to googlefonts/noto-cjk)
+Upstream tag/version: Sans2.004 / Noto Sans CJK v2.004
+Upstream path: Sans/OTC/NotoSansCJK-Medium.ttc
+Source URL: https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTC/NotoSansCJK-Medium.ttc
+License: SIL Open Font License 1.1
+Bundled runtime: NotoSansCJK-Medium.ttc
+Bundled source path: src\puripuly_heart\data\fonts\NotoSansCJK-Medium.ttc
+Bundled runtime path: puripuly_heart\data\fonts\NotoSansCJK-Medium.ttc
+Source/provenance bundle: third_party\noto-sans-cjk\
+Source/provenance files: OFL.txt ; README.md ; SHA256SUMS.txt
+Byte length: 18,354,360
+SHA256: 197d5e1e019faca33a4d55931c7d68b8056f3b97cb862049f5cb8de9efdfb8ce
+
+This application bundles the official static Medium Noto Sans CJK TTC for the native VR Subtitle Overlay. The TTC provides Korean, Japanese, Simplified Chinese, Traditional Chinese, and Hong Kong faces under the SIL Open Font License 1.1. The source-tree app font asset is checked against the provenance bundle's tag-pinned upstream source, license text, byte length, and SHA256 during release staging and installer integrity checks.
+
+----
+
+NanumSquareRound
+Source: https://help.naver.com/service/30016/contents/18088?osType=PC&lang=ko
+License: SIL Open Font License 1.1
+
+Copyright (c) 2010 NAVER Corporation (https://www.navercorp.com/)
+with Reserved Font Name Nanum, Naver Nanum, NanumGothic, Naver NanumGothic,
+NanumMyeongjo, Naver NanumMyeongjo, NanumBrush, Naver NanumBrush, NanumPen,
+Naver NanumPen, Naver NanumGothicEco, NanumGothicEco, Naver NanumMyeongjoEco,
+NanumMyeongjoEco, Naver NanumGothicLight, NanumGothicLight, NanumBarunGothic,
+Naver NanumBarunGothic, NanumSquareRound, NanumBarunPen, MaruBuri,
+NanumSquareNeo.
+
+----
+
+M PLUS Rounded 1c
+Source: https://github.com/google/fonts/tree/main/ofl/mplusrounded1c
+License: SIL Open Font License 1.1
+
+Copyright (c) 2016 The Rounded M+ Project Authors.
+
+----
+
+Resource Han Rounded CN
+Source: https://github.com/CyanoHao/Resource-Han-Rounded
+License: SIL Open Font License 1.1
+
+Copyright (c) 2018-2022 Cyano Hao.
+Portions (c) 2014-2021 Adobe (http://www.adobe.com/),
+with Reserved Font Name "Source".
+
+----
+
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply to any
+document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting in part or in whole any of the components of the Original
+Version, by changing formats or by porting the Font Software to a new
+environment.
+
+"Author" refers to any designer, engineer, programmer, technical writer
+or other person who contributed to the Font Software.
+
+PERMISSION AND CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components, in
+Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or in
+the appropriate machine-readable metadata fields within text or binary
+files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name
+as presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any Modified
+Version, except to acknowledge the contribution(s) of the Copyright
+Holder(s) and the Author(s) or with their explicit written permission.
+
+5) The Font Software, modified or unmodified, in part or in whole, must
+be distributed entirely under this license, and must not be distributed
+under any other license. The requirement for fonts to remain under this
+license does not apply to any document created using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are not
+met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
+DEALINGS IN THE FONT SOFTWARE.

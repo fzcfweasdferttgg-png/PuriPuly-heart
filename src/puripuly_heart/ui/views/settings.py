@@ -1,0 +1,5444 @@
+"""Settings view - Bento grid layout with SegmentedButton providers."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import copy
+import inspect
+import json
+import logging
+import math
+import re
+from dataclasses import fields, replace
+from pathlib import Path
+from typing import Awaitable, Callable, Mapping
+
+import flet as ft
+
+from puripuly_heart.app.ports.settings_secrets import (
+    SettingsSecretKey,
+    SettingsSecretLoadResult,
+    SettingsSecretMutation,
+    SettingsSecretSnapshot,
+    SettingsSecretsPort,
+)
+from puripuly_heart.app.ports.settings_view import (
+    ActivationNoticeSettingsIntent,
+    AudioInputSettingsIntent,
+    AudioSettingsIntent,
+    ChatboxSourceSettingsIntent,
+    ClipboardSettingsIntent,
+    CloudFreeTierProvidersEdit,
+    CustomSttEndpointEdit,
+    CustomSttExtraEdit,
+    CustomSttModelEdit,
+    CustomVocabularySettingsIntent,
+    DesktopAudioOutputSettingsIntent,
+    DesktopOverlayBackgroundAlphaIntent,
+    DesktopOverlayPositionResetIntent,
+    DesktopOverlaySizeIntent,
+    DesktopOverlaySwapCaptionLanguagesIntent,
+    GeneralSettingsSnapshot,
+    ImmediateSettingsIntent,
+    LlmGpuDeviceEdit,
+    LocaleSettingsIntent,
+    LocalLlmBaseUrlEdit,
+    LocalLlmExtraBodyEdit,
+    LocalLlmModelEdit,
+    OpenRouterPkceTarget,
+    OscConnectionSettingsIntent,
+    OverlayCalibrationSettingsIntent,
+    OverlayCalibrationSnapshot,
+    OverlayPeerOriginalSettingsIntent,
+    OverlaySettingsSnapshot,
+    OverlayTargetSettingsIntent,
+    OverlayTranslationSettingsIntent,
+    PeerExpectedLanguagesIntent,
+    PeerSttProviderEdit,
+    PeerVadSpeechThresholdIntent,
+    PromptApplyIntent,
+    PromptSettingsSnapshot,
+    ProviderApplyIntent,
+    ProviderSettingsEdit,
+    ProviderSettingsSnapshot,
+    QwenBeijingApiHostEdit,
+    QwenRegionEdit,
+    QwenSingaporeApiHostEdit,
+    SelfSttProviderEdit,
+    SelfVadSettingsIntent,
+    SonioxSpeakerDiarizationEdit,
+    SttGpuDeviceEdit,
+    SttLocalModelEdit,
+    SystemPromptEdit,
+    TranslationHttpExtensionEdit,
+    TranslationSelectionEdit,
+    TranslationSelectionSnapshot,
+    VrcMicInterceptSettingsIntent,
+)
+from puripuly_heart.app.ports.ui_models import OscControlPresentationState
+from puripuly_heart.app.services.http_extension_registry import (
+    HttpExtensionRegistryService,
+)
+from puripuly_heart.app.services.local_asr.local_asr_selection import resolve_local_asr_selection
+from puripuly_heart.config.alibaba_connection import workspace_api_host_region
+from puripuly_heart.config.desktop_overlay_values import (
+    DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
+    DESKTOP_FLET_SIZE_PRESET_DISPLAY_ORDER,
+    DESKTOP_FLET_SIZE_PRESET_ORDER,
+)
+from puripuly_heart.config.llm_profiles import (
+    profile_for_alias,
+)
+from puripuly_heart.config.overlay_calibration import (
+    OVERLAY_CALIBRATION_ANCHORS,
+    OverlayCalibration,
+)
+from puripuly_heart.config.prompts import load_prompt_for_provider
+from puripuly_heart.config.provider_values import (
+    CLOUD_FREE_TIER_STT_PROVIDERS,
+    LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS,
+    LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS,
+    MAX_CUSTOM_VOCAB_TERMS,
+    LLMProviderName,
+    OpenRouterCredentialSource,
+    OpenRouterLLMModel,
+    OpenRouterSelectionAlias,
+    QwenRegion,
+    STTProviderName,
+    display_stt_provider,
+    is_custom_stt_provider,
+    is_qwen_cloud_stt_provider,
+    normalize_cloud_free_tier_providers,
+    normalize_local_llm_base_url,
+    parse_openrouter_llm_model,
+)
+from puripuly_heart.config.resolved import (
+    OVERLAY_TARGET_DESKTOP,
+    OVERLAY_TARGET_STEAMVR,
+    VAD_ONSET_MAX,
+    VAD_ONSET_MIN,
+)
+from puripuly_heart.config.translation_values import (
+    MANAGED_GEMMA_MODELS,
+    TranslationConnection,
+    TranslationModel,
+    default_translation_connection,
+    normalize_translation_connection,
+    normalize_translation_model,
+    supported_translation_connections,
+)
+from puripuly_heart.core.http_extensions import http_extension_secret_key
+from puripuly_heart.core.language import get_stt_compatibility_warning
+from puripuly_heart.core.local_asr.local_stt_assets import LOCAL_STT_MODEL_IDS
+from puripuly_heart.core.stt.custom import (
+    CustomSTTConfigurationError,
+    normalize_custom_stt_extra,
+)
+from puripuly_heart.ui.components.managed_trial_usage_bar import ManagedTrialUsageBar
+from puripuly_heart.ui.components.settings import (
+    ApiKeyField,
+    AudioSettings,
+    CustomVocabularyTagEditor,
+    LanguageHintEditor,
+    OptionItem,
+    OscConnectionModal,
+    PromptEditor,
+    SettingsModal,
+    SettingsUnitCard,
+)
+from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
+from puripuly_heart.ui.components.subtab_shell import TextSubtab, TextSubtabShell
+from puripuly_heart.ui.flet_runtime import (
+    is_control_mounted,
+    is_hover_active,
+    update_control_if_mounted,
+)
+from puripuly_heart.ui.fonts import TypeFace, font_for_language, locale_body_letter_spacing
+from puripuly_heart.ui.gpu_device import GpuDeviceOption
+from puripuly_heart.ui.i18n import (
+    available_locales,
+    get_locale,
+    language_name,
+    locale_label,
+    provider_label,
+    t,
+)
+from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
+from puripuly_heart.ui.settings.contract import (
+    SettingsApiSurfaceSlots,
+    SettingsGeneralIntents,
+    SettingsGeneralSurfaceSlots,
+    SettingsOverlayIntents,
+    SettingsOverlaySurfaceSlots,
+    SettingsPromptIntents,
+    SettingsPromptSurfaceSlots,
+    SettingsProviderIntents,
+    SettingsSurfaceIntents,
+)
+from puripuly_heart.ui.settings.renderer import (
+    SETTINGS_ROW_SPACING,
+    compose_settings_api_surface,
+    compose_settings_general_surface,
+    compose_settings_overlay_surface,
+    compose_settings_prompt_surface,
+)
+from puripuly_heart.ui.theme import (
+    COLOR_DIVIDER,
+    COLOR_ERROR,
+    COLOR_NEUTRAL_DARK,
+    COLOR_ON_BACKGROUND,
+    COLOR_PRIMARY,
+    COLOR_SECONDARY,
+    COLOR_WARNING,
+    text_field_outline_border,
+    text_style,
+)
+
+logger = logging.getLogger(__name__)
+_DRAFT_PROVIDER_FIELDS: dict[type, str] = {
+    SelfSttProviderEdit: "stt_provider",
+    PeerSttProviderEdit: "peer_stt_provider",
+    CloudFreeTierProvidersEdit: "cloud_free_tier_providers",
+    SonioxSpeakerDiarizationEdit: "soniox_speaker_diarization_enabled",
+    SttGpuDeviceEdit: "stt_gpu_device_id",
+    SttLocalModelEdit: "stt_local_model",
+    QwenRegionEdit: "qwen_region",
+    QwenBeijingApiHostEdit: "qwen_api_host_beijing",
+    QwenSingaporeApiHostEdit: "qwen_api_host_singapore",
+    LocalLlmBaseUrlEdit: "local_llm_base_url",
+    LocalLlmModelEdit: "local_llm_model",
+    LocalLlmExtraBodyEdit: "local_llm_extra_body_json",
+    CustomSttEndpointEdit: "custom_stt_endpoint",
+    CustomSttModelEdit: "custom_stt_model",
+    CustomSttExtraEdit: "custom_stt_extra_json",
+    TranslationSelectionEdit: "translation",
+}
+_DRAFT_TRANSLATION_FIELDS: dict[type, str] = {
+    LlmGpuDeviceEdit: "gpu_device_id",
+    TranslationHttpExtensionEdit: "http_extension_id",
+}
+
+
+_CENTER_ALIGNMENT = ft.Alignment(0, 0)
+_SETTINGS_SUBTAB_ORDER = ("api", "general", "prompt", "overlay")
+_OVERLAY_DISTANCE_MIN = 0.5
+_OVERLAY_DISTANCE_MAX = 2.0
+_OVERLAY_DISTANCE_DIVISIONS = 30
+_OVERLAY_OFFSET_STEP = 0.05
+_DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP = 0.1
+_OVERLAY_TEXT_SCALE_PRESETS = (
+    ("large", 1.2),
+    ("normal", 1.0),
+    ("small", 0.8),
+)
+_DESKTOP_OVERLAY_REOPEN_FAILURE_REASONS = frozenset(
+    {
+        "window_configuration_failed",
+        "window_reveal_lost",
+        "window_visibility_unstable",
+    }
+)
+_CUSTOM_VOCAB_DELIMITER_RE = re.compile(r"\s+")
+_STT_UI_PROVIDERS = (
+    STTProviderName.LOCAL_QWEN_GPU,
+)
+_STT_SECTION_ORDER = (
+    "settings.stt.section.gpu_inference",
+)
+_ROLLING_MEMBER_STT_PROVIDERS: frozenset[STTProviderName] = frozenset()
+_STT_SECTION_BY_PROVIDER: dict[STTProviderName, str] = {
+    STTProviderName.LOCAL_QWEN_GPU: "settings.stt.section.gpu_inference",
+}
+_TRANSLATION_MODEL_LABEL_KEYS = {
+    TranslationModel.LOCAL_LLM: "provider.local_llms",
+    TranslationModel.CUSTOM_HTTP: "provider.custom_http",
+}
+_LOCAL_STT_PROVIDERS = frozenset(
+    {
+        STTProviderName.LOCAL_QWEN_GPU,
+    }
+)
+_TRANSLATION_CONNECTION_LABEL_KEYS = {
+    TranslationConnection.OLLAMA: "settings.translation_connection.ollama",
+    TranslationConnection.CUSTOM_HTTP: "settings.translation_connection.custom_http",
+}
+_TRANSLATION_CONNECTION_DESCRIPTION_KEYS: dict[TranslationConnection, str] = {}
+_TRANSLATION_MODELS = (
+    TranslationModel.LOCAL_LLM,
+    TranslationModel.CUSTOM_HTTP,
+)
+_TRANSLATION_MODEL_SECTION_ORDER = (
+    "settings.translation_model.section.user_settings",
+)
+_TRANSLATION_MODEL_SECTION_BY_MODEL: dict[TranslationModel, str] = {
+    TranslationModel.LOCAL_LLM: "settings.translation_model.section.user_settings",
+    TranslationModel.CUSTOM_HTTP: "settings.translation_model.section.user_settings",
+}
+
+def _make_text_button(label: str, **kwargs) -> ft.TextButton:
+    return ft.TextButton(content=label, **kwargs)
+
+
+def _settings_secondary_text_button_style() -> ft.ButtonStyle:
+    return ft.ButtonStyle(
+        color={
+            ft.ControlState.HOVERED: COLOR_PRIMARY,
+            ft.ControlState.DEFAULT: COLOR_SECONDARY,
+        },
+        icon_color={
+            ft.ControlState.HOVERED: COLOR_PRIMARY,
+            ft.ControlState.DEFAULT: COLOR_SECONDARY,
+        },
+        text_style=text_style(size=20),
+        overlay_color=ft.Colors.TRANSPARENT,
+        animation_duration=0,
+    )
+
+
+def _set_text_button_label(button: ft.TextButton, label: str) -> None:
+    button.content = label
+
+
+def _reject_json_constant(value: str) -> None:
+    raise json.JSONDecodeError(f"invalid JSON constant: {value}", value, 0)
+
+
+def _custom_stt_extra_to_text(extra: Mapping[str, object]) -> str:
+    if not extra:
+        return "{}"
+    return json.dumps(extra, ensure_ascii=False, indent=2)
+
+
+def _update_control_if_mounted(control: ft.Control) -> None:
+    update_control_if_mounted(control)
+
+
+def _derive_openrouter_selection_alias(
+    llm_model: OpenRouterLLMModel,
+    selected_source: OpenRouterCredentialSource,
+) -> OpenRouterSelectionAlias:
+    if llm_model == OpenRouterLLMModel.GPT_6_LUNA:
+        return OpenRouterSelectionAlias.GPT_6_LUNA_BYOK
+    if llm_model == OpenRouterLLMModel.QWEN_35_FLASH_02_23:
+        if selected_source == OpenRouterCredentialSource.MANAGED:
+            return OpenRouterSelectionAlias.QWEN35_FLASH_MANAGED
+        return OpenRouterSelectionAlias.QWEN35_FLASH_BYOK
+    if llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH:
+        if selected_source == OpenRouterCredentialSource.MANAGED:
+            return OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
+        return OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
+    if selected_source == OpenRouterCredentialSource.MANAGED:
+        return OpenRouterSelectionAlias.GEMMA4_26B_31B_MANAGED
+    return OpenRouterSelectionAlias.GEMMA4_26B_31B_BYOK
+
+
+class SettingsView(ft.Column):
+    """Settings view with Bento grid layout."""
+
+    def __init__(
+        self,
+        http_extension_registry: HttpExtensionRegistryService | None = None,
+    ):
+        super().__init__(expand=True, spacing=16)
+
+        # Callbacks (assigned by App)
+        self.on_settings_changed: Callable[[ImmediateSettingsIntent], None] | None = None
+        self.on_prompt_apply_settings: Callable[[PromptApplyIntent], None] | None = None
+        self.on_pending_prompt_changed: Callable[[PromptApplyIntent], None] | None = None
+        self.on_providers_changed: Callable[[], None] | None = None
+        self.on_local_llm_secret_changed: Callable[[], None] | None = None
+        self.on_verify_api_key: Callable[[str, str], object] | None = None
+        self.on_provider_secret_change: Callable[[str, str], object] | None = None
+        self.on_secret_cleared: Callable[[str], None] | None = None  # key name
+        self.on_overlay_calibration_begin: Callable[[], OverlayCalibration] | None = None
+        self.on_overlay_calibration_change: Callable[[str, object], OverlayCalibration] | None = (
+            None
+        )
+        self.on_overlay_calibration_apply: Callable[[], OverlayCalibration] | None = None
+        self.on_overlay_calibration_cancel: Callable[[], OverlayCalibration] | None = None
+        self.on_desktop_overlay_lock_change: Callable[[bool], None] | None = None
+        self.on_desktop_overlay_size_change: Callable[[str], None] | None = None
+        self.on_desktop_overlay_recovery_action: Callable[[str], None] | None = None
+        self.on_desktop_overlay_position_reset: Callable[[], None] | None = None
+        self.on_view_logs: Callable[[], None] | None = None
+        self.on_start_audio_test: Callable[[], None] | None = None
+        self.on_gpu_discovery_requested: Callable[[], object] | None = None
+        self.on_open_model_assets: Callable[[], None] | None = None
+        self.on_list_loopback_capture_options: Callable[[], object] | None = None
+        self.on_list_loopback_process_options: Callable[[], object] | None = None
+        self.on_list_loopback_device_options: Callable[[], object] | None = None
+        self.on_current_loopback_capture_option: Callable[[], str] | None = None
+        self.on_apply_loopback_capture_option: Callable[[str], None] | None = None
+        self.on_loopback_capture_summary: Callable[[], str] | None = None
+        self.on_osc_effective_ports: Callable[[], tuple[int | None, int | None]] | None = None
+        self.show_snackbar: Callable[[str, str], None] | None = None
+        self.runtime_log_basic: Callable[..., None] | None = None
+        self._settings_secrets: SettingsSecretsPort | None = None
+
+        self._http_extensions = (
+            http_extension_registry
+            if http_extension_registry is not None
+            else HttpExtensionRegistryService.from_default_directory()
+        )
+        self._http_extension_secret_fields: dict[str, ft.TextField] = {}
+        self._http_extension_secret_dirty: set[str] = set()
+        self._http_extension_selected_id: str | None = None
+        self._http_extension_snapshot = self._http_extensions.snapshot
+        self._http_extension_runtime_reload_pending = False
+        self._immediate_provider_apply_intent: ProviderApplyIntent | None = None
+
+        # State
+        self._provider_snapshot: ProviderSettingsSnapshot | None = None
+        self._provider_draft: ProviderSettingsSnapshot | None = None
+        self._provider_edits: dict[type, ProviderSettingsEdit] = {}
+        self._general_snapshot: GeneralSettingsSnapshot | None = None
+        self._peer_auto_languages_pending: tuple[str, ...] | None = None
+        self._prompt_snapshot: PromptSettingsSnapshot | None = None
+        self._overlay_snapshot: OverlaySettingsSnapshot | None = None
+        self._config_path: Path | None = None
+        self.has_provider_changes: bool = False
+        self.has_pending_prompt_changes: bool = False
+        self._overlay_state: str = "off"
+        self._overlay_failure_reason: str | None = None
+        self._overlay_runtime_target: str = OVERLAY_TARGET_STEAMVR
+        self._desktop_overlay_captions_locked = False
+        self._desktop_overlay_pending_locked: bool | None = None
+        self._desktop_overlay_primary_action_kind: str | None = None
+        self._desktop_overlay_pending_size_preset: str | None = None
+        self._desktop_overlay_pending_position_reset = False
+        self._overlay_calibration = OverlayCalibration()
+        self._overlay_calibration_draft = self._overlay_calibration.copy()
+        self._overlay_calibration_session_active = False
+        self._overlay_peer_contract: OverlayPeerConsumerContract | None = None
+        self._gpu_devices: tuple[GpuDeviceOption, ...] = ()
+        self._llm_gpu_devices: tuple[GpuDeviceOption, ...] = ()
+
+        # Build UI components
+        self._build_ui()
+
+    def self_stt_control(self) -> ft.Control:
+        return self._self_stt_card
+
+    def peer_stt_control(self) -> ft.Control:
+        return self._peer_stt_card
+
+    def translation_provider_control(self) -> ft.Control:
+        return self._translation_provider_card
+
+    def translation_connection_control(self) -> ft.Control:
+        return self._translation_connection_card
+
+    def http_extension_control(self) -> ft.Control:
+        return self._http_extension_host
+
+    def set_http_extension_registry(
+        self,
+        registry: HttpExtensionRegistryService | None,
+    ) -> None:
+        if registry is None:
+            return
+        self._http_extensions = registry
+        self._http_extension_snapshot = registry.snapshot
+        self._sync_http_extension_card(force_credentials=True)
+
+    def cloud_free_tier_control(self) -> ft.Control:
+        return self._cloud_free_tier_card
+
+    def soniox_speaker_diarization_control(self) -> ft.Control:
+        return self._soniox_speaker_diarization_card
+
+    def gpu_device_control(self) -> ft.Control:
+        return self._gpu_device_card
+
+    def stt_model_control(self) -> ft.Control:
+        return self._stt_model_card
+
+    def gpu_llm_control(self) -> ft.Control:
+        return self._gpu_llm_card
+
+    def model_assets_control(self) -> ft.Control:
+        return self._model_assets_card
+
+    def local_llm_connection_control(self) -> ft.Control:
+        return self._local_llm_connection_card
+
+    def bind_settings_intents(
+        self,
+        *,
+        surface: SettingsSurfaceIntents,
+        provider: SettingsProviderIntents,
+        general: SettingsGeneralIntents,
+        prompt: SettingsPromptIntents,
+        overlay: SettingsOverlayIntents,
+    ) -> None:
+        self.on_settings_changed = surface.settings_changed
+        self.show_snackbar = surface.show_snackbar
+        if surface.runtime_log_basic is not None:
+            self.runtime_log_basic = surface.runtime_log_basic
+        self.on_providers_changed = provider.providers_changed
+        self.on_verify_api_key = provider.verify_api_key
+        self.on_provider_secret_change = provider.provider_secret_change
+        self.on_secret_cleared = provider.secret_cleared
+        self.on_local_llm_secret_changed = provider.local_llm_secret_changed
+        self.on_gpu_discovery_requested = provider.gpu_discovery_requested
+        self.on_open_model_assets = provider.open_model_assets
+        self._settings_secrets = provider.settings_secrets
+        self.on_start_audio_test = general.start_audio_test
+        self.on_list_loopback_capture_options = general.list_loopback_capture_options
+        self.on_list_loopback_process_options = general.list_loopback_process_options
+        self.on_list_loopback_device_options = general.list_loopback_device_options
+        self.on_current_loopback_capture_option = general.current_loopback_capture_option
+        self.on_apply_loopback_capture_option = general.apply_loopback_capture_option
+        self.on_loopback_capture_summary = general.loopback_capture_summary
+        self.on_osc_effective_ports = general.osc_effective_ports
+        self.on_prompt_apply_settings = prompt.prompt_apply_settings
+        self.on_pending_prompt_changed = prompt.pending_prompt_changed
+        self.on_desktop_overlay_lock_change = overlay.desktop_overlay_lock_change
+        self.on_desktop_overlay_size_change = overlay.desktop_overlay_size_change
+        self.on_desktop_overlay_recovery_action = overlay.desktop_overlay_recovery_action
+        self.on_desktop_overlay_position_reset = overlay.desktop_overlay_position_reset
+        self.on_view_logs = overlay.view_logs
+        if overlay.calibration_begin is not None:
+            self.on_overlay_calibration_begin = overlay.calibration_begin
+        if overlay.calibration_change is not None:
+            self.on_overlay_calibration_change = overlay.calibration_change
+        if overlay.calibration_apply is not None:
+            self.on_overlay_calibration_apply = overlay.calibration_apply
+        if overlay.calibration_cancel is not None:
+            self.on_overlay_calibration_cancel = overlay.calibration_cancel
+
+    # --- Card Wrapper (About page pattern) ---
+    def _wrap_card(
+        self,
+        content: ft.Control,
+        *,
+        expand: bool | None = None,
+        height: float | int | None = SharedCardWrapper.DEFAULT_HEIGHT,
+    ) -> SharedCardWrapper:
+        """Wrap content in the shared card shell used across settings/about."""
+        return SharedCardWrapper(
+            content,
+            expand=expand,
+            height=height,
+        )
+
+    def _wrap_unit_card(
+        self,
+        *,
+        title: ft.Control,
+        value: ft.Control,
+        extra_controls: tuple[ft.Control, ...] = (),
+        height: float | int | None = SettingsUnitCard.DEFAULT_HEIGHT,
+    ) -> SettingsUnitCard:
+        return SettingsUnitCard(
+            title=title,
+            value=value,
+            extra_controls=extra_controls,
+            height=height,
+        )
+
+    def _wrap_empty_unit_card(
+        self,
+        *,
+        height: float | int | None = SettingsUnitCard.DEFAULT_HEIGHT,
+    ) -> SharedCardWrapper:
+        card = self._wrap_card(ft.Container(expand=True), expand=True, height=height)
+        card.ignore_interactions = True
+        return card
+
+    # --- Clickable Text Builders ---
+    def _build_clickable_text(
+        self,
+        text: str,
+        on_click,
+        *,
+        size: int = 28,
+        text_align: ft.TextAlign = ft.TextAlign.CENTER,
+        alignment=_CENTER_ALIGNMENT,
+        no_wrap: bool = False,
+        max_lines: int | None = None,
+        overflow: ft.TextOverflow | None = None,
+        width: float | int | None = None,
+        height: float | int | None = None,
+        expand: bool | int | None = True,
+    ) -> ft.Container:
+        """Build a clickable centered text with hover effect."""
+        text_control = ft.Text(
+            text,
+            size=size,
+            font_family=font_for_language(get_locale()),
+            color=COLOR_ON_BACKGROUND,
+            text_align=text_align,
+            no_wrap=no_wrap,
+            max_lines=max_lines,
+            overflow=overflow,
+        )
+        return ft.Container(
+            content=text_control,
+            alignment=alignment,
+            width=width,
+            height=height,
+            expand=expand,
+            on_click=on_click,
+            on_hover=self._on_text_hover,
+        )
+
+    def _set_unit_card_value_text(
+        self, control: ft.Container, text: str, *, size: int = 28
+    ) -> None:
+        text_control = control.content
+        text_control.value = text
+        text_control.size = size
+
+    def _iter_locale_sensitive_clickable_text_controls(self) -> tuple[ft.Container, ...]:
+        return (
+            self._stt_text,
+            self._peer_stt_text,
+            self._gpu_device_text,
+            self._gpu_llm_text,
+            self._llm_text,
+            self._ui_text,
+            self._chatbox_source_text,
+            self._osc_connection_text,
+            self._clipboard_auto_translate_text,
+            self._activation_notice_button,
+            self._audio_test_text,
+            self._vrc_mic_text,
+            self._mic_audio_text,
+            self._audio_host_api_text,
+            self._loopback_audio_text,
+            self._overlay_translation_button,
+            self._overlay_peer_original_button,
+            self._overlay_target_button,
+            self._overlay_anchor_button,
+            self._overlay_text_scale_text,
+            self._desktop_overlay_size_button,
+            self._desktop_overlay_lock_button,
+            self._desktop_overlay_swap_caption_languages_button,
+            self._overlay_vr_reset_button,
+            self._overlay_desktop_reset_button,
+            self._desktop_overlay_primary_action,
+            self._desktop_overlay_view_logs_action,
+            self._translation_connection_text,
+            self._cloud_free_tier_text,
+            self._soniox_speaker_diarization_text,
+            self._http_extension_text,
+            self._http_extension_path_text,
+        )
+
+    def _sync_clickable_text_control_fonts(self, font_family: str | None) -> None:
+        for control in self._iter_locale_sensitive_clickable_text_controls():
+            if control:
+                control.content.font_family = font_family
+
+    def _sync_general_audio_card_texts(self) -> None:
+        default_label = t("settings.default_option")
+        self._set_unit_card_value_text(
+            self._mic_audio_text,
+            self._audio_settings.microphone or default_label,
+        )
+        self._set_unit_card_value_text(
+            self._audio_host_api_text,
+            self._audio_settings.host_api_display_label,
+        )
+        loopback_summary = (
+            self.on_loopback_capture_summary()
+            if callable(getattr(self, "on_loopback_capture_summary", None))
+            else (self._audio_settings.desktop_output_device or default_label)
+        )
+        self._set_unit_card_value_text(
+            self._loopback_audio_text,
+            loopback_summary or default_label,
+        )
+
+    def _sync_osc_connection_card(self, settings: GeneralSettingsSnapshot) -> None:
+        mode = settings.osc_connection_mode
+        if mode not in {"automatic", "manual", "off"}:
+            mode = "automatic"
+        self._set_unit_card_value_text(
+            self._osc_connection_text,
+            t(f"settings.osc.mode.{mode}"),
+        )
+
+    def refresh_loopback_capture_target(self, settings: GeneralSettingsSnapshot) -> None:
+        self._general_snapshot = settings
+        self._audio_settings.desktop_output_device = settings.output_device
+        summary = (
+            self.on_loopback_capture_summary()
+            if callable(getattr(self, "on_loopback_capture_summary", None))
+            else (self._audio_settings.desktop_output_device or t("settings.default_option"))
+        )
+        self._set_unit_card_value_text(
+            self._loopback_audio_text,
+            summary or t("settings.default_option"),
+        )
+        if is_control_mounted(self._loopback_audio_text):
+            self._loopback_audio_text.update()
+
+    def _on_text_hover(self, e: ft.ControlEvent) -> None:
+        """Handle hover effect on clickable text."""
+        container = e.control
+        text_control = container.content
+        next_color = COLOR_PRIMARY if is_hover_active(e) else COLOR_ON_BACKGROUND
+        if text_control.color == next_color:
+            return
+        text_control.color = next_color
+        container.update()
+
+    def _make_overlay_step_hover_handler(self, text_control: ft.Text):
+        def _on_hover(e: ft.ControlEvent) -> None:
+            next_color = COLOR_PRIMARY if is_hover_active(e) else COLOR_ON_BACKGROUND
+            if text_control.color == next_color:
+                return
+            text_control.color = next_color
+            if is_control_mounted(text_control):
+                text_control.update()
+
+        return _on_hover
+
+    def _build_overlay_step_hit_lane(self, on_click, *, on_hover=None) -> ft.Container:
+        return ft.Container(
+            content=ft.Container(expand=True),
+            expand=1,
+            on_click=on_click,
+            on_hover=on_hover,
+        )
+
+    def _build_overlay_step_visual_lane(
+        self, text: str, *, alignment
+    ) -> tuple[ft.Container, ft.Text]:
+        text_control = ft.Text(
+            text,
+            size=22,
+            font_family=font_for_language(get_locale()),
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        return (
+            ft.Container(
+                content=text_control,
+                expand=1,
+                alignment=alignment,
+            ),
+            text_control,
+        )
+
+    def _build_overlay_step_split_layout(
+        self,
+        *,
+        title: ft.Text,
+        value_text: ft.Text,
+        decrease_text: str,
+        increase_text: str,
+        on_decrease,
+        on_increase,
+    ) -> tuple[ft.Stack, ft.Container, ft.Container, ft.Text, ft.Text]:
+        decrease_visual, decrease_glyph = self._build_overlay_step_visual_lane(
+            decrease_text,
+            alignment=ft.Alignment.CENTER_RIGHT,
+        )
+        increase_visual, increase_glyph = self._build_overlay_step_visual_lane(
+            increase_text,
+            alignment=ft.Alignment.CENTER_LEFT,
+        )
+        decrease_lane = self._build_overlay_step_hit_lane(
+            on_decrease,
+            on_hover=self._make_overlay_step_hover_handler(decrease_glyph),
+        )
+        increase_lane = self._build_overlay_step_hit_lane(
+            on_increase,
+            on_hover=self._make_overlay_step_hover_handler(increase_glyph),
+        )
+        visual_row = ft.Row(
+            controls=[
+                decrease_visual,
+                ft.Container(
+                    content=value_text,
+                    width=84,
+                    alignment=ft.Alignment.CENTER,
+                ),
+                increase_visual,
+            ],
+            spacing=4,
+            expand=1,
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        visual_column = ft.Column(
+            controls=[
+                title,
+                ft.Container(
+                    content=visual_row,
+                    expand=True,
+                    alignment=ft.Alignment.CENTER,
+                ),
+            ],
+            spacing=0,
+            expand=True,
+        )
+        stack = ft.Stack(
+            controls=[
+                ft.Row(
+                    controls=[decrease_lane, increase_lane],
+                    spacing=0,
+                    expand=1,
+                    vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+                ),
+                ft.TransparentPointer(content=visual_column),
+            ],
+            fit=ft.StackFit.EXPAND,
+            expand=True,
+            alignment=ft.Alignment.CENTER,
+        )
+        return stack, decrease_lane, increase_lane, decrease_glyph, increase_glyph
+
+    def _get_button_style(
+        self,
+        font_family: str | None,
+        *,
+        size: int = 20,
+        default_color: str = COLOR_SECONDARY,
+        disabled_color: str | None = None,
+    ) -> ft.ButtonStyle:
+        """Create a complete ButtonStyle with the specified font."""
+        color = {
+            ft.ControlState.HOVERED: COLOR_PRIMARY,
+            ft.ControlState.DEFAULT: default_color,
+        }
+        if disabled_color is not None:
+            color[ft.ControlState.DISABLED] = disabled_color
+        return ft.ButtonStyle(
+            color=color,
+            icon_color=color,
+            text_style=text_style(
+                TypeFace(font_family, locale_body_letter_spacing(get_locale())),
+                size=size,
+            ),
+            overlay_color=ft.Colors.TRANSPARENT,
+            animation_duration=0,
+        )
+
+    def _settings_subtab_label(self, key: str) -> str:
+        return t(f"settings.subtab.{key}")
+
+    def _build_settings_subtab_shell(
+        self, tab_rows: dict[str, list[ft.Control]]
+    ) -> TextSubtabShell:
+        return TextSubtabShell(
+            tabs=[
+                TextSubtab(key, self._settings_subtab_label(key), tuple(tab_rows[key]))
+                for key in _SETTINGS_SUBTAB_ORDER
+            ],
+            font_family=font_for_language(get_locale()),
+            initial_key=_SETTINGS_SUBTAB_ORDER[0],
+            subtab_bar_position="bottom",
+        )
+
+    def _emit_runtime_basic(self, message: str, *, level: int = logging.INFO) -> None:
+        runtime_log_basic = getattr(self, "runtime_log_basic", None)
+        if runtime_log_basic is not None:
+            runtime_log_basic(message, level=level)
+            return
+        logger.log(level, message)
+
+    def _build_action_button(
+        self,
+        text: str,
+        on_click,
+        *,
+        size: int = 20,
+        default_color: str = COLOR_SECONDARY,
+        disabled_color: str | None = None,
+        width: float | int | None = None,
+        height: float | int | None = None,
+    ) -> ft.TextButton:
+        return _make_text_button(
+            text,
+            style=self._get_button_style(
+                font_for_language(get_locale()),
+                size=size,
+                default_color=default_color,
+                disabled_color=disabled_color,
+            ),
+            on_click=on_click,
+            width=width,
+            height=height,
+        )
+
+    def _format_overlay_calibration_number(self, value: float) -> str:
+        return f"{value:.2f}"
+
+    def _overlay_anchor_label_for(self, anchor: str) -> str:
+        return t(f"settings.overlay.calibration.anchor.{anchor}")
+
+    def _overlay_text_scale_label_for(self, value: float) -> str:
+        return t(
+            f"settings.overlay.calibration.text_scale.{self._overlay_text_scale_preset_key_for(value)}"
+        )
+
+    def _overlay_text_scale_preset_key_for(self, value: float) -> str:
+        return min(
+            _OVERLAY_TEXT_SCALE_PRESETS,
+            key=lambda preset: abs(preset[1] - value),
+        )[0]
+
+    def _overlay_text_scale_value_for(self, preset_key: str) -> float:
+        for key, scale in _OVERLAY_TEXT_SCALE_PRESETS:
+            if key == preset_key:
+                return scale
+        try:
+            return float(preset_key)
+        except TypeError, ValueError:
+            return 1.0
+
+    def _build_ui(self) -> None:
+        """Build the settings UI with Bento grid layout."""
+        # === API provider surfaces: Self STT + Peer STT + Shared Translation ===
+        self._stt_text = self._build_clickable_text(
+            t("settings.not_selected"),
+            self._on_stt_click,
+        )
+        self._stt_title = ft.Text(
+            t("settings.section.stt"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_SECONDARY
+        )
+        self._self_stt_card = self._wrap_unit_card(
+            title=self._stt_title,
+            value=self._stt_text,
+        )
+
+        self._llm_text = self._build_clickable_text(
+            t("provider.gemini_flash"),
+            self._on_llm_click,
+        )
+        self._trans_title = ft.Text(
+            t("settings.section.translation"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._translation_provider_card = self._wrap_unit_card(
+            title=self._trans_title,
+            value=self._llm_text,
+        )
+
+        self._peer_auto_languages_title = ft.Text(
+            t("settings.peer_auto_languages.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._peer_auto_languages_editor = LanguageHintEditor(
+            on_add=self._on_peer_auto_languages_add,
+            on_remove=self._on_peer_auto_languages_remove,
+        )
+        self._peer_auto_languages_card = self._wrap_card(
+            ft.Column(
+                [
+                    self._peer_auto_languages_title,
+                    self._peer_auto_languages_editor,
+                ],
+                spacing=12,
+            ),
+            height=None,
+            expand=False,
+        )
+
+        # === General Tab Row 1 ===
+        self._ui_text = self._build_clickable_text(
+            locale_label(get_locale()),
+            self._on_ui_click,
+        )
+        self._ui_title = ft.Text(
+            t("settings.section.ui"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_SECONDARY
+        )
+        ui_card = self._wrap_unit_card(
+            title=self._ui_title,
+            value=self._ui_text,
+        )
+
+        self._audio_settings = AudioSettings()
+        self._chatbox_source_text = self._build_clickable_text(
+            t("settings.chatbox_source.on"),
+            self._on_chatbox_source_click,
+        )
+        self._chatbox_source_title = ft.Text(
+            t("settings.chatbox_include_source"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        chatbox_source_card = self._wrap_unit_card(
+            title=self._chatbox_source_title,
+            value=self._chatbox_source_text,
+        )
+
+        self._osc_connection_text = self._build_clickable_text(
+            t("settings.osc.mode.automatic"),
+            self._on_osc_connection_click,
+        )
+        self._osc_connection_title = ft.Text(
+            t("settings.osc.connection.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._vrchat_osc_card = self._wrap_unit_card(
+            title=self._osc_connection_title,
+            value=self._osc_connection_text,
+        )
+
+        self._clipboard_auto_translate_text = self._build_clickable_text(
+            t("settings.clipboard_auto_translate.off"),
+            self._on_clipboard_auto_translate_click,
+        )
+        self._clipboard_auto_translate_title = ft.Text(
+            t("settings.clipboard_auto_translate"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        clipboard_auto_translate_card = self._wrap_unit_card(
+            title=self._clipboard_auto_translate_title,
+            value=self._clipboard_auto_translate_text,
+        )
+
+        self._activation_notice_title = ft.Text(
+            t("settings.activation_notice.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._activation_notice_button = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_activation_notice_click,
+        )
+        self._activation_notice_button.disabled = True
+        self._activation_notice_card = self._wrap_unit_card(
+            title=self._activation_notice_title,
+            value=self._activation_notice_button,
+        )
+
+        self._vrc_mic_text = self._build_clickable_text(
+            t("settings.vrc_mic.on"),
+            self._on_vrc_mic_click,
+        )
+        self._vrc_mic_title = ft.Text(
+            t("settings.vrc_mic_intercept"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        vrc_mic_card = self._wrap_unit_card(
+            title=self._vrc_mic_title,
+            value=self._vrc_mic_text,
+        )
+
+        self._audio_test_text = self._build_clickable_text(
+            t("settings.audio_test.action"),
+            self._on_audio_test_click,
+        )
+        self._audio_test_title = ft.Text(
+            t("settings.audio_test"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        audio_test_card = self._wrap_unit_card(
+            title=self._audio_test_title,
+            value=self._audio_test_text,
+        )
+
+        self._general_ui_card = ui_card
+        self._general_chatbox_source_card = chatbox_source_card
+
+        # === General Tab Row 2: Host API / Microphone Audio / Loopback Audio ===
+        self._mic_audio_text = self._build_clickable_text(
+            t("settings.default_option"),
+            self._on_mic_audio_click,
+        )
+        self._audio_host_api_title = ft.Text(
+            t("settings.audio_host_api"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._audio_host_api_text = self._build_clickable_text(
+            t("settings.default_option"),
+            self._on_mic_host_api_click,
+        )
+        host_api_card = self._wrap_unit_card(
+            title=self._audio_host_api_title,
+            value=self._audio_host_api_text,
+        )
+        self._mic_audio_title = ft.Text(
+            t("settings.section.microphone_audio"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        mic_audio_card = self._wrap_unit_card(
+            title=self._mic_audio_title,
+            value=self._mic_audio_text,
+        )
+
+        self._loopback_audio_text = self._build_clickable_text(
+            t("settings.default_option"),
+            self._on_loopback_audio_click,
+        )
+        self._loopback_audio_title = ft.Text(
+            t("settings.section.loopback_audio"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        loopback_audio_card = self._wrap_unit_card(
+            title=self._loopback_audio_title,
+            value=self._loopback_audio_text,
+        )
+        self._general_host_api_card = host_api_card
+        self._general_mic_audio_card = mic_audio_card
+        self._general_loopback_audio_card = loopback_audio_card
+
+        # === General Tab Row 3: VRChat Mute Sync / Self VAD / Peer VAD ===
+        self._self_vad_title = ft.Text(
+            t("settings.section.self_vad_sensitivity"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._vad_slider = ft.Slider(
+            min=VAD_ONSET_MIN,
+            max=VAD_ONSET_MAX,
+            divisions=18,
+            value=0.4,
+            label="0.40",
+            active_color=COLOR_PRIMARY,
+            on_change=self._handle_vad_visual_change,
+            on_change_end=self._handle_vad_change,
+        )
+        self._self_vad_card = self._wrap_unit_card(
+            title=self._self_vad_title,
+            value=ft.Container(content=self._vad_slider, alignment=_CENTER_ALIGNMENT, expand=True),
+        )
+
+        self._peer_vad_title = ft.Text(
+            t("settings.section.peer_vad_sensitivity"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._peer_vad_slider = ft.Slider(
+            min=VAD_ONSET_MIN,
+            max=VAD_ONSET_MAX,
+            divisions=18,
+            value=0.5,
+            label="0.50",
+            active_color=COLOR_PRIMARY,
+            on_change=self._handle_peer_vad_visual_change,
+            on_change_end=self._handle_peer_vad_change,
+        )
+        self._peer_vad_card = self._wrap_unit_card(
+            title=self._peer_vad_title,
+            value=ft.Container(
+                content=self._peer_vad_slider,
+                alignment=_CENTER_ALIGNMENT,
+                expand=True,
+            ),
+        )
+        self._general_surface = compose_settings_general_surface(
+            SettingsGeneralSurfaceSlots(
+                ui=self._general_ui_card,
+                chatbox_source=self._general_chatbox_source_card,
+                audio_host_api=self._general_host_api_card,
+                microphone=self._general_mic_audio_card,
+                loopback=self._general_loopback_audio_card,
+                audio_test=audio_test_card,
+                self_vad=self._self_vad_card,
+                peer_vad=self._peer_vad_card,
+                clipboard_auto_translate=clipboard_auto_translate_card,
+                vrchat_mic_intercept=vrc_mic_card,
+                activation_notice=self._activation_notice_card,
+                activation_notice_middle=self._wrap_empty_unit_card(),
+                activation_notice_trailing=self._wrap_empty_unit_card(),
+            ),
+            placeholder_factory=lambda: self._vrchat_osc_card,
+        )
+
+        # === Peer STT card ===
+        self._peer_provider_title = ft.Text(
+            t("settings.section.peer_stt"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._peer_stt_text = self._build_clickable_text(
+            t("settings.not_selected"),
+            self._on_peer_stt_click,
+        )
+        self._peer_stt_card = self._wrap_unit_card(
+            title=self._peer_provider_title,
+            value=self._peer_stt_text,
+        )
+
+        self._gpu_device_title = ft.Text(
+            t("settings.gpu_device.asr"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._gpu_device_text = self._build_clickable_text(
+            t("settings.gpu_device.auto"),
+            self._on_gpu_device_click,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._gpu_device_card = self._wrap_unit_card(
+            title=self._gpu_device_title,
+            value=self._gpu_device_text,
+        )
+        self._stt_model_title = ft.Text(
+            t("settings.stt_model.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._stt_model_text = self._build_clickable_text(
+            t("settings.not_selected"),
+            self._on_stt_model_click,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._stt_model_card = self._wrap_unit_card(
+            title=self._stt_model_title,
+            value=self._stt_model_text,
+        )
+        self._gpu_llm_title = ft.Text(
+            t("settings.gpu_device.llm"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._gpu_llm_text = self._build_clickable_text(
+            t("settings.gpu_device.auto"),
+            self._on_llm_gpu_device_click,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._gpu_llm_card = self._wrap_unit_card(
+            title=self._gpu_llm_title,
+            value=self._gpu_llm_text,
+        )
+        self._model_assets_title = ft.Text(
+            t("settings.model_assets"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._model_assets_text = self._build_clickable_text(
+            t("settings.model_assets.action"),
+            self._on_model_assets_click,
+        )
+        self._model_assets_card = self._wrap_unit_card(
+            title=self._model_assets_title,
+            value=self._model_assets_text,
+        )
+
+        self._overlay_translation_title = ft.Text(
+            t("settings.overlay.show_translation"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_translation_button = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_overlay_translation_click,
+        )
+        self._overlay_translation_card = self._wrap_unit_card(
+            title=self._overlay_translation_title,
+            value=self._overlay_translation_button,
+        )
+
+        self._overlay_peer_original_title = ft.Text(
+            t("settings.overlay.show_peer_original"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_peer_original_button = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_overlay_peer_original_click,
+        )
+        self._overlay_peer_original_card = self._wrap_unit_card(
+            title=self._overlay_peer_original_title,
+            value=self._overlay_peer_original_button,
+        )
+
+        self._overlay_target_title = ft.Text(
+            t("settings.overlay.caption_location"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_target_button = self._build_clickable_text(
+            self._overlay_target_label_for(OVERLAY_TARGET_STEAMVR),
+            self._on_overlay_target_click,
+            size=28,
+            max_lines=2,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._overlay_target_card = self._wrap_unit_card(
+            title=self._overlay_target_title,
+            value=self._overlay_target_button,
+        )
+
+        self._overlay_anchor_title = ft.Text(
+            t("settings.overlay.calibration.anchor"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_anchor_button = self._build_clickable_text(
+            self._overlay_anchor_label_for(self._overlay_calibration.anchor),
+            self._on_overlay_anchor_click,
+        )
+        self._overlay_anchor_card = self._wrap_unit_card(
+            title=self._overlay_anchor_title,
+            value=self._overlay_anchor_button,
+        )
+
+        self._overlay_distance_title = ft.Text(
+            t("settings.overlay.calibration.distance"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_distance_value_text = ft.Text(
+            self._format_overlay_calibration_number(self._overlay_calibration.distance),
+            size=28,
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        (
+            self._overlay_distance_card_content,
+            self._overlay_distance_decrease_button,
+            self._overlay_distance_increase_button,
+            self._overlay_distance_decrease_glyph,
+            self._overlay_distance_increase_glyph,
+        ) = self._build_overlay_step_split_layout(
+            title=self._overlay_distance_title,
+            value_text=self._overlay_distance_value_text,
+            decrease_text="－",
+            increase_text="＋",
+            on_decrease=lambda _e: self._on_overlay_distance_step(-_OVERLAY_OFFSET_STEP),
+            on_increase=lambda _e: self._on_overlay_distance_step(_OVERLAY_OFFSET_STEP),
+        )
+        self._overlay_distance_card = self._wrap_card(
+            self._overlay_distance_card_content,
+            expand=True,
+            height=SettingsUnitCard.DEFAULT_HEIGHT,
+        )
+
+        self._overlay_offset_x_title = ft.Text(
+            t("settings.overlay.calibration.offset_x"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_offset_x_value_text = ft.Text(
+            self._format_overlay_calibration_number(self._overlay_calibration.offset_x),
+            size=28,
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        (
+            self._overlay_offset_x_card_content,
+            self._overlay_offset_x_decrease_button,
+            self._overlay_offset_x_increase_button,
+            self._overlay_offset_x_decrease_glyph,
+            self._overlay_offset_x_increase_glyph,
+        ) = self._build_overlay_step_split_layout(
+            title=self._overlay_offset_x_title,
+            value_text=self._overlay_offset_x_value_text,
+            decrease_text="◀",
+            increase_text="▶",
+            on_decrease=lambda _e: self._on_overlay_offset_x_step(-_OVERLAY_OFFSET_STEP),
+            on_increase=lambda _e: self._on_overlay_offset_x_step(_OVERLAY_OFFSET_STEP),
+        )
+        self._overlay_offset_x_card = self._wrap_card(
+            self._overlay_offset_x_card_content,
+            expand=True,
+            height=SettingsUnitCard.DEFAULT_HEIGHT,
+        )
+
+        self._overlay_offset_y_title = ft.Text(
+            t("settings.overlay.calibration.offset_y"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_offset_y_value_text = ft.Text(
+            self._format_overlay_calibration_number(self._overlay_calibration.offset_y),
+            size=28,
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        (
+            self._overlay_offset_y_card_content,
+            self._overlay_offset_y_decrease_button,
+            self._overlay_offset_y_increase_button,
+            self._overlay_offset_y_decrease_glyph,
+            self._overlay_offset_y_increase_glyph,
+        ) = self._build_overlay_step_split_layout(
+            title=self._overlay_offset_y_title,
+            value_text=self._overlay_offset_y_value_text,
+            decrease_text="▲",
+            increase_text="▼",
+            on_decrease=lambda _e: self._on_overlay_offset_y_step(-_OVERLAY_OFFSET_STEP),
+            on_increase=lambda _e: self._on_overlay_offset_y_step(_OVERLAY_OFFSET_STEP),
+        )
+        self._overlay_offset_y_card = self._wrap_card(
+            self._overlay_offset_y_card_content,
+            expand=True,
+            height=SettingsUnitCard.DEFAULT_HEIGHT,
+        )
+
+        self._overlay_text_scale_title = ft.Text(
+            t("settings.overlay.calibration.text_scale"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_text_scale_text = self._build_clickable_text(
+            self._overlay_text_scale_label_for(self._overlay_calibration.text_scale),
+            self._on_overlay_text_scale_click,
+        )
+        self._overlay_text_scale_card = self._wrap_unit_card(
+            title=self._overlay_text_scale_title,
+            value=self._overlay_text_scale_text,
+        )
+
+        self._overlay_vr_reset_title = ft.Text(
+            t("settings.overlay.position_reset.vr.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_vr_reset_button = self._build_clickable_text(
+            t("settings.overlay.position_reset.action.vr"),
+            self._on_overlay_position_reset,
+            height=72,
+            expand=False,
+        )
+        self._overlay_vr_reset_card = self._wrap_unit_card(
+            title=self._overlay_vr_reset_title,
+            value=self._overlay_vr_reset_button,
+        )
+
+        self._overlay_desktop_reset_title = ft.Text(
+            t("settings.overlay.position_reset.desktop.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._overlay_desktop_reset_button = self._build_clickable_text(
+            t("settings.overlay.position_reset.action.desktop"),
+            self._on_desktop_overlay_position_reset,
+            height=72,
+            expand=False,
+        )
+        self._overlay_desktop_reset_card = self._wrap_unit_card(
+            title=self._overlay_desktop_reset_title,
+            value=self._overlay_desktop_reset_button,
+        )
+        self._overlay_reset_title = self._overlay_vr_reset_title
+
+        self._desktop_overlay_size_title = ft.Text(
+            t("settings.overlay.desktop.size.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._desktop_overlay_size_button = self._build_clickable_text(
+            self._desktop_overlay_size_label_for("medium"),
+            self._on_desktop_overlay_size_click,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._desktop_overlay_size_card = self._wrap_unit_card(
+            title=self._desktop_overlay_size_title,
+            value=self._desktop_overlay_size_button,
+        )
+
+        self._desktop_overlay_background_alpha_title = ft.Text(
+            t("settings.overlay.desktop.background_alpha.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._desktop_overlay_background_alpha_value_text = ft.Text(
+            "40%",
+            size=28,
+            color=COLOR_ON_BACKGROUND,
+            text_align=ft.TextAlign.CENTER,
+        )
+        (
+            self._desktop_overlay_background_alpha_card_content,
+            self._desktop_overlay_background_alpha_decrease_button,
+            self._desktop_overlay_background_alpha_increase_button,
+            self._desktop_overlay_background_alpha_decrease_glyph,
+            self._desktop_overlay_background_alpha_increase_glyph,
+        ) = self._build_overlay_step_split_layout(
+            title=self._desktop_overlay_background_alpha_title,
+            value_text=self._desktop_overlay_background_alpha_value_text,
+            decrease_text="－",
+            increase_text="＋",
+            on_decrease=lambda _e: self._on_desktop_overlay_background_alpha_step(
+                -_DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP
+            ),
+            on_increase=lambda _e: self._on_desktop_overlay_background_alpha_step(
+                _DESKTOP_OVERLAY_BACKGROUND_ALPHA_STEP
+            ),
+        )
+        self._desktop_overlay_background_alpha_card = self._wrap_card(
+            self._desktop_overlay_background_alpha_card_content,
+            expand=True,
+            height=SettingsUnitCard.DEFAULT_HEIGHT,
+        )
+
+        self._desktop_overlay_lock_title = ft.Text(
+            t("settings.overlay.desktop.lock.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._desktop_overlay_lock_button = self._build_clickable_text(
+            self._desktop_overlay_lock_label_for(False),
+            self._on_desktop_overlay_lock_click,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._desktop_overlay_lock_card = self._wrap_unit_card(
+            title=self._desktop_overlay_lock_title,
+            value=self._desktop_overlay_lock_button,
+        )
+
+        self._desktop_overlay_swap_caption_languages_title = ft.Text(
+            t("settings.overlay.desktop.swap_caption_languages.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._desktop_overlay_swap_caption_languages_button = self._build_clickable_text(
+            t("settings.option.off"),
+            self._on_desktop_overlay_swap_caption_languages_click,
+        )
+        self._desktop_overlay_swap_caption_languages_card = self._wrap_unit_card(
+            title=self._desktop_overlay_swap_caption_languages_title,
+            value=self._desktop_overlay_swap_caption_languages_button,
+        )
+
+        self._desktop_overlay_status_title = ft.Text(
+            "",
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._desktop_overlay_reason_text = ft.Text(
+            "",
+            size=15,
+            color=COLOR_SECONDARY,
+            text_align=ft.TextAlign.CENTER,
+            max_lines=2,
+            overflow=ft.TextOverflow.ELLIPSIS,
+            visible=False,
+        )
+        self._desktop_overlay_helper_text = ft.Text(
+            "",
+            size=14,
+            color=COLOR_SECONDARY,
+            text_align=ft.TextAlign.CENTER,
+            max_lines=2,
+            overflow=ft.TextOverflow.ELLIPSIS,
+            visible=False,
+        )
+        self._desktop_overlay_primary_action = self._build_clickable_text(
+            "",
+            self._on_desktop_overlay_primary_action,
+            size=20,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._desktop_overlay_primary_action.visible = False
+        self._desktop_overlay_view_logs_action = self._build_clickable_text(
+            t("settings.overlay.desktop.recovery.action.view_details"),
+            self._on_desktop_overlay_view_logs,
+            size=16,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._desktop_overlay_view_logs_action.visible = False
+        self._desktop_overlay_status_body = ft.Column(
+            [
+                self._desktop_overlay_reason_text,
+                self._desktop_overlay_primary_action,
+                self._desktop_overlay_view_logs_action,
+                self._desktop_overlay_helper_text,
+            ],
+            spacing=6,
+            expand=True,
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        self._desktop_overlay_status_card = self._wrap_unit_card(
+            title=self._desktop_overlay_status_title,
+            value=self._desktop_overlay_status_body,
+        )
+        self._overlay_empty_card = self._wrap_empty_unit_card()
+        self._overlay_desktop_reset_spacer = self._wrap_empty_unit_card()
+
+        self._overlay_surface = compose_settings_overlay_surface(
+            SettingsOverlaySurfaceSlots(
+                overlay_target=self._overlay_target_card,
+                overlay_translation=self._overlay_translation_card,
+                overlay_peer_original=self._overlay_peer_original_card,
+                anchor=self._overlay_anchor_card,
+                distance=self._overlay_distance_card,
+                offset_x=self._overlay_offset_x_card,
+                offset_y=self._overlay_offset_y_card,
+                text_scale=self._overlay_text_scale_card,
+                vr_reset=self._overlay_vr_reset_card,
+                desktop_size=self._desktop_overlay_size_card,
+                desktop_lock=self._desktop_overlay_lock_card,
+                desktop_background_alpha=self._desktop_overlay_background_alpha_card,
+                desktop_swap_caption_languages=self._desktop_overlay_swap_caption_languages_card,
+                desktop_reset=self._overlay_desktop_reset_card,
+                desktop_reset_spacer=self._overlay_desktop_reset_spacer,
+                desktop_status=self._desktop_overlay_status_card,
+                desktop_status_trailing=self._overlay_empty_card,
+            ),
+            placeholder_factory=self._wrap_empty_unit_card,
+        )
+        self._overlay_vr_rows = self._overlay_surface.vr_rows
+        self._overlay_desktop_rows = self._overlay_surface.desktop_rows
+        self._desktop_overlay_controls_row = self._overlay_surface.desktop_controls_row
+        self._desktop_overlay_recovery_row = self._overlay_surface.recovery_row
+        self._sync_overlay_target_specific_visibility()
+
+        self._translation_connection_title = ft.Text(
+            t("settings.translation_connection"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._translation_connection_text = self._build_clickable_text(
+            t("settings.translation_connection.managed"),
+            self._on_translation_connection_click,
+        )
+        self._translation_connection_card = self._wrap_unit_card(
+            title=self._translation_connection_title,
+            value=self._translation_connection_text,
+        )
+        self._soniox_speaker_diarization_title = ft.Text(
+            t("settings.soniox_speaker_diarization"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._soniox_speaker_diarization_text = self._build_clickable_text(
+            t("settings.soniox_speaker_diarization.inactive"),
+            self._on_soniox_speaker_diarization_click,
+        )
+        self._soniox_speaker_diarization_card = self._wrap_unit_card(
+            title=self._soniox_speaker_diarization_title,
+            value=self._soniox_speaker_diarization_text,
+        )
+        self._soniox_speaker_diarization_text.on_click = None
+        self._soniox_speaker_diarization_text.on_hover = None
+        self._soniox_speaker_diarization_card.ignore_interactions = True
+        self._cloud_free_tier_title = ft.Text(
+            t("settings.cloud_free_tier"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._cloud_free_tier_text = self._build_clickable_text(
+            t("settings.cloud_free_tier.inactive"),
+            self._on_cloud_free_tier_click,
+        )
+        self._cloud_free_tier_card = self._wrap_unit_card(
+            title=self._cloud_free_tier_title,
+            value=self._cloud_free_tier_text,
+        )
+        self._cloud_free_tier_text.on_click = None
+        self._cloud_free_tier_text.on_hover = None
+        self._cloud_free_tier_card.ignore_interactions = True
+
+        self._local_llm_connection_title = ft.Text(
+            t("settings.local_llm.connection"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._local_llm_base_url = ft.TextField(
+            label=t("settings.local_llm.base_url"),
+            value="http://127.0.0.1:11434/v1",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_local_llm_field_change,
+            on_blur=self._on_local_llm_base_url_change_end,
+            on_submit=self._on_local_llm_base_url_change_end,
+        )
+        self._local_llm_model = ft.TextField(
+            label=t("settings.local_llm.model"),
+            value="llama3.1:8b",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_local_llm_field_change,
+            on_blur=self._on_local_llm_model_change_end,
+            on_submit=self._on_local_llm_model_change_end,
+        )
+        self._local_llm_api_key = ApiKeyField(
+            "settings.local_llm.api_key",
+            "local_llm_api_key",
+            "local_llm",
+            on_verify=None,
+            on_save=self._on_local_llm_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._local_llm_extra_body = ft.TextField(
+            label=t("settings.local_llm.extra_body"),
+            value=json.dumps(
+                {"reasoning_effort": "none", "temperature": 0.6},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            multiline=True,
+            min_lines=3,
+            max_lines=6,
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_local_llm_field_change,
+            on_blur=self._on_local_llm_extra_body_change_end,
+            on_submit=self._on_local_llm_extra_body_change_end,
+        )
+        self._local_llm_extra_body_helper = ft.Text(
+            t("settings.local_llm.extra_body.description"),
+            size=15,
+            color=COLOR_SECONDARY,
+        )
+        self._local_llm_extra_body_error = ft.Text(
+            "",
+            size=13,
+            color=COLOR_ERROR,
+            visible=False,
+        )
+        self._local_llm_extra_body_error_key = ""
+        self._local_llm_extra_body_error_kwargs: dict[str, object] = {}
+        self._local_llm_connection_card = self._wrap_card(
+            ft.Column(
+                [
+                    self._local_llm_connection_title,
+                    ft.Container(height=4),
+                    self._local_llm_extra_body_helper,
+                    self._local_llm_base_url,
+                    self._local_llm_model,
+                    self._local_llm_api_key,
+                    self._local_llm_extra_body,
+                    self._local_llm_extra_body_error,
+                ],
+                spacing=8,
+            ),
+            height=None,
+        )
+        self._local_llm_connection_card.visible = False
+
+        self._http_extension_title = ft.Text(
+            t("settings.http_extension.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._http_extension_text = self._build_clickable_text(
+            t("settings.http_extension.none"),
+            self._on_http_extension_click,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._http_extension_selection_card = self._wrap_unit_card(
+            title=self._http_extension_title,
+            value=self._http_extension_text,
+        )
+
+        self._http_extension_path_title = ft.Text(
+            t("settings.http_extension.path"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._http_extension_path_text = self._build_clickable_text(
+            t("settings.http_extension.open"),
+            self._on_http_extension_open_folder,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._http_extension_path_card = self._wrap_unit_card(
+            title=self._http_extension_path_title,
+            value=self._http_extension_path_text,
+        )
+
+        self._http_extension_refresh_title = ft.Text(
+            t("settings.http_extension.refresh"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._http_extension_refresh_icon = ft.Container(
+            content=ft.Icon(
+                ft.Icons.REFRESH_ROUNDED,
+                size=44,
+                color=COLOR_ON_BACKGROUND,
+            ),
+            alignment=_CENTER_ALIGNMENT,
+            expand=True,
+            on_click=self._on_http_extension_reload,
+            on_hover=self._on_text_hover,
+        )
+        self._http_extension_refresh_card = self._wrap_unit_card(
+            title=self._http_extension_refresh_title,
+            value=self._http_extension_refresh_icon,
+        )
+
+        self._http_extension_credentials = ft.Column([], spacing=12, visible=False)
+
+        self._http_extension_row = ft.Row(
+            [
+                self._http_extension_selection_card,
+                self._http_extension_path_card,
+                self._http_extension_refresh_card,
+            ],
+            spacing=SETTINGS_ROW_SPACING,
+            expand=True,
+        )
+        self._http_extension_host = ft.Container(
+            content=ft.Column(
+                [self._http_extension_row, self._http_extension_credentials],
+                spacing=12,
+            ),
+            visible=False,
+        )
+
+        # === Row 8: Persona (2x2) - Licenses style ===
+        self._prompt_editor = PromptEditor(
+            on_change=self._on_prompt_change,
+            on_commit=self._on_prompt_commit,
+        )
+        self._persona_title = ft.Text(
+            t("settings.section.persona"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_SECONDARY
+        )
+
+        # Reset button (matches Persona title color, hover -> primary)
+        self._reset_prompt_btn = _make_text_button(
+            t("settings.reset_prompt"),
+            icon=ft.Icons.REFRESH_ROUNDED,
+            style=_settings_secondary_text_button_style(),
+            on_click=self._on_reset_prompt,
+        )
+
+        # Header row with title and reset button
+        persona_header = ft.Row(
+            controls=[self._persona_title, ft.Container(expand=True), self._reset_prompt_btn],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        # Simple container like Licenses (no border, no internal scroll)
+        prompt_container = ft.Container(
+            content=self._prompt_editor,
+            width=float("inf"),
+        )
+
+        persona_card = SharedCardWrapper(
+            ft.Column(
+                [
+                    persona_header,
+                    ft.Container(height=16),
+                    prompt_container,
+                ],
+                spacing=0,
+            ),
+            height=None,
+            expand=False,
+        )
+        # === Row 9: Custom Vocabulary (2x1) ===
+        self._custom_vocab_title = ft.Text(
+            t("settings.section.custom_vocabulary"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._custom_vocab_description_text = ft.Text(
+            t("settings.custom_vocabulary.description"),
+            size=20,
+            color=COLOR_SECONDARY,
+            text_align=ft.TextAlign.RIGHT,
+        )
+        self._custom_vocab_header = ft.Row(
+            controls=[
+                self._custom_vocab_title,
+                ft.Container(expand=True),
+                self._custom_vocab_description_text,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=8,
+        )
+        self._custom_vocab_tag_editor = CustomVocabularyTagEditor(
+            on_add_terms=self._on_custom_vocabulary_add_terms,
+            on_remove_term=self._on_custom_vocabulary_remove_term,
+        )
+        row7 = SharedCardWrapper(
+            ft.Column(
+                [
+                    self._custom_vocab_header,
+                    ft.Container(height=12),
+                    self._custom_vocab_tag_editor,
+                ],
+                spacing=0,
+            ),
+            height=None,
+            expand=False,
+        )
+
+        self._api_surface = compose_settings_api_surface(
+            SettingsApiSurfaceSlots.from_slot_provider(self),
+        )
+        self._translation_connection_row = self._api_surface.translation_connection_row
+        self._openrouter_routing_row = self._translation_connection_row
+        self._gpu_device_row = self._api_surface.gpu_device_row
+
+        self._prompt_surface = compose_settings_prompt_surface(
+            SettingsPromptSurfaceSlots(
+                custom_vocabulary=row7,
+                peer_expected_language=self._peer_auto_languages_card,
+                persona=persona_card,
+            )
+        )
+
+        self._settings_subtab_shell = self._build_settings_subtab_shell(
+            {
+                "api": list(self._api_surface.rows),
+                "general": list(self._general_surface.rows),
+                "prompt": list(self._prompt_surface.rows),
+                "overlay": list(self._overlay_surface.rows),
+            }
+        )
+        self.controls = [self._settings_subtab_shell]
+
+    def _gpu_llm_selected(self, settings: ProviderSettingsSnapshot) -> bool:
+        model = settings.translation.model
+        return (
+            model in MANAGED_GEMMA_MODELS
+            and settings.translation.connection == TranslationConnection.GPU
+        )
+
+    def _local_model_selected(self, settings: ProviderSettingsSnapshot | None = None) -> bool:
+        current = settings or self._build_settings_with_provider_draft()
+        return bool(
+            current is not None
+            and (
+                current.stt_provider in _LOCAL_STT_PROVIDERS
+                or current.peer_stt_provider in _LOCAL_STT_PROVIDERS
+                or current.translation.model in MANAGED_GEMMA_MODELS
+            )
+        )
+
+    def _gpu_column_label(
+        self,
+        selected: str,
+        devices: tuple[GpuDeviceOption, ...],
+    ) -> str:
+        if selected == "auto":
+            return t("settings.gpu_device.auto")
+        if selected == "cpu":
+            return t("settings.gpu_device.cpu")
+        selected_device = next(
+            (device for device in devices if device.device_id == selected),
+            None,
+        )
+        if selected_device is not None:
+            return selected_device.display_name
+        return t("settings.gpu_device.unavailable", device=selected)
+
+    def _sync_gpu_device_card(self) -> None:
+        if not hasattr(self, "_gpu_device_text"):
+            return
+        settings = self._build_settings_with_provider_draft()
+        asr_selected = settings.stt_gpu_device_id if settings is not None else "auto"
+        llm_selected = settings.translation.gpu_device_id if settings is not None else "auto"
+        asr_label = self._gpu_column_label(asr_selected, getattr(self, "_gpu_devices", ()))
+        llm_label = self._gpu_column_label(llm_selected, getattr(self, "_llm_gpu_devices", ()))
+        self._set_unit_card_value_text(self._gpu_device_text, asr_label)
+        self._set_unit_card_value_text(self._gpu_llm_text, llm_label)
+        self._sync_stt_model_card()
+        visible = self._local_model_selected(settings)
+        self._gpu_device_row.visible = visible
+        _update_control_if_mounted(self._gpu_device_row)
+
+    def set_gpu_devices(
+        self,
+        *,
+        devices: tuple[GpuDeviceOption, ...] | None = None,
+        llm_devices: tuple[GpuDeviceOption, ...] | None = None,
+    ) -> None:
+        if devices is not None:
+            self._gpu_devices = devices
+        if llm_devices is not None:
+            self._llm_gpu_devices = llm_devices
+        self._sync_gpu_device_card()
+
+    @staticmethod
+    def _gpu_backend_label(name: str) -> str:
+        match = re.fullmatch(r"Vulkan\s*(\d+)", name.strip(), flags=re.IGNORECASE)
+        if match is not None:
+            return f"Vulkan {match.group(1)}"
+        return name.strip()
+
+    def _gpu_column_options(
+        self,
+        selected: str,
+        devices: tuple[GpuDeviceOption, ...],
+    ) -> list[OptionItem]:
+        options = [
+            OptionItem(
+                value="auto",
+                label=t("settings.gpu_device.auto"),
+            ),
+            OptionItem(
+                value="cpu",
+                label=t("settings.gpu_device.cpu"),
+            ),
+        ]
+        options.extend(
+            OptionItem(
+                value=device.device_id,
+                label=device.display_name,
+                description=self._gpu_backend_label(device.backend_name),
+            )
+            for device in devices
+        )
+        if (
+            selected not in {"auto", "cpu"}
+            and all(device.device_id != selected for device in devices)
+        ):
+            options.append(
+                OptionItem(
+                    value=selected,
+                    label=t("settings.gpu_device.unavailable", device=selected),
+                )
+            )
+        return options
+
+    def _open_gpu_column_modal(
+        self,
+        *,
+        title: str,
+        selected: str,
+        devices: tuple[GpuDeviceOption, ...],
+        on_select,
+    ) -> None:
+        if self.on_gpu_discovery_requested is not None:
+            self.on_gpu_discovery_requested()
+        SettingsModal(
+            self.page,
+            title,
+            self._gpu_column_options(selected, devices),
+            on_select,
+            show_description=True,
+        ).open(selected)
+
+    def _on_gpu_device_click(self, _event) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
+        selected = settings.stt_gpu_device_id if settings is not None else "auto"
+        self._open_gpu_column_modal(
+            title=t("settings.gpu_device.asr"),
+            selected=selected,
+            devices=self._gpu_devices,
+            on_select=self._on_gpu_device_selected,
+        )
+
+    def _on_llm_gpu_device_click(self, _event) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
+        selected = settings.translation.gpu_device_id if settings is not None else "auto"
+        self._open_gpu_column_modal(
+            title=t("settings.gpu_device.llm"),
+            selected=selected,
+            devices=self._llm_gpu_devices,
+            on_select=self._on_llm_gpu_device_selected,
+        )
+
+    def _on_model_assets_click(self, _event) -> None:
+        if self.on_open_model_assets is not None:
+            self.on_open_model_assets()
+
+    def _on_gpu_device_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(draft, stt_gpu_device_id=value or "auto")
+        self._record_provider_edit(SttGpuDeviceEdit(self._provider_draft.stt_gpu_device_id))
+        self.has_provider_changes = True
+        self._sync_gpu_device_card()
+
+    def _on_llm_gpu_device_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        draft = self._ensure_provider_settings_draft()
+        translation = replace(draft.translation, gpu_device_id=value or "auto")
+        self._provider_draft = replace(draft, translation=translation)
+        self._record_provider_edit(LlmGpuDeviceEdit(translation.gpu_device_id))
+        self.has_provider_changes = True
+        self._sync_gpu_device_card()
+
+    @staticmethod
+    def _stt_model_label(model_id: str) -> str:
+        family, _, quant = model_id.partition("-gguf-")
+        if not quant:
+            return model_id
+        return f"{family} · {quant.upper()}"
+
+    def _stt_model_options(self) -> list[OptionItem]:
+        options = [OptionItem(value="", label=t("settings.not_selected"))]
+        options.extend(
+            OptionItem(
+                value=model_id,
+                label=self._stt_model_label(model_id),
+            )
+            for model_id in LOCAL_STT_MODEL_IDS
+        )
+        return options
+
+    def _sync_stt_model_card(self) -> None:
+        if not hasattr(self, "_stt_model_text"):
+            return
+        settings = self._build_settings_with_provider_draft()
+        model = settings.stt_local_model if settings is not None else ""
+        label = self._stt_model_label(model) if model else t("settings.not_selected")
+        self._set_unit_card_value_text(self._stt_model_text, label)
+
+    def _on_stt_model_click(self, _event) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
+        selected = settings.stt_local_model if settings is not None else ""
+        SettingsModal(
+            self.page,
+            t("settings.stt_model.title"),
+            self._stt_model_options(),
+            self._on_stt_model_selected,
+            show_description=False,
+        ).open(selected)
+
+    def _on_stt_model_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(draft, stt_local_model=value)
+        self._record_provider_edit(SttLocalModelEdit(self._provider_draft.stt_local_model))
+        self.has_provider_changes = True
+        self._sync_stt_model_card()
+
+    def _http_extension_modal_options(self) -> list[OptionItem]:
+        options = [OptionItem(value="", label=t("settings.http_extension.none"))]
+        options.extend(
+            OptionItem(
+                value=loaded.definition.id,
+                label=loaded.definition.name,
+                description=loaded.definition.description or None,
+            )
+            for loaded in self._http_extension_snapshot.extensions
+        )
+        return options
+
+    def _sync_http_extension_credentials(self, extension) -> None:
+        self._http_extension_secret_fields = {}
+        self._http_extension_secret_dirty.clear()
+        secret_values: dict[str, str] = {}
+        if extension is not None and self._settings_secrets is not None:
+            keys = tuple(
+                http_extension_secret_key(extension.id, secret.id) for secret in extension.secrets
+            )
+            result = self._settings_secrets.load_values(keys)
+            if result.error_message is not None:
+                self._emit_runtime_basic(result.error_message, level=logging.WARNING)
+            if result.snapshot is not None:
+                secret_values = {
+                    secret.id: result.snapshot.get(
+                        http_extension_secret_key(extension.id, secret.id)
+                    )
+                    or ""
+                    for secret in extension.secrets
+                }
+        controls: list[ft.Control] = []
+        if extension is not None:
+            for secret in extension.secrets:
+                field = ft.TextField(
+                    label=t("settings.http_extension.api_key"),
+                    value=secret_values.get(secret.id, ""),
+                    password=True,
+                    can_reveal_password=False,
+                    border_radius=12,
+                    border_color=COLOR_DIVIDER,
+                    focused_border_color=COLOR_PRIMARY,
+                    expand=True,
+                    text_size=24,
+                    color=COLOR_NEUTRAL_DARK,
+                    label_style=ft.TextStyle(
+                        size=18,
+                        weight=ft.FontWeight.BOLD,
+                        color=COLOR_NEUTRAL_DARK,
+                    ),
+                    on_change=lambda _event, secret_id=secret.id: (
+                        self._http_extension_secret_dirty.add(secret_id)
+                    ),
+                    on_blur=lambda _event, secret_id=secret.id: self._on_http_extension_secret_blur(
+                        secret_id
+                    ),
+                )
+                reveal_button = ft.IconButton(
+                    icon=ft.Icons.VISIBILITY_OFF_ROUNDED,
+                    icon_color=COLOR_DIVIDER,
+                    icon_size=24,
+                )
+
+                def _on_toggle_secret_reveal(
+                    _event,
+                    field: ft.TextField = field,
+                    button: ft.IconButton = reveal_button,
+                ) -> None:
+                    field.password = not field.password
+                    button.icon = (
+                        ft.Icons.VISIBILITY_OFF_ROUNDED
+                        if field.password
+                        else ft.Icons.VISIBILITY_ROUNDED
+                    )
+                    update_control_if_mounted(field)
+                    update_control_if_mounted(button)
+
+                reveal_button.on_click = _on_toggle_secret_reveal
+                field.suffix = reveal_button
+                self._http_extension_secret_fields[secret.id] = field
+                controls.append(field)
+        self._http_extension_credentials.controls = controls
+        _update_control_if_mounted(self._http_extension_credentials)
+
+    def _sync_http_extension_card(
+        self,
+        settings: ProviderSettingsSnapshot | None = None,
+        *,
+        force_credentials: bool = False,
+    ) -> None:
+        if not hasattr(self, "_http_extension_row"):
+            return
+        if settings is None:
+            settings = self._build_settings_with_provider_draft()
+        if settings is None:
+            return
+        is_custom = settings.translation.model == TranslationModel.CUSTOM_HTTP
+        self._http_extension_row.visible = is_custom
+        self._http_extension_host.visible = is_custom
+        self._http_extension_credentials.visible = is_custom
+        if not is_custom:
+            _update_control_if_mounted(self._http_extension_host)
+            return
+        selected_id = settings.translation.http_extension_id
+        loaded = self._http_extension_snapshot.get(selected_id)
+        selected_changed = selected_id != self._http_extension_selected_id
+        self._set_unit_card_value_text(
+            self._http_extension_text,
+            loaded.definition.name if loaded else t("settings.http_extension.none"),
+        )
+        if selected_changed or force_credentials:
+            self._sync_http_extension_credentials(loaded.definition if loaded else None)
+            self._http_extension_selected_id = selected_id
+        _update_control_if_mounted(self._http_extension_host)
+        _update_control_if_mounted(self._http_extension_credentials)
+
+    def _on_http_extension_click(self, _event) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
+        selected = settings.translation.http_extension_id if settings is not None else ""
+        SettingsModal(
+            self.page,
+            t("settings.http_extension.title"),
+            self._http_extension_modal_options(),
+            self._on_http_extension_selected,
+            show_description=True,
+        ).open(selected)
+
+    def _on_http_extension_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        draft = self._ensure_provider_settings_draft()
+        translation = replace(draft.translation, http_extension_id=value or "")
+        self._provider_draft = replace(draft, translation=translation)
+        self._record_provider_edit(TranslationHttpExtensionEdit(translation.http_extension_id))
+        self.has_provider_changes = True
+        self._sync_http_extension_card(self._provider_draft, force_credentials=True)
+
+    def _on_http_extension_secret_blur(self, secret_id: str) -> None:
+        http_extension_id = self._http_extension_selected_id
+        field = self._http_extension_secret_fields.get(secret_id)
+        if (
+            not http_extension_id
+            or field is None
+            or secret_id not in self._http_extension_secret_dirty
+        ):
+            return
+        value = (field.value or "").strip()
+        self._http_extension_secret_dirty.discard(secret_id)
+        result = self._on_secret_change(
+            http_extension_secret_key(http_extension_id, secret_id),
+            value,
+        )
+        if inspect.isawaitable(result):
+            self._schedule_page_task(self._finish_http_extension_secret_save, result)
+
+    async def _finish_http_extension_secret_save(self, result) -> None:
+        succeeded = await result
+        if succeeded is False and self.show_snackbar is not None:
+            self.show_snackbar(
+                t("settings.http_extension.credential_save_failed"),
+                COLOR_ERROR,
+            )
+
+    def _schedule_page_task(self, callback: Callable[..., object], *args: object) -> None:
+        page = getattr(self, "page", None)
+        if page is not None:
+            page.run_task(callback, *args)
+
+    def _on_http_extension_open_folder(self, _event) -> None:
+        try:
+            self._http_extensions.open_directory()
+        except Exception:
+            if self.show_snackbar is not None:
+                self.show_snackbar(
+                    t("settings.http_extension.open_folder_failed"),
+                    COLOR_ERROR,
+                )
+
+    def _on_http_extension_reload(self, _event) -> None:
+        settings = self._build_settings_with_provider_draft()
+        previous_snapshot = self._http_extension_snapshot
+        active_settings = self._provider_snapshot
+        selected_id = (
+            active_settings.translation.http_extension_id
+            if active_settings is not None
+            and active_settings.translation.model == TranslationModel.CUSTOM_HTTP
+            else None
+        )
+        previous_selected = previous_snapshot.get(selected_id) if selected_id else None
+        self._http_extension_snapshot = self._http_extensions.reload()
+        current_selected = self._http_extension_snapshot.get(selected_id) if selected_id else None
+        self._sync_http_extension_card(settings, force_credentials=True)
+        if self._http_extension_snapshot.errors and self.show_snackbar is not None:
+            self.show_snackbar(
+                t(
+                    "settings.http_extension.reload_errors",
+                    count=len(self._http_extension_snapshot.errors),
+                ),
+                COLOR_WARNING,
+            )
+        if (
+            active_settings is not None
+            and active_settings.translation.model == TranslationModel.CUSTOM_HTTP
+            and (
+                previous_selected is None
+                and current_selected is not None
+                or previous_selected is not None
+                and current_selected is None
+                or previous_selected is not None
+                and current_selected is not None
+                and previous_selected.fingerprint != current_selected.fingerprint
+            )
+            and self.on_providers_changed is not None
+        ):
+            self._http_extension_runtime_reload_pending = True
+            self.on_providers_changed()
+
+    def consume_http_extension_runtime_reload(self) -> bool:
+        pending = self._http_extension_runtime_reload_pending
+        self._http_extension_runtime_reload_pending = False
+        return pending
+
+    def _get_llm_modal_value(self, settings: ProviderSettingsSnapshot) -> str:
+        return settings.translation.model.value
+
+    def _translation_model_display_label(self, model: TranslationModel) -> str:
+        if model == TranslationModel.NONE:
+            return t("settings.not_selected")
+        return t(_TRANSLATION_MODEL_LABEL_KEYS[model])
+
+    def _translation_connection_display_label(self, connection: TranslationConnection) -> str:
+        if connection == TranslationConnection.NONE:
+            return t("settings.not_selected")
+        return t(_TRANSLATION_CONNECTION_LABEL_KEYS[connection])
+        key = _TRANSLATION_CONNECTION_DESCRIPTION_KEYS.get(connection)
+        return t(key) if key else ""
+
+    def _set_translation_connection_text(self, text: str) -> None:
+        text_control = self._translation_connection_text.content
+        text_control.value = text
+        text_control.size = 28
+
+    def _sync_translation_connection_title(self, settings: ProviderSettingsSnapshot) -> None:
+        title = getattr(self, "_translation_connection_title", None)
+        if title is None:
+            return
+        title.value = t("settings.translation_connection")
+
+    def _stored_openrouter_selection_alias(
+        self, settings: ProviderSettingsSnapshot
+    ) -> OpenRouterSelectionAlias | None:
+        if settings.openrouter_selection_alias is None:
+            if settings.openrouter_selected_source == OpenRouterCredentialSource.NONE:
+                return None
+            return _derive_openrouter_selection_alias(
+                settings.openrouter_llm_model,
+                settings.openrouter_selected_source,
+            )
+        try:
+            profile_for_alias(settings.openrouter_selection_alias.value)
+            return settings.openrouter_selection_alias
+        except KeyError:
+            if settings.openrouter_selected_source == OpenRouterCredentialSource.NONE:
+                return None
+            return _derive_openrouter_selection_alias(
+                settings.openrouter_llm_model,
+                settings.openrouter_selected_source,
+            )
+
+    def _display_openrouter_selection_alias(
+        self, settings: ProviderSettingsSnapshot
+    ) -> OpenRouterSelectionAlias:
+        stored_alias = self._stored_openrouter_selection_alias(settings)
+        if stored_alias is not None:
+            return stored_alias
+        if settings.openrouter_llm_model == OpenRouterLLMModel.GPT_6_LUNA:
+            return OpenRouterSelectionAlias.GPT_6_LUNA_BYOK
+        if settings.openrouter_llm_model == OpenRouterLLMModel.QWEN_35_FLASH_02_23:
+            return OpenRouterSelectionAlias.QWEN35_FLASH_MANAGED
+        if settings.openrouter_llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH:
+            return OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
+        return OpenRouterSelectionAlias.GEMMA4_26B_31B_MANAGED
+
+    def _openrouter_selection_profile(self, settings: ProviderSettingsSnapshot | None):
+        if settings is None:
+            return None
+        try:
+            return profile_for_alias(self._display_openrouter_selection_alias(settings).value)
+        except KeyError:
+            return None
+
+    def _get_llm_display_label(self, settings: ProviderSettingsSnapshot) -> str:
+        return self._translation_model_display_label(settings.translation.model)
+
+    def _get_translation_connection_display_label(
+        self,
+        settings: ProviderSettingsSnapshot | None,
+    ) -> str:
+        if settings is None:
+            return t("settings.not_selected")
+        return self._translation_connection_display_label(settings.translation.connection)
+
+    def _sync_activation_notice_card(self) -> None:
+        settings = self._general_snapshot
+        enabled = settings.activation_notice_enabled if settings is not None else True
+        self._set_unit_card_value_text(
+            self._activation_notice_button,
+            t("settings.option.on" if enabled else "settings.option.off"),
+        )
+        self._activation_notice_button.disabled = settings is None
+        _update_control_if_mounted(self._activation_notice_button)
+
+    def _active_prompt_key_for_settings(
+        self,
+        settings: ProviderSettingsSnapshot | None,
+    ) -> str:
+        if settings is None:
+            return "gemini"
+        if settings.llm_provider == LLMProviderName.INDEX_TRANSLATE:
+            return "index_translate"
+        if settings.llm_provider == LLMProviderName.GEMINI:
+            return "gemini"
+        if settings.llm_provider == LLMProviderName.OPENROUTER:
+            return "openrouter"
+        if settings.llm_provider in (LLMProviderName.OPENAI, LLMProviderName.CHATGPT):
+            return "openai"
+        if settings.llm_provider == LLMProviderName.DEEPSEEK:
+            return "deepseek"
+        if settings.llm_provider == LLMProviderName.LOCAL_LLM:
+            return "local_llm"
+        if settings.llm_provider == LLMProviderName.MANAGED_GEMMA:
+            return "managed_gemma"
+        return "qwen"
+
+    def _active_prompt_key(self) -> str:
+        return self._active_prompt_key_for_settings(self._build_settings_with_provider_draft())
+
+    def _ensure_provider_prompt_value(
+        self,
+        settings: ProviderSettingsSnapshot,
+        provider_name: str,
+    ) -> str:
+        prompt = self._prompt_editor.value
+        if prompt.strip():
+            return prompt
+        prompt = load_prompt_for_provider(provider_name)
+        return prompt
+
+    def _current_source_language(self) -> str:
+        if self._prompt_snapshot is None:
+            return "en"
+        return self._prompt_snapshot.source_language
+
+    def _sync_prompt_tab_copy(self) -> None:
+        self._custom_vocab_description_text.value = t("settings.custom_vocabulary.description")
+        peer_auto_languages_title = getattr(self, "_peer_auto_languages_title", None)
+        if peer_auto_languages_title is not None:
+            peer_auto_languages_title.value = t("settings.peer_auto_languages.title")
+        peer_auto_languages_editor = getattr(self, "_peer_auto_languages_editor", None)
+        if peer_auto_languages_editor is not None and hasattr(
+            peer_auto_languages_editor, "apply_locale"
+        ):
+            peer_auto_languages_editor.apply_locale()
+        if is_control_mounted(self):
+            for control in (
+                self._custom_vocab_description_text,
+                peer_auto_languages_title,
+            ):
+                if control is not None:
+                    with contextlib.suppress(Exception):
+                        control.update()
+
+    def _sync_custom_vocabulary_editor_from_settings(self, *, preserve_input: bool = False) -> None:
+        if self._prompt_snapshot is None:
+            self._custom_vocab_tag_editor.set_terms([])
+            self._custom_vocab_tag_editor.clear_input()
+            return
+
+        self._custom_vocab_tag_editor.set_terms(list(self._prompt_snapshot.custom_vocabulary_terms))
+        if not preserve_input:
+            self._custom_vocab_tag_editor.clear_input()
+
+    def bind_recent_language_queue(self, dashboard: object) -> None:
+        """Point the hint editor at the dashboard's shared recent-language queue."""
+        codes = getattr(dashboard, "recent_language_codes", None)
+        remember = getattr(dashboard, "remember_recent_language", None)
+        editor = getattr(self, "_peer_auto_languages_editor", None)
+        if editor is None or not callable(codes) or not callable(remember):
+            return
+        editor.bind_recent_languages(codes=codes, remember=remember)
+
+    def _sync_peer_auto_languages_editor(
+        self,
+        settings: GeneralSettingsSnapshot | None = None,
+    ) -> None:
+        if not hasattr(self, "_peer_auto_languages_editor"):
+            return
+        settings = settings or self._general_snapshot
+        languages = () if settings is None else tuple(settings.peer_expected_languages)
+        pending = self._peer_auto_languages_pending
+        if pending is not None and languages != pending:
+            if (
+                self._general_snapshot is not None
+                and self._general_snapshot.peer_expected_languages != pending
+            ):
+                self._general_snapshot = replace(
+                    self._general_snapshot,
+                    peer_expected_languages=pending,
+                )
+            self._peer_auto_languages_editor.set_terms(list(pending))
+            return
+        self._peer_auto_languages_pending = None
+        self._peer_auto_languages_editor.set_terms(list(languages))
+
+    def _set_peer_auto_languages(self, languages: list[str]) -> None:
+        if self._general_snapshot is None:
+            return
+        normalized = tuple(
+            dict.fromkeys(language.strip() for language in languages if language.strip())
+        )
+        if self._general_snapshot.peer_expected_languages == normalized:
+            return
+        self._peer_auto_languages_pending = normalized
+        self._general_snapshot = replace(
+            self._general_snapshot,
+            peer_expected_languages=normalized,
+        )
+        self._peer_auto_languages_editor.set_terms(list(normalized))
+        recent_languages = self._peer_auto_languages_editor.recent_language_codes()
+        self._emit_settings_changed(PeerExpectedLanguagesIntent(normalized, recent_languages))
+
+    def _on_peer_auto_languages_add(self, language: str) -> None:
+        if self._general_snapshot is None:
+            return
+        self._set_peer_auto_languages([*self._general_snapshot.peer_expected_languages, language])
+
+    def _on_peer_auto_languages_remove(self, language: str) -> None:
+        if self._general_snapshot is None:
+            return
+        self._set_peer_auto_languages(
+            [
+                current
+                for current in self._general_snapshot.peer_expected_languages
+                if current != language
+            ]
+        )
+
+    def _normalize_custom_vocabulary_submitted_terms(self, raw_terms: list[str]) -> list[str]:
+        terms: list[str] = []
+        for raw_term in raw_terms:
+            for part in _CUSTOM_VOCAB_DELIMITER_RE.split(str(raw_term)):
+                normalized = part.strip()
+                if normalized:
+                    terms.append(normalized)
+        return terms
+
+    def _build_settings_with_provider_draft(self) -> ProviderSettingsSnapshot | None:
+        return self._provider_draft or self._provider_snapshot
+
+    def _ensure_provider_settings_draft(self) -> ProviderSettingsSnapshot:
+        assert self._provider_snapshot is not None
+        if self._provider_draft is None:
+            self._provider_draft = self._provider_snapshot
+        return self._provider_draft
+
+    def _record_provider_edit(self, edit: ProviderSettingsEdit) -> None:
+        self._provider_edits[type(edit)] = edit
+
+    def _translation_selection_edit(
+        self,
+        selection: TranslationSelectionSnapshot,
+    ) -> TranslationSelectionEdit:
+        committed_history = (
+            {}
+            if self._provider_snapshot is None
+            else dict(self._provider_snapshot.translation.connection_history)
+        )
+        return TranslationSelectionEdit(
+            selection,
+            tuple(
+                (model, connection)
+                for model, connection in selection.connection_history
+                if committed_history.get(model) != connection
+            ),
+        )
+
+    def _stt_provider_display_label(
+        self,
+        provider: STTProviderName,
+        *,
+        custom_mode: str = "offline",
+    ) -> str:
+        if provider == STTProviderName.NONE:
+            return t("settings.not_selected")
+        return provider_label(
+            display_stt_provider(
+                provider,
+                custom_mode=custom_mode,
+            ).value
+        )
+
+    def _display_stt_choice(
+        self,
+        settings: ProviderSettingsSnapshot,
+        *,
+        peer: bool = False,
+    ) -> STTProviderName:
+        provider = self._effective_peer_stt_provider(settings) if peer else settings.stt_provider
+        return display_stt_provider(
+            provider,
+            custom_mode=settings.custom_stt_mode,
+        )
+
+    def _normalized_peer_stt_provider(self, provider: STTProviderName) -> STTProviderName:
+        return provider
+
+    def _effective_peer_stt_provider(
+        self,
+        settings: ProviderSettingsSnapshot | None,
+    ) -> STTProviderName:
+        if settings is None:
+            return STTProviderName.NONE
+        return self._normalized_peer_stt_provider(settings.peer_stt_provider)
+
+    def _peer_stt_option_item(self, provider: STTProviderName) -> OptionItem:
+        return self._stt_option_item(provider)
+
+    def _classified_peer_stt_option_item(self, provider: STTProviderName) -> OptionItem:
+        item = self._peer_stt_option_item(provider)
+        section_key = _STT_SECTION_BY_PROVIDER.get(provider, "")
+        section = t(section_key) if section_key else ""
+        return OptionItem(
+            value=item.value,
+            label=item.label,
+            description=item.description,
+            disabled=item.disabled,
+            section=section,
+        )
+
+    def _stt_option_item(self, provider: STTProviderName) -> OptionItem:
+        description = t(f"provider.{provider.value}.description", default="")
+        return OptionItem(
+            value=provider.value,
+            label=provider_label(provider.value).replace("\n", " "),
+            description=description,
+        )
+
+    def _classified_stt_option_item(self, provider: STTProviderName) -> OptionItem:
+        item = self._stt_option_item(provider)
+        section_key = _STT_SECTION_BY_PROVIDER.get(provider, "")
+        section = t(section_key) if section_key else ""
+        return OptionItem(
+            value=item.value,
+            label=item.label,
+            description=item.description,
+            disabled=item.disabled,
+            section=section,
+        )
+
+    def _local_llm_extra_body_error_message(
+        self,
+        message_key: str,
+        **kwargs: object,
+    ) -> str:
+        if "key" not in kwargs:
+            return t(message_key, **kwargs)
+        template = t(message_key)
+        with contextlib.suppress(Exception):
+            return template.format(**kwargs)
+        return template
+
+    def _show_local_llm_extra_body_error(self, message_key: str, **kwargs: object) -> None:
+        message = self._local_llm_extra_body_error_message(message_key, **kwargs)
+        self._local_llm_extra_body_error_key = message_key
+        self._local_llm_extra_body_error_kwargs = dict(kwargs)
+        self._local_llm_extra_body_error.value = message
+        self._local_llm_extra_body_error.visible = True
+        self._local_llm_extra_body.error = message
+        _update_control_if_mounted(self._local_llm_extra_body)
+        _update_control_if_mounted(self._local_llm_extra_body_error)
+
+    def _on_local_llm_field_change(self, e) -> None:
+        _ = e
+        if self._provider_snapshot is None:
+            return
+        current = self._provider_draft or self._provider_snapshot
+        if current.llm_provider != LLMProviderName.LOCAL_LLM:
+            return
+        self._ensure_provider_settings_draft()
+        self.has_provider_changes = True
+
+    def _clear_local_llm_extra_body_error(self) -> None:
+        self._local_llm_extra_body_error_key = ""
+        self._local_llm_extra_body_error_kwargs = {}
+        self._local_llm_extra_body_error.value = ""
+        self._local_llm_extra_body_error.visible = False
+        self._local_llm_extra_body.error = None
+        _update_control_if_mounted(self._local_llm_extra_body)
+        _update_control_if_mounted(self._local_llm_extra_body_error)
+
+    def _on_local_llm_base_url_change_end(self, e) -> None:
+        _ = e
+        if self._provider_snapshot is None:
+            return
+        raw_value = self._local_llm_base_url.value or ""
+        try:
+            normalized = normalize_local_llm_base_url(raw_value)
+        except ValueError:
+            self._local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+            _update_control_if_mounted(self._local_llm_base_url)
+            return
+
+        self._local_llm_base_url.error = None
+        self._local_llm_base_url.value = normalized
+        current = self._provider_draft or self._provider_snapshot
+        if current.local_llm_base_url != normalized:
+            draft = self._ensure_provider_settings_draft()
+            self._provider_draft = replace(draft, local_llm_base_url=normalized)
+            self._record_provider_edit(LocalLlmBaseUrlEdit(self._provider_draft.local_llm_base_url))
+            self.has_provider_changes = True
+        _update_control_if_mounted(self._local_llm_base_url)
+
+    def _on_local_llm_model_change_end(self, e) -> None:
+        _ = e
+        if self._provider_snapshot is None:
+            return
+        model = (self._local_llm_model.value or "").strip()
+        if not model:
+            self._local_llm_model.error = t("settings.local_llm.model.required")
+            _update_control_if_mounted(self._local_llm_model)
+            return
+
+        self._local_llm_model.error = None
+        self._local_llm_model.value = model
+        current = self._provider_draft or self._provider_snapshot
+        if current.local_llm_model != model:
+            draft = self._ensure_provider_settings_draft()
+            self._provider_draft = replace(draft, local_llm_model=model)
+            self._record_provider_edit(LocalLlmModelEdit(self._provider_draft.local_llm_model))
+            self.has_provider_changes = True
+        _update_control_if_mounted(self._local_llm_model)
+
+    def _on_local_llm_extra_body_change_end(self, e) -> None:
+        _ = e
+        if self._provider_snapshot is None:
+            return
+        raw = (self._local_llm_extra_body.value or "").strip()
+        try:
+            parsed = (
+                {"reasoning_effort": "none", "temperature": 0.6}
+                if not raw
+                else json.loads(raw, parse_constant=_reject_json_constant)
+            )
+        except json.JSONDecodeError:
+            self._show_local_llm_extra_body_error("settings.local_llm.extra_body.invalid_json")
+            return
+
+        if not isinstance(parsed, dict):
+            self._show_local_llm_extra_body_error("settings.local_llm.extra_body.must_be_object")
+            return
+
+        lowered = {str(key).lower() for key in parsed}
+        reserved = LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS.intersection(lowered)
+        if reserved:
+            self._show_local_llm_extra_body_error(
+                "settings.local_llm.extra_body.reserved_key",
+                key=sorted(reserved)[0],
+            )
+            return
+
+        sensitive = LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS.intersection(lowered)
+        if sensitive:
+            self._show_local_llm_extra_body_error(
+                "settings.local_llm.extra_body.sensitive_key",
+                key=sorted(sensitive)[0],
+            )
+            return
+
+        try:
+            json.dumps(parsed, allow_nan=False)
+        except TypeError, ValueError:
+            self._show_local_llm_extra_body_error("settings.local_llm.extra_body.not_serializable")
+            return
+
+        normalized = copy.deepcopy(parsed)
+        normalized_text = json.dumps(
+            normalized,
+            ensure_ascii=False,
+            indent=2,
+            allow_nan=False,
+        )
+        current = self._provider_draft or self._provider_snapshot
+        if current.local_llm_extra_body_json != normalized_text:
+            draft = self._ensure_provider_settings_draft()
+            self._provider_draft = replace(draft, local_llm_extra_body_json=normalized_text)
+            self._record_provider_edit(
+                LocalLlmExtraBodyEdit(self._provider_draft.local_llm_extra_body_json)
+            )
+            self.has_provider_changes = True
+        self._local_llm_extra_body.value = normalized_text
+        self._clear_local_llm_extra_body_error()
+        _update_control_if_mounted(self._local_llm_extra_body)
+
+    def _commit_local_llm_fields_from_controls(self) -> None:
+        if self._provider_snapshot is None:
+            return
+        current = self._provider_draft or self._provider_snapshot
+        if current.llm_provider != LLMProviderName.LOCAL_LLM:
+            return
+        self._on_local_llm_base_url_change_end(None)
+        self._on_local_llm_model_change_end(None)
+        self._on_local_llm_extra_body_change_end(None)
+
+    def _stage_prompt_draft(self, value: str) -> None:
+        if self._prompt_snapshot is None:
+            return
+        committed_prompt = self._committed_prompt_value()
+        self.has_pending_prompt_changes = value != committed_prompt
+        if self.has_pending_prompt_changes:
+            self._record_provider_edit(SystemPromptEdit(value))
+        else:
+            self._provider_edits.pop(SystemPromptEdit, None)
+
+    def _committed_prompt_value(self) -> str:
+        if self._prompt_snapshot is None:
+            return ""
+        return self._prompt_snapshot.system_prompt
+
+    def _build_provider_apply_intent(self) -> ProviderApplyIntent | None:
+        self._commit_local_llm_fields_from_controls()
+        if self._provider_snapshot is None:
+            return None
+        return ProviderApplyIntent(tuple(self._provider_edits.values()))
+
+    def consume_immediate_provider_apply_settings(self) -> ProviderApplyIntent | None:
+        intent = self._immediate_provider_apply_intent
+        self._immediate_provider_apply_intent = None
+        return intent
+
+    def build_provider_apply_settings(self) -> ProviderApplyIntent | None:
+        return self._build_provider_apply_intent()
+
+    def acknowledge_provider_apply_settings(self, intent: ProviderApplyIntent) -> None:
+        snapshot = self._provider_snapshot
+        if snapshot is None:
+            return
+        for edit in intent.edits:
+            edit_type = type(edit)
+            field_name = _DRAFT_PROVIDER_FIELDS.get(edit_type)
+            translation_field = _DRAFT_TRANSLATION_FIELDS.get(edit_type)
+            if edit_type is TranslationSelectionEdit:
+                selection = edit.selection
+                history = dict(snapshot.translation.connection_history)
+                history.update(edit.history_updates)
+                translation = replace(
+                    snapshot.translation,
+                    model=selection.model,
+                    connection=selection.connection,
+                    connection_history=tuple(history.items()),
+                    previous_llm_model=selection.previous_llm_model,
+                )
+                snapshot = self._provider_snapshot_with_translation(snapshot, translation)
+            elif field_name is not None:
+                value = getattr(edit, fields(edit)[0].name)
+                snapshot = replace(snapshot, **{field_name: value})
+            elif translation_field is not None:
+                value = getattr(edit, fields(edit)[0].name)
+                snapshot = replace(
+                    snapshot,
+                    translation=replace(snapshot.translation, **{translation_field: value}),
+                )
+            elif edit_type is SystemPromptEdit and self._prompt_snapshot is not None:
+                self._prompt_snapshot = replace(self._prompt_snapshot, system_prompt=edit.value)
+            if self._provider_edits.get(edit_type) == edit:
+                del self._provider_edits[edit_type]
+        self._provider_snapshot = snapshot
+        self.has_provider_changes = any(
+            edit_type is not SystemPromptEdit for edit_type in self._provider_edits
+        )
+        self.has_pending_prompt_changes = (
+            self._prompt_snapshot is not None
+            and self._prompt_editor.value != self._prompt_snapshot.system_prompt
+        )
+        if not self.has_provider_changes:
+            self._provider_draft = None
+
+    def acknowledge_prompt_apply_settings(self, intent: PromptApplyIntent) -> None:
+        if self._prompt_snapshot is None:
+            return
+        self._prompt_snapshot = replace(self._prompt_snapshot, system_prompt=intent.value)
+        self._stage_prompt_draft(self._prompt_editor.value)
+
+    def _rebase_provider_draft(self, provider: ProviderSettingsSnapshot) -> None:
+        if self._provider_draft is None:
+            return
+        updates: dict[str, object] = {}
+        translation_updates: dict[str, object] = {}
+        for edit_type, edit in self._provider_edits.items():
+            field_name = _DRAFT_PROVIDER_FIELDS.get(edit_type)
+            if edit_type is TranslationSelectionEdit:
+                selection = edit.selection
+                history = dict(provider.translation.connection_history)
+                history.update(edit.history_updates)
+                translation_updates.update(
+                    model=selection.model,
+                    connection=selection.connection,
+                    connection_history=tuple(history.items()),
+                    previous_llm_model=selection.previous_llm_model,
+                )
+            elif field_name is not None:
+                updates[field_name] = getattr(edit, fields(edit)[0].name)
+            translation_field = _DRAFT_TRANSLATION_FIELDS.get(edit_type)
+            if translation_field is not None:
+                translation_updates[translation_field] = getattr(edit, fields(edit)[0].name)
+        if translation_updates:
+            updates["translation"] = replace(provider.translation, **translation_updates)
+        self._provider_draft = replace(provider, **updates)
+        if TranslationSelectionEdit in self._provider_edits:
+            self._provider_draft = self._provider_snapshot_with_translation(
+                self._provider_draft, self._provider_draft.translation
+            )
+
+    # --- Load Settings ---
+    def load_from_settings(
+        self,
+        *,
+        provider: ProviderSettingsSnapshot,
+        general: GeneralSettingsSnapshot,
+        prompt: PromptSettingsSnapshot,
+        overlay: OverlaySettingsSnapshot,
+        config_path: Path,
+        preserve_custom_vocab_draft: bool = False,
+    ) -> None:
+        """Load current settings into the UI."""
+        previous = self._build_settings_with_provider_draft()
+        selection_changed = (
+            self._provider_snapshot is not None
+            and self._provider_snapshot.translation != provider.translation
+        )
+        raw_drafts = []
+        if selection_changed and previous is not None:
+            for control, field_name in (
+                (self._local_llm_base_url, "local_llm_base_url"),
+                (self._local_llm_model, "local_llm_model"),
+                (self._local_llm_extra_body, "local_llm_extra_body_json"),
+                (self._custom_stt_endpoint, "custom_stt_endpoint"),
+                (self._custom_stt_model, "custom_stt_model"),
+                (self._custom_stt_extra, "custom_stt_extra_json"),
+            ):
+                if control.value != getattr(previous, field_name):
+                    raw_drafts.append((control, control.value, control.error))
+        preserve_vocabulary_input = (
+            selection_changed
+            and self._prompt_snapshot is not None
+            and self._prompt_snapshot.source_language == prompt.source_language
+        )
+        self._rebase_provider_draft(provider)
+        draft = self._provider_draft
+        prompt_draft = self._prompt_editor.value if self.has_pending_prompt_changes else None
+        self._provider_snapshot = provider
+        self._general_snapshot = general
+        self._prompt_snapshot = prompt
+        self._overlay_snapshot = overlay
+        self._config_path = config_path
+        self._http_extension_runtime_reload_pending = False
+        display_provider = draft or provider
+        self._desktop_overlay_pending_size_preset = None
+        self._desktop_overlay_pending_position_reset = False
+        self._desktop_overlay_pending_locked = None
+        self._desktop_overlay_captions_locked = False
+        if self._overlay_state == "off":
+            self._overlay_runtime_target = self._current_overlay_target()
+        self._sync_clickable_text_control_fonts(font_for_language(general.locale))
+
+        # UI Language
+        self._ui_text.content.value = locale_label(general.locale)
+
+        # STT Provider
+        self._set_unit_card_value_text(
+            self._stt_text,
+            self._stt_provider_display_label(
+                display_provider.stt_provider,
+                custom_mode=display_provider.custom_stt_mode,
+            ),
+        )
+        self._set_unit_card_value_text(
+            self._peer_stt_text,
+            self._stt_provider_display_label(
+                self._effective_peer_stt_provider(display_provider),
+                custom_mode=display_provider.custom_stt_mode,
+            ),
+        )
+        self._sync_cloud_free_tier_card(display_provider)
+        self._sync_soniox_speaker_diarization_card(display_provider)
+        self._update_api_visibility()
+        self._sync_gpu_device_card()
+
+        # LLM Provider
+        self._set_unit_card_value_text(
+            self._llm_text,
+            self._get_llm_display_label(display_provider),
+        )
+        self._set_translation_connection_text(
+            self._get_translation_connection_display_label(display_provider),
+        )
+        self._sync_translation_connection_title(display_provider)
+        self._local_llm_base_url.value = display_provider.local_llm_base_url
+        self._local_llm_base_url.error = None
+        self._local_llm_model.value = display_provider.local_llm_model
+        self._local_llm_model.error = None
+        self._local_llm_extra_body.value = display_provider.local_llm_extra_body_json
+        self._clear_local_llm_extra_body_error()
+
+        # Audio Settings
+        self._audio_settings.host_api = general.input_host_api
+        self._audio_settings.microphone = general.input_device
+        self._audio_settings.desktop_output_device = general.output_device
+        self._sync_general_audio_card_texts()
+
+        # VAD
+        self._vad_slider.value = general.self_vad_speech_threshold
+        self._vad_slider.label = f"{general.self_vad_speech_threshold:.2f}"
+        self._peer_vad_slider.value = general.peer_vad_speech_threshold
+        self._peer_vad_slider.label = f"{general.peer_vad_speech_threshold:.2f}"
+        self._vrc_mic_text.content.value = t(
+            "settings.vrc_mic.on" if general.vrc_mic_intercept else "settings.vrc_mic.off"
+        )
+        self._sync_osc_connection_card(general)
+        self._chatbox_source_text.content.value = t(
+            "settings.chatbox_source.on"
+            if general.chatbox_include_source
+            else "settings.chatbox_source.off"
+        )
+        self._clipboard_auto_translate_text.content.value = t(
+            "settings.clipboard_auto_translate.on"
+            if general.clipboard_auto_translate_enabled
+            else "settings.clipboard_auto_translate.off"
+        )
+        self._sync_activation_notice_card()
+        # Prompt
+        provider_name = self._active_prompt_key()
+        self._prompt_editor.set_provider(provider_name)
+        if prompt_draft is not None:
+            self._prompt_editor.value = prompt_draft
+        elif prompt.system_prompt.strip():
+            self._prompt_editor.value = prompt.system_prompt
+        else:
+            self._prompt_editor.load_default_prompt(emit_change=False)
+            self._prompt_snapshot = replace(prompt, system_prompt=self._prompt_editor.value)
+
+        _ = preserve_custom_vocab_draft
+        self._sync_custom_vocabulary_editor_from_settings(preserve_input=preserve_vocabulary_input)
+        self._sync_peer_auto_languages_editor()
+        self._sync_prompt_tab_copy()
+        self._overlay_peer_contract = None
+        self._sync_overlay_controls()
+        self.set_overlay_calibration(
+            OverlayCalibration(
+                anchor=overlay.calibration.anchor,
+                distance=overlay.calibration.distance,
+                offset_x=overlay.calibration.offset_x,
+                offset_y=overlay.calibration.offset_y,
+                text_scale=overlay.calibration.text_scale,
+            ),
+            preserve_draft=self._overlay_calibration_session_active,
+        )
+
+        # Load secrets
+        self._load_secrets(provider, config_path)
+        for control, value, error in raw_drafts:
+            control.value = value
+            control.error = error
+
+        if is_control_mounted(self):
+            self.update()
+
+    def refresh_after_openrouter_pkce_success(
+        self,
+        *,
+        provider: ProviderSettingsSnapshot,
+        prompt: PromptSettingsSnapshot,
+        config_path: Path,
+    ) -> None:
+        self._provider_snapshot = provider
+        self._provider_draft = None
+        self._provider_edits.clear()
+        self._prompt_snapshot = prompt
+        self._config_path = config_path
+        self.has_provider_changes = False
+        self.has_pending_prompt_changes = False
+        self._desktop_overlay_pending_size_preset = None
+        self._desktop_overlay_pending_position_reset = False
+        self._desktop_overlay_pending_locked = None
+        self._desktop_overlay_captions_locked = False
+
+        self._set_unit_card_value_text(
+            self._llm_text,
+            self._get_llm_display_label(provider),
+        )
+        self._set_translation_connection_text(
+            self._get_translation_connection_display_label(provider),
+        )
+        self._update_api_visibility()
+
+        provider_name = self._active_prompt_key()
+        self._prompt_editor.set_provider(provider_name)
+        if prompt.system_prompt.strip():
+            self._prompt_editor.value = prompt.system_prompt
+        else:
+            self._prompt_editor.load_default_prompt(emit_change=False)
+            self._prompt_snapshot = replace(prompt, system_prompt=self._prompt_editor.value)
+        self._sync_custom_vocabulary_editor_from_settings()
+        self._sync_peer_auto_languages_editor()
+        self._sync_prompt_tab_copy()
+
+        if is_control_mounted(self):
+            self.update()
+
+    def project_osc_control_state(self, state: OscControlPresentationState) -> None:
+        control = state.changed_control
+        if control in {"PuriPuly_Talk", "PuriPuly_Trans"}:
+            return
+
+        if control == "PuriPuly_SelfSrcLang" and self._prompt_snapshot is not None:
+            self._prompt_snapshot = replace(
+                self._prompt_snapshot,
+                source_language=state.self_source_language,
+                custom_vocabulary_enabled=state.custom_vocabulary_enabled,
+                custom_vocabulary_terms=state.custom_vocabulary_terms,
+                custom_vocabulary_other_languages_have_terms=(
+                    state.custom_vocabulary_other_languages_have_terms
+                ),
+            )
+            self._custom_vocab_tag_editor.set_terms(list(state.custom_vocabulary_terms))
+        if control in {"PuriPuly_PeerAuto", "PuriPuly_PeerSrcLang"}:
+            if self._general_snapshot is not None:
+                self._general_snapshot = replace(
+                    self._general_snapshot,
+                    effective_peer_source_language=state.peer_source_language,
+                )
+        if control in {
+            "PuriPuly_PeerAuto",
+            "PuriPuly_SelfSrcLang",
+            "PuriPuly_SelfDstLang",
+            "PuriPuly_SelfDstLang2",
+            "PuriPuly_PeerSrcLang",
+            "PuriPuly_PeerDstLang",
+        }:
+            return
+
+        if self._provider_snapshot is not None:
+            self._provider_snapshot = self._project_osc_provider_snapshot(
+                self._provider_snapshot,
+                state,
+            )
+        if self._provider_draft is not None:
+            self._provider_draft = self._project_osc_provider_snapshot(
+                self._provider_draft,
+                state,
+            )
+            self._rebase_provider_edits_after_osc(control)
+        if self._general_snapshot is not None:
+            if control == "PuriPuly_MuteSync":
+                self._general_snapshot = replace(
+                    self._general_snapshot,
+                    vrc_mic_intercept=state.mute_sync,
+                )
+            elif control == "PuriPuly_ChatboxSource":
+                self._general_snapshot = replace(
+                    self._general_snapshot,
+                    chatbox_include_source=state.chatbox_source,
+                )
+
+        display_settings = self._build_settings_with_provider_draft()
+        if display_settings is None:
+            return
+        if control in {"PuriPuly_SelfASR", "PuriPuly_PeerASR"}:
+            self._sync_stt_provider_labels(display_settings)
+            self._update_api_visibility()
+            _update_control_if_mounted(self._stt_text)
+            _update_control_if_mounted(self._peer_stt_text)
+        elif control == "PuriPuly_Translator":
+            self._set_unit_card_value_text(
+                self._llm_text,
+                self._get_llm_display_label(display_settings),
+            )
+            self._set_translation_connection_text(
+                self._get_translation_connection_display_label(display_settings)
+            )
+            self._sync_translation_connection_title(display_settings)
+            self._update_api_visibility()
+            _update_control_if_mounted(self._llm_text)
+            _update_control_if_mounted(self._translation_connection_row)
+        elif control == "PuriPuly_MuteSync":
+            self._vrc_mic_text.content.value = t(
+                "settings.vrc_mic.on" if state.mute_sync else "settings.vrc_mic.off"
+            )
+            _update_control_if_mounted(self._vrc_mic_text)
+        elif control == "PuriPuly_ChatboxSource":
+            self._chatbox_source_text.content.value = t(
+                "settings.chatbox_source.on"
+                if state.chatbox_source
+                else "settings.chatbox_source.off"
+            )
+            _update_control_if_mounted(self._chatbox_source_text)
+        elif control in {"PuriPuly_Listen", "PuriPuly_Captions"}:
+            self._sync_overlay_controls()
+
+    @staticmethod
+    def _project_osc_provider_snapshot(
+        snapshot: ProviderSettingsSnapshot,
+        state: OscControlPresentationState,
+    ) -> ProviderSettingsSnapshot:
+        control = state.changed_control
+        if control in {"PuriPuly_SelfASR", "PuriPuly_PeerASR"}:
+            if control == "PuriPuly_SelfASR":
+                return replace(
+                    snapshot,
+                    stt_provider=STTProviderName(state.self_asr_setting),
+                    custom_stt_mode=state.custom_stt_mode,
+                    custom_stt_compatibility=state.custom_stt_compatibility,
+                )
+            return replace(
+                snapshot,
+                peer_stt_provider=STTProviderName(state.peer_asr_setting),
+                custom_stt_mode=state.custom_stt_mode,
+                custom_stt_compatibility=state.custom_stt_compatibility,
+            )
+        if control == "PuriPuly_Translator":
+            translation = replace(
+                snapshot.translation,
+                model=TranslationModel(state.translation_model),
+                connection=TranslationConnection(state.translation_connection),
+                connection_history=tuple(
+                    (TranslationModel(model), TranslationConnection(connection))
+                    for model, connection in state.translation_connection_history
+                ),
+                http_extension_id=state.translation_http_extension_id,
+                previous_llm_model=(
+                    None
+                    if state.translation_previous_model is None
+                    else TranslationModel(state.translation_previous_model)
+                ),
+            )
+            return replace(
+                snapshot,
+                llm_provider=LLMProviderName(state.llm_provider),
+                translation=translation,
+                openrouter_llm_model=parse_openrouter_llm_model(state.openrouter_llm_model),
+                openrouter_selected_source=OpenRouterCredentialSource(
+                    state.openrouter_selected_source
+                ),
+                openrouter_selection_alias=(
+                    None
+                    if state.openrouter_selection_alias is None
+                    else OpenRouterSelectionAlias(state.openrouter_selection_alias)
+                ),
+            )
+        return snapshot
+
+    def _rebase_provider_edits_after_osc(self, control: str) -> None:
+        draft = self._provider_draft
+        if draft is None:
+            return
+        if control == "PuriPuly_SelfASR" and SelfSttProviderEdit in self._provider_edits:
+            self._record_provider_edit(SelfSttProviderEdit(draft.stt_provider))
+        if control == "PuriPuly_PeerASR" and PeerSttProviderEdit in self._provider_edits:
+            self._record_provider_edit(PeerSttProviderEdit(draft.peer_stt_provider))
+        if control == "PuriPuly_Translator" and (TranslationSelectionEdit in self._provider_edits):
+            self._record_provider_edit(self._translation_selection_edit(draft.translation))
+
+    def _load_secrets(self, settings: ProviderSettingsSnapshot, config_path: Path) -> None:
+        """Load secret values into fields."""
+        _ = config_path
+        result = self._load_secret_snapshot()
+        if result is None or result.snapshot is None:
+            return
+        snapshot = result.snapshot
+
+        if snapshot.local_llm_api_key is not None:
+            self._local_llm_api_key.value = snapshot.local_llm_api_key
+
+    def _load_secret_snapshot(
+        self,
+    ) -> SettingsSecretLoadResult[SettingsSecretSnapshot] | None:
+        if self._settings_secrets is None:
+            return None
+        result = self._settings_secrets.load()
+        if result.error_message is not None:
+            self._emit_runtime_basic(result.error_message, level=logging.WARNING)
+        return result
+
+    # --- Visibility Updates ---
+    def _update_api_visibility(self) -> None:
+        """Update remaining provider surface visibility."""
+        settings = self._build_settings_with_provider_draft()
+        if settings is None:
+            return
+
+        llm = settings.llm_provider
+        is_custom_http = settings.translation.model == TranslationModel.CUSTOM_HTTP
+        if hasattr(self, "_http_extension_credentials"):
+            self._http_extension_credentials.visible = is_custom_http
+            _update_control_if_mounted(self._http_extension_credentials)
+        self._translation_connection_row.visible = not is_custom_http
+        self._local_llm_connection_card.visible = (
+            not is_custom_http and llm == LLMProviderName.LOCAL_LLM
+        )
+        self._sync_http_extension_card(settings)
+        self._sync_cloud_free_tier_card(settings)
+        self._sync_soniox_speaker_diarization_card(settings)
+
+    # --- Event Handlers ---
+    def _on_stt_click(self, e) -> None:
+        """Open STT provider selection modal."""
+        if not is_control_mounted(self):
+            return
+        options = [
+            OptionItem(
+                value=STTProviderName.NONE.value,
+                label=t("settings.not_selected"),
+            )
+        ]
+        options.extend(
+            self._classified_stt_option_item(provider) for provider in _STT_UI_PROVIDERS
+        )
+        display_settings = self._build_settings_with_provider_draft()
+        current = (
+            self._display_stt_choice(display_settings).value
+            if display_settings is not None
+            else STTProviderName.NONE.value
+        )
+        modal = SettingsModal(
+            self.page,
+            t("settings.section.stt"),
+            options,
+            self._on_stt_selected,
+            show_description=True,
+        )
+        modal.open(current)
+
+    def _on_stt_selected(self, value: str) -> None:
+        """Handle STT provider selection from modal."""
+        if self._provider_snapshot is None:
+            return
+        current_settings = self._build_settings_with_provider_draft()
+        assert current_settings is not None
+        selected = STTProviderName(value)
+        if self._display_stt_choice(current_settings) == selected:
+            return
+        old_provider = current_settings.stt_provider.value
+        self._emit_runtime_basic(
+            f"[Settings] STT provider draft changed: {old_provider} -> {selected.value}"
+        )
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(
+            draft,
+            stt_provider=selected,
+        )
+        if selected != current_settings.stt_provider:
+            self._record_provider_edit(SelfSttProviderEdit(selected))
+        if (
+            selected == STTProviderName.LOCAL_QWEN_GPU
+            and self.on_gpu_discovery_requested is not None
+        ):
+            self.on_gpu_discovery_requested()
+        self._update_api_visibility()
+        self._sync_gpu_device_card()
+        self.has_provider_changes = True
+
+        self._sync_stt_provider_labels(self._provider_draft)
+
+        source_lang = self._current_source_language()
+        selection = resolve_local_asr_selection(selected.value, source_lang)
+        if selected != STTProviderName.NONE and not selection.supported:
+            self._show_stt_selection_notice(t("local_stt.language_unsupported"))
+        warning = (
+            None
+            if selected == STTProviderName.NONE or not selection.supported
+            else get_stt_compatibility_warning(
+                source_lang,
+                selected.value,
+            )
+        )
+        if warning:
+            message = t(warning.key, language=language_name(warning.language_code))
+            self._show_stt_selection_notice(message)
+
+        if is_control_mounted(self):
+            self._stt_text.update()
+            self._peer_stt_text.update()
+
+    def _on_peer_stt_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        options = [
+            OptionItem(
+                value=STTProviderName.NONE.value,
+                label=t("settings.not_selected"),
+            )
+        ]
+        options.extend(
+            self._classified_peer_stt_option_item(provider) for provider in _STT_UI_PROVIDERS
+        )
+        display_settings = self._build_settings_with_provider_draft()
+        current = (
+            self._display_stt_choice(display_settings, peer=True).value
+            if display_settings is not None
+            else STTProviderName.NONE.value
+        )
+        SettingsModal(
+            self.page,
+            t("settings.section.peer_stt"),
+            options,
+            self._on_peer_stt_selected,
+            show_description=True,
+        ).open(current)
+
+    def _on_peer_stt_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        current_settings = self._build_settings_with_provider_draft()
+        assert current_settings is not None
+        selected = STTProviderName(value)
+        if self._display_stt_choice(current_settings, peer=True) == selected:
+            return
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(
+            draft,
+            peer_stt_provider=selected,
+        )
+        if selected != current_settings.peer_stt_provider:
+            self._record_provider_edit(PeerSttProviderEdit(selected))
+        if (
+            selected == STTProviderName.LOCAL_QWEN_GPU
+            and self.on_gpu_discovery_requested is not None
+        ):
+            self.on_gpu_discovery_requested()
+        selection = resolve_local_asr_selection(
+            selected.value,
+            (
+                self._general_snapshot.effective_peer_source_language
+                if self._general_snapshot is not None
+                else "en"
+            ),
+        )
+        if selected != STTProviderName.NONE and not selection.supported:
+            self._show_stt_selection_notice(t("local_stt.language_unsupported"))
+        self._sync_stt_provider_labels(self._provider_draft)
+        self._update_api_visibility()
+        self._sync_gpu_device_card()
+        if is_control_mounted(self):
+            self._peer_stt_text.update()
+            self._stt_text.update()
+        self.has_provider_changes = True
+
+    def _uses_cloud_free_tier_auto_select(
+        self,
+        settings: ProviderSettingsSnapshot | None,
+    ) -> bool:
+        if settings is None:
+            return False
+        return (
+            settings.stt_provider == STTProviderName.ROLLING_FREE
+            or self._effective_peer_stt_provider(settings) == STTProviderName.ROLLING_FREE
+        )
+
+    def _cloud_free_tier_display_label(
+        self,
+        settings: ProviderSettingsSnapshot | None,
+    ) -> str:
+        if not self._uses_cloud_free_tier_auto_select(settings):
+            return t("settings.cloud_free_tier.inactive")
+        assert settings is not None
+        selected = normalize_cloud_free_tier_providers(settings.cloud_free_tier_providers)
+        return t("settings.cloud_free_tier.count", count=len(selected))
+
+    def _sync_cloud_free_tier_card(
+        self,
+        settings: ProviderSettingsSnapshot | None = None,
+    ) -> None:
+        if settings is None:
+            settings = self._build_settings_with_provider_draft()
+        active = self._uses_cloud_free_tier_auto_select(settings)
+        self._set_unit_card_value_text(
+            self._cloud_free_tier_text,
+            self._cloud_free_tier_display_label(settings),
+        )
+        self._cloud_free_tier_text.on_click = self._on_cloud_free_tier_click if active else None
+        self._cloud_free_tier_text.on_hover = self._on_text_hover if active else None
+        if not active:
+            self._cloud_free_tier_text.content.color = COLOR_ON_BACKGROUND
+        self._cloud_free_tier_card.ignore_interactions = not active
+        if is_control_mounted(self._cloud_free_tier_text):
+            self._cloud_free_tier_text.update()
+        if is_control_mounted(self._cloud_free_tier_card):
+            self._cloud_free_tier_card.update()
+
+    def _soniox_speaker_diarization_active(
+        self,
+        settings: ProviderSettingsSnapshot | None,
+    ) -> bool:
+        if settings is None:
+            return False
+        return self._effective_peer_stt_provider(settings) == STTProviderName.SONIOX
+
+    def _sync_soniox_speaker_diarization_card(
+        self,
+        settings: ProviderSettingsSnapshot | None = None,
+    ) -> None:
+        if settings is None:
+            settings = self._build_settings_with_provider_draft()
+        active = self._soniox_speaker_diarization_active(settings)
+        if active and settings is not None:
+            label = t(
+                "settings.option.on"
+                if settings.soniox_speaker_diarization_enabled
+                else "settings.option.off"
+            )
+        else:
+            label = t("settings.soniox_speaker_diarization.inactive")
+        self._set_unit_card_value_text(self._soniox_speaker_diarization_text, label)
+        self._soniox_speaker_diarization_text.on_click = (
+            self._on_soniox_speaker_diarization_click if active else None
+        )
+        self._soniox_speaker_diarization_text.on_hover = self._on_text_hover if active else None
+        if not active:
+            self._soniox_speaker_diarization_text.content.color = COLOR_ON_BACKGROUND
+        self._soniox_speaker_diarization_card.ignore_interactions = not active
+        _update_control_if_mounted(self._soniox_speaker_diarization_text)
+        _update_control_if_mounted(self._soniox_speaker_diarization_card)
+
+    def _on_soniox_speaker_diarization_click(self, _event) -> None:
+        settings = self._build_settings_with_provider_draft()
+        if not self._soniox_speaker_diarization_active(settings):
+            return
+        assert settings is not None
+        enabled = not settings.soniox_speaker_diarization_enabled
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(
+            draft,
+            soniox_speaker_diarization_enabled=enabled,
+        )
+        self._record_provider_edit(SonioxSpeakerDiarizationEdit(enabled))
+        self.has_provider_changes = True
+        self._sync_soniox_speaker_diarization_card(self._provider_draft)
+        if self.on_providers_changed is not None:
+            self.on_providers_changed()
+
+    def _on_cloud_free_tier_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        if not self._uses_cloud_free_tier_auto_select(self._build_settings_with_provider_draft()):
+            return
+        options = [
+            OptionItem(
+                value=provider.value,
+                label=provider_label(provider.value).replace("\n", " "),
+            )
+            for provider in CLOUD_FREE_TIER_STT_PROVIDERS
+        ]
+        display_settings = self._build_settings_with_provider_draft()
+        current = (
+            tuple(
+                provider.value
+                for provider in normalize_cloud_free_tier_providers(
+                    display_settings.cloud_free_tier_providers
+                )
+            )
+            if display_settings is not None
+            else tuple(provider.value for provider in CLOUD_FREE_TIER_STT_PROVIDERS[:1])
+        )
+        SettingsModal(
+            self.page,
+            t("settings.cloud_free_tier.modal_title"),
+            options,
+            lambda _value: None,
+            show_description=False,
+            multi_select=True,
+            on_selection_change=self._on_cloud_free_tier_changed,
+        ).open(current)
+
+    def _on_cloud_free_tier_changed(self, values: tuple[str, ...]) -> None:
+        if self._provider_snapshot is None:
+            return
+        selected = normalize_cloud_free_tier_providers(values)
+        current_settings = self._build_settings_with_provider_draft()
+        assert current_settings is not None
+        if selected == normalize_cloud_free_tier_providers(
+            current_settings.cloud_free_tier_providers
+        ):
+            return
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(draft, cloud_free_tier_providers=selected)
+        self._record_provider_edit(CloudFreeTierProvidersEdit(selected))
+        self.has_provider_changes = True
+        self._sync_cloud_free_tier_card(self._provider_draft)
+        self._update_api_visibility()
+        if self.on_providers_changed is not None:
+            self.on_providers_changed()
+
+    def _sync_stt_provider_labels(self, settings: ProviderSettingsSnapshot) -> None:
+        self._set_unit_card_value_text(
+            self._stt_text,
+            self._stt_provider_display_label(
+                settings.stt_provider,
+                custom_mode=settings.custom_stt_mode,
+            ),
+        )
+        self._set_unit_card_value_text(
+            self._peer_stt_text,
+            self._stt_provider_display_label(
+                self._effective_peer_stt_provider(settings),
+                custom_mode=settings.custom_stt_mode,
+            ),
+        )
+
+    def _show_stt_selection_notice(self, message: str) -> None:
+        if self.show_snackbar:
+            self.show_snackbar(message, COLOR_WARNING)
+        elif is_control_mounted(self):
+            self.page.show_dialog(
+                ft.SnackBar(
+                    ft.Text(message, color=ft.Colors.WHITE),
+                    bgcolor=COLOR_WARNING,
+                    duration=4000,
+                    behavior=ft.SnackBarBehavior.FLOATING,
+                    elevation=0,
+                    margin=ft.Margin.only(bottom=90),
+                    padding=20,
+                )
+            )
+
+    def _on_llm_click(self, e) -> None:
+        """Open translation model selection modal."""
+        if not is_control_mounted(self):
+            return
+        options: list[OptionItem] = [
+            OptionItem(
+                value=TranslationModel.NONE.value,
+                label=t("settings.not_selected"),
+                section=t("settings.translation_model.section.user_settings"),
+            )
+        ]
+        for model in _TRANSLATION_MODELS:
+            options.append(
+                OptionItem(
+                    value=model.value,
+                    label=self._translation_model_display_label(model),
+                    description=t(
+                        f"settings.translation_model.{model.value}.description",
+                        default="",
+                    ),
+                    section=t("settings.translation_model.section.user_settings"),
+                )
+            )
+        display_settings = self._build_settings_with_provider_draft()
+        current = (
+            self._get_llm_modal_value(display_settings)
+            if display_settings is not None
+            else TranslationModel.NONE.value
+        )
+        modal = SettingsModal(
+            self.page,
+            t("settings.section.translation"),
+            options,
+            self._on_llm_selected,
+            show_description=True,
+        )
+        modal.open(current)
+
+    def _restore_translation_connection_for_model(
+        self,
+        model: TranslationModel,
+        history: tuple[tuple[TranslationModel, TranslationConnection], ...],
+    ) -> TranslationConnection:
+        connection = dict(history).get(model)
+        if connection in supported_translation_connections(model):
+            return connection
+        return default_translation_connection(model)
+
+    def _sync_translation_selection_controls(self, settings: ProviderSettingsSnapshot) -> None:
+        self._set_unit_card_value_text(
+            self._llm_text,
+            self._get_llm_display_label(settings),
+        )
+        self._set_translation_connection_text(
+            self._get_translation_connection_display_label(settings),
+        )
+        self._sync_translation_connection_title(settings)
+
+    def _provider_snapshot_with_translation(
+        self,
+        settings: ProviderSettingsSnapshot,
+        selection: TranslationSelectionSnapshot,
+    ) -> ProviderSettingsSnapshot:
+        model = selection.model
+        connection = selection.connection
+        llm_provider = settings.llm_provider
+        openrouter_model = settings.openrouter_llm_model
+        openrouter_source = settings.openrouter_selected_source
+        openrouter_alias = settings.openrouter_selection_alias
+        if model == TranslationModel.INDEX_TRANSLATE_35B:
+            llm_provider = LLMProviderName.INDEX_TRANSLATE
+            openrouter_source = OpenRouterCredentialSource.NONE
+            openrouter_alias = None
+        elif model == TranslationModel.GPT_6_LUNA:
+            if connection == TranslationConnection.OFFICIAL_BYOK:
+                llm_provider = LLMProviderName.OPENAI
+                openrouter_source = OpenRouterCredentialSource.NONE
+                openrouter_alias = None
+            elif connection == TranslationConnection.CHATGPT:
+                llm_provider = LLMProviderName.CHATGPT
+                openrouter_source = OpenRouterCredentialSource.NONE
+                openrouter_alias = None
+            else:
+                llm_provider = LLMProviderName.OPENROUTER
+                openrouter_model = OpenRouterLLMModel.GPT_6_LUNA
+                openrouter_source = OpenRouterCredentialSource.BYOK
+                openrouter_alias = OpenRouterSelectionAlias.GPT_6_LUNA_BYOK
+        elif model == TranslationModel.GEMMA4_26B_31B:
+            llm_provider = LLMProviderName.OPENROUTER
+            openrouter_model = OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
+            openrouter_source = (
+                OpenRouterCredentialSource.MANAGED
+                if connection == TranslationConnection.MANAGED
+                else OpenRouterCredentialSource.BYOK
+            )
+            openrouter_alias = (
+                OpenRouterSelectionAlias.GEMMA4_26B_31B_MANAGED
+                if openrouter_source == OpenRouterCredentialSource.MANAGED
+                else OpenRouterSelectionAlias.GEMMA4_26B_31B_BYOK
+            )
+        elif model == TranslationModel.DEEPSEEK_V4_FLASH:
+            llm_provider = LLMProviderName.OPENROUTER
+            openrouter_model = OpenRouterLLMModel.DEEPSEEK_V4_FLASH
+            openrouter_source = (
+                OpenRouterCredentialSource.MANAGED
+                if connection
+                in {TranslationConnection.MANAGED, TranslationConnection.MANAGED_CHINA}
+                else OpenRouterCredentialSource.BYOK
+            )
+            openrouter_alias = (
+                OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
+                if openrouter_source == OpenRouterCredentialSource.MANAGED
+                else OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
+            )
+        elif model == TranslationModel.DEEPSEEK_V4_FLASH_41:
+            llm_provider = (
+                LLMProviderName.DEEPSEEK
+                if connection == TranslationConnection.OFFICIAL_BYOK
+                else LLMProviderName.OPENROUTER
+            )
+            if llm_provider == LLMProviderName.OPENROUTER:
+                openrouter_model = OpenRouterLLMModel.DEEPSEEK_V4_FLASH_41
+                openrouter_source = (
+                    OpenRouterCredentialSource.MANAGED
+                    if connection
+                    in {TranslationConnection.MANAGED, TranslationConnection.MANAGED_CHINA}
+                    else OpenRouterCredentialSource.BYOK
+                )
+                openrouter_alias = (
+                    OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_41_MANAGED
+                    if openrouter_source == OpenRouterCredentialSource.MANAGED
+                    else OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_41_BYOK
+                )
+        elif model == TranslationModel.GEMINI_FLASH:
+            llm_provider = (
+                LLMProviderName.GEMINI
+                if connection == TranslationConnection.OFFICIAL_BYOK
+                else LLMProviderName.OPENROUTER
+            )
+            if llm_provider == LLMProviderName.OPENROUTER:
+                openrouter_source = OpenRouterCredentialSource.BYOK
+                openrouter_model = OpenRouterLLMModel.GEMINI_FLASH
+                openrouter_alias = OpenRouterSelectionAlias.GEMINI_FLASH_BYOK
+        elif model == TranslationModel.QWEN_38_FLASH:
+            llm_provider = LLMProviderName.QWEN
+        elif model in MANAGED_GEMMA_MODELS:
+            llm_provider = LLMProviderName.MANAGED_GEMMA
+        elif model == TranslationModel.LOCAL_LLM:
+            llm_provider = LLMProviderName.LOCAL_LLM
+        return replace(
+            settings,
+            llm_provider=llm_provider,
+            translation=selection,
+            openrouter_llm_model=openrouter_model,
+            openrouter_selected_source=openrouter_source,
+            openrouter_selection_alias=openrouter_alias,
+        )
+
+    def _apply_translation_selection(
+        self,
+        model: TranslationModel,
+        connection: TranslationConnection,
+    ) -> None:
+        if self._provider_snapshot is None:
+            return
+        if connection not in supported_translation_connections(model):
+            return
+
+        current_settings = self._build_settings_with_provider_draft()
+        assert current_settings is not None
+        old_model = current_settings.translation.model
+        old_connection = current_settings.translation.connection
+        old_provider = current_settings.llm_provider
+        if old_model == model and old_connection == connection:
+            return
+
+        draft = self._ensure_provider_settings_draft()
+        history = dict(current_settings.translation.connection_history)
+        history[model] = connection
+        previous_llm_model = current_settings.translation.previous_llm_model
+        if model == TranslationModel.CUSTOM_HTTP and old_model != TranslationModel.CUSTOM_HTTP:
+            previous_llm_model = old_model
+        elif model != TranslationModel.CUSTOM_HTTP:
+            previous_llm_model = None
+        selection = replace(
+            current_settings.translation,
+            model=model,
+            connection=connection,
+            connection_history=tuple(
+                (candidate, history[candidate])
+                for candidate in TranslationModel
+                if candidate in history
+            ),
+            previous_llm_model=previous_llm_model,
+        )
+        self._provider_draft = self._provider_snapshot_with_translation(draft, selection)
+        self._record_provider_edit(self._translation_selection_edit(selection))
+        new_provider = self._provider_draft.llm_provider
+
+        if old_provider != new_provider:
+            self._emit_runtime_basic(
+                f"[Settings] LLM provider changed: {old_provider.value} -> {new_provider.value}"
+            )
+
+        self.has_provider_changes = True
+        self._update_api_visibility()
+        if (
+            self._gpu_llm_selected(self._provider_draft)
+            and not self._gpu_llm_selected(current_settings)
+            and self.on_gpu_discovery_requested is not None
+        ):
+            self.on_gpu_discovery_requested()
+        self._sync_gpu_device_card()
+
+        if (
+            model == TranslationModel.INDEX_TRANSLATE_35B
+            or old_model == TranslationModel.INDEX_TRANSLATE_35B
+            or connection in (TranslationConnection.MANAGED, TranslationConnection.MANAGED_CHINA)
+            or model in MANAGED_GEMMA_MODELS
+            or old_model in MANAGED_GEMMA_MODELS
+        ) and getattr(self, "on_providers_changed", None) is not None:
+            if (
+                model == TranslationModel.INDEX_TRANSLATE_35B
+                or old_model == TranslationModel.INDEX_TRANSLATE_35B
+            ):
+                self._immediate_provider_apply_intent = ProviderApplyIntent(
+                    (self._translation_selection_edit(selection),)
+                )
+            self.on_providers_changed()
+
+        display_settings = self._build_settings_with_provider_draft()
+        assert display_settings is not None
+        self._sync_translation_selection_controls(display_settings)
+
+        if old_provider != display_settings.llm_provider:
+            provider_name = self._active_prompt_key()
+            self._prompt_editor.set_provider(provider_name)
+            next_prompt = self._ensure_provider_prompt_value(self._provider_draft, provider_name)
+            self._prompt_editor.value = next_prompt
+            self._stage_prompt_draft(next_prompt)
+        self._sync_prompt_tab_copy()
+
+        if is_control_mounted(self):
+            self._llm_text.update()
+            self._translation_connection_row.update()
+            self._local_llm_connection_card.update()
+            http_extension_host = getattr(self, "_http_extension_host", None)
+            if http_extension_host is not None:
+                http_extension_host.update()
+
+    def _on_llm_selected(self, value: str) -> None:
+        """Handle translation model selection from modal."""
+        if self._provider_snapshot is None:
+            return
+        model = normalize_translation_model(value)
+        connection = default_translation_connection(model)
+        current_settings = self._build_settings_with_provider_draft()
+        assert current_settings is not None
+        if (
+            current_settings.translation.model == model
+            and current_settings.translation.connection == connection
+        ):
+            return
+        self._apply_translation_selection(model, connection)
+
+    def _on_translation_connection_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        display_settings = self._build_settings_with_provider_draft()
+        model = (
+            display_settings.translation.model
+            if display_settings is not None
+            else TranslationModel.NONE
+        )
+        if model == TranslationModel.NONE:
+            return
+        connections = supported_translation_connections(model)
+        options = [
+            OptionItem(
+                value=connection.value,
+                label=self._translation_connection_display_label(connection),
+                description=self._translation_connection_display_description(connection),
+            )
+            for connection in connections
+        ]
+        current = (
+            display_settings.translation.connection.value
+            if display_settings is not None
+            else default_translation_connection(model).value
+        )
+        modal = SettingsModal(
+            self.page,
+            t("settings.translation_connection"),
+            options,
+            self._on_translation_connection_selected,
+            show_description=True,
+        )
+        modal.open(current)
+
+    def _on_translation_connection_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        current_settings = self._build_settings_with_provider_draft()
+        assert current_settings is not None
+        model = current_settings.translation.model
+        try:
+            connection = TranslationConnection(value)
+        except TypeError, ValueError:
+            return
+        if connection not in supported_translation_connections(model):
+            return
+        self._apply_translation_selection(model, connection)
+
+    def _on_ui_click(self, e) -> None:
+        """Open UI language selection modal."""
+        if not is_control_mounted(self):
+            return
+        options = [OptionItem(value=code, label=locale_label(code)) for code in available_locales()]
+        current = self._general_snapshot.locale if self._general_snapshot else "en"
+        modal = SettingsModal(
+            self.page,
+            t("settings.section.ui"),
+            options,
+            self._on_ui_selected,
+            show_description=False,
+        )
+        modal.open(current)
+
+    def _on_ui_selected(self, value: str) -> None:
+        """Handle UI language selection from modal."""
+        if self._general_snapshot is None:
+            return
+        old_locale = self._general_snapshot.locale
+        self._emit_runtime_basic(f"[Settings] Language changed: {old_locale} -> {value}")
+        self._general_snapshot = replace(self._general_snapshot, locale=value)
+
+        # Update text
+        self._ui_text.content.value = locale_label(value)
+        if is_control_mounted(self):
+            self._ui_text.update()
+        self._emit_settings_changed(LocaleSettingsIntent(value))
+
+    def _write_secret_value(self, key: str, value: str) -> bool:
+        if (
+            self._provider_snapshot is None
+            or not self._config_path
+            or self._settings_secrets is None
+        ):
+            return False
+
+        try:
+            secret_key = SettingsSecretKey(key)
+        except ValueError:
+            return False
+        result = self._settings_secrets.mutate(SettingsSecretMutation(key=secret_key, value=value))
+        if not result.succeeded:
+            self._emit_runtime_basic(
+                f"Failed to update secret {key}: {result.error_type or 'unknown'}",
+                level=logging.WARNING,
+            )
+            return False
+        return True
+
+    def _on_local_llm_secret_change(self, key: str, value: str) -> None:
+        if key != "local_llm_api_key":
+            return
+        stripped = value.strip()
+        if not self._write_secret_value(key, stripped):
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.local_llm.api_key.save_failed"), COLOR_ERROR)
+            return
+        self._local_llm_api_key.value = stripped
+        if self.on_local_llm_secret_changed:
+            self.on_local_llm_secret_changed()
+
+    def _on_secret_change(self, key: str, value: str) -> object:
+        if self._provider_snapshot is None or not self._config_path:
+            return False
+        if self.on_provider_secret_change is not None:
+            return self.on_provider_secret_change(key, value)
+
+        if not self._write_secret_value(key, value):
+            return False
+        if not value and self.on_secret_cleared:
+            with contextlib.suppress(Exception):
+                self.on_secret_cleared(key)
+        return True
+
+    def _on_audio_change(self) -> None:
+        if self._general_snapshot is None:
+            return
+
+        new_host = self._audio_settings.host_api
+        new_device = self._audio_settings.microphone
+        new_desktop_output = self._audio_settings.desktop_output_device
+        old_host = self._general_snapshot.input_host_api
+        old_device = self._general_snapshot.input_device
+        old_desktop_output = self._general_snapshot.output_device
+
+        if old_host != new_host:
+            self._emit_runtime_basic(f"[Settings] Audio Host changed: {old_host} -> {new_host}")
+        if old_device != new_device:
+            self._emit_runtime_basic(f"[Settings] Microphone changed: {old_device} -> {new_device}")
+        if old_desktop_output != new_desktop_output:
+            self._emit_runtime_basic(
+                f"[Settings] Desktop loopback output changed: {old_desktop_output} -> {new_desktop_output}"
+            )
+
+        self._general_snapshot = replace(
+            self._general_snapshot,
+            input_host_api=new_host,
+            input_device=new_device,
+            output_device=new_desktop_output,
+        )
+        changes = []
+        if old_host != new_host or old_device != new_device:
+            changes.append(AudioInputSettingsIntent(new_host, new_device))
+        if old_desktop_output != new_desktop_output:
+            changes.append(DesktopAudioOutputSettingsIntent(new_desktop_output))
+        if changes:
+            self._emit_settings_changed(AudioSettingsIntent(tuple(changes)))
+
+    def _on_mic_host_api_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        options = self._audio_settings._get_host_api_options()
+        modal = SettingsModal(
+            self.page,
+            t("settings.audio_host_api"),
+            options,
+            self._on_mic_host_api_selected,
+            show_description=False,
+        )
+        modal.open(self._audio_settings.host_api)
+
+    def _on_mic_host_api_selected(self, value: str) -> None:
+        self._audio_settings.host_api = value
+        self._audio_settings.microphone = ""
+        self._sync_general_audio_card_texts()
+        if is_control_mounted(self):
+            self._mic_audio_text.update()
+            self._audio_host_api_text.update()
+        self._on_audio_change()
+
+    def _on_mic_audio_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        options = self._audio_settings._get_microphone_options()
+        modal = SettingsModal(
+            self.page,
+            t("settings.section.microphone_audio"),
+            options,
+            self._on_mic_audio_selected,
+            show_description=False,
+        )
+        modal.open(self._audio_settings.microphone)
+
+    def _on_mic_audio_selected(self, value: str) -> None:
+        self._audio_settings.microphone = value
+        self._sync_general_audio_card_texts()
+        if is_control_mounted(self):
+            self._mic_audio_text.update()
+        self._on_audio_change()
+
+    def _on_loopback_audio_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        list_process_options = getattr(self, "on_list_loopback_process_options", None)
+        list_device_options = getattr(self, "on_list_loopback_device_options", None)
+        list_options = getattr(self, "on_list_loopback_capture_options", None)
+        if callable(list_options):
+            current = (
+                self.on_current_loopback_capture_option()
+                if callable(getattr(self, "on_current_loopback_capture_option", None))
+                else "device:"
+            )
+            if callable(list_device_options) and callable(list_process_options):
+                device_options = list_device_options()
+                process_section = t("settings.desktop_audio.section.process")
+                initial_options: list[OptionItem] = [
+                    OptionItem(value="", label="", section=process_section),
+                    *device_options,
+                ]
+                modal = SettingsModal(
+                    self.page,
+                    t("settings.section.loopback_audio"),
+                    initial_options,
+                    self._on_loopback_audio_selected,
+                    show_description=False,
+                    two_column=True,
+                )
+                modal.open(current, loading_section=process_section)
+                self._schedule_page_task(self._load_process_capture_options, modal, current)
+            else:
+                options = list_options()
+                modal = SettingsModal(
+                    self.page,
+                    t("settings.section.loopback_audio"),
+                    options,
+                    self._on_loopback_audio_selected,
+                    show_description=False,
+                    two_column=True,
+                )
+                modal.open(current)
+        else:
+            options = self._audio_settings._get_desktop_output_options()
+            current = self._audio_settings.desktop_output_device
+            modal = SettingsModal(
+                self.page,
+                t("settings.section.loopback_audio"),
+                options,
+                self._on_loopback_audio_selected,
+                show_description=False,
+            )
+            modal.open(current)
+
+    async def _load_process_capture_options(self, modal: SettingsModal, current: str) -> None:
+        list_process_options = getattr(self, "on_list_loopback_process_options", None)
+        list_device_options = getattr(self, "on_list_loopback_device_options", None)
+        if not callable(list_process_options) or not callable(list_device_options):
+            return
+        process_options = await asyncio.to_thread(list_process_options)
+        device_options = await asyncio.to_thread(list_device_options)
+        full_options: list[OptionItem] = [*process_options, *device_options]
+        modal.replace_options(full_options)
+
+    def _on_loopback_audio_selected(self, value: str) -> None:
+        apply_option = getattr(self, "on_apply_loopback_capture_option", None)
+        if callable(apply_option):
+            apply_option(value)
+            summary = (
+                self.on_loopback_capture_summary()
+                if callable(getattr(self, "on_loopback_capture_summary", None))
+                else value
+            )
+            if value.startswith("device:"):
+                self._audio_settings.desktop_output_device = value[len("device:") :]
+            self._set_unit_card_value_text(
+                self._loopback_audio_text,
+                summary or t("settings.default_option"),
+            )
+            if is_control_mounted(self):
+                self._loopback_audio_text.update()
+            return
+        self._audio_settings.desktop_output_device = value
+        self._sync_general_audio_card_texts()
+        if is_control_mounted(self):
+            self._loopback_audio_text.update()
+        self._on_audio_change()
+
+    def _normalized_overlay_target(self, value: object) -> str:
+        return OVERLAY_TARGET_DESKTOP if value == OVERLAY_TARGET_DESKTOP else OVERLAY_TARGET_STEAMVR
+
+    def _current_overlay_target(self) -> str:
+        if self._overlay_snapshot is None:
+            return OVERLAY_TARGET_STEAMVR
+        return self._normalized_overlay_target(self._overlay_snapshot.target)
+
+    def _overlay_target_label_for(self, target: object) -> str:
+        normalized_target = self._normalized_overlay_target(target)
+        return t(f"settings.overlay.target.{normalized_target}")
+
+    def _sync_overlay_target_control(self) -> None:
+        self._set_unit_card_value_text(
+            self._overlay_target_button,
+            self._overlay_target_label_for(self._current_overlay_target()),
+            size=28,
+        )
+        self._overlay_target_button.disabled = self._overlay_snapshot is None
+
+    def _sync_overlay_target_specific_visibility(self) -> None:
+        desktop_selected = self._current_overlay_target() == OVERLAY_TARGET_DESKTOP
+        for row in getattr(self, "_overlay_vr_rows", ()):
+            row.visible = not desktop_selected
+        for row in getattr(self, "_overlay_desktop_rows", ()):
+            row.visible = desktop_selected
+
+    @staticmethod
+    def _normalize_desktop_overlay_size_preset(value: object) -> str:
+        if isinstance(value, str) and value in DESKTOP_FLET_SIZE_PRESET_ORDER:
+            return value
+        return "medium"
+
+    @staticmethod
+    def _normalize_desktop_overlay_background_alpha(value: object) -> float:
+        if isinstance(value, bool):
+            return DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
+        try:
+            alpha = float(value)
+        except TypeError, ValueError:
+            return DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
+        if not math.isfinite(alpha):
+            return DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
+        return max(0.0, min(1.0, alpha))
+
+    def _desktop_overlay_background_alpha_label_for(self, value: object) -> str:
+        alpha = self._normalize_desktop_overlay_background_alpha(value)
+        transparency = 1.0 - alpha
+        return f"{int(round(transparency * 100))}%"
+
+    def _desktop_overlay_size_label_for(self, size_preset: object) -> str:
+        normalized = self._normalize_desktop_overlay_size_preset(size_preset)
+        return t(f"settings.overlay.desktop.size.option.{normalized}")
+
+    def _current_desktop_overlay_size_preset(self) -> str:
+        pending_size_preset = getattr(self, "_desktop_overlay_pending_size_preset", None)
+        if pending_size_preset is not None:
+            return pending_size_preset
+        if self._overlay_snapshot is None:
+            return "medium"
+        return self._normalize_desktop_overlay_size_preset(
+            self._overlay_snapshot.desktop_size_preset
+        )
+
+    def _current_desktop_overlay_background_alpha(self) -> float:
+        if self._overlay_snapshot is None:
+            return DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
+        return self._normalize_desktop_overlay_background_alpha(
+            self._overlay_snapshot.desktop_background_alpha
+        )
+
+    def _desktop_overlay_lock_label_for(self, locked: bool) -> str:
+        return t(
+            "settings.overlay.desktop.lock.value.locked"
+            if locked
+            else "settings.overlay.desktop.lock.value.move"
+        )
+
+    def _current_desktop_overlay_locked(self) -> bool:
+        if self._overlay_snapshot is None:
+            return False
+        if getattr(self, "_desktop_overlay_pending_position_reset", False):
+            return False
+        if not self._desktop_overlay_runtime_lock_applies():
+            return False
+        pending_locked = getattr(self, "_desktop_overlay_pending_locked", None)
+        if pending_locked is not None:
+            return bool(pending_locked)
+        return bool(getattr(self, "_desktop_overlay_captions_locked", False))
+
+    def _desktop_overlay_runtime_lock_applies(self) -> bool:
+        if getattr(self, "_overlay_state", "off") not in {"connected", "running"}:
+            return False
+        return (
+            self._normalized_overlay_target(
+                getattr(self, "_overlay_runtime_target", OVERLAY_TARGET_STEAMVR)
+            )
+            == OVERLAY_TARGET_DESKTOP
+        )
+
+    def _sync_desktop_overlay_main_controls(self) -> None:
+        self._set_unit_card_value_text(
+            self._desktop_overlay_size_button,
+            self._desktop_overlay_size_label_for(self._current_desktop_overlay_size_preset()),
+        )
+        self._set_unit_card_value_text(
+            self._desktop_overlay_lock_button,
+            self._desktop_overlay_lock_label_for(self._current_desktop_overlay_locked()),
+        )
+        self._set_unit_card_value_text(
+            self._desktop_overlay_swap_caption_languages_button,
+            t(
+                "settings.option.on"
+                if self._current_desktop_overlay_swap_caption_languages()
+                else "settings.option.off"
+            ),
+        )
+        self._desktop_overlay_background_alpha_value_text.value = (
+            self._desktop_overlay_background_alpha_label_for(
+                self._current_desktop_overlay_background_alpha()
+            )
+        )
+        disabled = self._overlay_snapshot is None
+        self._desktop_overlay_size_button.disabled = disabled
+        self._desktop_overlay_background_alpha_decrease_button.disabled = disabled
+        self._desktop_overlay_background_alpha_increase_button.disabled = disabled
+        self._desktop_overlay_lock_button.disabled = disabled
+        self._desktop_overlay_swap_caption_languages_button.disabled = disabled
+        self._overlay_vr_reset_button.disabled = disabled
+        self._overlay_desktop_reset_button.disabled = disabled
+
+    def _desktop_overlay_status_is_visible(self) -> bool:
+        return bool(
+            self._current_overlay_target() == OVERLAY_TARGET_DESKTOP
+            or self._normalized_overlay_target(self._overlay_runtime_target)
+            == OVERLAY_TARGET_DESKTOP
+        )
+
+    def _desktop_overlay_failure_action_kind(self) -> str:
+        if self._overlay_failure_reason in _DESKTOP_OVERLAY_REOPEN_FAILURE_REASONS:
+            return "reopen"
+        return "retry"
+
+    def _set_desktop_overlay_primary_action(
+        self,
+        *,
+        label_key: str | None,
+        action_kind: str | None,
+        visible: bool,
+    ) -> None:
+        self._set_unit_card_value_text(
+            self._desktop_overlay_primary_action,
+            t(label_key) if label_key else "",
+            size=20,
+        )
+        self._desktop_overlay_primary_action_kind = action_kind
+        self._desktop_overlay_primary_action.visible = visible
+
+    def _sync_desktop_overlay_status_control(self) -> None:
+        state = self._overlay_state
+        desktop_status_visible = self._desktop_overlay_status_is_visible() and state == "failed"
+        self._desktop_overlay_status_card.visible = desktop_status_visible
+        self._desktop_overlay_recovery_row.visible = desktop_status_visible
+        self._desktop_overlay_reason_text.visible = False
+        self._desktop_overlay_reason_text.value = ""
+        self._desktop_overlay_helper_text.visible = False
+        self._desktop_overlay_helper_text.value = ""
+        self._desktop_overlay_view_logs_action.visible = False
+        self._desktop_overlay_view_logs_action.disabled = False
+
+        if state == "failed":
+            self._desktop_overlay_status_title.value = t("settings.overlay.desktop.status.failed")
+            action_kind = self._desktop_overlay_failure_action_kind()
+            self._desktop_overlay_reason_text.value = t(
+                f"settings.overlay.desktop.recovery.message.{action_kind}",
+                default=t("settings.overlay.desktop.recovery.message.retry"),
+            )
+            self._desktop_overlay_reason_text.visible = True
+            action_key = (
+                "settings.overlay.desktop.recovery.action.reopen"
+                if action_kind == "reopen"
+                else "settings.overlay.desktop.recovery.action.retry"
+            )
+            self._set_desktop_overlay_primary_action(
+                label_key=action_key,
+                action_kind=action_kind,
+                visible=True,
+            )
+            self._desktop_overlay_view_logs_action.visible = True
+        else:
+            self._set_desktop_overlay_primary_action(
+                label_key=None,
+                action_kind=None,
+                visible=False,
+            )
+
+    def _on_overlay_target_click(self, e) -> None:
+        _ = e
+        if not is_control_mounted(self) or self._overlay_snapshot is None:
+            return
+        options = [
+            OptionItem(
+                value=OVERLAY_TARGET_STEAMVR,
+                label=self._overlay_target_label_for(OVERLAY_TARGET_STEAMVR),
+            ),
+            OptionItem(
+                value=OVERLAY_TARGET_DESKTOP,
+                label=self._overlay_target_label_for(OVERLAY_TARGET_DESKTOP),
+            ),
+        ]
+        modal = SettingsModal(
+            self.page,
+            t("settings.overlay.caption_location"),
+            options,
+            self._on_overlay_target_selected,
+            show_description=True,
+        )
+        modal.open(self._current_overlay_target())
+
+    def _on_overlay_target_selected(self, value: str) -> None:
+        if self._overlay_snapshot is None:
+            return
+        target = self._normalized_overlay_target(value)
+        if self._current_overlay_target() == target:
+            return
+        self._overlay_snapshot = replace(self._overlay_snapshot, target=target)
+        if self._overlay_state == "off":
+            self._overlay_runtime_target = target
+        self._sync_overlay_controls()
+        self._emit_settings_changed(OverlayTargetSettingsIntent(self._overlay_snapshot.target))
+
+    def _on_desktop_overlay_size_click(self, e) -> None:
+        _ = e
+        if (
+            not is_control_mounted(self)
+            or self._overlay_snapshot is None
+            or self._desktop_overlay_size_button.disabled
+        ):
+            return
+        options = [
+            OptionItem(
+                value=preset,
+                label=self._desktop_overlay_size_label_for(preset),
+            )
+            for preset in DESKTOP_FLET_SIZE_PRESET_DISPLAY_ORDER
+        ]
+        modal = SettingsModal(
+            self.page,
+            t("settings.overlay.desktop.size.title"),
+            options,
+            self._on_desktop_overlay_size_selected,
+            show_description=False,
+        )
+        modal.open(self._current_desktop_overlay_size_preset())
+
+    def _on_desktop_overlay_size_selected(self, value: str) -> None:
+        if self._overlay_snapshot is None:
+            return
+        size_preset = self._normalize_desktop_overlay_size_preset(value)
+        if self._current_desktop_overlay_size_preset() == size_preset:
+            return
+        if self.on_desktop_overlay_size_change:
+            self._desktop_overlay_pending_size_preset = size_preset
+            self._sync_desktop_overlay_main_controls()
+            self.on_desktop_overlay_size_change(size_preset)
+            return
+        self._overlay_snapshot = replace(
+            self._overlay_snapshot,
+            desktop_size_preset=size_preset,
+        )
+        self._desktop_overlay_pending_size_preset = None
+        self._sync_desktop_overlay_main_controls()
+        self._emit_settings_changed(DesktopOverlaySizeIntent(size_preset))
+
+    def _current_desktop_overlay_swap_caption_languages(self) -> bool:
+        if self._overlay_snapshot is None:
+            return False
+        return self._overlay_snapshot.desktop_swap_caption_languages
+
+    def _on_desktop_overlay_swap_caption_languages_click(self, e) -> None:
+        if (
+            self._overlay_snapshot is None
+            or self._desktop_overlay_swap_caption_languages_button.disabled
+        ):
+            return
+        next_value = "off" if self._current_desktop_overlay_swap_caption_languages() else "on"
+        self._on_desktop_overlay_swap_caption_languages_selected(next_value)
+
+    def _on_desktop_overlay_swap_caption_languages_selected(self, value: str) -> None:
+        if self._overlay_snapshot is None:
+            return
+        enabled = value == "on"
+        if self._current_desktop_overlay_swap_caption_languages() == enabled:
+            self._sync_desktop_overlay_main_controls()
+            return
+        self._overlay_snapshot = replace(
+            self._overlay_snapshot,
+            desktop_swap_caption_languages=enabled,
+        )
+        self._sync_desktop_overlay_main_controls()
+        self._emit_settings_changed(DesktopOverlaySwapCaptionLanguagesIntent(enabled))
+
+    def _on_desktop_overlay_lock_click(self, e) -> None:
+        _ = e
+        if self._overlay_snapshot is None or self._desktop_overlay_lock_button.disabled:
+            return
+        next_value = "move" if self._current_desktop_overlay_locked() else "locked"
+        self._on_desktop_overlay_lock_selected(next_value)
+
+    def _on_desktop_overlay_lock_selected(self, value: str) -> None:
+        if self._overlay_snapshot is None:
+            return
+        locked = value == "locked"
+        if self._current_desktop_overlay_locked() == locked:
+            return
+        if not self._desktop_overlay_runtime_lock_applies():
+            self._sync_desktop_overlay_main_controls()
+            return
+        if self.on_desktop_overlay_lock_change:
+            self._desktop_overlay_pending_locked = locked
+            self._desktop_overlay_captions_locked = locked
+            self._sync_desktop_overlay_main_controls()
+            self.on_desktop_overlay_lock_change(locked)
+            return
+        self._desktop_overlay_pending_locked = locked
+        self._desktop_overlay_captions_locked = locked
+        self._sync_desktop_overlay_main_controls()
+
+    def _on_desktop_overlay_background_alpha_step(self, delta: float) -> None:
+        if (
+            self._overlay_snapshot is None
+            or self._desktop_overlay_background_alpha_decrease_button.disabled
+        ):
+            return
+        current = self._current_desktop_overlay_background_alpha()
+        current_transparency = 1.0 - current
+        next_transparency = self._normalize_desktop_overlay_background_alpha(
+            round(current_transparency + delta, 2)
+        )
+        next_alpha = self._normalize_desktop_overlay_background_alpha(
+            round(1.0 - next_transparency, 2)
+        )
+        if current == next_alpha:
+            self._sync_desktop_overlay_main_controls()
+            if is_control_mounted(self):
+                self.update()
+            return
+        self._overlay_snapshot = replace(
+            self._overlay_snapshot,
+            desktop_background_alpha=next_alpha,
+        )
+        self._sync_desktop_overlay_main_controls()
+        if is_control_mounted(self):
+            self.update()
+        self._emit_settings_changed(DesktopOverlayBackgroundAlphaIntent(next_alpha))
+
+    def _on_desktop_overlay_primary_action(self, e) -> None:
+        _ = e
+        action_kind = self._desktop_overlay_primary_action_kind
+        if action_kind == "lock" and self.on_desktop_overlay_lock_change:
+            self.on_desktop_overlay_lock_change(True)
+        elif action_kind == "edit" and self.on_desktop_overlay_lock_change:
+            self.on_desktop_overlay_lock_change(False)
+        elif action_kind in {"retry", "reopen"} and self.on_desktop_overlay_recovery_action:
+            self.on_desktop_overlay_recovery_action(action_kind)
+
+    def _on_desktop_overlay_view_logs(self, e) -> None:
+        _ = e
+        if self.on_view_logs:
+            self.on_view_logs()
+
+    def set_overlay_calibration(
+        self,
+        calibration: OverlayCalibration,
+        *,
+        preserve_draft: bool = False,
+    ) -> None:
+        calibration.validate()
+        self._overlay_calibration = calibration.copy()
+        if self._overlay_snapshot is not None:
+            self._overlay_snapshot = replace(
+                self._overlay_snapshot,
+                calibration=OverlayCalibrationSnapshot(
+                    anchor=calibration.anchor,
+                    distance=calibration.distance,
+                    offset_x=calibration.offset_x,
+                    offset_y=calibration.offset_y,
+                    text_scale=calibration.text_scale,
+                ),
+            )
+
+        if preserve_draft and self._overlay_calibration_session_active:
+            self._sync_overlay_calibration_controls(self._overlay_calibration_draft)
+            return
+
+        self._overlay_calibration_draft = calibration.copy()
+        self._overlay_calibration_session_active = False
+        self._sync_overlay_calibration_controls(self._overlay_calibration)
+
+    def _sync_overlay_calibration_controls(
+        self,
+        calibration: OverlayCalibration | None = None,
+    ) -> None:
+        current = (calibration or self._overlay_calibration).copy()
+        self._set_unit_card_value_text(
+            self._overlay_anchor_button,
+            self._overlay_anchor_label_for(current.anchor),
+        )
+        self._overlay_distance_value_text.value = self._format_overlay_calibration_number(
+            current.distance
+        )
+        self._overlay_offset_x_value_text.value = self._format_overlay_calibration_number(
+            current.offset_x
+        )
+        self._overlay_offset_y_value_text.value = self._format_overlay_calibration_number(
+            current.offset_y
+        )
+        self._overlay_text_scale_text.content.value = self._overlay_text_scale_label_for(
+            current.text_scale
+        )
+
+    def _begin_overlay_calibration_session(self) -> OverlayCalibration:
+        if self._overlay_calibration_session_active:
+            return self._overlay_calibration_draft.copy()
+
+        if self.on_overlay_calibration_begin:
+            calibration = self.on_overlay_calibration_begin()
+        else:
+            calibration = self._overlay_calibration.copy()
+
+        calibration.validate()
+        self._overlay_calibration_draft = calibration.copy()
+        self._overlay_calibration_session_active = True
+        self._sync_overlay_calibration_controls(self._overlay_calibration_draft)
+        return self._overlay_calibration_draft.copy()
+
+    def _update_overlay_calibration_draft(
+        self,
+        field_name: str,
+        value: object,
+    ) -> OverlayCalibration:
+        self._begin_overlay_calibration_session()
+
+        if self.on_overlay_calibration_change:
+            calibration = self.on_overlay_calibration_change(field_name, value)
+            calibration.validate()
+            self._overlay_calibration_draft = calibration.copy()
+        else:
+            if field_name == "anchor":
+                setattr(self._overlay_calibration_draft, field_name, str(value))
+            else:
+                setattr(self._overlay_calibration_draft, field_name, float(value))
+            self._overlay_calibration_draft.validate()
+
+        self._sync_overlay_calibration_controls(self._overlay_calibration_draft)
+        return self._overlay_calibration_draft.copy()
+
+    def _commit_overlay_calibration_draft(self) -> OverlayCalibration:
+        if self.on_overlay_calibration_apply:
+            calibration = self.on_overlay_calibration_apply()
+            calibration.validate()
+        else:
+            if not self._overlay_calibration_session_active:
+                self._begin_overlay_calibration_session()
+            calibration = self._overlay_calibration_draft.copy()
+
+        self._overlay_calibration = calibration.copy()
+        self._overlay_calibration_draft = calibration.copy()
+        self._overlay_calibration_session_active = False
+        calibration_snapshot = OverlayCalibrationSnapshot(
+            anchor=calibration.anchor,
+            distance=calibration.distance,
+            offset_x=calibration.offset_x,
+            offset_y=calibration.offset_y,
+            text_scale=calibration.text_scale,
+        )
+        if self._overlay_snapshot is not None:
+            self._overlay_snapshot = replace(
+                self._overlay_snapshot,
+                calibration=calibration_snapshot,
+            )
+        self._sync_overlay_calibration_controls(self._overlay_calibration)
+
+        if is_control_mounted(self):
+            self.update()
+
+        if self.on_overlay_calibration_apply is None:
+            self._emit_settings_changed(OverlayCalibrationSettingsIntent(calibration_snapshot))
+
+        return calibration.copy()
+
+    def _apply_overlay_calibration_field_immediately(
+        self,
+        field_name: str,
+        value: object,
+    ) -> OverlayCalibration | None:
+        try:
+            self._update_overlay_calibration_draft(field_name, value)
+        except ValueError:
+            self._sync_overlay_calibration_controls(self._overlay_calibration)
+            return None
+
+        return self._commit_overlay_calibration_draft()
+
+    def _on_overlay_distance_step(self, delta: float) -> None:
+        current = self._overlay_calibration.distance
+        next_value = max(_OVERLAY_DISTANCE_MIN, min(_OVERLAY_DISTANCE_MAX, current + delta))
+        self._apply_overlay_calibration_field_immediately("distance", round(next_value, 2))
+
+    def _on_overlay_anchor_click(self, e) -> None:
+        if not is_control_mounted(self) or self._overlay_snapshot is None:
+            return
+        options = [
+            OptionItem(
+                value=anchor,
+                label=t(f"settings.overlay.calibration.anchor.{anchor}"),
+                description=t(
+                    f"settings.overlay.calibration.anchor.{anchor}.description",
+                    default="",
+                ),
+            )
+            for anchor in OVERLAY_CALIBRATION_ANCHORS
+        ]
+        modal = SettingsModal(
+            self.page,
+            t("settings.overlay.calibration.anchor"),
+            options,
+            self._on_overlay_anchor_selected,
+            show_description=True,
+        )
+        modal.open(self._overlay_calibration.anchor)
+
+    def _on_overlay_anchor_selected(self, value: str) -> None:
+        self._apply_overlay_calibration_field_immediately("anchor", value)
+
+    def _on_overlay_offset_x_step(self, delta: float) -> None:
+        current = self._overlay_calibration.offset_x
+        self._apply_overlay_calibration_field_immediately("offset_x", current + delta)
+
+    def _on_overlay_offset_y_step(self, delta: float) -> None:
+        current = self._overlay_calibration.offset_y
+        self._apply_overlay_calibration_field_immediately("offset_y", current + delta)
+
+    def _on_overlay_text_scale_click(self, e) -> None:
+        if not is_control_mounted(self) or self._overlay_snapshot is None:
+            return
+        options = [
+            OptionItem(
+                value=key,
+                label=t(f"settings.overlay.calibration.text_scale.{key}"),
+            )
+            for key, _scale in _OVERLAY_TEXT_SCALE_PRESETS
+        ]
+        modal = SettingsModal(
+            self.page,
+            t("settings.overlay.calibration.text_scale"),
+            options,
+            self._on_overlay_text_scale_selected,
+            show_description=False,
+        )
+        modal.open(self._overlay_text_scale_preset_key_for(self._overlay_calibration.text_scale))
+
+    def _on_overlay_text_scale_selected(self, value: str) -> None:
+        self._apply_overlay_calibration_field_immediately(
+            "text_scale", self._overlay_text_scale_value_for(value)
+        )
+
+    def _on_overlay_position_reset(self, e) -> None:
+        _ = e
+        defaults = OverlayCalibration()
+        for field_name in OverlayCalibration.__dataclass_fields__:
+            self._update_overlay_calibration_draft(field_name, getattr(defaults, field_name))
+        self._commit_overlay_calibration_draft()
+
+    def _on_desktop_overlay_position_reset(self, e) -> None:
+        _ = e
+        if self._overlay_snapshot is None or self._overlay_desktop_reset_button.disabled:
+            return
+        if self.on_desktop_overlay_position_reset:
+            self._desktop_overlay_pending_position_reset = True
+            self._desktop_overlay_captions_locked = False
+            self._sync_desktop_overlay_main_controls()
+            self.on_desktop_overlay_position_reset()
+            return
+        self._desktop_overlay_captions_locked = False
+        self._desktop_overlay_pending_position_reset = False
+        self._sync_desktop_overlay_main_controls()
+        self._emit_settings_changed(DesktopOverlayPositionResetIntent())
+
+    def sync_desktop_overlay_settings(self, settings: OverlaySettingsSnapshot) -> None:
+        self._overlay_snapshot = settings
+        self._desktop_overlay_pending_size_preset = None
+        self._desktop_overlay_pending_position_reset = False
+        self._desktop_overlay_pending_locked = None
+        self._desktop_overlay_captions_locked = False
+        if self._overlay_state == "off":
+            self._overlay_runtime_target = self._current_overlay_target()
+        self._sync_overlay_controls()
+
+    def set_overlay_peer_contract(self, contract: OverlayPeerConsumerContract) -> None:
+        self._overlay_peer_contract = contract
+        if self._provider_snapshot is not None:
+            self._update_api_visibility()
+        self._sync_overlay_controls()
+
+    def _sync_overlay_controls(self) -> None:
+        overlay_translation_enabled = bool(
+            self._overlay_snapshot and self._overlay_snapshot.show_translation
+        )
+        overlay_peer_original_enabled = bool(
+            self._overlay_snapshot and self._overlay_snapshot.show_peer_original
+        )
+        self._set_unit_card_value_text(
+            self._overlay_translation_button,
+            t("settings.option.on" if overlay_translation_enabled else "settings.option.off"),
+        )
+        self._set_unit_card_value_text(
+            self._overlay_peer_original_button,
+            t("settings.option.on" if overlay_peer_original_enabled else "settings.option.off"),
+        )
+        self._sync_overlay_target_control()
+        self._sync_overlay_target_specific_visibility()
+        self._sync_desktop_overlay_main_controls()
+        self._sync_desktop_overlay_status_control()
+
+        disabled = self._overlay_snapshot is None
+        self._overlay_translation_button.disabled = disabled
+        self._overlay_peer_original_button.disabled = disabled
+        self._overlay_target_button.disabled = disabled
+        self._overlay_anchor_button.disabled = disabled
+        self._overlay_distance_decrease_button.disabled = disabled
+        self._overlay_distance_increase_button.disabled = disabled
+        self._overlay_offset_x_decrease_button.disabled = disabled
+        self._overlay_offset_x_increase_button.disabled = disabled
+        self._overlay_offset_y_decrease_button.disabled = disabled
+        self._overlay_offset_y_increase_button.disabled = disabled
+        self._desktop_overlay_background_alpha_decrease_button.disabled = disabled
+        self._desktop_overlay_background_alpha_increase_button.disabled = disabled
+        self._overlay_vr_reset_button.disabled = disabled
+        self._overlay_desktop_reset_button.disabled = disabled
+        if is_control_mounted(self):
+            self.update()
+
+    def set_overlay_runtime_state(
+        self,
+        state: str,
+        *,
+        failure_reason: str | None = None,
+        overlay_target: str | None = None,
+        desktop_captions_locked: bool | None = None,
+    ) -> None:
+        self._overlay_state = state
+        self._overlay_failure_reason = failure_reason
+        if overlay_target is not None:
+            self._overlay_runtime_target = self._normalized_overlay_target(overlay_target)
+        elif state == "off":
+            self._overlay_runtime_target = self._current_overlay_target()
+        if desktop_captions_locked is not None:
+            if self._desktop_overlay_runtime_lock_applies():
+                self._desktop_overlay_pending_locked = None
+                self._desktop_overlay_captions_locked = bool(desktop_captions_locked)
+            else:
+                self._desktop_overlay_pending_locked = None
+                self._desktop_overlay_captions_locked = False
+        self._sync_overlay_controls()
+
+    def _on_overlay_translation_click(self, e) -> None:
+        if self._overlay_snapshot is None or self._overlay_translation_button.disabled:
+            return
+        next_value = "off" if self._overlay_snapshot.show_translation else "on"
+        self._on_overlay_translation_selected(next_value)
+
+    def _on_overlay_translation_selected(self, value: str) -> None:
+        if self._overlay_snapshot is None:
+            return
+        self._overlay_snapshot = replace(
+            self._overlay_snapshot,
+            show_translation=value == "on",
+        )
+        self._sync_overlay_controls()
+        self._emit_settings_changed(
+            OverlayTranslationSettingsIntent(self._overlay_snapshot.show_translation)
+        )
+
+    def _on_overlay_peer_original_click(self, e) -> None:
+        if self._overlay_snapshot is None or self._overlay_peer_original_button.disabled:
+            return
+        next_value = "off" if self._overlay_snapshot.show_peer_original else "on"
+        self._on_overlay_peer_original_selected(next_value)
+
+    def _on_overlay_peer_original_selected(self, value: str) -> None:
+        if self._overlay_snapshot is None:
+            return
+        self._overlay_snapshot = replace(
+            self._overlay_snapshot,
+            show_peer_original=value == "on",
+        )
+        self._sync_overlay_controls()
+        self._emit_settings_changed(
+            OverlayPeerOriginalSettingsIntent(self._overlay_snapshot.show_peer_original)
+        )
+
+    def _handle_vad_visual_change(self, e) -> None:
+        self._vad_slider.label = f"{float(e.control.value):.2f}"
+        _update_control_if_mounted(self._vad_slider)
+
+    def _handle_vad_change(self, e) -> None:
+        self.apply_vad_threshold("self", float(e.control.value))
+
+    def _handle_peer_vad_visual_change(self, e) -> None:
+        self._peer_vad_slider.label = f"{float(e.control.value):.2f}"
+        _update_control_if_mounted(self._peer_vad_slider)
+
+    def _handle_peer_vad_change(self, e) -> None:
+        self.apply_vad_threshold("peer", float(e.control.value))
+
+    def vad_thresholds(self) -> dict[str, float] | None:
+        if self._general_snapshot is None:
+            return None
+        return {
+            "self": self._general_snapshot.self_vad_speech_threshold,
+            "peer": self._general_snapshot.peer_vad_speech_threshold,
+        }
+
+    def apply_vad_threshold(self, channel: str, value: float) -> None:
+        if self._general_snapshot is None:
+            return
+        new_vad = float(value)
+        if channel == "peer":
+            self._general_snapshot = replace(
+                self._general_snapshot,
+                peer_vad_speech_threshold=new_vad,
+            )
+            slider = self._peer_vad_slider
+            intent = PeerVadSpeechThresholdIntent(new_vad)
+        else:
+            self._general_snapshot = replace(
+                self._general_snapshot,
+                self_vad_speech_threshold=new_vad,
+            )
+            slider = self._vad_slider
+            intent = SelfVadSettingsIntent(new_vad)
+        slider.value = new_vad
+        slider.label = f"{new_vad:.2f}"
+        _update_control_if_mounted(slider)
+        self._emit_settings_changed(intent)
+
+    def _on_vrc_mic_click(self, e) -> None:
+        """Toggle VRC mic intercept immediately from the unit card."""
+        if self._general_snapshot is None:
+            return
+        next_value = "off" if self._general_snapshot.vrc_mic_intercept else "on"
+        self._on_vrc_mic_selected(next_value)
+
+    def _on_audio_test_click(self, e) -> None:
+        """Request the app/controller-owned audio-test lifecycle."""
+        _ = e
+        if self.on_start_audio_test is not None:
+            self.on_start_audio_test()
+
+    def _on_vrc_mic_selected(self, value: str) -> None:
+        """处理选项卡的选择结果
+
+        Handle VRC mic intercept selection result.
+        """
+        if self._general_snapshot is None:
+            return
+        new_value = value == "on"
+        self._emit_runtime_basic(f"[Settings] VRC mic intercept toggled: {new_value}")
+        self._general_snapshot = replace(
+            self._general_snapshot,
+            vrc_mic_intercept=new_value,
+        )
+
+        self._vrc_mic_text.content.value = t(
+            "settings.vrc_mic.on" if new_value else "settings.vrc_mic.off"
+        )
+        if is_control_mounted(self):
+            self._vrc_mic_text.update()
+        self._emit_settings_changed(VrcMicInterceptSettingsIntent(new_value))
+
+    def _on_chatbox_source_click(self, e) -> None:
+        """Open chatbox source inclusion selection modal."""
+        if not is_control_mounted(self):
+            return
+        options = [
+            OptionItem(value="on", label=t("settings.chatbox_source.on")),
+            OptionItem(value="off", label=t("settings.chatbox_source.off")),
+        ]
+        if self._general_snapshot is None:
+            return
+        current = "on" if self._general_snapshot.chatbox_include_source else "off"
+        modal = SettingsModal(
+            self.page,
+            t("settings.chatbox_include_source"),
+            options,
+            self._on_chatbox_source_selected,
+            show_description=False,
+        )
+        modal.open(current)
+
+    def _on_chatbox_source_selected(self, value: str) -> None:
+        """Handle chatbox source inclusion selection result."""
+        if self._general_snapshot is None:
+            return
+        new_value = value == "on"
+        self._emit_runtime_basic(f"[Settings] Chatbox include source toggled: {new_value}")
+        self._general_snapshot = replace(
+            self._general_snapshot,
+            chatbox_include_source=new_value,
+        )
+
+        self._chatbox_source_text.content.value = t(
+            "settings.chatbox_source.on" if new_value else "settings.chatbox_source.off"
+        )
+        if is_control_mounted(self):
+            self._chatbox_source_text.update()
+        self._emit_settings_changed(ChatboxSourceSettingsIntent(new_value))
+
+    def _on_osc_connection_click(self, e) -> None:
+        _ = e
+        if self._general_snapshot is None or not is_control_mounted(self):
+            return
+        self._osc_connection_modal = OscConnectionModal(
+            self.page,
+            self._on_osc_connection_selected,
+            effective_ports_provider=self.on_osc_effective_ports,
+        )
+        self._osc_connection_modal.open(
+            self._general_snapshot.osc_connection_mode,
+            int(self._general_snapshot.osc_send_port or self._general_snapshot.osc_port),
+            int(self._general_snapshot.osc_receive_port),
+        )
+
+    def _on_osc_connection_selected(self, mode: str, send_port: int, receive_port: int) -> None:
+        if self._general_snapshot is None:
+            return
+        if mode not in {"automatic", "manual", "off"}:
+            return
+        try:
+            send_port = int(send_port)
+            receive_port = int(receive_port)
+        except TypeError, ValueError:
+            return
+        if not 1 <= send_port <= 65535 or not 1 <= receive_port <= 65535:
+            return
+        self._general_snapshot = replace(
+            self._general_snapshot,
+            osc_connection_mode=mode,
+            osc_send_port=send_port,
+            osc_receive_port=receive_port,
+        )
+        self._sync_osc_connection_card(self._general_snapshot)
+        if is_control_mounted(self):
+            self._osc_connection_text.update()
+        self._emit_settings_changed(
+            OscConnectionSettingsIntent(
+                connection_mode=self._general_snapshot.osc_connection_mode,
+                send_port=self._general_snapshot.osc_send_port,
+                receive_port=self._general_snapshot.osc_receive_port,
+            )
+        )
+
+    def _on_clipboard_auto_translate_click(self, e) -> None:
+        """Toggle clipboard auto-translate immediately from the unit card."""
+        if self._general_snapshot is None:
+            return
+        next_value = "off" if self._general_snapshot.clipboard_auto_translate_enabled else "on"
+        self._on_clipboard_auto_translate_selected(next_value)
+
+    def _on_clipboard_auto_translate_selected(self, value: str) -> None:
+        """Handle clipboard auto-translate selection result."""
+        if self._general_snapshot is None:
+            return
+        new_value = value == "on"
+        self._emit_runtime_basic(f"[Settings] Clipboard auto translate toggled: {new_value}")
+        self._general_snapshot = replace(
+            self._general_snapshot,
+            clipboard_auto_translate_enabled=new_value,
+        )
+        self._clipboard_auto_translate_text.content.value = t(
+            "settings.clipboard_auto_translate.on"
+            if new_value
+            else "settings.clipboard_auto_translate.off"
+        )
+        if is_control_mounted(self):
+            self._clipboard_auto_translate_text.update()
+        self._emit_settings_changed(ClipboardSettingsIntent(new_value))
+
+    def _on_activation_notice_click(self, e) -> None:
+        if self._general_snapshot is None or self._activation_notice_button.disabled:
+            return
+        enabled = not self._general_snapshot.activation_notice_enabled
+        self._general_snapshot = replace(
+            self._general_snapshot,
+            activation_notice_enabled=enabled,
+        )
+        self._sync_activation_notice_card()
+        self._emit_settings_changed(ActivationNoticeSettingsIntent(enabled))
+
+    def _on_prompt_change(self, value: str) -> None:
+        self._prompt_editor.value = value
+        self._stage_prompt_draft(value)
+
+    def _on_prompt_commit(self, value: str) -> None:
+        self._stage_prompt_draft(value)
+        if self.on_pending_prompt_changed is not None:
+            self.on_pending_prompt_changed(PromptApplyIntent(value))
+        if not self.has_pending_prompt_changes and value == self._committed_prompt_value():
+            return
+        if self.has_provider_changes:
+            return
+        if self.has_pending_prompt_changes:
+            self._emit_prompt_apply_settings(PromptApplyIntent(value))
+
+    def _on_reset_prompt(self, e) -> None:
+        """Reset prompt to default for current provider."""
+        self._prompt_editor.load_default_prompt()
+        self._on_prompt_commit(self._prompt_editor.value)
+
+    def _show_custom_vocabulary_limit_snackbar(self) -> None:
+        if self.show_snackbar:
+            self.show_snackbar(
+                t(
+                    "snackbar.custom_vocabulary_limit",
+                    max_terms=MAX_CUSTOM_VOCAB_TERMS,
+                ),
+                COLOR_WARNING,
+            )
+
+    def _set_custom_vocabulary_terms_for_current_language(self, next_terms: list[str]) -> None:
+        if self._prompt_snapshot is None:
+            return
+
+        source_language = self._current_source_language()
+        current_terms = list(self._prompt_snapshot.custom_vocabulary_terms)
+        applied_terms = list(next_terms)
+        next_enabled = bool(applied_terms) or (
+            self._prompt_snapshot.custom_vocabulary_other_languages_have_terms
+        )
+
+        if (
+            current_terms == applied_terms
+            and self._prompt_snapshot.custom_vocabulary_enabled == next_enabled
+        ):
+            return
+
+        self._prompt_snapshot = replace(
+            self._prompt_snapshot,
+            custom_vocabulary_enabled=next_enabled,
+            custom_vocabulary_terms=tuple(applied_terms),
+        )
+        self._custom_vocab_tag_editor.set_terms(applied_terms)
+        self._emit_settings_changed(
+            CustomVocabularySettingsIntent(
+                source_language=source_language,
+                terms=tuple(applied_terms),
+            )
+        )
+
+    def _on_custom_vocabulary_add_terms(self, raw_terms: list[str]) -> None:
+        if self._prompt_snapshot is None:
+            return
+
+        raw_values = [str(term) for term in raw_terms]
+        if any(value != "" for value in raw_values):
+            self._custom_vocab_tag_editor.clear_input()
+        submitted_terms = self._normalize_custom_vocabulary_submitted_terms(raw_values)
+        if not submitted_terms:
+            return
+
+        current_terms = list(self._prompt_snapshot.custom_vocabulary_terms)
+        next_terms = list(current_terms)
+        seen_terms = set(current_terms)
+        cap_exceeded = False
+
+        for term in submitted_terms:
+            if term in seen_terms:
+                continue
+            seen_terms.add(term)
+            if len(next_terms) >= MAX_CUSTOM_VOCAB_TERMS:
+                cap_exceeded = True
+                continue
+            next_terms.append(term)
+
+        if cap_exceeded:
+            self._show_custom_vocabulary_limit_snackbar()
+
+        self._set_custom_vocabulary_terms_for_current_language(next_terms)
+
+    def _on_custom_vocabulary_remove_term(self, term: str) -> None:
+        if self._prompt_snapshot is None:
+            return
+
+        current_terms = list(self._prompt_snapshot.custom_vocabulary_terms)
+        try:
+            current_terms.remove(term)
+        except ValueError:
+            return
+        self._set_custom_vocabulary_terms_for_current_language(current_terms)
+
+    async def _verify_key(self, provider: str, key: str) -> tuple[bool, str]:
+        """Verify API key."""
+        if self.on_verify_api_key:
+            result = await self.on_verify_api_key(provider, key)
+            return result
+        return False, "Verification not available"
+
+    def _emit_settings_changed(self, intent: ImmediateSettingsIntent) -> None:
+        if self.on_settings_changed:
+            self.on_settings_changed(intent)
+
+    def _emit_prompt_apply_settings(self, intent: PromptApplyIntent) -> None:
+        if self.on_prompt_apply_settings:
+            self.on_prompt_apply_settings(intent)
+
+    # --- Locale ---
+    def apply_locale(self) -> None:
+        """Update all labels when locale changes."""
+        self._settings_subtab_shell.set_font_family(font_for_language(get_locale()))
+        for key in _SETTINGS_SUBTAB_ORDER:
+            self._settings_subtab_shell.set_tab_label(key, self._settings_subtab_label(key))
+
+        # Section titles
+        self._stt_title.value = t("settings.section.stt")
+        self._trans_title.value = t("settings.section.translation")
+        self._ui_title.value = t("settings.section.ui")
+        self._audio_host_api_title.value = t("settings.audio_host_api")
+        self._mic_audio_title.value = t("settings.section.microphone_audio")
+        self._loopback_audio_title.value = t("settings.section.loopback_audio")
+        self._self_vad_title.value = t("settings.section.self_vad_sensitivity")
+        self._peer_vad_title.value = t("settings.section.peer_vad_sensitivity")
+        self._audio_test_title.value = t("settings.audio_test")
+        self._translation_connection_title.value = t("settings.translation_connection")
+        self._cloud_free_tier_title.value = t("settings.cloud_free_tier")
+        self._soniox_speaker_diarization_title.value = t("settings.soniox_speaker_diarization")
+        self._sync_soniox_speaker_diarization_card()
+        self._sync_cloud_free_tier_card()
+        self._local_llm_connection_title.value = t("settings.local_llm.connection")
+        self._http_extension_title.value = t("settings.http_extension.title")
+        self._http_extension_path_title.value = t("settings.http_extension.path")
+        self._http_extension_refresh_title.value = t("settings.http_extension.refresh")
+        self._set_unit_card_value_text(
+            self._http_extension_path_text,
+            t("settings.http_extension.open"),
+        )
+        self._sync_http_extension_card()
+        self._local_llm_base_url.label = t("settings.local_llm.base_url")
+        self._local_llm_model.label = t("settings.local_llm.model")
+        self._local_llm_api_key.apply_locale()
+        self._local_llm_extra_body.label = t("settings.local_llm.extra_body")
+        self._local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description")
+        if self._local_llm_base_url.error:
+            self._local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+        if self._local_llm_model.error:
+            self._local_llm_model.error = t("settings.local_llm.model.required")
+        if self._local_llm_extra_body_error.visible:
+            error_key = self._local_llm_extra_body_error_key
+            error_kwargs = self._local_llm_extra_body_error_kwargs
+            if error_key:
+                message = self._local_llm_extra_body_error_message(error_key, **error_kwargs)
+                self._local_llm_extra_body_error.value = message
+                self._local_llm_extra_body.error = message
+        self._persona_title.value = t("settings.section.persona")
+        self._custom_vocab_title.value = t("settings.section.custom_vocabulary")
+        self._vrc_mic_title.value = t("settings.vrc_mic_intercept")
+        self._osc_connection_title.value = t("settings.osc.connection.title")
+        self._chatbox_source_title.value = t("settings.chatbox_include_source")
+        self._clipboard_auto_translate_title.value = t("settings.clipboard_auto_translate")
+        self._activation_notice_title.value = t("settings.activation_notice.title")
+        self._sync_activation_notice_card()
+        self._peer_provider_title.value = t("settings.section.peer_stt")
+        self._gpu_device_title.value = t("settings.gpu_device.asr")
+        self._stt_model_title.value = t("settings.stt_model.title")
+        self._gpu_llm_title.value = t("settings.gpu_device.llm")
+        self._model_assets_title.value = t("settings.model_assets")
+        self._set_unit_card_value_text(
+            self._model_assets_text,
+            t("settings.model_assets.action"),
+        )
+        self._overlay_target_title.value = t("settings.overlay.caption_location")
+        self._overlay_translation_title.value = t("settings.overlay.show_translation")
+        self._overlay_peer_original_title.value = t("settings.overlay.show_peer_original")
+        self._audio_settings.apply_locale()
+        self._sync_general_audio_card_texts()
+        self._overlay_anchor_title.value = t("settings.overlay.calibration.anchor")
+        self._overlay_distance_title.value = t("settings.overlay.calibration.distance")
+        self._overlay_offset_x_title.value = t("settings.overlay.calibration.offset_x")
+        self._overlay_offset_y_title.value = t("settings.overlay.calibration.offset_y")
+        self._overlay_text_scale_title.value = t("settings.overlay.calibration.text_scale")
+        self._overlay_vr_reset_title.value = t("settings.overlay.position_reset.vr.title")
+        self._overlay_desktop_reset_title.value = t("settings.overlay.position_reset.desktop.title")
+        self._desktop_overlay_size_title.value = t("settings.overlay.desktop.size.title")
+        self._desktop_overlay_background_alpha_title.value = t(
+            "settings.overlay.desktop.background_alpha.title"
+        )
+        self._desktop_overlay_lock_title.value = t("settings.overlay.desktop.lock.title")
+        self._desktop_overlay_swap_caption_languages_title.value = t(
+            "settings.overlay.desktop.swap_caption_languages.title"
+        )
+        self._set_unit_card_value_text(
+            self._overlay_vr_reset_button, t("settings.overlay.position_reset.action.vr")
+        )
+        self._set_unit_card_value_text(
+            self._overlay_desktop_reset_button,
+            t("settings.overlay.position_reset.action.desktop"),
+        )
+        _set_text_button_label(self._reset_prompt_btn, t("settings.reset_prompt"))
+        self._sync_prompt_tab_copy()
+
+        # Update dynamic buttons by replacing the entire style object
+        ui_font = font_for_language(get_locale())
+        display_settings = self._build_settings_with_provider_draft()
+
+        if self._reset_prompt_btn:
+            self._reset_prompt_btn.style = self._get_button_style(ui_font)
+
+        self._sync_clickable_text_control_fonts(ui_font)
+        for glyph_text in (
+            getattr(self, "_overlay_distance_decrease_glyph", None),
+            getattr(self, "_overlay_distance_increase_glyph", None),
+            getattr(self, "_overlay_offset_x_decrease_glyph", None),
+            getattr(self, "_overlay_offset_x_increase_glyph", None),
+            getattr(self, "_overlay_offset_y_decrease_glyph", None),
+            getattr(self, "_overlay_offset_y_increase_glyph", None),
+            getattr(self, "_desktop_overlay_background_alpha_decrease_glyph", None),
+            getattr(self, "_desktop_overlay_background_alpha_increase_glyph", None),
+        ):
+            if glyph_text:
+                glyph_text.font_family = ui_font
+                glyph_text.size = 22
+        # Update text controls with current selection labels
+        if display_settings:
+            self._sync_stt_provider_labels(display_settings)
+            self._set_unit_card_value_text(
+                self._llm_text,
+                self._get_llm_display_label(display_settings),
+            )
+            self._set_translation_connection_text(
+                self._get_translation_connection_display_label(display_settings),
+            )
+            self._sync_translation_connection_title(display_settings)
+            self._sync_http_extension_card(display_settings, force_credentials=True)
+            if self._general_snapshot is not None:
+                self._ui_text.content.value = locale_label(self._general_snapshot.locale)
+            self._vrc_mic_text.content.value = t(
+                "settings.vrc_mic.on"
+                if self._general_snapshot is not None and self._general_snapshot.vrc_mic_intercept
+                else "settings.vrc_mic.off"
+            )
+            if self._general_snapshot is not None:
+                self._sync_osc_connection_card(self._general_snapshot)
+            self._chatbox_source_text.content.value = t(
+                "settings.chatbox_source.on"
+                if self._general_snapshot is not None
+                and self._general_snapshot.chatbox_include_source
+                else "settings.chatbox_source.off"
+            )
+            self._clipboard_auto_translate_text.content.value = t(
+                "settings.clipboard_auto_translate.on"
+                if self._general_snapshot is not None
+                and self._general_snapshot.clipboard_auto_translate_enabled
+                else "settings.clipboard_auto_translate.off"
+            )
+            self._set_unit_card_value_text(
+                self._audio_test_text,
+                t("settings.audio_test.action"),
+            )
+            self._sync_overlay_controls()
+            self._sync_overlay_calibration_controls()
+
+        # Components
+        self._audio_settings.apply_locale()
+        self._prompt_editor.apply_locale()
+        self._sync_gpu_device_card()
+
+        if is_control_mounted(self):
+            self.update()
+
+    def refresh_prompt_if_empty(self) -> None:
+        """Load default prompt if current is empty."""
+        self._prompt_editor.load_default_if_empty()

@@ -1,0 +1,660 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import cast
+
+from puripuly_heart.app.ports.translation_runtime_configuration import (
+    TranslationRuntimeSettingsValues,
+)
+from puripuly_heart.app.services.canonical_settings_persistence import SettingsOwner
+from puripuly_heart.app.services.managed_gemma_translation import ManagedGemmaTranslationOwner
+from puripuly_heart.app.services.peer_application import PeerApplicationOwner, PeerApplicationState
+from puripuly_heart.app.services.provider.provider_runtime_apply import (
+    LlmProviderRebuildContext,
+    LlmProviderRebuildOwner,
+    ProviderRuntimeApplyPlan,
+    ProviderRuntimeOwner,
+    ProviderRuntimeState,
+)
+from puripuly_heart.config.paths import default_http_extensions_dir
+from puripuly_heart.config.prompts import resolve_system_prompt
+from puripuly_heart.config.runtime_resolution import resolve_llm_config
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.config.translation_values import MANAGED_GEMMA_MODELS
+from puripuly_heart.config.vad_defaults import DEFAULT_STABLE_VAD_HANGOVER_MS
+from puripuly_heart.core.chatgpt.session import ChatGptAccessTokenPort
+from puripuly_heart.core.http_extensions import HttpExtensionRegistry
+from puripuly_heart.core.local_asr.local_asr_provider_runtime import LocalASRProviderRuntimePort
+from puripuly_heart.core.observability import ProviderObservationPort
+from puripuly_heart.core.orchestrator.configuration import (
+    TranslationRuntimeConfigurationPort,
+)
+from puripuly_heart.core.owned_thread import run_owned_thread_call
+from puripuly_heart.core.runtime.provider_handle import ProviderRuntimeHandle
+from puripuly_heart.core.runtime.self_capture import SelfCaptureSessionOwner
+from puripuly_heart.core.self_capture import SelfCaptureSessionSnapshot
+from puripuly_heart.core.translation_backend import TranslationBackend
+from puripuly_heart.core.translation_policy import FIXED_TRANSLATION_POLICY
+
+from .wiring_llm_factory import (
+    llm_factory_extras_from_vnext,
+    runtime_resolution_input_from_vnext,
+)
+from .wiring_managed_account import ManagedOpenRouterReleaseRuntime
+from .wiring_managed_gemma import (
+    managed_gemma_selection,
+    managed_gemma_translation_desired,
+    noop_managed_gemma_release,
+)
+from .wiring_provider_runtime_policy import (
+    build_llm_provider_signature,
+    llm_provider_requires_secret,
+    provider_llm_for_translation,
+    provider_runtime_requires_gpu_restart,
+)
+from .wiring_secrets_factory import create_secret_store
+from .wiring_stt_factory import (
+    build_peer_capture_session_config_from_vnext,
+    build_peer_stt_provider_signature_from_vnext,
+    build_peer_stt_runtime_signature_from_vnext,
+    build_self_capture_session_config_from_vnext,
+    build_self_stt_provider_signature_from_vnext,
+    build_self_stt_runtime_signature_from_vnext,
+    rebind_rolling_stt_provider,
+)
+from .wiring_translation_backend import create_translation_backend
+from .wiring_translation_runtime_configuration import (
+    replace_translation_runtime_settings,
+)
+
+
+def project_translation_runtime_settings(
+    settings: AppSettingsVNext,
+) -> TranslationRuntimeSettingsValues:
+    return project_translation_runtime_settings_from_vnext(settings)
+
+
+def project_translation_runtime_settings_from_vnext(
+    settings: AppSettingsVNext,
+) -> TranslationRuntimeSettingsValues:
+    languages = settings.intent.languages
+    stt = settings.intent.stt
+    llm_config = resolve_llm_config(runtime_resolution_input_from_vnext(settings))
+    return TranslationRuntimeSettingsValues(
+        source_language=languages.source_language,
+        target_language=languages.target_language,
+        self_target_languages=tuple(
+            language
+            for language in (
+                languages.target_language,
+                languages.secondary_target_language,
+            )
+            if language
+        ),
+        peer_source_language=languages.peer_source_language,
+        peer_target_language=languages.peer_target_language,
+        peer_source_mode=languages.peer_source_mode,
+        system_prompt=resolve_system_prompt(
+            settings.intent.prompts.system_prompt_override,
+            model=llm_config.primary.model,
+        ),
+        concurrency_limit=settings.intent.translation.concurrency_limit,
+        chatbox_include_source=settings.intent.osc.chatbox_include_source,
+        hangover_s=(
+            stt.low_latency_vad_hangover_ms / 1000.0
+            if FIXED_TRANSLATION_POLICY.fast_translation_enabled
+            else DEFAULT_STABLE_VAD_HANGOVER_MS / 1000.0
+        ),
+        peer_hangover_s=settings.intent.desktop_audio.vad_hangover_ms / 1000.0,
+        low_latency_mode=FIXED_TRANSLATION_POLICY.fast_translation_enabled,
+        low_latency_merge_gap_ms=stt.low_latency_merge_gap_ms,
+        low_latency_spec_retry_max=stt.low_latency_spec_retry_max,
+    )
+
+
+@dataclass(slots=True)
+class ProviderRuntimeSignatures:
+    http_extensions: HttpExtensionRegistry | None = None
+    last_self_runtime: tuple[object, ...] | None = None
+    last_self_provider: tuple[object, ...] | None = None
+    last_llm_provider: tuple[object, ...] | None = None
+    last_llm_selection: tuple[str, str, str] | None = None
+    superseded_settings_ids: set[int] = field(default_factory=set)
+
+    def sync_llm(self, canonical: AppSettingsVNext) -> None:
+        self.last_llm_provider = build_llm_provider_signature(
+            canonical,
+            http_extensions=self.http_extensions,
+        )
+        translation = canonical.intent.translation
+        self.last_llm_selection = (
+            (
+                "custom_http"
+                if translation.model == "custom_http"
+                else provider_llm_for_translation(translation.model, translation.connection)
+            ),
+            translation.model,
+            translation.connection,
+        )
+
+    def sync_stt(
+        self,
+        settings: AppSettingsVNext,
+        *,
+        canonical: AppSettingsVNext,
+        peer: PeerApplicationOwner,
+        peer_translation_enabled: bool = False,
+    ) -> None:
+        self.last_self_runtime = build_self_stt_runtime_signature_from_vnext(canonical)
+        self.last_self_provider = build_self_stt_provider_signature_from_vnext(canonical)
+        peer.last_runtime_signature = build_peer_stt_runtime_signature_from_vnext(canonical)
+        peer.last_provider_signature = build_peer_stt_provider_signature_from_vnext(canonical)
+        peer.last_intent_enabled = bool(peer_translation_enabled)
+        peer.last_activation_requested = peer.activation_requested(
+            intent_enabled=peer.last_intent_enabled,
+            eula_accepted=canonical.state.peer_translation.eula_accepted,
+        )
+
+    def capture_peer_before_canonical_mutation(
+        self,
+        settings: AppSettingsVNext,
+        *,
+        canonical: AppSettingsVNext,
+        peer: PeerApplicationOwner,
+    ) -> None:
+        if peer.last_provider_signature is None:
+            peer.last_provider_signature = build_peer_stt_provider_signature_from_vnext(canonical)
+        if peer.last_runtime_signature is None:
+            peer.last_runtime_signature = build_peer_stt_runtime_signature_from_vnext(canonical)
+
+    def cache(
+        self,
+        peer: PeerApplicationOwner,
+    ) -> tuple[object | None, object | None, object | None]:
+        return (
+            self.last_self_provider,
+            peer.last_provider_signature,
+            self.last_llm_provider,
+        )
+
+    def mark_llm_retry(self) -> None:
+        self.last_llm_provider = ()
+
+    def mark_superseded(self, settings: AppSettingsVNext) -> None:
+        self.superseded_settings_ids.add(id(settings))
+
+    def consume_superseded(self, settings: AppSettingsVNext) -> bool:
+        settings_id = id(settings)
+        if settings_id not in self.superseded_settings_ids:
+            return False
+        self.superseded_settings_ids.discard(settings_id)
+        return True
+
+
+@dataclass(slots=True)
+class ProviderRuntimeEffects:
+    settings: SettingsOwner
+    llm_runtime_provider: Callable[[], ProviderRuntimeHandle | None]
+    local_asr_runtime_provider: Callable[[], LocalASRProviderRuntimePort | None]
+    translation_runtime_configuration_provider: Callable[
+        [],
+        TranslationRuntimeConfigurationPort | None,
+    ]
+    self_capture_provider: Callable[[], SelfCaptureSessionOwner | None]
+    self_capture_owner: Callable[[], SelfCaptureSessionOwner]
+    peer: Callable[[], PeerApplicationOwner]
+    peer_state: Callable[[AppSettingsVNext], PeerApplicationState]
+    canonical_settings: Callable[[AppSettingsVNext], AppSettingsVNext]
+    clear_local_pending: Callable[[], None]
+    sync_local_notice: Callable[[], None]
+    managed_pending_sink: Callable[[bool], None]
+    managed_pending_provider: Callable[[], bool]
+    dashboard_managed_pending_sink: Callable[[bool], None]
+    sync_effective_flags: Callable[[], None]
+    refresh_overlay: Callable[[], None]
+    refresh_peer_runtime: Callable[[AppSettingsVNext], Awaitable[None]]
+    replace_self_stt: Callable[[AppSettingsVNext, bool], Awaitable[None]]
+    self_state_sink: Callable[[SelfCaptureSessionSnapshot], None]
+    self_availability: Callable[[SelfCaptureSessionSnapshot], bool]
+    gpu_recovery: Callable[[AppSettingsVNext, ProviderRuntimeApplyPlan], Awaitable[None]]
+    failure_sink: Callable[[str], None]
+
+    def state(self, settings: AppSettingsVNext) -> ProviderRuntimeState:
+        llm_runtime = self.llm_runtime_provider()
+        local_asr_runtime = self.local_asr_runtime_provider()
+        self_owner = self.self_capture_provider()
+        peer_owner = self.peer().runtime
+        return ProviderRuntimeState(
+            runtime_available=llm_runtime is not None and local_asr_runtime is not None,
+            llm_available=llm_runtime is not None and llm_runtime.provider is not None,
+            self_stt_available=(
+                local_asr_runtime is not None
+                and local_asr_runtime.snapshot.channel_for("self").provider_id is not None
+            ),
+            peer_stt_available=(
+                local_asr_runtime is not None
+                and local_asr_runtime.snapshot.channel_for("peer").provider_id is not None
+            ),
+            self_stt_desired=bool(self_owner is not None and self_owner.snapshot.desired_active),
+            peer_stt_desired=self.peer().desired_active(self.peer_state(settings)),
+            self_failure_diagnostics=(
+                self_owner.snapshot.failure_diagnostics if self_owner is not None else None
+            ),
+            peer_failure_diagnostics=(
+                peer_owner.snapshot.failure_diagnostics if peer_owner is not None else None
+            ),
+        )
+
+    def self_runtime_convergence(self, settings: object) -> bool | None:
+        runtime = self.local_asr_runtime_provider()
+        owner = self.self_capture_provider()
+        if owner is None:
+            return None
+        expected = build_self_capture_session_config_from_vnext(
+            self.canonical_settings(settings),
+        )
+        if not owner.snapshot.desired_active:
+            channel = runtime.snapshot.channel_for("self") if runtime is not None else None
+            return (
+                False
+                if (
+                    owner.snapshot.failure_reason is not None
+                    and (channel is None or channel.provider_id != expected.provider_id)
+                )
+                else None
+            )
+        if runtime is None:
+            return False
+        capture = owner.snapshot
+        channel = runtime.snapshot.channel_for("self")
+        provider_status = getattr(capture.provider_status, "value", capture.provider_status)
+        return bool(
+            channel.provider_id == expected.provider_id
+            and channel.has_resources
+            and not channel.pending_handoff
+            and channel.phase in {"dormant", "ready", "running"}
+            and capture.provider_id == expected.provider_id
+            and capture.runtime_signature == expected.runtime_signature
+            and provider_status == "ready"
+            and capture.failure_reason is None
+            and capture.desired_active
+            == (capture.effective_active if capture.desired_active else False)
+        )
+
+    def peer_runtime_convergence(self, settings: object) -> bool | None:
+        owner = self.peer()
+        config = build_peer_capture_session_config_from_vnext(
+            self.canonical_settings(settings),
+        )
+        capture_convergence = owner.capture_runtime_convergence(config, self.peer_state(settings))
+        if capture_convergence is not True:
+            return capture_convergence
+        runtime = self.local_asr_runtime_provider()
+        if runtime is None:
+            return False
+        channel = runtime.snapshot.channel_for("peer")
+        return bool(
+            channel.provider_id == config.provider_id
+            and channel.has_resources
+            and channel.provider_live
+            and not channel.pending_handoff
+            and channel.phase in {"dormant", "ready", "running"}
+        )
+
+    def apply_common(self, settings: AppSettingsVNext) -> None:
+        canonical = self.canonical_settings(settings)
+        translation = canonical.intent.translation
+        provider_llm = provider_llm_for_translation(translation.model, translation.connection)
+        self.clear_local_pending()
+        self.sync_local_notice()
+        if (
+            translation.model == "custom_http"
+            or provider_llm != "openrouter"
+            or translation.openrouter_selected_source != "managed"
+        ):
+            self.managed_pending_sink(False)
+        else:
+            self.dashboard_managed_pending_sink(self.managed_pending_provider())
+        config_owner = self.translation_runtime_configuration_provider()
+        if config_owner is None:
+            return
+        peer_enabled = self.peer().effective_enabled()
+        replace_translation_runtime_settings(
+            config_owner,
+            project_translation_runtime_settings_from_vnext(canonical),
+            peer_translation_enabled=peer_enabled,
+            integrated_context_enabled=peer_enabled,
+        )
+
+    def rebind_rolling_stt_secret(self, secret_key: str, api_key: str) -> None:
+        runtime = self.local_asr_runtime_provider()
+        if runtime is None:
+            return
+        current_provider = getattr(runtime, "current_provider", None)
+        if not callable(current_provider):
+            return
+        for channel in ("self", "peer"):
+            rebind_rolling_stt_provider(
+                current_provider(channel),
+                secret_key=secret_key,
+                api_key=api_key,
+            )
+
+    async def refresh_peer(self, settings: AppSettingsVNext) -> None:
+        await self.refresh_peer_runtime(settings)
+        self.sync_effective_flags()
+        self.refresh_overlay()
+
+    async def refresh_self_stt(self, settings: AppSettingsVNext) -> None:
+        owner = self.self_capture_provider()
+        if owner is not None and owner.snapshot.desired_active:
+            await self.replace_self_stt(settings, True)
+            return
+        await self.rebuild_self_stt(settings)
+
+    async def rebuild_self_stt(self, settings: AppSettingsVNext) -> None:
+        if self.local_asr_runtime_provider() is None:
+            return
+        owner = self.self_capture_owner()
+        config = build_self_capture_session_config_from_vnext(self.canonical_settings(settings))
+        if owner.snapshot.desired_active:
+            snapshot = await owner.apply_intent(config, enabled=True)
+        else:
+            snapshot = await owner.prepare_provider(config)
+        self.self_state_sink(snapshot)
+        if not self.self_availability(snapshot):
+            self.failure_sink("STT backend not available")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntimeComponents:
+    runtime: ProviderRuntimeOwner
+    llm_rebuild: LlmProviderRebuildOwner
+    effects: ProviderRuntimeEffects
+    signatures: ProviderRuntimeSignatures
+    sync_stt_signatures: Callable[[AppSettingsVNext], None]
+    capture_signatures_before_canonical_mutation: Callable[[], None]
+
+
+def compose_provider_runtime(
+    *,
+    config_path: Path,
+    settings: SettingsOwner,
+    llm_runtime_provider: Callable[[], ProviderRuntimeHandle | None],
+    http_extensions: HttpExtensionRegistry | None = None,
+    local_asr_runtime_provider: Callable[[], LocalASRProviderRuntimePort | None],
+    translation_runtime_configuration_provider: Callable[
+        [],
+        TranslationRuntimeConfigurationPort | None,
+    ],
+    self_capture_provider: Callable[[], SelfCaptureSessionOwner | None],
+    self_capture_owner: Callable[[], SelfCaptureSessionOwner],
+    peer: Callable[[], PeerApplicationOwner],
+    peer_state: Callable[[AppSettingsVNext], PeerApplicationState],
+    canonical_settings: Callable[[AppSettingsVNext], AppSettingsVNext],
+    clear_local_pending: Callable[[], None],
+    sync_local_notice: Callable[[], None],
+    managed_pending_sink: Callable[[bool], None],
+    managed_pending_provider: Callable[[], bool],
+    dashboard_managed_pending_sink: Callable[[bool], None],
+    sync_effective_flags: Callable[[], None],
+    refresh_overlay: Callable[[], None],
+    refresh_peer_runtime: Callable[[AppSettingsVNext], Awaitable[None]],
+    replace_self_stt: Callable[[AppSettingsVNext, bool], Awaitable[None]],
+    self_state_sink: Callable[[SelfCaptureSessionSnapshot], None],
+    self_availability: Callable[[SelfCaptureSessionSnapshot], bool],
+    gpu_recovery: Callable[[AppSettingsVNext, ProviderRuntimeApplyPlan], Awaitable[None]],
+    managed_release: Callable[[], ManagedOpenRouterReleaseRuntime],
+    managed_delegate_ready: Callable[[], None],
+    runtime_logging: ProviderObservationPort,
+    translation_needs_key_sink: Callable[[bool], None],
+    usage_refresh: Callable[[], Awaitable[None]],
+    failure_sink: Callable[[str], None],
+    success_sink: Callable[[str], None],
+    additional_signature_sink: Callable[[AppSettingsVNext], None],
+    managed_gemma: ManagedGemmaTranslationOwner | None = None,
+    signatures: ProviderRuntimeSignatures | None = None,
+    chatgpt_session: ChatGptAccessTokenPort | None = None,
+) -> ProviderRuntimeComponents:
+    effective_http_extensions = http_extensions
+    if effective_http_extensions is None:
+        effective_http_extensions = HttpExtensionRegistry(default_http_extensions_dir())
+        effective_http_extensions.reload()
+    signature_state = signatures or ProviderRuntimeSignatures()
+    if signature_state.http_extensions is None:
+        signature_state.http_extensions = effective_http_extensions
+    effects = ProviderRuntimeEffects(
+        settings=settings,
+        llm_runtime_provider=llm_runtime_provider,
+        local_asr_runtime_provider=local_asr_runtime_provider,
+        translation_runtime_configuration_provider=(translation_runtime_configuration_provider),
+        self_capture_provider=self_capture_provider,
+        self_capture_owner=self_capture_owner,
+        peer=peer,
+        peer_state=peer_state,
+        canonical_settings=canonical_settings,
+        clear_local_pending=clear_local_pending,
+        sync_local_notice=sync_local_notice,
+        managed_pending_sink=managed_pending_sink,
+        managed_pending_provider=managed_pending_provider,
+        dashboard_managed_pending_sink=dashboard_managed_pending_sink,
+        sync_effective_flags=sync_effective_flags,
+        refresh_overlay=refresh_overlay,
+        refresh_peer_runtime=refresh_peer_runtime,
+        replace_self_stt=replace_self_stt,
+        self_state_sink=self_state_sink,
+        self_availability=self_availability,
+        gpu_recovery=gpu_recovery,
+        failure_sink=failure_sink,
+    )
+
+    def llm_context(current: object | None) -> LlmProviderRebuildContext | None:
+        runtime = llm_runtime_provider()
+        if current is None or runtime is None:
+            return None
+
+        async def replace_provider(provider: object | None) -> object | None:
+            return await runtime.replace_provider(provider, start=False)
+
+        canonical = canonical_settings(current)
+        translation = canonical.intent.translation
+        provider_llm = provider_llm_for_translation(translation.model, translation.connection)
+        return LlmProviderRebuildContext(
+            settings=current,
+            replace_provider=replace_provider,
+            requires_secret=llm_provider_requires_secret(
+                translation.model,
+                provider_llm,
+            ),
+            resource_label=(
+                "Translation backend" if translation.model == "custom_http" else "LLM provider"
+            ),
+            selection=(
+                "custom_http" if translation.model == "custom_http" else provider_llm,
+                translation.model,
+                translation.connection,
+            ),
+            previous_selection=(
+                signature_state.last_llm_selection if runtime.provider is not None else None
+            ),
+        )
+
+    def _translation_backend_from_canonical(
+        settings_value: object,
+        *,
+        secrets: object,
+        **backend_kwargs: object,
+    ) -> object:
+        canonical = canonical_settings(settings_value)
+        translation = canonical.intent.translation
+        return create_translation_backend(
+            translation_model=translation.model,
+            secrets=secrets,
+            http_extensions=effective_http_extensions,
+            runtime_input=runtime_resolution_input_from_vnext(canonical),
+            extras=llm_factory_extras_from_vnext(canonical),
+            http_extension_id=translation.http_extension_id,
+            concurrency_limit=translation.concurrency_limit,
+            **backend_kwargs,
+        )
+
+    async def create_llm(settings_value: object) -> object | None:
+        canonical = canonical_settings(settings_value)
+        translation = canonical.intent.translation
+        if translation.model == "gemma4_26b_31b":
+            selection_at_admission = settings.canonical
+            secrets = await run_owned_thread_call(
+                lambda: create_secret_store(canonical.intent.secrets, config_path=config_path)
+            )
+        else:
+            secrets = create_secret_store(canonical.intent.secrets, config_path=config_path)
+        if translation.model in MANAGED_GEMMA_MODELS:
+            if managed_gemma is None:
+                raise RuntimeError("managed Gemma translation runtime is unavailable")
+            config = translation_runtime_configuration_provider()
+            translation_on = managed_gemma_translation_desired(
+                translation_enabled=bool(
+                    config is not None and config.snapshot().value.translation_enabled
+                ),
+                peer_translation_enabled=settings.peer_translation_enabled(),
+            )
+            if not translation_on:
+                return _translation_backend_from_canonical(
+                    settings_value,
+                    secrets=secrets,
+                    runtime_logging=runtime_logging,
+                    managed_gemma_runtime=managed_gemma.runtime,
+                    managed_gemma_release=noop_managed_gemma_release,
+                )
+            activation = await managed_gemma.prepare(managed_gemma_selection(settings_value))
+            return _translation_backend_from_canonical(
+                settings_value,
+                secrets=secrets,
+                runtime_logging=runtime_logging,
+                managed_gemma_runtime=activation.runtime,
+                managed_gemma_release=noop_managed_gemma_release,
+            )
+        if managed_gemma is not None:
+            await managed_gemma.deactivate()
+        if translation.model == "custom_http":
+            return _translation_backend_from_canonical(
+                settings_value,
+                secrets=secrets,
+            )
+        release = managed_release()
+        await release.rebuild(secrets=secrets)
+        if translation.model == "gemma4_26b_31b":
+            backend = await run_owned_thread_call(
+                lambda: _translation_backend_from_canonical(
+                    settings_value,
+                    secrets=secrets,
+                    managed_release_service=release.service,
+                    managed_delegate_ready=managed_delegate_ready,
+                    runtime_logging=runtime_logging,
+                    chatgpt_session=chatgpt_session,
+                )
+            )
+            current = settings.canonical
+            if (
+                current is None
+                or selection_at_admission is None
+                or current.intent.translation != selection_at_admission.intent.translation
+            ):
+                if backend is not None:
+                    await cast(TranslationBackend, backend).close()
+                raise asyncio.CancelledError
+            return backend
+        return _translation_backend_from_canonical(
+            settings_value,
+            secrets=secrets,
+            managed_release_service=release.service,
+            managed_delegate_ready=managed_delegate_ready,
+            runtime_logging=runtime_logging,
+            chatgpt_session=chatgpt_session,
+        )
+
+    def sync_llm_signature(current: object) -> None:
+        signature_state.sync_llm(canonical_settings(current))
+
+    llm_rebuild = LlmProviderRebuildOwner(
+        context_provider=lambda: llm_context(settings.committed_settings),
+        provider_factory=create_llm,
+        availability_sink=translation_needs_key_sink,
+        usage_refresh=usage_refresh,
+        failure_sink=failure_sink,
+        success_sink=success_sink,
+        signature_sink=sync_llm_signature,
+        retry_sink=signature_state.mark_llm_retry,
+    )
+
+    def sync_stt_signatures(current: object) -> None:
+        signature_state.sync_stt(
+            current,
+            canonical=canonical_settings(current),
+            peer=peer(),
+            peer_translation_enabled=settings.peer_translation_enabled(),
+        )
+        additional_signature_sink(current)
+
+    def capture_signatures_before_canonical_mutation() -> None:
+        current = settings.committed_settings
+        if current is None:
+            return
+        signature_state.capture_peer_before_canonical_mutation(
+            current,
+            canonical=canonical_settings(current),
+            peer=peer(),
+        )
+
+    runtime = ProviderRuntimeOwner(
+        state_provider=effects.state,
+        common_effect=effects.apply_common,
+        rebuild_llm=lambda current: llm_rebuild.rebuild_with_context(
+            llm_context(current), propagate_failure=True
+        ),
+        recover_gpu=effects.gpu_recovery,
+        refresh_peer=effects.refresh_peer,
+        refresh_self_stt=effects.refresh_self_stt,
+        signature_sink=sync_stt_signatures,
+        current_settings_provider=lambda: settings.committed_settings,
+        signature_cache_provider=lambda: signature_state.cache(peer()),
+        self_signature_builder=lambda current: build_self_stt_provider_signature_from_vnext(
+            canonical_settings(current)
+        ),
+        peer_signature_builder=lambda current, canonical: (
+            build_peer_stt_provider_signature_from_vnext(
+                canonical if canonical is not None else canonical_settings(current)
+            )
+        ),
+        llm_signature_builder=lambda current: build_llm_provider_signature(
+            canonical_settings(current),
+            http_extensions=effective_http_extensions,
+        ),
+        gpu_restart_decision=lambda current, next_value: provider_runtime_requires_gpu_restart(
+            canonical_settings(current),
+            canonical_settings(next_value),
+        ),
+        self_runtime_convergence=effects.self_runtime_convergence,
+        peer_runtime_convergence=effects.peer_runtime_convergence,
+    )
+    return ProviderRuntimeComponents(
+        runtime=runtime,
+        llm_rebuild=llm_rebuild,
+        effects=effects,
+        signatures=signature_state,
+        sync_stt_signatures=sync_stt_signatures,
+        capture_signatures_before_canonical_mutation=(capture_signatures_before_canonical_mutation),
+    )
+
+
+__all__ = [
+    "ProviderRuntimeComponents",
+    "ProviderRuntimeEffects",
+    "ProviderRuntimeSignatures",
+    "compose_provider_runtime",
+    "project_translation_runtime_settings",
+    "project_translation_runtime_settings_from_vnext",
+]

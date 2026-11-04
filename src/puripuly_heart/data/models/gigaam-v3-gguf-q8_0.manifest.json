@@ -1,0 +1,30 @@
+{
+  "manifest_version": 2,
+  "model_id": "gigaam-v3-gguf-q8_0",
+  "engine": "transcribe.cpp-vulkan",
+  "install_dirname": "gigaam-v3-gguf-q8_0",
+  "sources": {
+    "huggingface": {
+      "repo_id": "fzcfweasdferttgg/asr-gguf-onnx",
+      "revision": "main",
+      "download_url_template": "https://huggingface.co/fzcfweasdferttgg/asr-gguf-onnx/resolve/main/{path}"
+    },
+    "modelscope": {
+      "repo_id": "fzcfweasdferttggpng/asr-gguf-onnx",
+      "revision": "master",
+      "download_url_template": "https://modelscope.cn/models/fzcfweasdferttggpng/asr-gguf-onnx/resolve/master/{path}"
+    },
+    "hf_mirror": {
+      "repo_id": "fzcfweasdferttgg/asr-gguf-onnx",
+      "revision": "main",
+      "download_url_template": "https://hf-mirror.com/fzcfweasdferttgg/asr-gguf-onnx/resolve/main/{path}"
+    }
+  },
+  "files": [
+    {
+      "relative_path": "gigaam-v3/gguf/q8_0/gigaam-v3-e2e-rnnt-Q8_0.gguf",
+      "size_bytes": 273724832,
+      "crc32": "c1218c26"
+    }
+  ]
+}

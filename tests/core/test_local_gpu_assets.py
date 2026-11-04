@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import json
+import zlib
+from pathlib import Path
+
+from puripuly_heart.core.local_asr.local_gpu_assets import (
+    LOCAL_QWEN_GPU_ENGINE,
+    LOCAL_QWEN_GPU_MODEL_FILENAME,
+    inspect_local_gpu_install,
+    load_local_gpu_asset_manifest,
+    local_gpu_model_path,
+)
+from puripuly_heart.core.local_asr.local_stt_assets import (
+    LOCAL_QWEN_GPU_MODEL_ID,
+    LocalSTTAssetFile,
+    LocalSTTAssetManifest,
+    LocalSTTAssetSource,
+)
+
+
+def _fixture_manifest(payload: bytes) -> LocalSTTAssetManifest:
+    return LocalSTTAssetManifest(
+        manifest_version=2,
+        model_id=LOCAL_QWEN_GPU_MODEL_ID,
+        engine=LOCAL_QWEN_GPU_ENGINE,
+        install_dirname="gpu-fixture",
+        sources={
+            "fixture": LocalSTTAssetSource(
+                name="fixture",
+                revision="revision",
+                repo_id="fixture/repo",
+                download_url_template="https://example.invalid/{relative_path}",
+            )
+        },
+        files=(
+            LocalSTTAssetFile(
+                relative_path=LOCAL_QWEN_GPU_MODEL_FILENAME,
+                size_bytes=len(payload),
+                crc32=f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}",
+            ),
+        ),
+    )
+
+
+def _write_installed_contract(root: Path, manifest: LocalSTTAssetManifest) -> Path:
+    install_root = root / manifest.install_dirname
+    install_root.mkdir(parents=True)
+    installed = {
+        "manifest_version": 1,
+        "model_id": manifest.model_id,
+        "engine": manifest.engine,
+        "install_dirname": manifest.install_dirname,
+        "selected_source": "fixture",
+        "selected_revision": "revision",
+    }
+    (install_root / manifest.installed_manifest_filename).write_text(
+        json.dumps(installed),
+        encoding="utf-8",
+    )
+    return install_root
+
+
+def test_gpu_manifest_pins_one_strict_vulkan_q6_k_asset() -> None:
+    manifest = load_local_gpu_asset_manifest()
+
+    assert manifest.model_id == LOCAL_QWEN_GPU_MODEL_ID
+    assert manifest.engine == LOCAL_QWEN_GPU_ENGINE
+    assert manifest.sources["huggingface"].revision == "main"
+    assert [(item.relative_path, item.size_bytes, item.crc32) for item in manifest.files] == [
+        (
+            "qwen3-asr-1.7b/gguf/q6_k/Qwen3-ASR-1.7B-Q6_K.gguf",
+            1_692_554_208,
+            "29aac2ac",
+        )
+    ]
+    source = manifest.sources["huggingface"]
+    assert source.download_url_template.format(path=manifest.files[0].relative_path) == (
+        "https://huggingface.co/fzcfweasdferttgg/asr-gguf-onnx/resolve/main/"
+        "qwen3-asr-1.7b/gguf/q6_k/Qwen3-ASR-1.7B-Q6_K.gguf"
+    )
+
+
+def test_gpu_install_is_not_inspected_before_explicit_opt_in(tmp_path: Path) -> None:
+    snapshot = inspect_local_gpu_install(explicit_opt_in=False, model_root=tmp_path)
+
+    assert snapshot.status == "not_requested"
+    assert not snapshot.activation_allowed
+    assert snapshot.state is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_gpu_install_requires_its_own_exact_asset_contract(tmp_path: Path) -> None:
+    payload = b"gpu-model-fixture"
+    manifest = _fixture_manifest(payload)
+
+    missing = inspect_local_gpu_install(
+        explicit_opt_in=True,
+        model_root=tmp_path,
+        manifest=manifest,
+    )
+    assert missing.status == "missing"
+    assert not missing.activation_allowed
+
+    install_root = _write_installed_contract(tmp_path, manifest)
+    model_path = install_root / LOCAL_QWEN_GPU_MODEL_FILENAME
+    model_path.write_bytes(b"wrong")
+    invalid = inspect_local_gpu_install(
+        explicit_opt_in=True,
+        model_root=tmp_path,
+        manifest=manifest,
+    )
+    assert invalid.status == "invalid"
+    assert not invalid.activation_allowed
+
+    model_path.write_bytes(payload)
+    ready = inspect_local_gpu_install(
+        explicit_opt_in=True,
+        model_root=tmp_path,
+        manifest=manifest,
+    )
+    assert ready.status == "ready"
+    assert ready.activation_allowed
+    assert local_gpu_model_path(tmp_path, manifest=manifest) == model_path

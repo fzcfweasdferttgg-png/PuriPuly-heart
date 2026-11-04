@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+import copy
+
+from puripuly_heart.app.ports.ui_application import UiApplicationState
+from puripuly_heart.app.ports.ui_application_state import (
+    UiApplicationStateRuntimePort,
+)
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+
+
+class UiApplicationStateOwner:
+    def __init__(self, runtime: UiApplicationStateRuntimePort) -> None:
+        self._runtime = runtime
+
+    def snapshot(self) -> UiApplicationState:
+        runtime = self._runtime
+        return UiApplicationState(
+            config_path=runtime.config_path,
+            translation_enabled=runtime.translation_enabled,
+            stt_state=runtime.stt_state,
+            peer_translation_eula_accepted=runtime.peer_translation_eula_accepted,
+            audio_test_active=runtime.audio_test_active,
+            provider_name=runtime.provider_name,
+            overlay_target=runtime.overlay_target,
+            desktop_overlay_captions_locked=runtime.desktop_overlay_captions_locked,
+            translation_runtime_ready=runtime.translation_runtime_ready,
+        )
+
+    def compatibility_settings(self) -> AppSettingsVNext | None:
+        settings = self._runtime.compatibility_settings
+        return copy.deepcopy(settings) if settings is not None else None
+
+    def overlay_calibration(self) -> object:
+        return copy.deepcopy(self._runtime.overlay_calibration)

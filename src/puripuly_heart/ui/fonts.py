@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from puripuly_heart.core.language import get_language_info
+from puripuly_heart.ui.foundation.resources import DEFAULT_FOUNDATION_RESOURCES
+from puripuly_heart.ui.foundation.tokens import FOUNDATION_DESIGN_TOKENS
+
+if TYPE_CHECKING:
+    import flet as ft
+
+
+FONT_FAMILY_NANUM = "NanumSquareRound"
+FONT_FAMILY_MPLUS = "MPLUSRounded1c"
+FONT_FAMILY_RESOURCE_HAN_CN = "ResourceHanRoundedCN"
+FONT_FAMILY_NOTO_SANS_CJK_JP = "Noto Sans CJK JP"
+_NOTO_CJK_FILENAME = "NotoSansCJK-Medium.ttc"
+
+DEFAULT_FONT_FAMILY = FOUNDATION_DESIGN_TOKENS.default_font_family
+
+_FONT_FILE_CANDIDATES: dict[str, tuple[str, ...]] = {
+    FONT_FAMILY_NANUM: (
+        "NanumSquareRoundEB.ttf",
+        "NanumSquareRoundB.ttf",
+        "NanumSquareRound-Bold.ttf",
+    ),
+    FONT_FAMILY_MPLUS: (
+        "MPLUSRounded1c-Bold.ttf",
+        "MPLUSRounded1c-Bold.otf",
+    ),
+    FONT_FAMILY_RESOURCE_HAN_CN: ("ResourceHanRoundedCN-Bold.ttf",),
+    FONT_FAMILY_NOTO_SANS_CJK_JP: (_NOTO_CJK_FILENAME,),
+}
+
+
+def assets_dir() -> Path:
+    return DEFAULT_FOUNDATION_RESOURCES.assets_root
+
+
+def fonts_dir() -> Path:
+    return assets_dir() / "fonts"
+
+
+def register_ui_fonts(page: "ft.Page") -> None:
+    _register_fonts(
+        page,
+        (FONT_FAMILY_NANUM, FONT_FAMILY_MPLUS, FONT_FAMILY_RESOURCE_HAN_CN),
+    )
+
+
+def register_caption_fonts(page: "ft.Page") -> None:
+    _register_fonts(page, (FONT_FAMILY_NOTO_SANS_CJK_JP,))
+
+
+def _register_fonts(page: "ft.Page", families: tuple[str, ...]) -> None:
+    fonts: dict[str, str] = {}
+    for family in families:
+        asset_path = font_asset_path(family)
+        if asset_path:
+            fonts[family] = asset_path
+    if fonts:
+        page.fonts = fonts
+
+
+def font_asset_path(font_family: str) -> str | None:
+    filename = _resolve_font_file(font_family)
+    if not filename:
+        return None
+    return f"/{DEFAULT_FOUNDATION_RESOURCES.asset_url(f'fonts/{filename}')}"
+
+
+def default_font_family() -> str | None:
+    if _font_available(DEFAULT_FONT_FAMILY):
+        return DEFAULT_FONT_FAMILY
+    return None
+
+
+_LOCALE_LETTER_SPACING_PX = {
+    "ja": 0.5,
+    "zh": 0.4,
+}
+
+
+def locale_body_letter_spacing(locale: str | None) -> float | None:
+    base = (locale or "").split("-")[0].lower()
+    return _LOCALE_LETTER_SPACING_PX.get(base)
+
+
+@dataclass(frozen=True)
+class TypeFace:
+    font_family: str | None
+    letter_spacing: float | None
+
+
+LOG_TYPEFACE = TypeFace("Consolas", 0)
+
+
+def typeface_for_language(code: str | None) -> TypeFace:
+    return TypeFace(font_for_language(code), locale_body_letter_spacing(code))
+
+
+def metrics_strut_typeface() -> TypeFace:
+    return TypeFace(default_font_family(), 0)
+
+
+def font_for_language(code: str | None) -> str | None:
+    if not code:
+        return default_font_family()
+
+    info = get_language_info(code)
+    lang_code = info.code if info else code
+
+    if lang_code == "zh-CN":
+        return _resolve_family(FONT_FAMILY_RESOURCE_HAN_CN)
+
+    base_code = lang_code.split("-")[0].lower()
+    if base_code == "ja":
+        return _resolve_family(FONT_FAMILY_MPLUS)
+    if base_code in ("ko", "en"):
+        return _resolve_family(FONT_FAMILY_NANUM)
+
+    return None
+
+
+def _resolve_family(font_family: str) -> str | None:
+    if _font_available(font_family):
+        return font_family
+    return default_font_family()
+
+
+def _font_available(font_family: str) -> bool:
+    return _resolve_font_file(font_family) is not None
+
+
+def _resolve_font_file(font_family: str) -> str | None:
+    return _resolve_font_file_in_root(fonts_dir(), font_family)
+
+
+@lru_cache(maxsize=32)
+def _resolve_font_file_in_root(fonts_root: Path, font_family: str) -> str | None:
+    for filename in _FONT_FILE_CANDIDATES.get(font_family, ()):
+        if (fonts_root / filename).is_file():
+            return filename
+    return None

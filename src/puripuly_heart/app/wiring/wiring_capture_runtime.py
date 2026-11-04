@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+import re
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+
+from puripuly_heart.app.ports.capture_vad_runtime import (
+    PeerCaptureVadEventRuntime,
+    SelfCaptureVadEventRuntime,
+)
+from puripuly_heart.app.ports.provider_channel_runtime import ProviderChannelResetPort
+from puripuly_heart.config.provider_values import STTProviderName
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.core.audio.diagnostics import AudioFaultProfile, FaultInjectingAudioSource
+from puripuly_heart.core.audio.gate import VrcMicAudioGate
+from puripuly_heart.core.audio.source import AudioSource
+from puripuly_heart.core.clock import Clock
+from puripuly_heart.core.diagnostic_validation import (
+    stt_startup_failure_code,
+    stt_startup_failure_stage,
+    stt_startup_failure_type,
+)
+from puripuly_heart.core.local_asr.local_asr_provider_runtime import (
+    LocalASRProviderRuntimePort,
+    ProviderRuntimeBuildRequest,
+)
+from puripuly_heart.core.peer_capture import (
+    PeerCaptureDiagnostic,
+    PeerCaptureSessionConfig,
+    PeerCaptureSessionSnapshot,
+)
+from puripuly_heart.core.runtime.peer_channel import PeerCaptureSessionOwner
+from puripuly_heart.core.runtime.self_capture import SelfCaptureSessionOwner
+from puripuly_heart.core.self_capture import (
+    SelfCaptureAdmissionPort,
+    SelfCaptureDiagnostic,
+    SelfCaptureDiagnosticEvent,
+    SelfCaptureSessionConfig,
+    SelfCaptureSessionSnapshot,
+)
+from puripuly_heart.core.stt.diagnostics import recognition_cause
+
+from .root import (
+    compose_peer_capture_session_owner,
+    compose_self_capture_session_owner,
+)
+from .wiring_composition import (
+    create_peer_capture_admission_adapter,
+    create_peer_capture_audio_loop_adapter,
+    create_peer_capture_source_adapter,
+    create_peer_capture_target_resolver_adapter,
+    create_peer_capture_vad_adapter,
+    create_peer_capture_vad_sink_adapter,
+    create_self_capture_audio_loop_adapter,
+    create_self_capture_source_adapter,
+    create_self_capture_vad_adapter,
+    create_self_capture_vad_sink_adapter,
+)
+from .wiring_stt_factory import (
+    build_peer_stt_provider_request,
+    build_self_stt_provider_request_from_config,
+)
+
+_CAPTURE_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
+_CAPTURE_PROVIDER_IDS = frozenset(provider.value for provider in STTProviderName)
+_CAPTURE_DETAIL_TYPES = frozenset(
+    {"RuntimeError", "OSError", "TimeoutError", "ConnectionError", "ValueError", "TypeError"}
+)
+
+
+def _safe_capture_id(value: str | None, *, allow_admission: bool = False) -> str:
+    if value is not None and (
+        _CAPTURE_ID_RE.fullmatch(value) or (allow_admission and value == "admission")
+    ):
+        return value
+    return "unclassified"
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureDiagnosticsAdapter:
+    debug_allowed: Callable[[], bool]
+    capture_fault_profile: Callable[[], str]
+    log_diagnostic: Callable[[str], None]
+    log_basic: Callable[[str], None]
+
+    def wrap_source(self, source: AudioSource) -> AudioSource:
+        return FaultInjectingAudioSource(
+            source=source,
+            fault_profile_provider=lambda: (
+                self.capture_fault_profile()
+                if self.debug_allowed()
+                else AudioFaultProfile.NONE.value
+            ),
+        )
+
+    def self_capture(self, diagnostic: SelfCaptureDiagnostic) -> None:
+        if (
+            diagnostic.event is not SelfCaptureDiagnosticEvent.FAILURE
+            or diagnostic.failure_diagnostics is not None
+        ):
+            return
+        fields = [
+            "[SelfCapture] failed",
+            f"state={diagnostic.state.value}",
+            f"provider={diagnostic.provider_id if diagnostic.provider_id in _CAPTURE_PROVIDER_IDS else 'unclassified'}",
+            f"cause={diagnostic.reason.value if diagnostic.reason is not None else 'none'}",
+            f"detail={diagnostic.detail if diagnostic.detail in _CAPTURE_DETAIL_TYPES else 'none'}",
+            f"failure_stage={stt_startup_failure_stage(diagnostic.failure_stage)}",
+            f"failure_code={stt_startup_failure_code(diagnostic.failure_code)}",
+            f"failure_type={stt_startup_failure_type(diagnostic.failure_type)}",
+            f"recognition_reason={recognition_cause(diagnostic.recognition_reason)}",
+            f"utterance_id={diagnostic.utterance_id if diagnostic.utterance_id is not None else 'none'}",
+            f"epoch={_safe_capture_id(diagnostic.epoch, allow_admission=True) if diagnostic.epoch is not None else 'none'}",
+            f"turn={_safe_capture_id(diagnostic.turn) if diagnostic.turn is not None else 'none'}",
+            f"activation_generation={diagnostic.activation_generation if diagnostic.activation_generation is not None else 'none'}",
+            f"desired_active_before={str(diagnostic.desired_active_before).lower() if diagnostic.desired_active_before is not None else 'none'}",
+            f"desired_active_after={str(diagnostic.desired_active_after).lower() if diagnostic.desired_active_after is not None else 'none'}",
+            f"action={'deactivate' if diagnostic.action == 'deactivate' else 'none'}",
+            f"target_state={diagnostic.target_state.value if diagnostic.target_state is not None else 'none'}",
+        ]
+        self.log_basic(" ".join(fields))
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureOwnerFactory:
+    canonical_provider: Callable[[], AppSettingsVNext | None]
+    self_admission: SelfCaptureAdmissionPort
+    ensure_peer_local_ready: Callable[[int | None], Awaitable[bool]]
+    clock: Clock
+    log_basic: Callable[[str], None]
+    log_diagnostic: Callable[[str], None]
+    source_wrapper: Callable[[AudioSource], AudioSource]
+    self_state_sink: Callable[[SelfCaptureSessionSnapshot], None]
+    self_diagnostic_sink: Callable[[SelfCaptureDiagnostic], None]
+    peer_state_sink: Callable[[PeerCaptureSessionSnapshot], None]
+    peer_diagnostic_sink: Callable[[PeerCaptureDiagnostic], None]
+    local_asr_diagnostic_sink: Callable[[object], None]
+
+    def compose_self(
+        self,
+        vad_runtime: SelfCaptureVadEventRuntime | None,
+        provider_runtime: LocalASRProviderRuntimePort | None,
+        channel_reset: ProviderChannelResetPort | None,
+        audio_gate: VrcMicAudioGate | None,
+    ) -> SelfCaptureSessionOwner:
+        return compose_self_capture_session_owner(
+            provider_runtime=provider_runtime,
+            channel_reset=channel_reset,
+            admission=self.self_admission,
+            provider_request_factory=self.self_provider_request,
+            source_factory=create_self_capture_source_adapter(
+                log_diagnostic=self.log_diagnostic,
+                wrap_source=self.source_wrapper,
+            ),
+            vad_factory=create_self_capture_vad_adapter(),
+            run_audio_loop=create_self_capture_audio_loop_adapter(
+                audio_gate_provider=lambda: audio_gate,
+                log_basic=self.log_basic,
+            ),
+            vad_sink=create_self_capture_vad_sink_adapter(runtime_provider=lambda: vad_runtime),
+            state_changed=self.self_state_sink,
+            diagnostic_sink=self.self_diagnostic_sink,
+            audio_gate_reset=audio_gate.reset if audio_gate is not None else None,
+        )
+
+    def compose_peer(
+        self,
+        vad_runtime: PeerCaptureVadEventRuntime,
+        provider_runtime: LocalASRProviderRuntimePort,
+        channel_reset: ProviderChannelResetPort,
+    ) -> PeerCaptureSessionOwner:
+        return compose_peer_capture_session_owner(
+            provider_runtime=provider_runtime,
+            channel_reset=channel_reset,
+            admission=create_peer_capture_admission_adapter(
+                runtime_available=lambda: (
+                    self.canonical_provider() is not None and vad_runtime is not None
+                ),
+                ensure_local_ready=lambda: self.ensure_peer_local_ready(None),
+            ),
+            target_resolver=create_peer_capture_target_resolver_adapter(),
+            clock=self.clock,
+            provider_request_factory=self.peer_provider_request,
+            source_factory=create_peer_capture_source_adapter(
+                log_diagnostic=self.log_diagnostic,
+                wrap_source=self.source_wrapper,
+            ),
+            vad_factory=create_peer_capture_vad_adapter(),
+            run_audio_loop=create_peer_capture_audio_loop_adapter(
+                log_basic=self.log_basic,
+            ),
+            vad_sink=create_peer_capture_vad_sink_adapter(runtime_provider=lambda: vad_runtime),
+            state_changed=self.peer_state_sink,
+            diagnostic_sink=self.peer_diagnostic_sink,
+            local_asr_diagnostic_sink=self.local_asr_diagnostic_sink,
+        )
+
+    def self_provider_request(
+        self,
+        config: SelfCaptureSessionConfig,
+        warmup: bool,
+    ) -> ProviderRuntimeBuildRequest:
+        return build_self_stt_provider_request_from_config(config, warmup=warmup)
+
+    def peer_provider_request(
+        self, config: PeerCaptureSessionConfig, warmup: bool
+    ) -> ProviderRuntimeBuildRequest:
+        return build_peer_stt_provider_request(
+            config, gpu_device_id=config.gpu_device_id, warmup=warmup
+        )
+
+
+__all__ = [
+    "CaptureDiagnosticsAdapter",
+    "CaptureOwnerFactory",
+]

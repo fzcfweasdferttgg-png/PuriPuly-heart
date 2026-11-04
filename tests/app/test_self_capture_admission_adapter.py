@@ -1,0 +1,223 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import replace
+
+import pytest
+
+from puripuly_heart.app.adapters.self_capture.self_capture_admission import (
+    SelfCaptureAdmissionAdapter,
+)
+from puripuly_heart.app.ports.self_capture_admission import (
+    SelfCaptureAdmissionEffect,
+    SelfCaptureAdmissionEffectType,
+    SelfCaptureAdmissionState,
+)
+from puripuly_heart.core.self_capture import (
+    SelfCaptureAdmissionStatus,
+    SelfCaptureSessionConfig,
+)
+
+
+def _config(*, local_gpu: bool = False) -> SelfCaptureSessionConfig:
+    return SelfCaptureSessionConfig(
+        provider_id="local" if local_gpu else "soniox",
+        provider_signature=("provider",),
+        runtime_signature=("runtime",),
+        capture_signature=("capture",),
+        target_sample_rate_hz=16000,
+        local_gpu=local_gpu,
+    )
+
+
+def _state(**changes: object) -> SelfCaptureAdmissionState:
+    baseline = SelfCaptureAdmissionState(
+        settings_available=True,
+        runtime_available=True,
+        gpu_status="ready",
+        activation_generation=7,
+    )
+    return replace(baseline, **changes)
+
+
+def _adapter(
+    *,
+    states: list[SelfCaptureAdmissionState],
+    validation_result: bool = True,
+    effects: list[SelfCaptureAdmissionEffect] | None = None,
+) -> tuple[SelfCaptureAdmissionAdapter, list[bool]]:
+    validation_calls: list[bool] = []
+    effect_calls = effects if effects is not None else []
+
+    async def validate_gpu_activation() -> bool:
+        validation_calls.append(True)
+        return validation_result
+
+    return (
+        SelfCaptureAdmissionAdapter(
+            state_provider=lambda _config: states.pop(0) if len(states) > 1 else states[0],
+            validate_gpu_activation=validate_gpu_activation,
+            effect_sink=effect_calls.append,
+        ),
+        validation_calls,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_missing_settings_before_provider_work() -> None:
+    effects: list[SelfCaptureAdmissionEffect] = []
+    adapter, validation_calls = _adapter(
+        states=[_state(settings_available=False)],
+        effects=effects,
+    )
+
+    result = await adapter.admit(_config(local_gpu=True))
+
+    assert result.status is SelfCaptureAdmissionStatus.REJECTED
+    assert result.reason == "runtime_unavailable"
+    assert result.retain_intent is False
+    assert validation_calls == []
+    assert effects == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("runtime_available", "status", "reason"),
+    [
+        (True, SelfCaptureAdmissionStatus.ADMITTED, None),
+        (False, SelfCaptureAdmissionStatus.REJECTED, "runtime_unavailable"),
+    ],
+)
+async def test_adapter_maps_remote_provider_runtime_availability(
+    runtime_available: bool,
+    status: SelfCaptureAdmissionStatus,
+    reason: str | None,
+) -> None:
+    adapter, validation_calls = _adapter(
+        states=[_state(runtime_available=runtime_available)],
+    )
+
+    result = await adapter.admit(_config())
+
+    assert result.status is status
+    assert result.reason == reason
+    assert validation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_adapter_admits_valid_gpu_without_effects() -> None:
+    effects: list[SelfCaptureAdmissionEffect] = []
+    adapter, validation_calls = _adapter(
+        states=[_state(gpu_status="validating")],
+        effects=effects,
+    )
+
+    result = await adapter.admit(_config(local_gpu=True))
+
+    assert result.status is SelfCaptureAdmissionStatus.ADMITTED
+    assert result.reason is None
+    assert validation_calls == [True]
+    assert effects == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "gpu_status",
+    ["not_installed", "invalid", "install_failed", "installing"],
+)
+async def test_adapter_retains_pending_gpu_intent_from_refreshed_state(
+    gpu_status: str,
+) -> None:
+    effects: list[SelfCaptureAdmissionEffect] = []
+    adapter, validation_calls = _adapter(
+        states=[
+            _state(gpu_status="validating"),
+            _state(gpu_status=gpu_status),
+        ],
+        validation_result=False,
+        effects=effects,
+    )
+
+    result = await adapter.admit(_config(local_gpu=True))
+
+    assert result.status is SelfCaptureAdmissionStatus.PENDING
+    assert result.reason == gpu_status
+    assert result.retain_intent is True
+    assert validation_calls == [True]
+    assert effects == [
+        SelfCaptureAdmissionEffect(
+            SelfCaptureAdmissionEffectType.RETAIN_GPU_PENDING_INTENT,
+            status=gpu_status,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("gpu_status", "reason"),
+    [
+        ("unsupported", "unsupported"),
+        ("activation_failed", "activation_failed"),
+        (None, "gpu_unavailable"),
+    ],
+)
+async def test_adapter_rejects_terminal_gpu_status_without_effect(
+    gpu_status: str | None,
+    reason: str,
+) -> None:
+    effects: list[SelfCaptureAdmissionEffect] = []
+    adapter, _ = _adapter(
+        states=[
+            _state(gpu_status="validating"),
+            _state(gpu_status=gpu_status),
+        ],
+        validation_result=False,
+        effects=effects,
+    )
+
+    result = await adapter.admit(_config(local_gpu=True))
+
+    assert result.status is SelfCaptureAdmissionStatus.REJECTED
+    assert result.reason == reason
+    assert result.retain_intent is False
+    assert effects == []
+
+
+@pytest.mark.asyncio
+async def test_adapter_propagates_gpu_validation_exception_and_cancellation() -> None:
+    async def fail_validation() -> bool:
+        raise RuntimeError("validation failed")
+
+    adapter = SelfCaptureAdmissionAdapter(
+        state_provider=lambda _config: _state(),
+        validate_gpu_activation=fail_validation,
+        effect_sink=lambda _effect: None,
+    )
+    with pytest.raises(RuntimeError, match="validation failed"):
+        await adapter.admit(_config(local_gpu=True))
+
+    async def cancel_validation() -> bool:
+        raise asyncio.CancelledError
+
+    adapter = SelfCaptureAdmissionAdapter(
+        state_provider=lambda _config: _state(),
+        validate_gpu_activation=cancel_validation,
+        effect_sink=lambda _effect: None,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await adapter.admit(_config(local_gpu=True))
+
+
+@pytest.mark.asyncio
+async def test_adapter_propagates_effect_failure() -> None:
+    def fail_effect(_effect: SelfCaptureAdmissionEffect) -> None:
+        raise RuntimeError("effect failed")
+
+    adapter = SelfCaptureAdmissionAdapter(
+        state_provider=lambda _config: _state(gpu_status="not_installed"),
+        validate_gpu_activation=lambda: asyncio.sleep(0, result=False),
+        effect_sink=fail_effect,
+    )
+
+    with pytest.raises(RuntimeError, match="effect failed"):
+        await adapter.admit(_config(local_gpu=True))

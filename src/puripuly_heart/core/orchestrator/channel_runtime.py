@@ -1,0 +1,237 @@
+from __future__ import annotations
+
+import asyncio
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from uuid import UUID
+
+from puripuly_heart.domain.models import ChannelId, UtteranceBundle
+from puripuly_heart.domain.recognition import RecognitionTextOrigin
+
+_LOW_LATENCY_COMMITTED_TOMBSTONE_LIMIT = 1024
+
+
+def _validate_channel(channel: str) -> None:
+    if channel not in ("self", "peer"):
+        raise ValueError(f"invalid channel: {channel!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextEntry:
+    text: str
+    source_language: str
+    target_language: str
+    timestamp: float
+    channel: ChannelId = "self"
+    origin: str = ""
+
+    def __post_init__(self) -> None:
+        _validate_channel(self.channel)
+        if not self.origin:
+            object.__setattr__(self, "origin", self.channel)
+
+
+@dataclass(slots=True)
+class _MergeBuffer:
+    merge_id: UUID
+    parts: list[str] = field(default_factory=list)
+    utterance_ids: list[UUID] = field(default_factory=list)
+    recognition_origins: dict[UUID, tuple[RecognitionTextOrigin, ...]] = field(default_factory=dict)
+    start_time: float | None = None
+    last_end_time: float | None = None
+    recognition_scope: tuple[object, ...] | None = None
+    resume_pending: bool = False
+    resume_confirmed: bool = False
+    resume_utterance_id: UUID | None = None
+    awaiting_vad_end: bool = False
+    awaiting_vad_utterance_id: UUID | None = None
+    awaiting_vad_timeout_task: asyncio.Task[None] | None = None
+    finalize_wait_task: asyncio.Task[None] | None = None
+    finalize_wait_started_at: float | None = None
+    resume_end_timeout_task: asyncio.Task[None] | None = None
+
+
+@dataclass(slots=True)
+class ChannelRuntime:
+    channel: ChannelId
+    stt: object | None = None
+    stt_task: asyncio.Task[None] | None = None
+    utterances: dict[UUID, UtteranceBundle] = field(default_factory=dict)
+    translation_tasks: dict[UUID, asyncio.Task[None]] = field(default_factory=dict)
+    utterance_sources: dict[UUID, str] = field(default_factory=dict)
+    utterance_start_times: dict[UUID, float] = field(default_factory=dict)
+    translation_history: list[ContextEntry] = field(default_factory=list)
+    speech_ended_ids: set[UUID] = field(default_factory=set)
+    low_latency_committed_utterance_ids: OrderedDict[UUID, None] = field(
+        default_factory=OrderedDict
+    )
+    merge_buffer: _MergeBuffer | None = None
+
+    def __post_init__(self) -> None:
+        _validate_channel(self.channel)
+
+    def get_or_create_bundle(self, utterance_id: UUID) -> UtteranceBundle:
+        bundle = self.utterances.get(utterance_id)
+        if bundle is None:
+            bundle = UtteranceBundle(utterance_id=utterance_id, channel=self.channel)
+            self.utterances[utterance_id] = bundle
+        return bundle
+
+    def remember_source(self, utterance_id: UUID, source: str | None) -> None:
+        if source:
+            self.utterance_sources[utterance_id] = source
+
+    def get_source(self, utterance_id: UUID) -> str | None:
+        return self.utterance_sources.get(utterance_id)
+
+    def remember_low_latency_committed_utterance(self, utterance_id: UUID) -> None:
+        self.low_latency_committed_utterance_ids.pop(utterance_id, None)
+        self.low_latency_committed_utterance_ids[utterance_id] = None
+        while (
+            len(self.low_latency_committed_utterance_ids) > _LOW_LATENCY_COMMITTED_TOMBSTONE_LIMIT
+        ):
+            self.low_latency_committed_utterance_ids.popitem(last=False)
+
+    def clear_context(self) -> None:
+        self.translation_history.clear()
+
+    def remember_context(
+        self,
+        text: str,
+        *,
+        timestamp: float,
+        source_language: str = "",
+        target_language: str = "",
+        max_entries: int | None = None,
+        origin: str | None = None,
+    ) -> None:
+        text_clean = text.strip()
+        if len(text_clean) < 2:
+            return
+
+        self.translation_history.append(
+            ContextEntry(
+                text=text_clean,
+                source_language=source_language,
+                target_language=target_language,
+                timestamp=timestamp,
+                channel=self.channel,
+                origin=origin or self.channel,
+            )
+        )
+        if max_entries is not None and max_entries > 0:
+            while len(self.translation_history) > max_entries:
+                self.translation_history.pop(0)
+
+    def get_valid_context(
+        self,
+        *,
+        now: float,
+        source_language: str,
+        target_language: str,
+        time_window_s: float,
+        max_entries: int,
+    ) -> list[ContextEntry]:
+        history = (
+            self.translation_history[-max_entries:] if max_entries > 0 else self.translation_history
+        )
+        return [
+            entry
+            for entry in history
+            if (now - entry.timestamp) < time_window_s
+            and (not entry.source_language or entry.source_language == source_language)
+            and (not entry.target_language or entry.target_language == target_language)
+            and len(entry.text) >= 2
+        ]
+
+    async def clear_self_speech_state(self) -> None:
+        if self.channel != "self":
+            raise ValueError("speech-origin reset requires the Self channel")
+        merge_buffer = self.merge_buffer
+        if merge_buffer is not None:
+            tasks = (
+                merge_buffer.finalize_wait_task,
+                merge_buffer.awaiting_vad_timeout_task,
+                merge_buffer.resume_end_timeout_task,
+            )
+            for task in tasks:
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in tasks if task is not None),
+                return_exceptions=True,
+            )
+        speech_ids = {
+            utterance_id
+            for utterance_id, source in self.utterance_sources.items()
+            if source == "Mic"
+        }
+        if merge_buffer is not None:
+            speech_ids.update(merge_buffer.utterance_ids)
+        for utterance_id in speech_ids:
+            self.utterances.pop(utterance_id, None)
+            self.utterance_sources.pop(utterance_id, None)
+            self.utterance_start_times.pop(utterance_id, None)
+            self.speech_ended_ids.discard(utterance_id)
+        self.merge_buffer = None
+
+    async def clear_live_translation_state(self) -> None:
+        translation_task_ids = set(self.translation_tasks)
+        translation_tasks = list(self.translation_tasks.values())
+        for task in translation_tasks:
+            task.cancel()
+        if translation_tasks:
+            await asyncio.gather(*translation_tasks, return_exceptions=True)
+        self.translation_tasks.clear()
+
+        for utterance_id in translation_task_ids:
+            self.utterance_start_times.pop(utterance_id, None)
+            self.speech_ended_ids.discard(utterance_id)
+
+        await self._clear_merge_state()
+
+    async def reset_speech_runtime_state(self) -> None:
+        await self._clear_merge_state()
+        self.utterances.clear()
+        self.utterance_sources.clear()
+        self.translation_history[:] = [
+            entry for entry in self.translation_history if entry.origin != "self"
+        ]
+        self.utterance_start_times.clear()
+        self.speech_ended_ids.clear()
+        self.low_latency_committed_utterance_ids.clear()
+        self.stt_task = None
+
+    async def _clear_merge_state(self) -> None:
+        if self.merge_buffer is None:
+            return
+
+        merge_buffer = self.merge_buffer
+        merge_tasks = [
+            merge_buffer.finalize_wait_task,
+            merge_buffer.awaiting_vad_timeout_task,
+            merge_buffer.resume_end_timeout_task,
+        ]
+        for task in merge_tasks:
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in merge_tasks if task is not None), return_exceptions=True
+        )
+        for utterance_id in merge_buffer.utterance_ids:
+            self.utterances.pop(utterance_id, None)
+            self.utterance_sources.pop(utterance_id, None)
+            self.utterance_start_times.pop(utterance_id, None)
+            self.speech_ended_ids.discard(utterance_id)
+
+        self.merge_buffer = None
+
+    async def reset_runtime_state(self) -> None:
+        await self.clear_live_translation_state()
+        self.utterances.clear()
+        self.utterance_sources.clear()
+        self.utterance_start_times.clear()
+        self.translation_history.clear()
+        self.speech_ended_ids.clear()
+        self.low_latency_committed_utterance_ids.clear()
+        self.stt_task = None

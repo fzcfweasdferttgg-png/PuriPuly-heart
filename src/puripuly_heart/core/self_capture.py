@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from enum import Enum
+from typing import Literal, Protocol
+from uuid import UUID
+
+from puripuly_heart.core.messages import ErrorDiagnostics
+
+
+class SelfCaptureSessionState(str, Enum):
+    STOPPED = "stopped"
+    ADMISSION_PENDING = "admission_pending"
+    STARTING = "starting"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    FAULTED = "faulted"
+
+
+class SelfCaptureAdmissionStatus(str, Enum):
+    ADMITTED = "admitted"
+    PENDING = "pending"
+    REJECTED = "rejected"
+
+
+class SelfCaptureProviderStatus(str, Enum):
+    DETACHED = "detached"
+    PENDING = "pending"
+    READY = "ready"
+    RELEASING = "releasing"
+    FAILED = "failed"
+
+
+class SelfCaptureProviderMutationStatus(str, Enum):
+    APPLIED = "applied"
+    PENDING = "pending"
+    FAILED = "failed"
+    SUPERSEDED = "superseded"
+
+
+class SelfCaptureFailureReason(str, Enum):
+    ADMISSION_REJECTED = "admission_rejected"
+    PROVIDER_FAILED = "provider_failed"
+    SOURCE_OPEN_FAILED = "source_open_failed"
+    VAD_FAILED = "vad_failed"
+    SESSION_FAILED = "session_failed"
+    CLEANUP_FAILED = "cleanup_failed"
+
+
+class SelfCaptureDiagnosticEvent(str, Enum):
+    INTENT_CHANGED = "intent_changed"
+    ADMISSION_CHANGED = "admission_changed"
+    PROVIDER_CHANGED = "provider_changed"
+    SESSION_CHANGED = "session_changed"
+    FAILURE = "failure"
+
+
+@dataclass(frozen=True, slots=True)
+class SelfCaptureSessionConfig:
+    provider_id: str
+    provider_signature: tuple[object, ...]
+    runtime_signature: tuple[object, ...]
+    capture_signature: tuple[object, ...]
+    target_sample_rate_hz: int
+    input_host_api: str = ""
+    input_device: str = ""
+    internal_channels: int = 1
+    ring_buffer_ms: int = 2000
+    vad_speech_threshold: float = 0.5
+    vad_hangover_ms: int = 1100
+    source_mode: str = "manual"
+    source_language: str = "en"
+    expected_languages: tuple[str, ...] = ()
+    session_options: object | None = None
+    local_gpu: bool = False
+    release_backend_after: float | None = None
+    warmup: bool = True
+    provider_context: object | None = None
+    model_id: str | None = None
+    gpu_device_id: str = "auto"
+
+
+@dataclass(frozen=True, slots=True)
+class SelfCaptureAdmission:
+    status: SelfCaptureAdmissionStatus
+    reason: str | None = None
+    retain_intent: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SelfCaptureProviderMutation:
+    status: SelfCaptureProviderMutationStatus
+    reason: str | None = None
+    failure_code: str | None = None
+    failure_type: str | None = None
+    failure_stage: str | None = None
+    failure_diagnostics: ErrorDiagnostics | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SelfCaptureDiagnostic:
+    event: SelfCaptureDiagnosticEvent
+    generation: int
+    state: SelfCaptureSessionState
+    provider_id: str | None
+    reason: SelfCaptureFailureReason | None = None
+    detail: str | None = None
+    recognition_reason: str | None = None
+    utterance_id: UUID | None = None
+    epoch: str | None = None
+    turn: str | None = None
+    activation_generation: int | None = None
+    desired_active_before: bool | None = None
+    desired_active_after: bool | None = None
+    action: str | None = None
+    target_state: SelfCaptureSessionState | None = None
+    failure_code: str | None = None
+    failure_type: str | None = None
+    failure_stage: str | None = None
+    failure_diagnostics: ErrorDiagnostics | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SelfCaptureSessionSnapshot:
+    state: SelfCaptureSessionState
+    provider_status: SelfCaptureProviderStatus
+    desired_active: bool
+    effective_active: bool
+    generation: int
+    provider_id: str | None
+    runtime_signature: tuple[object, ...] | None
+    failure_reason: SelfCaptureFailureReason | None
+    admission_reason: str | None
+    has_source: bool
+    has_vad: bool
+    has_loop_task: bool
+    cleanup_debt: int
+    closed: bool
+    failure_diagnostics: ErrorDiagnostics | None = None
+
+
+class SelfCaptureIngressError(RuntimeError):
+    def __init__(
+        self,
+        code: Literal["provider_unavailable", "gpu_not_ready", "self_channel_inactive"],
+    ) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+SelfCaptureTerminalFailureHandler = Callable[[Exception | ErrorDiagnostics], Awaitable[None]]
+
+
+class SelfCaptureAdmissionPort(Protocol):
+    async def admit(self, config: SelfCaptureSessionConfig) -> SelfCaptureAdmission: ...
+
+
+class SelfCaptureProviderPort(Protocol):
+    def is_ready(self, config: SelfCaptureSessionConfig) -> bool: ...
+
+    async def replace(
+        self,
+        request: object,
+        *,
+        start: bool,
+        on_terminal_failure: SelfCaptureTerminalFailureHandler,
+    ) -> SelfCaptureProviderMutation: ...
+
+    async def handoff(
+        self,
+        request: object,
+        *,
+        start: bool,
+        on_terminal_failure: SelfCaptureTerminalFailureHandler,
+    ) -> SelfCaptureProviderMutation: ...
+
+    async def cancel_handoff(self) -> bool: ...
+
+    async def start_ingress(self) -> None: ...
+
+    async def warmup(
+        self,
+        *,
+        operation_id: str | None = None,
+        request_id: str | None = None,
+    ) -> None: ...
+
+    async def release(
+        self,
+        *,
+        mode: Literal["drain", "abort"],
+        release_backend_after: float | None = None,
+    ) -> None: ...
+
+
+class SelfCaptureSourcePort(Protocol):
+    async def close(self) -> None: ...
+
+
+__all__ = [
+    "SelfCaptureAdmission",
+    "SelfCaptureAdmissionPort",
+    "SelfCaptureAdmissionStatus",
+    "SelfCaptureDiagnostic",
+    "SelfCaptureDiagnosticEvent",
+    "SelfCaptureFailureReason",
+    "SelfCaptureIngressError",
+    "SelfCaptureProviderMutation",
+    "SelfCaptureProviderMutationStatus",
+    "SelfCaptureProviderPort",
+    "SelfCaptureProviderStatus",
+    "SelfCaptureSessionConfig",
+    "SelfCaptureSessionSnapshot",
+    "SelfCaptureSessionState",
+    "SelfCaptureSourcePort",
+    "SelfCaptureTerminalFailureHandler",
+]

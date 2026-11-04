@@ -1,0 +1,639 @@
+"""Unit tests for LLM translation context memory feature."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from uuid import uuid4
+
+import pytest
+
+from puripuly_heart.core.orchestrator.channel_runtime import ChannelRuntime, ContextEntry
+from puripuly_heart.core.orchestrator.context import ContextResolver
+from puripuly_heart.domain.events import STTFinalEvent, UIEventType
+from puripuly_heart.domain.models import Transcript, Translation
+from tests.helpers.translation_owners import compose_translation_test_harness
+
+# ── Mock classes ──────────────────────────────────────────────────────────────
+
+
+class FakeClock:
+    """Fake clock for testing time-based logic."""
+
+    def __init__(self, initial_time: float = 0.0):
+        self._time = initial_time
+
+    def now(self) -> float:
+        return self._time
+
+    def advance(self, seconds: float) -> None:
+        self._time += seconds
+
+
+@dataclass
+class FakeLLMProvider:
+    """Fake LLM provider that records calls."""
+
+    calls: list[dict] = field(default_factory=list)
+    response_text: str = "translated"
+
+    async def translate(
+        self,
+        *,
+        utterance_id,
+        text: str,
+        system_prompt: str,
+        source_language: str,
+        target_language: str,
+        context: str = "",
+        scene_participant_count: int | None = None,
+    ):
+        from puripuly_heart.domain.models import Translation
+
+        self.calls.append(
+            {
+                "utterance_id": utterance_id,
+                "text": text,
+                "context": context,
+            }
+        )
+        return Translation(utterance_id=utterance_id, text=self.response_text)
+
+    async def close(self) -> None:
+        pass
+
+
+@dataclass
+class FakeOscQueue:
+    """Fake OSC queue that records enqueued messages."""
+
+    messages: list = field(default_factory=list)
+
+    def enqueue(self, msg) -> None:
+        self.messages.append(msg)
+
+    def send_typing(self, on: bool) -> None:
+        pass
+
+    def set_typing_reason(self, reason: str, active: bool) -> None:
+        pass
+
+    def process_due(self) -> None:
+        pass
+
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+
+class TestContextFiltering:
+    """Test context time window and max entries filtering."""
+
+    def test_context_filters_by_time_window(self):
+        """Context entries older than time_window_s should be excluded."""
+        clock = FakeClock(initial_time=10.0)
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=clock,
+            context_time_window_s=5.0,
+            context_max_entries=3,
+        )
+
+        # Add entries at different times
+        harness.self_runtime.translation_history = [
+            ContextEntry(text="old", source_language="ko", target_language="en", timestamp=3.0),
+            ContextEntry(text="recent1", source_language="ko", target_language="en", timestamp=6.0),
+            ContextEntry(text="recent2", source_language="ko", target_language="en", timestamp=8.0),
+        ]
+
+        valid = harness.get_valid_context()
+
+        assert len(valid) == 2
+        assert valid[0].text == "recent1"
+        assert valid[1].text == "recent2"
+
+    def test_context_filters_by_max_entries(self):
+        """Only the most recent max_entries should be considered."""
+        clock = FakeClock(initial_time=10.0)
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=clock,
+            context_time_window_s=20.0,  # Default window
+            context_max_entries=2,
+        )
+
+        harness.self_runtime.translation_history = [
+            ContextEntry(text="first", source_language="ko", target_language="en", timestamp=7.0),
+            ContextEntry(text="second", source_language="ko", target_language="en", timestamp=8.0),
+            ContextEntry(text="third", source_language="ko", target_language="en", timestamp=9.0),
+        ]
+
+        valid = harness.get_valid_context()
+
+        # Should only get last 2
+        assert len(valid) == 2
+        assert valid[0].text == "second"
+        assert valid[1].text == "third"
+
+    def test_context_filters_by_language_pair(self):
+        """Only entries with the current language pair should be included."""
+        clock = FakeClock(initial_time=10.0)
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=clock,
+            context_time_window_s=20.0,
+        )
+
+        harness.self_runtime.translation_history = [
+            ContextEntry(text="wrong", source_language="ja", target_language="en", timestamp=9.0),
+            ContextEntry(text="ok", source_language="ko", target_language="en", timestamp=9.5),
+        ]
+
+        valid = harness.get_valid_context()
+
+        assert len(valid) == 1
+        assert valid[0].text == "ok"
+
+    def test_context_filters_short_entries(self):
+        """Entries shorter than 2 characters should be excluded."""
+        clock = FakeClock(initial_time=10.0)
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=clock,
+            context_time_window_s=20.0,
+        )
+
+        harness.self_runtime.translation_history = [
+            ContextEntry(text="a", source_language="ko", target_language="en", timestamp=9.0),
+            ContextEntry(text="ok", source_language="ko", target_language="en", timestamp=9.5),
+        ]
+
+        valid = harness.get_valid_context()
+
+        assert len(valid) == 1
+        assert valid[0].text == "ok"
+
+    def test_context_resolver_tracks_updated_owner_settings_after_init(self):
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=FakeClock(initial_time=10.0),
+            context_time_window_s=20.0,
+            context_max_entries=3,
+        )
+        harness.self_runtime.translation_history = [
+            ContextEntry(text="first", source_language="ko", target_language="en", timestamp=8.0),
+            ContextEntry(text="second", source_language="ko", target_language="en", timestamp=9.0),
+            ContextEntry(text="third", source_language="ko", target_language="en", timestamp=9.5),
+        ]
+
+        harness.replace_configuration(context_max_entries=1)
+        harness.replace_configuration(context_time_window_s=2.0)
+        harness.set_clock(FakeClock(initial_time=11.0))
+        valid = harness.get_valid_context()
+
+        assert [entry.text for entry in valid] == ["third"]
+
+
+class TestContextPassedToLLM:
+    """Test that context is correctly passed to LLM."""
+
+    @pytest.mark.asyncio
+    async def test_context_passed_to_llm(self):
+        """LLM should receive formatted context string."""
+        clock = FakeClock(initial_time=10.0)
+        fake_llm = FakeLLMProvider()
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=fake_llm,
+            osc=FakeOscQueue(),
+            clock=clock,
+            context_time_window_s=5.0,
+            context_max_entries=3,
+        )
+
+        # Add some context
+        harness.self_runtime.translation_history = [
+            ContextEntry(text="hello", source_language="ko", target_language="en", timestamp=8.0),
+        ]
+
+        await harness.self_owner.submit_text("world")
+        await asyncio.gather(
+            *harness.self_runtime.translation_tasks.values(), return_exceptions=True
+        )
+
+        # Verify LLM was called with context
+        assert len(fake_llm.calls) == 1
+        call = fake_llm.calls[0]
+        assert call["context"] == '- [self] "hello"'
+
+    @pytest.mark.asyncio
+    async def test_empty_context_when_no_history(self):
+        """LLM should receive empty context when no history."""
+        clock = FakeClock(initial_time=10.0)
+        fake_llm = FakeLLMProvider()
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=fake_llm,
+            osc=FakeOscQueue(),
+            clock=clock,
+        )
+
+        harness.self_runtime.translation_history = []
+
+        await harness.self_owner.submit_text("test")
+        await asyncio.gather(
+            *harness.self_runtime.translation_tasks.values(), return_exceptions=True
+        )
+
+        assert len(fake_llm.calls) == 1
+        assert fake_llm.calls[0]["context"] == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_context_when_all_expired(self):
+        """LLM should receive empty context when all entries are expired."""
+        clock = FakeClock(initial_time=100.0)  # Far in the future
+        fake_llm = FakeLLMProvider()
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=fake_llm,
+            osc=FakeOscQueue(),
+            clock=clock,
+            context_time_window_s=5.0,
+        )
+
+        # All entries are very old
+        harness.self_runtime.translation_history = [
+            ContextEntry(text="old", source_language="ko", target_language="en", timestamp=1.0),
+        ]
+
+        await harness.self_owner.submit_text("test")
+        await asyncio.gather(
+            *harness.self_runtime.translation_tasks.values(), return_exceptions=True
+        )
+
+        assert len(fake_llm.calls) == 1
+        assert fake_llm.calls[0]["context"] == ""
+
+
+class TestContextInternalPaths:
+    def test_translation_fixture_uses_integrated_context_when_peer_translation_is_off(self):
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=None,
+            osc=FakeOscQueue(),
+            clock=FakeClock(initial_time=112.0),
+            integrated_context_enabled=True,
+            peer_translation_enabled=False,
+        )
+        harness.self_runtime.remember_context("self only", timestamp=100.0)
+
+        context, mode = harness.translation_requests.context_resolver.resolve_for_request(
+            runtime=harness.self_runtime,
+            other_runtime=harness.peer_runtime,
+            source_language="en",
+            target_language="ko",
+        )
+
+        assert mode == "integrated"
+        assert context == '- [self] "self only"'
+
+    def test_context_resolver_formats_integrated_with_channel_prefix(self):
+        self_runtime = compose_translation_test_harness(
+            stt=None,
+            llm=None,
+            osc=FakeOscQueue(),
+            clock=FakeClock(initial_time=112.0),
+        ).self_runtime
+        peer_runtime = compose_translation_test_harness(
+            stt=None,
+            llm=None,
+            osc=FakeOscQueue(),
+            clock=FakeClock(initial_time=112.0),
+        ).peer_runtime
+        self_runtime.remember_context("I am ready", timestamp=100.0)
+        peer_runtime.remember_context(
+            "hello from peer",
+            timestamp=105.0,
+        )
+        resolver = ContextResolver(clock=FakeClock(initial_time=112.0))
+
+        context, mode = resolver.resolve_for_request(
+            runtime=self_runtime,
+            other_runtime=peer_runtime,
+            source_language="en",
+            target_language="ko",
+        )
+
+        assert mode == "integrated"
+        assert context == ('- [self] "I am ready"\n- [peer] "hello from peer"')
+
+    def test_context_resolver_uses_available_self_context_when_peer_context_is_empty(self):
+        self_runtime = ChannelRuntime(channel="self")
+        peer_runtime = ChannelRuntime(channel="peer")
+        self_runtime.remember_context(
+            "safe local line",
+            timestamp=100.0,
+            source_language="en",
+            target_language="ko",
+        )
+        resolver = ContextResolver(clock=FakeClock(initial_time=112.0))
+
+        context, mode = resolver.resolve_for_request(
+            runtime=peer_runtime,
+            other_runtime=self_runtime,
+            source_language="en",
+            target_language="ko",
+        )
+
+        assert mode == "integrated"
+        assert context == '- [self] "safe local line"'
+
+    def test_context_resolver_default_integrated_context_uses_60_second_window_and_latest_5_entries(
+        self,
+    ):
+        self_runtime = ChannelRuntime(channel="self")
+        peer_runtime = ChannelRuntime(channel="peer")
+        self_runtime.remember_context(
+            "61 seconds old", timestamp=39.0, source_language="en", target_language="ko"
+        )
+        self_runtime.remember_context(
+            "recent 1", timestamp=41.0, source_language="en", target_language="ko"
+        )
+        peer_runtime.remember_context(
+            "recent 2", timestamp=42.0, source_language="en", target_language="ko"
+        )
+        self_runtime.remember_context(
+            "recent 3", timestamp=43.0, source_language="en", target_language="ko"
+        )
+        peer_runtime.remember_context(
+            "recent 4", timestamp=44.0, source_language="en", target_language="ko"
+        )
+        self_runtime.remember_context(
+            "recent 5", timestamp=45.0, source_language="en", target_language="ko"
+        )
+        peer_runtime.remember_context(
+            "recent 6", timestamp=46.0, source_language="en", target_language="ko"
+        )
+        resolver = ContextResolver(clock=FakeClock(initial_time=100.0))
+
+        context, mode = resolver.resolve_for_request(
+            runtime=self_runtime,
+            other_runtime=peer_runtime,
+            source_language="en",
+            target_language="ko",
+            other_source_language="en",
+            other_target_language="ko",
+        )
+
+        assert mode == "integrated"
+        assert "61 seconds old" not in context
+        assert "recent 1" not in context
+        assert context == (
+            '- [peer] "recent 2"\n'
+            '- [self] "recent 3"\n'
+            '- [peer] "recent 4"\n'
+            '- [self] "recent 5"\n'
+            '- [peer] "recent 6"'
+        )
+
+    def test_prepare_llm_request_formats_prompt_and_context(self):
+        clock = FakeClock(initial_time=20.0)
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=clock,
+            system_prompt="Translate ${sourceName} to ${targetName}",
+        )
+        harness.self_runtime.translation_history = [
+            ContextEntry(text="안녕", source_language="ko", target_language="en", timestamp=19.0),
+        ]
+
+        prompt, context, now = harness.prepare_translation_request("입력")
+
+        assert "${sourceName}" not in prompt
+        assert "${targetName}" not in prompt
+        assert context == '- [self] "안녕"'
+        assert now == 20.0
+
+
+class TestContextSerializationContract:
+    def test_context_serialization_is_stable_as_time_advances(self):
+        entry = ContextEntry(
+            text="hello",
+            source_language="en",
+            target_language="ko",
+            timestamp=100.0,
+        )
+
+        first = ContextResolver(clock=FakeClock(initial_time=105.0)).format_entries([entry])
+        second = ContextResolver(clock=FakeClock(initial_time=115.0)).format_entries([entry])
+
+        assert first == '- [self] "hello"'
+        assert second == '- [self] "hello"'
+        assert first == second
+
+
+class TestContextLogging:
+    def test_prepare_llm_request_counts_peer_local_context_as_peer_entries(self):
+        clock = FakeClock(initial_time=20.0)
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=clock,
+        )
+        harness.peer_runtime.remember_context(
+            "secret peer context",
+            timestamp=19.0,
+            source_language="ko",
+            target_language="en",
+        )
+
+        _, context, _ = harness.prepare_translation_request(
+            "secret request", runtime=harness.peer_runtime
+        )
+
+        assert context == '- [peer] "secret peer context"'
+
+    @pytest.mark.asyncio
+    async def test_ensure_translation_deduplicates_same_utterance(self):
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=FakeClock(),
+        )
+        transcript = Transcript(utterance_id=uuid4(), text="hello", is_final=True)
+
+        await harness.ensure_translation(transcript)
+        await harness.ensure_translation(transcript)
+
+        assert len(harness.llm_runtime.provider.provider.calls) == 1
+        assert harness.translation_turns.is_parent_closed(transcript.utterance_id)
+        assert harness.self_runtime.translation_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_in_flight_duplicate_peer_final_preserves_original_parent_cleanup(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+        call_count = 0
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=FakeClock(initial_time=12.0),
+            peer_translation_enabled=True,
+        )
+
+        async def blocking_translate(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            started.set()
+            await release.wait()
+            return Translation(utterance_id=kwargs["utterance_id"], text="translated")
+
+        harness.llm_runtime.provider.provider.translate = blocking_translate
+        parent_id = uuid4()
+        harness.peer_runtime.utterance_start_times[parent_id] = 12.0
+        harness.peer_runtime.speech_ended_ids.add(parent_id)
+        harness.peer_owner._peer_parent_speech_end_times[parent_id] = 12.0
+        transcript = Transcript(
+            utterance_id=parent_id,
+            text="peer hello",
+            is_final=True,
+            channel="peer",
+        )
+        event = STTFinalEvent(utterance_id=parent_id, transcript=transcript)
+
+        await harness.dispatch_stt_event(event)
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        await harness.dispatch_stt_event(event)
+        assert harness.translation_turns.is_parent_active(parent_id)
+
+        release.set()
+        await harness.translation_turns.wait_for_idle()
+
+        assert call_count == 1
+        assert harness.translation_turns.is_parent_closed(parent_id)
+        assert not harness.translation_turns.is_parent_active(parent_id)
+        assert parent_id not in harness.peer_owner._peer_translation_parent_ids
+        assert parent_id not in harness.peer_owner._peer_parent_speech_end_times
+        assert parent_id not in harness.peer_owner._peer_parent_turn_ids
+        assert parent_id not in harness.peer_runtime.utterance_start_times
+        assert parent_id not in harness.peer_runtime.speech_ended_ids
+
+    @pytest.mark.asyncio
+    async def test_closed_translation_owner_rejection_clears_peer_parent_marker(self):
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=FakeClock(),
+            peer_translation_enabled=True,
+        )
+        await harness.translation_turns.close()
+        parent_id = uuid4()
+        transcript = Transcript(
+            utterance_id=parent_id,
+            text="peer hello",
+            is_final=True,
+            channel="peer",
+        )
+
+        await harness.ensure_translation(transcript)
+
+        assert not harness.translation_turns.is_parent_active(parent_id)
+        assert not harness.translation_turns.is_parent_closed(parent_id)
+        assert parent_id not in harness.peer_owner._peer_translation_parent_ids
+
+    @pytest.mark.asyncio
+    async def test_non_accepting_translation_owner_rejection_clears_peer_parent_marker(self):
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=FakeClock(),
+            peer_translation_enabled=True,
+        )
+        parent_id = uuid4()
+        transcript = Transcript(
+            utterance_id=parent_id,
+            text="peer hello",
+            is_final=True,
+            channel="peer",
+        )
+        harness.translation_turns._accepting = False
+        try:
+            await harness.ensure_translation(transcript)
+        finally:
+            harness.translation_turns._accepting = True
+
+        assert not harness.translation_turns.is_parent_active(parent_id)
+        assert not harness.translation_turns.is_parent_closed(parent_id)
+        assert parent_id not in harness.peer_owner._peer_translation_parent_ids
+
+    @pytest.mark.asyncio
+    async def test_blocked_peer_rejection_clears_peer_parent_marker(self):
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(),
+            osc=FakeOscQueue(),
+            clock=FakeClock(),
+            peer_translation_enabled=True,
+        )
+        parent_id = uuid4()
+        transcript = Transcript(
+            utterance_id=parent_id,
+            text="peer hello",
+            is_final=True,
+            channel="peer",
+        )
+        harness.translation_turns._blocked_channels.add("peer")
+        try:
+            await harness.ensure_translation(transcript)
+        finally:
+            harness.translation_turns._blocked_channels.discard("peer")
+
+        assert not harness.translation_turns.is_parent_active(parent_id)
+        assert not harness.translation_turns.is_parent_closed(parent_id)
+        assert parent_id not in harness.peer_owner._peer_translation_parent_ids
+
+    @pytest.mark.asyncio
+    async def test_submit_text_translation_success_updates_bundle_and_events(self):
+        harness = compose_translation_test_harness(
+            stt=None,
+            llm=FakeLLMProvider(response_text="OK"),
+            osc=FakeOscQueue(),
+            clock=FakeClock(initial_time=1.0),
+        )
+        admission = await harness.self_owner.submit_text("hello")
+        assert admission.status == "admitted"
+        utterance_id = admission.turn_id
+        await asyncio.gather(
+            *harness.self_runtime.translation_tasks.values(), return_exceptions=True
+        )
+
+        bundle = harness.bundle_for(utterance_id)
+        assert bundle.translation is not None
+        assert bundle.translation.text == "OK"
+
+        events = [
+            await harness.ui_events.get(),
+            await harness.ui_events.get(),
+            await harness.ui_events.get(),
+        ]
+        assert [event.type for event in events] == [
+            UIEventType.TRANSCRIPT_FINAL,
+            UIEventType.TRANSLATION_DONE,
+            UIEventType.OSC_SENT,
+        ]

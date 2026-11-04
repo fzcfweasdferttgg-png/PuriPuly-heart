@@ -1,0 +1,1837 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
+from uuid import uuid4
+
+import numpy as np
+import pytest
+
+from puripuly_heart.config.resolved import (
+    CREDENTIAL_SOURCE_NONE,
+    ResolvedCredentialRequirement,
+    ResolvedSTTConfig,
+)
+from puripuly_heart.core.asr_worker import (
+    ASRWorkerActivation,
+    ASRWorkerDevice,
+    ASRWorkerEvent,
+    ASRWorkerRequestError,
+    ASRWorkerTranscription,
+)
+from puripuly_heart.core.audio.ownership import (
+    AudioSegmentIdentity,
+    AudioSegmentSettingsSnapshot,
+    AudioSegmentSnapshot,
+    OwnedVadEvent,
+    PeerAudioSegmentLedger,
+)
+from puripuly_heart.core.local_asr.local_asr_provider_runtime import (
+    ProviderRuntimeBuildRequest,
+    ProviderRuntimeGpuRecoveryRequest,
+    ProviderRuntimeRecoveryChannel,
+)
+from puripuly_heart.core.local_asr.local_asr_provisioning import (
+    LocalASRModelProvisioningState,
+    LocalASRProvisioningSnapshot,
+)
+from puripuly_heart.core.local_asr.local_stt_assets import (
+    LOCAL_QWEN_GPU_MODEL_ID,
+)
+from tests.helpers.retired_model_ids import (
+    FUN_ASR_MLT_NANO_MODEL_ID,
+    ORUKEET_MODEL_ID,
+)
+from puripuly_heart.core.runtime.gpu_asr import (
+    GpuASRDiagnostic,
+    GpuASRRuntimeState,
+    SharedGpuASRRuntime,
+)
+from puripuly_heart.core.runtime.local_asr_provider_runtime import (
+    LocalASRProviderRuntimeOwner,
+)
+from puripuly_heart.core.runtime.local_asr_transition import LocalASRSessionOptions
+from puripuly_heart.core.runtime.peer_channel import (
+    _CaptureGeneration,
+    _GenerationGuardedVadSink,
+)
+from puripuly_heart.core.stt.backend import (
+    STTProviderTurnRequest,
+    STTProviderTurnTerminal,
+)
+from puripuly_heart.core.stt.scoped_engine import (
+    ScopedRecognitionEngine,
+    STTRecognitionWatchdogs,
+)
+from puripuly_heart.core.stt.scoped_event_buffer import STTProviderEventBuffer
+from puripuly_heart.core.vad.gating import SpeechEnd, SpeechStart
+from puripuly_heart.providers.stt.local_gpu import LocalGpuSTTBackend
+from tests.core.runtime.test_gpu_asr import FakeASRWorkerClient, FakeASRWorkerFactory
+
+GPU_DEVICE = ASRWorkerDevice(
+    device_id="vulkan-index-0",
+    registry_index=0,
+    name="GPU 0",
+    description="Physical Vulkan GPU",
+    device_type="discrete",
+    memory_total_bytes=8_000_000_000,
+    memory_free_bytes=1,
+)
+
+
+def _resolved_config(
+    channel: str,
+    provider: str = "deepgram",
+) -> ResolvedSTTConfig:
+    return ResolvedSTTConfig(
+        channel=channel,
+        source_language="ko" if channel == "self" else "en",
+        provider=provider,
+        model=None,
+        endpoint=None,
+        region=None,
+        credential=ResolvedCredentialRequirement(
+            source=CREDENTIAL_SOURCE_NONE,
+            required=False,
+            reference=None,
+        ),
+        input_host_api=None,
+        input_device=None,
+        output_device=None,
+        sample_rate_hz=16_000,
+        channels=1,
+        ring_buffer_ms=500,
+        drain_timeout_s=2.0,
+        vad_speech_threshold=0.5,
+        vad_hangover_ms=500,
+        vad_pre_roll_ms=500,
+        low_latency_enabled=True,
+        low_latency_merge_gap_ms=600,
+        low_latency_spec_retry_max=10,
+        custom_vocabulary_enabled=False,
+        custom_terms={},
+        provider_options={},
+    )
+
+
+class FakeProvisioningPort:
+    def __init__(self, integrity: str = "ready", operation: str = "idle") -> None:
+        self.integrity = integrity
+        self.operation = operation
+        self.inspect_gpu_calls: list[tuple[bool, bool]] = []
+        self.closed = False
+
+    @property
+    def snapshot(self) -> LocalASRProvisioningSnapshot:
+        return LocalASRProvisioningSnapshot(
+            models=(
+                LocalASRModelProvisioningState(
+                    model_id=LOCAL_QWEN_GPU_MODEL_ID,
+                    backend="gpu",
+                    integrity=self.integrity,
+                    operation=self.operation,
+                ),
+            ),
+            gpu_model_id=LOCAL_QWEN_GPU_MODEL_ID,
+        )
+
+    @property
+    def diagnostics(self) -> tuple[object, ...]:
+        return ()
+
+    async def inspect_gpu(
+        self,
+        *,
+        explicit_intent: bool,
+        verify_checksums: bool = False,
+    ) -> LocalASRProvisioningSnapshot:
+        self.inspect_gpu_calls.append((explicit_intent, verify_checksums))
+        return self.snapshot
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeGpuRuntime:
+    def __init__(
+        self,
+        sink,
+        *,
+        discovery_gate: asyncio.Event | None = None,
+        discovery_results: list[tuple[ASRWorkerDevice, ...] | BaseException] | None = None,
+    ) -> None:
+        self.sink = sink
+        self.discovery_gate = discovery_gate
+        self.discovery_results = discovery_results
+        self.state = "idle"
+        self.discovery_state = "idle"
+        self.active_channels = frozenset()
+        self.owners: dict[str, set[object]] = {}
+        self.pending_count = 0
+        self.worker_pid = None
+        self.last_failure_code = None
+        self.configured_device_id = None
+        self.startup_cleanup_snapshot = {
+            "pending_startups": 0,
+            "close_complete": True,
+            "cleanup_failures": [],
+        }
+        self.discovery_calls = 0
+        self.activation_calls: list[tuple[str, str]] = []
+        self.retry_calls = 0
+        self.close_calls = 0
+
+    async def emit(self, diagnostic: GpuASRDiagnostic) -> None:
+        await self.sink(diagnostic)
+
+    async def discover_devices(self) -> tuple[ASRWorkerDevice, ...]:
+        self.discovery_calls += 1
+        self.discovery_state = "pending"
+        await self.emit(GpuASRDiagnostic(kind="discovery_pending", fields={}))
+        if self.discovery_gate is not None:
+            await self.discovery_gate.wait()
+        if self.discovery_results is not None:
+            if not self.discovery_results:
+                raise AssertionError("unexpected extra GPU discovery")
+            result = self.discovery_results.pop(0)
+            if isinstance(result, BaseException):
+                raise result
+            self.discovery_state = "ready"
+            return result
+        self.discovery_state = "ready"
+        return (GPU_DEVICE,)
+
+    async def activate_channel(
+        self,
+        channel: str,
+        *,
+        owner: object,
+        model_path: Path,
+        model_id: str,
+        device_id: str,
+    ) -> ASRWorkerActivation:
+        _ = model_path, model_id
+        self.activation_calls.append((channel, device_id))
+        self.owners.setdefault(channel, set()).add(owner)
+        self.active_channels = frozenset({*self.active_channels, channel})
+        self.state = "ready"
+        self.worker_pid = 4242
+        self.configured_device_id = device_id
+        await self.emit(
+            GpuASRDiagnostic(
+                kind="activation_ready",
+                fields={
+                    "model": LOCAL_QWEN_GPU_MODEL_ID,
+                    "device": device_id,
+                    "model_load_seconds": 1.0,
+                    "warmup_seconds": 0.25,
+                },
+            )
+        )
+        return ASRWorkerActivation(
+            device=GPU_DEVICE,
+            model_load_seconds=1.0,
+            warmup_seconds=0.25,
+        )
+
+    async def retry(self) -> ASRWorkerActivation:
+        self.retry_calls += 1
+        self.state = "ready"
+        self.last_failure_code = None
+        return ASRWorkerActivation(
+            device=GPU_DEVICE,
+            model_load_seconds=1.0,
+            warmup_seconds=0.25,
+        )
+
+    async def submit(
+        self,
+        channel: str,
+        samples_f32: np.ndarray,
+        *,
+        speech_end_at: float,
+        language_hint: str | None = None,
+    ) -> ASRWorkerTranscription:
+        _ = channel, samples_f32, speech_end_at, language_hint
+        return ASRWorkerTranscription(
+            text="ok",
+            detected_language="en",
+            audio_seconds=1.0,
+            decode_seconds=0.1,
+            rtf=0.1,
+        )
+
+    async def deactivate_channel(self, channel: str, *, owner: object) -> None:
+        owners = self.owners.get(channel)
+        if owners is None or owner not in owners:
+            return
+        owners.remove(owner)
+        if owners:
+            return
+        self.owners.pop(channel)
+        self.active_channels = frozenset(self.owners)
+        if not self.active_channels:
+            self.worker_pid = None
+            self.state = "idle"
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        self.active_channels = frozenset()
+        self.owners.clear()
+        self.worker_pid = None
+        self.state = "closed"
+
+
+class FakeGpuRuntimeFactory:
+    def __init__(
+        self,
+        *,
+        discovery_gate: asyncio.Event | None = None,
+        discovery_results: list[tuple[ASRWorkerDevice, ...] | BaseException] | None = None,
+    ) -> None:
+        self.discovery_gate = discovery_gate
+        self.discovery_results = discovery_results
+        self.instances: list[FakeGpuRuntime] = []
+
+    def __call__(self, sink) -> FakeGpuRuntime:
+        results = None if self.discovery_results is None else list(self.discovery_results)
+        runtime = FakeGpuRuntime(
+            sink,
+            discovery_gate=self.discovery_gate,
+            discovery_results=results,
+        )
+        self.instances.append(runtime)
+        return runtime
+
+
+class FakeProvider:
+    def __init__(
+        self,
+        provider_id: str,
+        *,
+        gpu_runtime: FakeGpuRuntime,
+        channel: str,
+        gpu_device_id: str,
+    ) -> None:
+        self.provider_id = provider_id
+        self.gpu_runtime = gpu_runtime
+        self.channel = channel
+        self.gpu_device_id = gpu_device_id
+        self.is_at_utterance_boundary = True
+        self.warmup_calls = 0
+        self.close_calls = 0
+        self.close_backend_calls = 0
+        self.vad_events: list[object] = []
+        self.vad_gate: asyncio.Event | None = None
+        self.events_closed = asyncio.Event()
+
+    async def warmup(self) -> None:
+        self.warmup_calls += 1
+        if self.provider_id == "local_qwen_gpu":
+            await self.gpu_runtime.activate_channel(
+                self.channel,
+                owner=self,
+                model_path=Path("model.gguf"),
+                model_id=LOCAL_QWEN_GPU_MODEL_ID,
+                device_id=self.gpu_device_id,
+            )
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        self.events_closed.set()
+
+    async def close_backend(self) -> None:
+        self.close_backend_calls += 1
+        if self.provider_id == "local_qwen_gpu":
+            await self.gpu_runtime.deactivate_channel(self.channel, owner=self)
+
+    async def handle_vad_event(self, event: object) -> None:
+        self.vad_events.append(event)
+        if self.vad_gate is not None:
+            await self.vad_gate.wait()
+
+    async def events(self):
+        await self.events_closed.wait()
+        if False:
+            yield None
+
+
+class FakeProviderFactory:
+    def __init__(self) -> None:
+        self.requests: list[ProviderRuntimeBuildRequest] = []
+        self.providers: list[FakeProvider] = []
+        self.fail_next = False
+
+    async def create(
+        self,
+        request: ProviderRuntimeBuildRequest,
+        *,
+        gpu_runtime: FakeGpuRuntime,
+        on_terminal_failure=None,
+    ) -> FakeProvider:
+        _ = on_terminal_failure
+        self.requests.append(request)
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("provider secret payload")
+        provider = FakeProvider(
+            request.provider_id,
+            gpu_runtime=gpu_runtime,
+            channel=request.channel,
+            gpu_device_id=request.gpu_device_id,
+        )
+        self.providers.append(provider)
+        return provider
+
+
+def _owner(
+    *,
+    provisioning: FakeProvisioningPort | None = None,
+    gpu_factory: FakeGpuRuntimeFactory | None = None,
+    provider_factory: FakeProviderFactory | None = None,
+    state_changed=None,
+    diagnostic_sink=None,
+) -> tuple[
+    LocalASRProviderRuntimeOwner,
+    FakeProvisioningPort,
+    FakeGpuRuntimeFactory,
+    FakeProviderFactory,
+]:
+    provisioning = provisioning or FakeProvisioningPort()
+    gpu_factory = gpu_factory or FakeGpuRuntimeFactory()
+    provider_factory = provider_factory or FakeProviderFactory()
+    owner = LocalASRProviderRuntimeOwner(
+        provider_factory=provider_factory,
+        gpu_runtime_factory=gpu_factory,
+        provisioning=provisioning,
+        state_changed=state_changed,
+        diagnostic_sink=diagnostic_sink,
+    )
+    return owner, provisioning, gpu_factory, provider_factory
+
+
+async def _wait_until(predicate, *, timeout: float = 1.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError("timed out waiting for condition")
+        await asyncio.sleep(0)
+
+
+def test_build_request_and_snapshot_are_immutable() -> None:
+    request = ProviderRuntimeBuildRequest(config=_resolved_config("self"))
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner()
+    snapshot = owner.snapshot
+
+    with pytest.raises(FrozenInstanceError):
+        request.warmup = True
+    with pytest.raises(FrozenInstanceError):
+        snapshot.closed = True
+    with pytest.raises(ValueError, match="gpu_device_id"):
+        ProviderRuntimeBuildRequest(
+            config=_resolved_config("peer"),
+            gpu_device_id=" ",
+        )
+
+
+@pytest.mark.asyncio
+async def test_owner_constructs_replaces_and_closes_each_provider() -> None:
+    owner, provisioning, gpu_factory, provider_factory = _owner()
+    first = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "deepgram"),
+        warmup=True,
+    )
+    second = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "soniox"),
+        warmup=False,
+    )
+
+    first_result = await owner.replace_provider(first, start=False)
+    second_result = await owner.replace_provider(second, start=True)
+
+    assert first_result.status == "applied"
+    assert second_result.status == "applied"
+    assert second_result.previous_provider_id == "deepgram"
+    assert provider_factory.requests == [first, second]
+    assert provider_factory.providers[0].warmup_calls == 1
+    assert provider_factory.providers[0].close_calls == 0
+    assert provider_factory.providers[0].close_backend_calls == 1
+    assert owner.snapshot.channel_for("self").provider_id == "soniox"
+    assert owner.snapshot.channel_for("self").phase == "running"
+    assert provisioning.inspect_gpu_calls == []
+    assert gpu_factory.instances[0].discovery_calls == 0
+
+    await owner.close()
+    assert provider_factory.providers[1].close_calls == 0
+    assert provider_factory.providers[1].close_backend_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["self", "peer"])
+@pytest.mark.parametrize("mutation", ["replace_provider", "handoff_provider"])
+async def test_model_replacement_reports_completed_old_new_identity_without_eager_load(
+    channel: str, mutation: str
+) -> None:
+    observed = []
+    owner, _provisioning, _gpu_factory, provider_factory = _owner(diagnostic_sink=observed.append)
+    first = ProviderRuntimeBuildRequest(
+        config=replace(_resolved_config(channel, "local_cpu_auto"), source_language="en"),
+        model_id=ORUKEET_MODEL_ID,
+    )
+    second = ProviderRuntimeBuildRequest(
+        config=replace(_resolved_config(channel, "local_cpu_auto"), source_language="ko"),
+        model_id=FUN_ASR_MLT_NANO_MODEL_ID,
+    )
+    try:
+        await owner.replace_provider(first, start=False)
+        observed.clear()
+        result = await getattr(owner, mutation)(second, start=False)
+
+        assert result.status == "applied"
+        assert owner.snapshot.channel_for(channel).model_id == FUN_ASR_MLT_NANO_MODEL_ID
+        assert len(observed) == 1
+        diagnostic = observed[0]
+        assert diagnostic.channel == channel
+        assert diagnostic.previous_provider_id == diagnostic.provider_id == "local_cpu_auto"
+        assert diagnostic.previous_model_id == ORUKEET_MODEL_ID
+        assert diagnostic.model_id == FUN_ASR_MLT_NANO_MODEL_ID
+        assert diagnostic.previous_source_language == "en"
+        assert diagnostic.source_language == "ko"
+        assert diagnostic.outcome == "applied"
+        assert all(provider.warmup_calls == 0 for provider in provider_factory.providers)
+
+        observed.clear()
+        provider_factory.fail_next = True
+        failed = await getattr(owner, mutation)(first, start=False)
+
+        assert failed.status == "failed"
+        assert owner.snapshot.channel_for(channel).model_id == FUN_ASR_MLT_NANO_MODEL_ID
+        assert not any(diagnostic.outcome == "applied" for diagnostic in observed)
+    finally:
+        await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_generic_handoff_waits_for_channel_boundary_commit() -> None:
+    owner, _provisioning, _gpu_factory, provider_factory = _owner()
+    old_request = ProviderRuntimeBuildRequest(config=_resolved_config("self", "deepgram"))
+    next_request = ProviderRuntimeBuildRequest(config=_resolved_config("self", "soniox"))
+    await owner.replace_provider(old_request, start=False)
+    old_provider = provider_factory.providers[0]
+    old_provider.is_at_utterance_boundary = False
+
+    handoff = asyncio.create_task(
+        owner.handoff_provider(next_request, start=False),
+    )
+    await _wait_until(lambda: owner.snapshot.channel_for("self").pending_handoff)
+
+    assert handoff.done() is False
+    assert owner.snapshot.channel_for("self").provider_id == "deepgram"
+    assert not any(
+        diagnostic.event == "provider_handoff" and diagnostic.outcome == "applied"
+        for diagnostic in owner.diagnostics
+    )
+
+    await owner.commit_handoff("self")
+    result = await handoff
+
+    assert result.status == "applied"
+    assert result.previous_provider_id == "deepgram"
+    assert owner.snapshot.channel_for("self").provider_id == "soniox"
+    transitions = [
+        diagnostic for diagnostic in owner.diagnostics if diagnostic.event == "provider_handoff"
+    ]
+    assert len(transitions) == 1
+    assert transitions[0].previous_provider_id == "deepgram"
+    assert transitions[0].provider_id == "soniox"
+    await _wait_until(lambda: old_provider.close_backend_calls == 1)
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_owner_dispatches_warmup_and_vad_without_exposing_provider() -> None:
+    owner, _provisioning, _gpu_factory, provider_factory = _owner()
+    initial_options = LocalASRSessionOptions(
+        source_language="ko",
+        source_mode="manual",
+        language_hint="ko",
+    )
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_orukeet"),
+        model_id="orukeet-model",
+        session_options=initial_options,
+    )
+    await owner.replace_provider(request, start=False)
+    provider = provider_factory.providers[0]
+    event = object()
+
+    await owner.warmup_channel("self")
+    await owner.handle_vad_event("self", event)
+
+    channel = owner.snapshot.channel_for("self")
+    assert channel.provider_id == "local_orukeet"
+    assert channel.model_id == "orukeet-model"
+    assert channel.phase == "ready"
+    assert provider.warmup_calls == 1
+    assert provider.vad_events == [event]
+    assert not hasattr(owner.snapshot, "provider")
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attached_before_warmup", [False, True])
+async def test_abort_releases_loading_gpu_provider_before_readiness_and_allows_retry(
+    tmp_path: Path,
+    attached_before_warmup: bool,
+) -> None:
+    gate = asyncio.Event()
+    loading_client = FakeASRWorkerClient(activation_gate=gate)
+    replacement_client = FakeASRWorkerClient()
+    process_factory = FakeASRWorkerFactory(
+        [FakeASRWorkerClient(), loading_client, replacement_client]
+    )
+    runtimes = []
+
+    def create_runtime(sink):
+        runtime = SharedGpuASRRuntime(process_factory=process_factory, diagnostic_sink=sink)
+        runtimes.append(runtime)
+        return runtime
+
+    class ProviderFactory:
+        async def create(self, request, *, gpu_runtime, on_terminal_failure=None):
+            backend = LocalGpuSTTBackend(
+                runtime=gpu_runtime,
+                channel=request.channel,
+                model_path=tmp_path / "qwen3-asr-1.7b.gguf",
+                model_id=LOCAL_QWEN_GPU_MODEL_ID,
+                device_id=request.gpu_device_id,
+            )
+            return ScopedRecognitionEngine(
+                session_factory=lambda _settings, _epoch: backend.open_session(),
+                event_sink=lambda _event: None,
+                backend_prepare=backend.prepare,
+                backend_close=backend.close,
+            )
+
+    owner = LocalASRProviderRuntimeOwner(
+        provider_factory=ProviderFactory(),
+        gpu_runtime_factory=create_runtime,
+        provisioning=FakeProvisioningPort(),
+    )
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_qwen_gpu"),
+        model_id=LOCAL_QWEN_GPU_MODEL_ID,
+        gpu_device_id="vulkan:0",
+        warmup=not attached_before_warmup,
+    )
+    if attached_before_warmup:
+        result = await owner.replace_provider(request, start=False)
+        assert result.status == "applied"
+        preparing = asyncio.create_task(owner.warmup_channel("self"))
+    else:
+        preparing = asyncio.create_task(owner.replace_provider(request, start=False))
+    try:
+        await asyncio.wait_for(loading_client.activation_started.wait(), timeout=1)
+        await loading_client._events.put(
+            ASRWorkerEvent(
+                name="activation_progress",
+                request_id=None,
+                fields={"phase": "loading"},
+            )
+        )
+        await _wait_until(lambda: owner.snapshot.gpu.phase == "loading")
+
+        await asyncio.wait_for(owner.release_channel("self", mode="abort"), timeout=1)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(preparing, timeout=1)
+        assert not gate.is_set()
+        assert loading_client.is_closed
+        assert runtimes[0].state == GpuASRRuntimeState.STOPPED
+        snapshot = owner.snapshot
+        assert snapshot.channel_for("self").provider_id is None
+        assert snapshot.channel_for("self").phase == "inactive"
+        assert snapshot.gpu.phase == "inactive"
+        assert snapshot.gpu.worker_pid is None
+        assert snapshot.gpu.active_channels == frozenset()
+        assert snapshot.gpu.model_resident is False
+        assert snapshot.gpu.startup_cleanup["close_complete"] is True
+        assert not any(event.event == "activation_ready" for event in owner.diagnostics)
+
+        retry = ProviderRuntimeBuildRequest(
+            config=request.config,
+            model_id=LOCAL_QWEN_GPU_MODEL_ID,
+            gpu_device_id="vulkan:0",
+            warmup=True,
+        )
+        result = await asyncio.wait_for(owner.replace_provider(retry, start=False), timeout=1)
+        assert result.status == "applied"
+        assert owner.snapshot.gpu.phase == "ready"
+        assert owner.snapshot.gpu.model_resident is True
+        assert process_factory.modes == ["discovery", "persistent", "persistent"]
+    finally:
+        gate.set()
+        await owner.close()
+        await asyncio.gather(preparing, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_inactive_gpu_selection_does_not_discover_provision_or_start_worker() -> None:
+    owner, provisioning, gpu_factory, _provider_factory = _owner()
+
+    snapshot = await owner.inspect_gpu_readiness(
+        explicit_intent=False,
+        device_id="auto",
+    )
+
+    assert snapshot.gpu.phase == "inactive"
+    assert snapshot.gpu.worker_pid is None
+    assert provisioning.inspect_gpu_calls == []
+    assert gpu_factory.instances[0].discovery_calls == 0
+    assert gpu_factory.instances[0].activation_calls == []
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_gpu_readiness_uses_only_provisioning_port_and_low_vram_is_advisory() -> None:
+    owner, provisioning, gpu_factory, provider_factory = _owner()
+
+    snapshot = await owner.inspect_gpu_readiness(
+        explicit_intent=True,
+        device_id=GPU_DEVICE.device_id,
+    )
+
+    assert snapshot.gpu.phase == "available"
+    assert snapshot.gpu.devices == (GPU_DEVICE,)
+    assert snapshot.gpu.devices[0].memory_free_bytes == 1
+    assert provisioning.inspect_gpu_calls == [(True, False)]
+    assert gpu_factory.instances[0].activation_calls == []
+
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("peer", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=False,
+    )
+    result = await owner.replace_provider(request, start=False)
+
+    assert result.status == "applied"
+    assert provider_factory.providers[-1].gpu_runtime is gpu_factory.instances[0]
+    assert gpu_factory.instances[0].activation_calls == []
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_gpu_readiness_preserves_active_model_download_state() -> None:
+    provisioning = FakeProvisioningPort(integrity="missing", operation="downloading")
+    owner, _provisioning, gpu_factory, _provider_factory = _owner(provisioning=provisioning)
+
+    snapshot = await owner.inspect_gpu_readiness(
+        explicit_intent=True,
+        device_id=GPU_DEVICE.device_id,
+    )
+
+    assert snapshot.gpu.phase == "installing"
+    assert snapshot.gpu.failure_code == "downloading"
+    assert gpu_factory.instances[0].activation_calls == []
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_gpu_asset_rejects_construction_without_fallback() -> None:
+    provisioning = FakeProvisioningPort(integrity="missing")
+    owner, _provisioning, gpu_factory, provider_factory = _owner(provisioning=provisioning)
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_qwen_gpu"),
+        warmup=True,
+    )
+
+    result = await owner.replace_provider(request, start=True)
+
+    assert result.status == "failed"
+    assert provider_factory.requests == []
+    assert owner.snapshot.channel_for("self").provider_id is None
+    assert owner.snapshot.gpu.phase == "not_installed"
+    assert gpu_factory.instances[0].activation_calls == []
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_build_preserves_current_provider_and_excludes_raw_error_text() -> None:
+    owner, _provisioning, _gpu_factory, provider_factory = _owner()
+    current = ProviderRuntimeBuildRequest(config=_resolved_config("self", "deepgram"))
+    replacement = ProviderRuntimeBuildRequest(config=_resolved_config("self", "soniox"))
+    await owner.replace_provider(current, start=True)
+    provider_factory.fail_next = True
+
+    result = await owner.handoff_provider(replacement, start=True)
+
+    assert result.status == "failed"
+    assert owner.snapshot.channel_for("self").provider_id == "deepgram"
+    assert owner.snapshot.channel_for("self").phase == "running"
+    assert provider_factory.providers[0].close_backend_calls == 0
+    assert "provider secret payload" not in repr(owner.diagnostics[-1])
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_gpu_discovery_is_single_flight_and_exposes_pending_state() -> None:
+    gate = asyncio.Event()
+    gpu_factory = FakeGpuRuntimeFactory(discovery_gate=gate)
+    observed_phases: list[str] = []
+
+    def state_changed(snapshot) -> None:
+        observed_phases.append(snapshot.gpu.phase)
+
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner(
+        gpu_factory=gpu_factory,
+        state_changed=state_changed,
+    )
+    first = asyncio.create_task(owner.discover_gpu())
+    await _wait_until(lambda: gpu_factory.instances[0].discovery_calls == 1)
+    second = asyncio.create_task(owner.discover_gpu())
+
+    assert gpu_factory.instances[0].discovery_calls == 1
+    assert "discovery_pending" in observed_phases
+
+    gate.set()
+    first_snapshot, second_snapshot = await asyncio.gather(first, second)
+
+    assert first_snapshot.gpu.devices == (GPU_DEVICE,)
+    assert second_snapshot.gpu.devices == (GPU_DEVICE,)
+    assert gpu_factory.instances[0].discovery_calls == 1
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_gpu_discovery_is_not_cached_and_retries_on_next_intent() -> None:
+    gpu_factory = FakeGpuRuntimeFactory(
+        discovery_results=[
+            RuntimeError("worker_process_exited"),
+            (GPU_DEVICE,),
+        ]
+    )
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner(gpu_factory=gpu_factory)
+
+    first = await owner.discover_gpu()
+    second = await owner.discover_gpu()
+
+    assert first.gpu.phase == "failed"
+    assert first.gpu.failure_code == "RuntimeError"
+    assert second.gpu.phase == "idle"
+    assert second.gpu.devices == (GPU_DEVICE,)
+    assert gpu_factory.instances[0].discovery_calls == 2
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_empty_gpu_discovery_is_unsupported_and_cached() -> None:
+    gpu_factory = FakeGpuRuntimeFactory(discovery_results=[()])
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner(gpu_factory=gpu_factory)
+
+    first = await owner.discover_gpu()
+    second = await owner.discover_gpu()
+
+    assert first.gpu.phase == "unsupported"
+    assert first.gpu.failure_code == "no_supported_gpu"
+    assert second.gpu.phase == "unsupported"
+    assert gpu_factory.instances[0].discovery_calls == 1
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_capability_is_completed_no_gpu_answer() -> None:
+    gpu_factory = FakeGpuRuntimeFactory(
+        discovery_results=[ASRWorkerRequestError("unsupported_capability")]
+    )
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner(gpu_factory=gpu_factory)
+
+    first = await owner.discover_gpu()
+    second = await owner.discover_gpu()
+
+    assert first.gpu.phase == "unsupported"
+    assert first.gpu.failure_code == "no_supported_gpu"
+    assert second.gpu.phase == "unsupported"
+    assert gpu_factory.instances[0].discovery_calls == 1
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_inspect_gpu_readiness_does_not_rewrite_failed_discovery_as_unsupported() -> None:
+    gpu_factory = FakeGpuRuntimeFactory(
+        discovery_results=[
+            RuntimeError("worker_process_exited"),
+            RuntimeError("worker_process_exited"),
+        ]
+    )
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner(gpu_factory=gpu_factory)
+
+    await owner.discover_gpu()
+    snapshot = await owner.inspect_gpu_readiness(
+        explicit_intent=True,
+        device_id="auto",
+    )
+
+    assert snapshot.gpu.phase == "failed"
+    assert snapshot.gpu.failure_code == "RuntimeError"
+    assert gpu_factory.instances[0].discovery_calls == 2
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_inspect_gpu_readiness_retries_incomplete_discovery_failure() -> None:
+    gpu_factory = FakeGpuRuntimeFactory(
+        discovery_results=[
+            RuntimeError("worker_process_exited"),
+            (GPU_DEVICE,),
+        ]
+    )
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner(gpu_factory=gpu_factory)
+
+    first = await owner.discover_gpu()
+    snapshot = await owner.inspect_gpu_readiness(
+        explicit_intent=True,
+        device_id=GPU_DEVICE.device_id,
+    )
+
+    assert first.gpu.phase == "failed"
+    assert snapshot.gpu.phase == "available"
+    assert snapshot.gpu.devices == (GPU_DEVICE,)
+    assert gpu_factory.instances[0].discovery_calls == 2
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_manual_recovery_is_explicit_quiesced_and_never_builds_cpu_fallback() -> None:
+    owner, _provisioning, gpu_factory, provider_factory = _owner()
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+    result = await owner.replace_provider(request, start=True)
+    runtime = gpu_factory.instances[0]
+
+    assert result.status == "applied"
+    assert runtime.retry_calls == 0
+    assert result.snapshot.gpu.phase == "ready"
+    runtime.state = "failed"
+    runtime.last_failure_code = "decode_failed"
+
+    quiesced: list[tuple[str, ...]] = []
+
+    async def quiesce(channels: tuple[str, ...]) -> None:
+        assert owner.snapshot.gpu.active_channels == frozenset({"self"})
+        quiesced.append(channels)
+
+    snapshot = await owner.recover_gpu(
+        ProviderRuntimeGpuRecoveryRequest(
+            device_id=GPU_DEVICE.device_id,
+            channels=(ProviderRuntimeRecoveryChannel(request=request, start=True),),
+            reason="manual_retry",
+        ),
+        quiesce=quiesce,
+    )
+
+    assert quiesced == [("self",)]
+    assert runtime.retry_calls == 0
+    assert runtime.close_calls == 1
+    assert len(gpu_factory.instances) == 2
+    assert snapshot.gpu.phase == "ready"
+    assert [request.provider_id for request in provider_factory.requests] == [
+        "local_qwen_gpu",
+        "local_qwen_gpu",
+    ]
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_active_gpu_device_change_requires_owner_quiescence() -> None:
+    owner, _provisioning, gpu_factory, provider_factory = _owner()
+    current = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_qwen_gpu"),
+        gpu_device_id="auto",
+        warmup=True,
+    )
+    await owner.replace_provider(current, start=True)
+    requested = ProviderRuntimeBuildRequest(
+        config=_resolved_config("peer", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+
+    result = await owner.replace_provider(requested, start=True)
+
+    assert result.status == "failed"
+    assert result.snapshot.gpu.failure_code == "device_change_requires_quiesce"
+    assert owner.diagnostics[-1].failure_code == "device_change_requires_quiesce"
+    assert owner.snapshot.channel_for("peer").provider_id is None
+    assert len(provider_factory.requests) == 1
+    assert gpu_factory.instances[0].active_channels == frozenset({"self"})
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_self_and_peer_cloud_setup_overlap_without_cross_channel_eviction() -> None:
+    both_entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class BarrierFactory(FakeProviderFactory):
+        async def create(self, request, *, gpu_runtime, on_terminal_failure=None):
+            self.requests.append(request)
+            if len(self.requests) == 2:
+                both_entered.set()
+            await release.wait()
+            provider = FakeProvider(
+                request.provider_id,
+                gpu_runtime=gpu_runtime,
+                channel=request.channel,
+                gpu_device_id=request.gpu_device_id,
+            )
+            self.providers.append(provider)
+            return provider
+
+    factory = BarrierFactory()
+    owner, _provisioning, gpu_factory, _provider_factory = _owner(provider_factory=factory)
+    self_setup = asyncio.create_task(
+        owner.replace_provider(
+            ProviderRuntimeBuildRequest(config=_resolved_config("self", "deepgram")),
+            start=True,
+        )
+    )
+    peer_setup = asyncio.create_task(
+        owner.replace_provider(
+            ProviderRuntimeBuildRequest(config=_resolved_config("peer", "soniox")),
+            start=True,
+        )
+    )
+
+    await asyncio.wait_for(both_entered.wait(), timeout=0.5)
+    assert not self_setup.done()
+    assert not peer_setup.done()
+    assert gpu_factory.instances[0].active_channels == frozenset()
+
+    release.set()
+    self_result, peer_result = await asyncio.gather(self_setup, peer_setup)
+    assert self_result.status == peer_result.status == "applied"
+    assert owner.snapshot.channel_for("self").provider_id == "deepgram"
+    assert owner.snapshot.channel_for("peer").provider_id == "soniox"
+
+    await owner.release_channel("peer", mode="abort")
+    assert owner.snapshot.channel_for("self").provider_id == "deepgram"
+    assert factory.providers[0].close_backend_calls + factory.providers[1].close_backend_calls == 1
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_shared_gpu_keeps_peer_and_self_owned_during_self_stall_and_peer_release() -> None:
+    owner, _provisioning, gpu_factory, provider_factory = _owner()
+    self_request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+    peer_request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("peer", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+
+    self_result, peer_result = await asyncio.gather(
+        owner.replace_provider(self_request, start=True),
+        owner.replace_provider(peer_request, start=True),
+    )
+    runtime = gpu_factory.instances[0]
+    providers = {provider.channel: provider for provider in provider_factory.providers}
+    self_provider = providers["self"]
+    peer_provider = providers["peer"]
+    self_provider.vad_gate = asyncio.Event()
+    self_event = object()
+    self_dispatch = asyncio.create_task(owner.handle_vad_event("self", self_event))
+    await _wait_until(lambda: len(self_provider.vad_events) == 1)
+
+    await asyncio.wait_for(owner.release_channel("peer", mode="abort"), timeout=0.5)
+
+    assert self_result.status == peer_result.status == "applied"
+    assert len(gpu_factory.instances) == 1
+    assert len(runtime.activation_calls) == 2
+    assert set(runtime.activation_calls) == {
+        ("self", GPU_DEVICE.device_id),
+        ("peer", GPU_DEVICE.device_id),
+    }
+    assert runtime.active_channels == frozenset({"self"})
+    assert self_provider.vad_events == [self_event]
+    assert self_provider.close_backend_calls == 0
+    assert peer_provider.close_backend_calls == 1
+
+    self_provider.vad_gate.set()
+    await self_dispatch
+    await owner.close()
+    assert runtime.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_retry_creates_one_fresh_runtime_after_full_quiesce() -> None:
+    owner, _provisioning, gpu_factory, provider_factory = _owner()
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("peer", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+    await owner.replace_provider(request, start=False)
+    await owner.release_channel("peer", mode="abort")
+    failed_runtime = gpu_factory.instances[0]
+    failed_runtime.state = "failed"
+    failed_runtime.last_failure_code = "worker_failed"
+
+    snapshot = await owner.recover_gpu(
+        ProviderRuntimeGpuRecoveryRequest(
+            device_id=GPU_DEVICE.device_id,
+            channels=(ProviderRuntimeRecoveryChannel(request=request, start=False),),
+            reason="manual_retry",
+        )
+    )
+
+    assert len(gpu_factory.instances) == 2
+    assert failed_runtime.close_calls == 1
+    assert gpu_factory.instances[1].active_channels == frozenset({"peer"})
+    assert snapshot.gpu.model_resident is True
+    assert [request.provider_id for request in provider_factory.requests] == [
+        "local_qwen_gpu",
+        "local_qwen_gpu",
+    ]
+    diagnostic_count = len(owner.diagnostics)
+    await failed_runtime.emit(
+        GpuASRDiagnostic(
+            kind="worker_failed",
+            fields={"failure": "late_old_runtime_failure"},
+        )
+    )
+    assert owner.snapshot.gpu.phase == "ready"
+    assert len(owner.diagnostics) == diagnostic_count
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_gpu_recovery_unavailability_quiesces_and_releases_previous_runtime() -> None:
+    owner, provisioning, gpu_factory, provider_factory = _owner()
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+    await owner.replace_provider(request, start=True)
+    old_runtime = gpu_factory.instances[0]
+    provisioning.integrity = "missing"
+    quiesced: list[tuple[str, ...]] = []
+
+    async def quiesce(channels: tuple[str, ...]) -> None:
+        quiesced.append(channels)
+
+    snapshot = await owner.recover_gpu(
+        ProviderRuntimeGpuRecoveryRequest(
+            device_id=GPU_DEVICE.device_id,
+            channels=(ProviderRuntimeRecoveryChannel(request=request, start=True),),
+            reason="settings_restart",
+        ),
+        quiesce=quiesce,
+    )
+
+    assert quiesced == [("self",)]
+    assert snapshot.gpu.phase == "not_installed"
+    assert snapshot.channel_for("self").provider_id is None
+    assert old_runtime.close_calls == 1
+    assert len(gpu_factory.instances) == 2
+    assert gpu_factory.instances[1].active_channels == frozenset()
+    assert len(provider_factory.requests) == 1
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_gpu_recovery_build_failure_aborts_partial_resources_and_keeps_retryable_owner() -> (
+    None
+):
+    owner, _provisioning, gpu_factory, provider_factory = _owner()
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("peer", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+    await owner.replace_provider(request, start=False)
+    provider_factory.fail_next = True
+
+    with pytest.raises(RuntimeError, match="GPU provider recovery failed for peer"):
+        await owner.recover_gpu(
+            ProviderRuntimeGpuRecoveryRequest(
+                device_id=GPU_DEVICE.device_id,
+                channels=(ProviderRuntimeRecoveryChannel(request=request, start=False),),
+                reason="manual_retry",
+            )
+        )
+
+    assert owner.snapshot.gpu.phase == "failed"
+    assert owner.snapshot.channel_for("peer").provider_id is None
+    assert all(runtime.active_channels == frozenset() for runtime in gpu_factory.instances)
+    assert len(gpu_factory.instances) == 3
+
+    snapshot = await owner.recover_gpu(
+        ProviderRuntimeGpuRecoveryRequest(
+            device_id=GPU_DEVICE.device_id,
+            channels=(ProviderRuntimeRecoveryChannel(request=request, start=False),),
+            reason="manual_retry",
+        )
+    )
+
+    assert snapshot.gpu.phase == "ready"
+    assert snapshot.channel_for("peer").has_resources
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_gpu_recovery_commands_are_serialized_by_owner() -> None:
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner()
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+    recovery = ProviderRuntimeGpuRecoveryRequest(
+        device_id=GPU_DEVICE.device_id,
+        channels=(ProviderRuntimeRecoveryChannel(request=request, start=True),),
+        reason="manual_retry",
+    )
+    first_entered = asyncio.Event()
+    allow_first = asyncio.Event()
+    order: list[str] = []
+
+    async def first_quiesce(_channels: tuple[str, ...]) -> None:
+        order.append("first")
+        first_entered.set()
+        await allow_first.wait()
+
+    async def second_quiesce(_channels: tuple[str, ...]) -> None:
+        order.append("second")
+
+    first = asyncio.create_task(owner.recover_gpu(recovery, quiesce=first_quiesce))
+    await first_entered.wait()
+    second = asyncio.create_task(owner.recover_gpu(recovery, quiesce=second_quiesce))
+    await asyncio.sleep(0)
+
+    assert order == ["first"]
+
+    allow_first.set()
+    await asyncio.gather(first, second)
+
+    assert order == ["first", "second"]
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_gpu_diagnostics_copy_only_safe_lifecycle_fields() -> None:
+    observed = []
+    owner, _provisioning, gpu_factory, _provider_factory = _owner(diagnostic_sink=observed.append)
+    runtime = gpu_factory.instances[0]
+
+    await runtime.emit(
+        GpuASRDiagnostic(
+            kind="worker_failed",
+            fields={
+                "failure": "worker_exit",
+                "exit_code": 7,
+                "transcript": "private user speech",
+                "auth_token": "secret token",
+                "audio_path": "C:/Users/private/audio.wav",
+            },
+        )
+    )
+
+    diagnostic = owner.diagnostics[-1]
+    assert diagnostic.event == "worker_failed"
+    assert diagnostic.failure_code == "worker_exit"
+    assert diagnostic.worker_exit_code == 7
+    assert "private user speech" not in repr(diagnostic)
+    assert "secret token" not in repr(diagnostic)
+    assert "C:/Users/private/audio.wav" not in repr(diagnostic)
+    assert observed[-1] == diagnostic
+
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_state_and_diagnostic_sink_failures_cannot_break_owner_lifecycle() -> None:
+    def failing_state_sink(_snapshot) -> None:
+        raise RuntimeError("private state sink payload")
+
+    async def failing_diagnostic_sink(_diagnostic) -> None:
+        raise RuntimeError("private diagnostic sink payload")
+
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner(
+        state_changed=failing_state_sink,
+        diagnostic_sink=failing_diagnostic_sink,
+    )
+    request = ProviderRuntimeBuildRequest(config=_resolved_config("self", "deepgram"))
+
+    result = await owner.replace_provider(request, start=True)
+    await owner.close()
+
+    assert result.status == "applied"
+    assert owner.snapshot.closed is True
+    events = [diagnostic.event for diagnostic in owner.diagnostics]
+    assert "state_changed_sink" in events
+    assert "diagnostic_sink" in events
+    assert "private state sink payload" not in repr(owner.diagnostics)
+    assert "private diagnostic sink payload" not in repr(owner.diagnostics)
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_pending_handoff_and_awaits_all_owned_resources() -> None:
+    owner, _provisioning, gpu_factory, provider_factory = _owner()
+    old_request = ProviderRuntimeBuildRequest(config=_resolved_config("peer", "deepgram"))
+    next_request = ProviderRuntimeBuildRequest(config=_resolved_config("peer", "soniox"))
+    await owner.replace_provider(old_request, start=False)
+    provider_factory.providers[0].is_at_utterance_boundary = False
+    handoff = asyncio.create_task(owner.handoff_provider(next_request, start=False))
+    await _wait_until(lambda: owner.snapshot.channel_for("peer").pending_handoff)
+
+    await owner.close()
+    with contextlib.suppress(asyncio.CancelledError):
+        await handoff
+    await owner.close()
+
+    assert handoff.done()
+    assert owner.snapshot.closed is True
+    assert owner.snapshot.channel_for("peer").pending_handoff is False
+    assert provider_factory.providers[0].close_backend_calls == 1
+    assert provider_factory.providers[1].close_backend_calls == 1
+    assert gpu_factory.instances[0].close_calls == 1
+    with pytest.raises(RuntimeError, match="closed"):
+        await owner.discover_gpu()
+
+
+@pytest.mark.asyncio
+async def test_close_retains_failed_pending_candidate_cleanup_for_retry() -> None:
+    owner, _provisioning, _gpu_factory, provider_factory = _owner()
+    old_request = ProviderRuntimeBuildRequest(config=_resolved_config("peer", "deepgram"))
+    next_request = ProviderRuntimeBuildRequest(config=_resolved_config("peer", "soniox"))
+    await owner.replace_provider(old_request, start=False)
+    provider_factory.providers[0].is_at_utterance_boundary = False
+    handoff = asyncio.create_task(owner.handoff_provider(next_request, start=False))
+    await _wait_until(lambda: owner.snapshot.channel_for("peer").pending_handoff)
+    candidate = provider_factory.providers[1]
+    close_allowed = False
+    original_close_backend = candidate.close_backend
+
+    async def failing_close_backend() -> None:
+        if not close_allowed:
+            candidate.close_backend_calls += 1
+            raise RuntimeError("pending candidate close failed")
+        await original_close_backend()
+
+    candidate.close_backend = failing_close_backend
+
+    with pytest.raises(ExceptionGroup, match="provider runtime close failed"):
+        await owner.close()
+
+    assert handoff.done()
+    assert owner._close_complete is False
+    assert owner._pending_candidates == {"peer": candidate}
+    assert owner._pending_requests == {"peer": next_request}
+    with pytest.raises(RuntimeError, match="closed"):
+        await owner.start()
+
+    close_allowed = True
+    await owner.close()
+
+    assert owner._close_complete is True
+    assert owner._pending_candidates == {}
+    assert owner._pending_requests == {}
+    assert candidate.close_backend_calls >= 3
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_in_flight_provider_execution() -> None:
+    owner, _provisioning, _gpu_factory, provider_factory = _owner()
+    request = ProviderRuntimeBuildRequest(config=_resolved_config("self", "deepgram"))
+    await owner.replace_provider(request, start=True)
+    provider = provider_factory.providers[0]
+    provider.vad_gate = asyncio.Event()
+    execution = asyncio.create_task(owner.handle_vad_event("self", object()))
+    await _wait_until(lambda: bool(provider.vad_events))
+
+    await owner.close()
+
+    assert execution.cancelled()
+    assert provider.close_backend_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_owner_serialized_gpu_recovery_and_finishes_cleanup() -> None:
+    owner, _provisioning, gpu_factory, provider_factory = _owner()
+    request = ProviderRuntimeBuildRequest(
+        config=_resolved_config("self", "local_qwen_gpu"),
+        gpu_device_id=GPU_DEVICE.device_id,
+        warmup=True,
+    )
+    await owner.replace_provider(request, start=True)
+    quiesce_entered = asyncio.Event()
+
+    async def quiesce(_channels: tuple[str, ...]) -> None:
+        quiesce_entered.set()
+        await asyncio.Event().wait()
+
+    recovery = asyncio.create_task(
+        owner.recover_gpu(
+            ProviderRuntimeGpuRecoveryRequest(
+                device_id=GPU_DEVICE.device_id,
+                channels=(ProviderRuntimeRecoveryChannel(request=request, start=True),),
+                reason="manual_retry",
+            ),
+            quiesce=quiesce,
+        )
+    )
+    await quiesce_entered.wait()
+
+    await owner.close()
+
+    with pytest.raises(asyncio.CancelledError):
+        await recovery
+    assert owner.snapshot.closed is True
+    assert provider_factory.providers[0].close_backend_calls == 1
+    assert gpu_factory.instances[0].close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_close_failure_is_retryable_without_reopening_ingress() -> None:
+    owner, _provisioning, gpu_factory, provider_factory = _owner()
+    request = ProviderRuntimeBuildRequest(config=_resolved_config("self", "deepgram"))
+    await owner.replace_provider(request, start=True)
+    runtime = gpu_factory.instances[0]
+    original_close = runtime.close
+    close_attempts = 0
+
+    async def flaky_close() -> None:
+        nonlocal close_attempts
+        close_attempts += 1
+        if close_attempts == 1:
+            raise RuntimeError("worker close failed")
+        await original_close()
+
+    runtime.close = flaky_close
+
+    with pytest.raises(ExceptionGroup, match="provider runtime close failed"):
+        await owner.close()
+
+    assert owner.snapshot.closed is True
+    with pytest.raises(RuntimeError, match="closed"):
+        await owner.start()
+
+    await owner.close()
+
+    assert close_attempts == 2
+    assert runtime.close_calls == 1
+    assert provider_factory.providers[0].close_backend_calls == 1
+
+
+class FakeScopedProvider:
+    def __init__(self, scope: tuple[object, ...]) -> None:
+        self.scoped_settings_scope = scope
+        self.retain_for_scoped_dispatch = False
+        self.is_at_utterance_boundary = True
+        self.events: list[OwnedVadEvent] = []
+        self.rejections: list[tuple[OwnedVadEvent, str, str]] = []
+        self.failures: list[tuple[OwnedVadEvent, str]] = []
+        self.close_backend_calls = 0
+        self.cleanup_debt = 0
+        self.close_calls = 0
+
+    def bind_event_sink(self, _sink) -> None:
+        return None
+
+    async def handle_owned_vad_event(self, event: OwnedVadEvent) -> None:
+        self.events.append(event)
+        self.retain_for_scoped_dispatch = True
+
+    async def reject_owned_segment(
+        self,
+        event: OwnedVadEvent,
+        *,
+        reason: str,
+        outcome: str,
+    ) -> None:
+        self.rejections.append((event, reason, outcome))
+        self.retain_for_scoped_dispatch = True
+
+    async def fail_owned_segment(
+        self,
+        event: OwnedVadEvent,
+        *,
+        reason: str,
+    ) -> None:
+        self.failures.append((event, reason))
+        self.retain_for_scoped_dispatch = True
+
+    async def wait_for_event_ingress_drain(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+    async def close_backend(self) -> None:
+        self.close_backend_calls += 1
+
+
+def _owned_event(scope: tuple[object, ...], order: int) -> OwnedVadEvent:
+    provider_id, provider_signature, runtime_signature = scope
+    settings = AudioSegmentSettingsSnapshot(
+        provider_id=str(provider_id),
+        provider_signature=provider_signature,
+        runtime_signature=runtime_signature,
+        source_mode="fixed",
+        source_language="en",
+        expected_languages=("en",),
+        target_sample_rate_hz=16000,
+        vad_speech_threshold=0.5,
+        vad_hangover_ms=800,
+        vad_pre_roll_ms=320,
+    )
+    segment = AudioSegmentSnapshot(
+        identity=AudioSegmentIdentity(
+            activation_generation=1,
+            segment_order=order,
+            segment_id=uuid4(),
+            capture_epoch=1,
+        ),
+        settings=settings,
+        content_ranges=(),
+        context_ranges=(),
+        failed_ranges=(),
+        content_sample_count=0,
+        context_sample_count=0,
+        failed_normalized_sample_count=0,
+        failed_source_sample_count=0,
+        prefix_context_sample_count=0,
+        synthetic_context_sample_count=0,
+        genuine_onset=True,
+        state="sealed",
+        opened_at_monotonic_s=0.0,
+        sealed_at_monotonic_s=0.1,
+        seal_reason="silence",
+    )
+    return OwnedVadEvent(event=object(), segment=segment)
+
+
+@pytest.mark.asyncio
+async def test_peer_handoff_waits_for_and_accepts_peer_boundary_commit() -> None:
+    owner, _provisioning, _gpu_factory, provider_factory = _owner()
+    old_request = ProviderRuntimeBuildRequest(config=_resolved_config("peer", "soniox"))
+    next_request = ProviderRuntimeBuildRequest(config=_resolved_config("peer", "deepgram"))
+    await owner.replace_provider(old_request, start=True)
+    old_provider = provider_factory.providers[0]
+    old_provider.is_at_utterance_boundary = False
+
+    handoff = asyncio.create_task(owner.handoff_provider(next_request, start=True))
+    await _wait_until(lambda: owner.snapshot.channel_for("peer").pending_handoff)
+
+    assert handoff.done() is False
+    assert owner.snapshot.channel_for("peer").provider_id == "soniox"
+    with pytest.raises(ValueError, match="self-only"):
+        await owner.handle_vad_event("peer", object())
+
+    await owner.commit_handoff("peer")
+    result = await handoff
+
+    assert result.status == "applied"
+    assert result.previous_provider_id == "soniox"
+    assert owner.snapshot.channel_for("peer").provider_id == "deepgram"
+    await _wait_until(lambda: old_provider.close_backend_calls == 1)
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_vad_routing_preserves_old_configuration_until_ordered_handoff() -> None:
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner()
+    old_scope = ("deepgram", ("old",), ("old-runtime",))
+    new_scope = ("deepgram", ("new",), ("new-runtime",))
+    old = FakeScopedProvider(old_scope)
+    new = FakeScopedProvider(new_scope)
+    await owner.start()
+    await owner.handoff_prebuilt_provider("peer", old, start=True)
+    first_old = _owned_event(old_scope, 1)
+    queued_old = _owned_event(old_scope, 2)
+    first_new = _owned_event(new_scope, 3)
+
+    with pytest.raises(RuntimeError, match="no self provider"):
+        await owner.handle_owned_vad_event("self", first_old)
+    await owner.handle_owned_vad_event("peer", first_old)
+    await owner.handoff_prebuilt_provider("peer", new, start=True)
+    await owner.handle_owned_vad_event("peer", queued_old)
+    await owner.reject_owned_segment(
+        "peer",
+        queued_old,
+        reason="recognition_admission_timeout",
+        outcome="expired",
+    )
+    await owner.handle_owned_vad_event("peer", first_new)
+    await owner.fail_owned_segment(
+        "peer",
+        first_new,
+        reason="buffer_exhausted",
+    )
+    await _wait_until(lambda: old.close_backend_calls == 1)
+    assert old.events == [first_old, queued_old]
+    assert new.events == [first_new]
+    assert old.rejections == [(queued_old, "recognition_admission_timeout", "expired")]
+    assert new.failures == [(first_new, "buffer_exhausted")]
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_retained_scoped_engine_receives_pending_fact_from_blocked_peer_guard() -> None:
+    class Session:
+        allows_interim_timeout_fallback = False
+
+        def __init__(self) -> None:
+            self.events = STTProviderEventBuffer()
+            self.requests: list[STTProviderTurnRequest] = []
+            self.close_calls = 0
+
+        async def begin_turn(self, request: STTProviderTurnRequest) -> None:
+            self.requests.append(request)
+
+        async def send_turn_audio(self, _identity, _pcm16le, **_kwargs) -> None:
+            return None
+
+        async def seal_turn(self, identity, **_kwargs) -> None:
+            self.events.put(
+                STTProviderTurnTerminal(
+                    identity=identity,
+                    outcome="empty",
+                    text_authority="authoritative",
+                    epoch_disposition="reuse",
+                )
+            )
+
+        async def abort_turn(self, _identity, **_kwargs) -> None:
+            return None
+
+        async def turn_events(self):
+            async for event in self.events.events():
+                yield event
+
+        async def stop(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            self.close_calls += 1
+            self.events.close()
+
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner()
+    old_settings = AudioSegmentSettingsSnapshot(
+        provider_id="deepgram",
+        provider_signature=("old",),
+        runtime_signature=("old-runtime",),
+        source_mode="fixed",
+        source_language="en",
+        expected_languages=("en",),
+        target_sample_rate_hz=16000,
+        vad_speech_threshold=0.5,
+        vad_hangover_ms=800,
+        vad_pre_roll_ms=320,
+    )
+    new_scope = ("deepgram", ("new",), ("new-runtime",))
+    now = [0.0]
+    sessions: list[Session] = []
+
+    async def open_session(_settings, _epoch):
+        session = Session()
+        sessions.append(session)
+        return session
+
+    old = ScopedRecognitionEngine(
+        session_factory=open_session,
+        event_sink=lambda _event: None,
+        accepted_settings_scope=(
+            old_settings.provider_id,
+            old_settings.provider_signature,
+            old_settings.runtime_signature,
+        ),
+        monotonic_clock=lambda: now[0],
+        watchdog_resolver=lambda _settings: STTRecognitionWatchdogs(
+            idle_timeout_s=0.01,
+        ),
+    )
+    new = FakeScopedProvider(new_scope)
+    ledger = PeerAudioSegmentLedger(activation_generation=1, settings=old_settings)
+    first_id = uuid4()
+    first_start = ledger.observe_vad_event(
+        SpeechStart(
+            first_id,
+            pre_roll=np.empty((0,), dtype=np.float32),
+            chunk=np.ones((8,), dtype=np.float32),
+        ),
+        now_monotonic_s=0.0,
+    )
+    first_end = ledger.observe_vad_event(
+        SpeechEnd(first_id),
+        now_monotonic_s=0.01,
+    )
+
+    await owner.start()
+    await owner.handoff_prebuilt_provider("peer", old, start=True)
+    await owner.handle_owned_vad_event("peer", first_start)
+    await owner.handle_owned_vad_event("peer", first_end)
+    await owner.handoff_prebuilt_provider("peer", new, start=True)
+
+    ready = asyncio.Event()
+
+    queued_ledger = PeerAudioSegmentLedger(activation_generation=1, settings=old_settings)
+
+    class CaptureRuntime:
+        segment_ledger = queued_ledger
+
+        def is_current_generation(self, generation: int) -> bool:
+            return generation == 1
+
+    class Sink:
+        async def handle_owned_vad_event(self, event: OwnedVadEvent) -> None:
+            await owner.handle_owned_vad_event("peer", event)
+
+        async def observe_pending_source_work(self, *, pending: bool) -> None:
+            await owner.observe_pending_source_work("peer", pending=pending)
+
+    guard = _GenerationGuardedVadSink(
+        sink=Sink(),
+        runtime=CaptureRuntime(),
+        capture_generation=_CaptureGeneration(1),
+        provider_ingress_ready=ready,
+    )
+    queued_id = uuid4()
+    queued_start = queued_ledger.observe_vad_event(
+        SpeechStart(
+            queued_id,
+            pre_roll=np.empty((0,), dtype=np.float32),
+            chunk=np.ones((8,), dtype=np.float32),
+        ),
+        now_monotonic_s=0.02,
+    )
+    await guard.handle_owned_vad_event(queued_start)
+    now[0] = 180.0
+    await asyncio.sleep(0.03)
+
+    assert sessions[0].close_calls == 0
+    ready.set()
+    await guard.finish()
+    assert len(sessions) == 1
+    assert len(sessions[0].requests) == 2
+    await owner.close()
+
+
+@pytest.mark.asyncio
+async def test_scoped_rotation_waits_for_old_physical_cleanup_before_new_epoch() -> None:
+    owner, _provisioning, _gpu_factory, _provider_factory = _owner()
+    old_scope = ("deepgram", ("old",), ("old-runtime",))
+    new_scope = ("deepgram", ("new",), ("new-runtime",))
+    old = FakeScopedProvider(old_scope)
+    new = FakeScopedProvider(new_scope)
+    await owner.start()
+    await owner.handoff_prebuilt_provider("peer", old, start=True)
+    await owner.handle_owned_vad_event("peer", _owned_event(old_scope, 1))
+    old.cleanup_debt = 1
+    await owner.handoff_prebuilt_provider("peer", new, start=True)
+    first_new = _owned_event(new_scope, 2)
+
+    with pytest.raises(RuntimeError, match="provider_resource_quarantined"):
+        await owner.handle_owned_vad_event("peer", first_new)
+
+    assert new.events == []
+    old.cleanup_debt = 0
+    await owner.handle_owned_vad_event("peer", first_new)
+    assert new.events == [first_new]
+    await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["replace", "handoff"])
+@pytest.mark.parametrize("stage", ["provider_build", "provider_warmup"])
+async def test_provider_startup_failure_preserves_phase_and_current_provider(
+    operation: str,
+    stage: str,
+) -> None:
+    failure = ASRWorkerRequestError("heartbeat_timeout", {"raw_payload": "private-model-path"})
+
+    class FailingProvider(FakeProvider):
+        async def warmup(self) -> None:
+            raise failure
+
+    class FailingFactory(FakeProviderFactory):
+        async def create(self, request, *, gpu_runtime, on_terminal_failure=None):
+            if request.provider_id == "soniox":
+                if stage == "provider_build":
+                    raise failure
+                provider = FailingProvider(
+                    request.provider_id,
+                    gpu_runtime=gpu_runtime,
+                    channel=request.channel,
+                    gpu_device_id=request.gpu_device_id,
+                )
+                self.providers.append(provider)
+                return provider
+            return await super().create(
+                request,
+                gpu_runtime=gpu_runtime,
+                on_terminal_failure=on_terminal_failure,
+            )
+
+    provider_factory = FailingFactory()
+    owner, _, _, _ = _owner(provider_factory=provider_factory)
+    try:
+        await owner.replace_provider(
+            ProviderRuntimeBuildRequest(config=_resolved_config("self", "deepgram")),
+            start=True,
+        )
+        request = ProviderRuntimeBuildRequest(
+            config=_resolved_config("self", "soniox"), warmup=True
+        )
+        if operation == "replace":
+            result = await owner.replace_provider(request, start=True)
+        else:
+            result = await owner.handoff_provider(request, start=True)
+        assert result.status == "failed"
+        assert result.failure_stage == stage
+        assert result.failure_code == "heartbeat_timeout"
+        assert result.failure_type == "ASRWorkerRequestError"
+        assert owner.snapshot.channel_for("self").provider_id == "deepgram"
+        assert owner.snapshot.channel_for("self").phase == "running"
+        assert provider_factory.providers[0].close_calls == 0
+        assert provider_factory.providers[0].close_backend_calls == 0
+        if stage == "provider_warmup":
+            assert provider_factory.providers[1].close_calls == 1
+            assert provider_factory.providers[1].close_backend_calls == 1
+        failures = [item for item in owner.diagnostics if item.outcome == "failed"]
+        assert len(failures) == 1
+        assert failures[0].event == stage
+        assert failures[0].failure_code == "heartbeat_timeout"
+        assert failures[0].failure_type == "ASRWorkerRequestError"
+        assert "private-model-path" not in repr(failures)
+    finally:
+        await owner.close()

@@ -1,0 +1,7 @@
+python314.zip
+.
+Lib\site-packages
+..\src
+
+# Runs site.main() so that sitecustomize.py (cache/temp redirection) loads.
+import site

@@ -1,0 +1,371 @@
+{
+  "secret_store": {
+    "keyring_service_name": "puripuly-heart",
+    "registry_keys": [
+      "google_api_key",
+      "openrouter_api_key",
+      "openrouter_managed_api_key",
+      "openrouter_managed_qq_api_key",
+      "openrouter_managed_user_id",
+      "openrouter_managed_user_installation_id",
+      "deepseek_api_key",
+      "deepgram_api_key",
+      "soniox_api_key",
+      "alibaba_api_key_beijing",
+      "alibaba_api_key_singapore",
+      "alibaba_api_key",
+      "local_llm_api_key",
+      "managed_device_private_key",
+      "managed_device_public_key",
+      "managed_identity_binding"
+    ],
+    "env_lookup_paths": [
+      {
+        "owner": "gemini_llm",
+        "lookup": "require_secret",
+        "key": "google_api_key",
+        "env_vars": [
+          "GOOGLE_API_KEY"
+        ],
+        "legacy_keys": []
+      },
+      {
+        "owner": "openrouter_byok_llm",
+        "lookup": "openrouter_byok",
+        "key": "openrouter_api_key",
+        "env_vars": [
+          "OPENROUTER_API_KEY"
+        ],
+        "legacy_keys": []
+      },
+      {
+        "owner": "deepseek_llm",
+        "lookup": "require_secret",
+        "key": "deepseek_api_key",
+        "env_vars": [
+          "DEEPSEEK_API_KEY"
+        ],
+        "legacy_keys": []
+      },
+      {
+        "owner": "qwen_beijing_llm_stt_peer_stt",
+        "lookup": "require_secret_any",
+        "key": "alibaba_api_key_beijing",
+        "env_vars": [
+          "ALIBABA_API_KEY_BEIJING",
+          "ALIBABA_API_KEY",
+          "DASHSCOPE_API_KEY"
+        ],
+        "legacy_keys": [
+          "alibaba_api_key"
+        ]
+      },
+      {
+        "owner": "qwen_singapore_llm_stt_peer_stt",
+        "lookup": "require_secret_any",
+        "key": "alibaba_api_key_singapore",
+        "env_vars": [
+          "ALIBABA_API_KEY_SINGAPORE",
+          "ALIBABA_API_KEY",
+          "DASHSCOPE_API_KEY"
+        ],
+        "legacy_keys": [
+          "alibaba_api_key"
+        ]
+      },
+      {
+        "owner": "deepgram_stt_peer_stt",
+        "lookup": "require_secret",
+        "key": "deepgram_api_key",
+        "env_vars": [
+          "DEEPGRAM_API_KEY"
+        ],
+        "legacy_keys": []
+      },
+      {
+        "owner": "soniox_stt_peer_stt",
+        "lookup": "require_secret",
+        "key": "soniox_api_key",
+        "env_vars": [
+          "SONIOX_API_KEY"
+        ],
+        "legacy_keys": []
+      },
+      {
+        "owner": "local_llm_optional",
+        "lookup": "optional_secret_store_only",
+        "key": "local_llm_api_key",
+        "env_vars": [],
+        "legacy_keys": [],
+        "ignored_env_vars": [
+          "LOCAL_LLM_API_KEY"
+        ]
+      }
+    ],
+    "encrypted_file": {
+      "version": 1,
+      "salt_b64": "dm5leHQtZ2F0ZTAtc2FsdA==",
+      "salt_bytes": 16,
+      "item_keys": [
+        "google_api_key",
+        "alibaba_api_key"
+      ],
+      "golden_fixture": "tests/config/fixtures/secret_store_encrypted_file_v1.json",
+      "passphrase": "fixture-passphrase-not-secret",
+      "expected_fake_values": {
+        "google_api_key": "fixture-google-api-key",
+        "alibaba_api_key": "fixture-legacy-alibaba-api-key"
+      }
+    }
+  },
+  "overlay": {
+    "contract_version": 16,
+    "manifest_fields": [
+      "app_version",
+      "bridge_url",
+      "contract_version",
+      "locale",
+      "log_dir",
+      "log_level",
+      "overlay_instance_id",
+      "parent_pid",
+      "session_token",
+      "startup_deadline_ms"
+    ],
+    "startup_contract": {
+      "native_runner_command": [
+        "{overlay_executable}",
+        "--config",
+        "{manifest_path}"
+      ],
+      "desktop_source_runner_command": [
+        "{python_executable}",
+        "-m",
+        "puripuly_heart.ui.desktop_overlay",
+        "--config",
+        "{manifest_path}"
+      ],
+      "explicit_env_overrides": [
+        "PURIPULY_OVERLAY_QUIET_TAIL_PROFILE",
+        "PURIPULY_OVERLAY_HANDOFF_EXPERIMENT"
+      ],
+      "manifest_temp_prefix": "puripuly-overlay-",
+      "manifest_temp_suffix": ".json",
+      "ready_event_type": "overlay_ready",
+      "startup_failure_event_type": "startup_error",
+      "runtime_failure_event_type": "runtime_error",
+      "renderer_event_type": "overlay_event"
+    },
+    "presentation_snapshot_fields": [
+      "revision",
+      "calibration",
+      "blocks"
+    ],
+    "calibration_fields": [
+      "anchor",
+      "offset_x",
+      "offset_y",
+      "distance",
+      "text_scale",
+      "background_alpha"
+    ],
+    "presentation_block_fields": [
+      "id",
+      "occupant_key",
+      "appearance_seq",
+      "channel",
+      "block_variant",
+      "primary_text",
+      "secondary_text",
+      "secondary_enabled",
+      "update_id",
+      "primary_language",
+      "secondary_language",
+      "origin_wall_clock_ms",
+      "session_scope",
+      "source_text_hash",
+      "source_text_len",
+      "logical_turn_key",
+      "speaker_style"
+    ],
+    "channels": [
+      "self",
+      "peer"
+    ],
+    "block_variants": [
+      "active_self",
+      "active_peer",
+      "finalized"
+    ]
+  },
+  "installer_identity": {
+    "defines": {
+      "MyAppName": "PuriPuly <3",
+      "MyAppDirName": "PuriPulyHeart",
+      "MyAppGroupName": "PuriPulyHeart",
+      "MyAppDataDirName": "puripuly-heart",
+      "MyAppPublisher": "salee",
+      "MyAppURL": "https://github.com/kapitalismho/PuriPuly-heart",
+      "MyAppExeName": "PuriPulyHeart.exe",
+      "MyOverlayExeName": "PuriPulyHeartOverlay.exe",
+      "MyAppId": "{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+    },
+    "setup_lines": [
+      "AppId={#MyAppId}",
+      "AppName={#MyAppName}",
+      "AppVersion={#MyAppVersion}",
+      "DefaultDirName={autopf}\\{#MyAppDirName}",
+      "DefaultGroupName={#MyAppGroupName}",
+      "UsePreviousAppDir=yes",
+      "UsePreviousGroup=yes"
+    ]
+  },
+  "prompts": {
+    "translation_prompt_name": "translation_prompt",
+    "load_prompt_fallback_order": [
+      "{name}.md",
+      "{name}.txt",
+      "default.md",
+      "default.txt"
+    ],
+    "llm_provider_prompt_keys": [
+      "deepseek",
+      "gemini",
+      "local_llm",
+      "managed_gemma",
+      "openrouter",
+      "qwen"
+    ]
+  },
+  "provider_aliases": {
+    "openrouter_main_selection_aliases": [
+      "gemma4_26b_31b_managed",
+      "gemma4_26b_31b_byok",
+      "qwen35_flash_managed",
+      "deepseek_v4_flash_managed",
+      "gemini_flash_byok",
+      "deepseek_v4_flash_41_managed",
+      "qwen35_flash_byok",
+      "deepseek_v4_flash_byok",
+      "deepseek_v4_flash_41_byok",
+      "gpt_6_luna_byok"
+    ],
+    "legacy_selection_aliases": [
+      "gemma4_managed",
+      "gemma4_byok",
+      "gemma4_31b_managed",
+      "gemma4_31b_byok",
+      "gemini31_flash_lite_byok",
+      "openrouter:byok:google/gemma-4-26b-a4b-it",
+      "openrouter:byok:qwen/qwen3.5-flash-02-23",
+      "openrouter:managed:google/gemma-4-26b-a4b-it",
+      "openrouter:none:google/gemma-4-26b-a4b-it",
+      "openrouter:none:qwen/qwen3.5-flash-02-23"
+    ]
+  },
+  "provider_runtime_public_config": {
+    "runtime_resolution_input_fields": [
+      "translation",
+      "openrouter",
+      "direct",
+      "self_stt",
+      "peer_stt",
+      "overlay"
+    ],
+    "translation_runtime_intent_fields": [
+      "model",
+      "connection",
+      "concurrency_limit"
+    ],
+    "openrouter_runtime_intent_fields": [
+      "model",
+      "selected_source",
+      "selection_alias",
+      "routing_mode",
+      "provider_routing",
+      "managed_credential_kind",
+      "broker_base_url"
+    ],
+    "resolved_llm_config_fields": [
+      "primary",
+      "fallback",
+      "attempts",
+      "loser_grace_ms",
+      "concurrency_limit"
+    ],
+    "resolved_credential_requirement_fields": [
+      "source",
+      "required",
+      "reference"
+    ],
+    "credential_sources": [
+      "none",
+      "secret_store",
+      "managed"
+    ],
+    "current_credential_source_key": "selected_source",
+    "old_credential_source_keys": [
+      "credential_source",
+      "selected_credential_source"
+    ],
+    "legacy_alias_normalization_boundary": "normalize_openrouter_runtime_intent",
+    "resolved_runtime_forbidden_alias_fields": [
+      "selection_alias"
+    ]
+  },
+  "guard_coverage": {
+    "secret_store": [
+      "tests/config/test_public_compatibility_surfaces.py::test_secret_store_key_registry_snapshot_matches_current_public_keys",
+      "tests/config/test_public_compatibility_surfaces.py::test_secret_store_env_lookup_snapshot_matches_current_fallback_behavior",
+      "tests/config/test_public_compatibility_surfaces.py::test_settings_serialization_excludes_secret_store_registry_keys",
+      "tests/config/test_public_compatibility_surfaces.py::test_secret_store_encrypted_file_fixture_decrypts_and_freezes_wire_format",
+      "tests/config/test_public_compatibility_surfaces.py::test_secret_store_encrypted_file_path_resolution_and_env_passphrase",
+      "tests/app/test_wiring_secrets.py::test_create_secret_store_encrypted_file_resolves_relative_path",
+      "tests/app/test_wiring_secrets.py::test_create_secret_store_encrypted_file_requires_passphrase",
+      "tests/app/test_wiring_providers.py::test_create_llm_provider_openrouter_uses_env_fallback",
+      "tests/app/test_wiring_providers.py::test_create_llm_provider_local_llm_ignores_optional_env_key",
+      "tests/app/test_wiring_providers.py::test_create_llm_provider_local_llm_uses_secret_store_key_even_when_env_is_set",
+      "tests/core/test_encrypted_secret_store.py::test_retained_stores_observe_new_keys_rotations_and_deletions",
+      "tests/config/test_config_and_secrets.py::test_encrypted_file_secret_store_does_not_store_plaintext",
+      "tests/core/test_openrouter_credentials.py::test_resolve_openrouter_credentials_uses_selected_byok_key_without_managed_fallback"
+    ],
+    "broker_v1": [
+      "tests/core/test_managed_openrouter_broker_client.py::test_challenge_parses_fingerprint_salt",
+      "tests/core/test_managed_openrouter_broker_client.py::test_start_discord_oauth_posts_redirect_and_parses_success_payload",
+      "tests/core/test_managed_openrouter_broker_client.py::test_issue_discord_managed_key_posts_signed_payload_and_parses_success",
+      "tests/core/test_managed_openrouter_broker_client.py::test_nested_broker_error_envelope_becomes_release_error"
+    ],
+    "overlay": [
+      "tests/config/test_public_compatibility_surfaces.py::test_overlay_contract_snapshot_matches_manifest_and_protocol_wire_shape",
+      "tests/config/test_public_compatibility_surfaces.py::test_overlay_startup_contract_snapshot_matches_python_runners_and_manifest_handoff",
+      "tests/core/test_overlay_manifest.py::test_overlay_manifest_round_trips_contract_fields",
+      "tests/core/test_overlay_manifest.py::test_overlay_manifest_rejects_live_runtime_state_fields",
+      "tests/core/test_overlay_protocol.py::test_overlay_presentation_snapshot_round_trips_blocks_and_calibration",
+      "tests/core/test_overlay_bridge.py::test_overlay_bridge_sends_authenticated_initial_snapshot",
+      "tests/app/test_overlay_process_manager.py::test_overlay_process_manager_waits_for_overlay_ready_before_connected",
+      "tests/app/test_desktop_overlay_runner.py::test_overlay_manifest_serialization_omits_target_and_desktop_runtime_fields",
+      "tests/ui/test_desktop_overlay_renderer.py::test_desktop_overlay_snapshot_mapping_roles_secondary_promotion_and_channel_colors"
+    ],
+    "prompt_loader": [
+      "tests/config/test_public_compatibility_surfaces.py::test_prompt_loader_prefers_named_files_then_defaults",
+      "tests/config/test_prompt_loader.py::test_load_prompt_for_llm_providers_uses_shared_translation_prompt",
+      "tests/config/test_prompt_loader.py::test_load_prompt_for_provider_requires_translation_prompt_for_llm_provider",
+      "tests/config/test_prompt_loader.py::test_get_default_prompt_reads_translation_prompt"
+    ],
+    "provider_aliases": [
+      "tests/config/test_config_and_secrets.py::test_legacy_gemini_byok_alias_is_compatibility_only",
+      "tests/config/test_config_and_secrets.py::test_openrouter_alias_for_fields_does_not_expose_deepseek_v4_pro"
+    ],
+    "provider_runtime_public_config": [
+      "tests/config/test_public_compatibility_surfaces.py::test_provider_runtime_public_config_snapshot_matches_resolved_contracts",
+      "tests/config/test_runtime_resolution.py::test_legacy_openrouter_selection_aliases_normalize_before_resolved_runtime"
+    ],
+    "i18n_parity": [
+      "tests/ui/test_i18n_key_usage.py::test_i18n_bundles_share_the_same_keys"
+    ],
+    "packaging": [
+      "tests/release_evidence/test_local_asr_installer.py::test_compiled_identity_and_current_schema_telemetry_reader"
+    ]
+  },
+  "blockers": []
+}

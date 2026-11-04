@@ -1,0 +1,296 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import asdict
+from pathlib import Path
+from types import SimpleNamespace
+
+import flet as ft
+import pytest
+
+import puripuly_heart.ui.app as app_module
+from puripuly_heart.app.ports.ui_application import UiApplicationState
+from puripuly_heart.app.services.application_shutdown import (
+    ApplicationShutdownCoordinator,
+)
+from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
+from puripuly_heart.ui.fonts import (
+    FONT_FAMILY_NOTO_SANS_CJK_JP,
+    assets_dir,
+    font_asset_path,
+)
+from puripuly_heart.ui.foundation.adapter import FletFoundationAdapter
+from puripuly_heart.ui.foundation.preview import (
+    FoundationPreviewSurface,
+    foundation_preview_copy,
+)
+from puripuly_heart.ui.foundation.primitives import FoundationCard
+from puripuly_heart.ui.foundation.resources import (
+    DEFAULT_FOUNDATION_RESOURCES,
+)
+from puripuly_heart.ui.foundation.runtime import FletFoundationRuntime
+from puripuly_heart.ui.foundation.tokens import FOUNDATION_DESIGN_TOKENS
+from puripuly_heart.ui.theme import (
+    COLOR_BACKGROUND,
+    COLOR_DIVIDER,
+    COLOR_ERROR,
+    COLOR_NEUTRAL,
+    COLOR_ON_BACKGROUND,
+    COLOR_PRIMARY,
+    COLOR_SECONDARY,
+    COLOR_SUCCESS,
+    COLOR_SURFACE,
+    COLOR_WARNING,
+)
+from tests.helpers.paths import REPO_ROOT
+
+LOCALES = ("en", "ko", "zh-CN", "ja", "ru")
+FOUNDATION_I18N_KEYS = {
+    "debug_preview.foundation_primitives",
+    "foundation.preview.title",
+    "foundation.preview.body",
+    "foundation.preview.ready",
+    "foundation.preview.action",
+    "foundation.preview.unavailable",
+}
+
+
+class RecordingApplication:
+    def __init__(self) -> None:
+        self.state_calls = 0
+
+    def state(self) -> UiApplicationState:
+        self.state_calls += 1
+        return UiApplicationState(
+            config_path=Path("settings.json"),
+            translation_enabled=True,
+            stt_state=None,
+            peer_translation_eula_accepted=False,
+            audio_test_active=False,
+            provider_name="gemini",
+            overlay_target="none",
+            desktop_overlay_captions_locked=False,
+        )
+
+
+class RecordingPresentation:
+    def __init__(self, *, debug_ui_preview: bool) -> None:
+        self.debug_ui_preview = debug_ui_preview
+        self.locale_calls = 0
+
+    def apply_locale(self) -> None:
+        self.locale_calls += 1
+
+
+class TaskPage:
+    def __init__(self) -> None:
+        self.tasks: list[asyncio.Task[object]] = []
+
+    def run_task(self, coroutine, *args):
+        task = asyncio.create_task(coroutine(*args))
+        self.tasks.append(task)
+        return task
+
+
+def test_foundation_tokens_match_approved_light_palette() -> None:
+    assert asdict(FOUNDATION_DESIGN_TOKENS.palette) == {
+        "background": "#FDF9F8",
+        "surface": "#FDF1F0",
+        "on_background": "#554847",
+        "primary": "#FF6B6B",
+        "error": "#FF5449",
+        "success": "#66BB6A",
+        "warning": "#FF8A65",
+        "divider": "#EDE2DF",
+        "primary_container": "#FFDAD8",
+        "on_primary_container": "#733332",
+        "on_surface_variant": "#5F5352",
+        "surface_dim": "#D2C5C5",
+        "secondary": "#B9827D",
+        "tertiary": "#8C6E28",
+        "translation_tonal": "#FBE3E1",
+        "translation_on": "#A84045",
+        "display_source": "#855F5B",
+        "neutral": "#746665",
+        "neutral_dark": "#554847",
+        "surface_tonal": "#F8EEED",
+    }
+
+    assert (
+        COLOR_BACKGROUND,
+        COLOR_SURFACE,
+        COLOR_ON_BACKGROUND,
+        COLOR_PRIMARY,
+        COLOR_ERROR,
+        COLOR_SUCCESS,
+        COLOR_WARNING,
+        COLOR_DIVIDER,
+        COLOR_SECONDARY,
+        COLOR_NEUTRAL,
+    ) == (
+        "#FDF9F8",
+        "#FDF1F0",
+        "#554847",
+        "#FF6B6B",
+        "#FF5449",
+        "#66BB6A",
+        "#FF8A65",
+        "#EDE2DF",
+        "#B9827D",
+        "#746665",
+    )
+    assert app_module.DEFAULT_WINDOW_WIDTH == 1136
+    assert app_module.DEFAULT_WINDOW_HEIGHT == 850
+    assert FOUNDATION_DESIGN_TOKENS.window.resizable is False
+    assert FOUNDATION_DESIGN_TOKENS.window.maximizable is False
+
+
+def test_foundation_card_reuses_accepted_shared_card_geometry() -> None:
+    content = ft.Text("content")
+    foundation = FoundationCard(content, width=400)
+    accepted = SharedCardWrapper(content, expand=False, height=None, padding=24)
+
+    assert foundation.bgcolor == accepted.bgcolor
+    assert foundation.border_radius == accepted.border_radius == 16
+    assert foundation.border == accepted.border
+    assert foundation.shadow == accepted.shadow
+    assert foundation.clip_behavior == accepted.clip_behavior
+    assert foundation.width == 400
+    assert foundation.content.padding == 24
+
+
+def test_foundation_adapter_consumes_only_application_and_presentation_ports() -> None:
+    application = RecordingApplication()
+    presentation = RecordingPresentation(debug_ui_preview=True)
+    adapter = FletFoundationAdapter(application, presentation)
+
+    snapshot = adapter.snapshot()
+    adapter.apply_locale()
+
+    assert snapshot.config_path == Path("settings.json")
+    assert snapshot.translation_enabled is True
+    assert snapshot.debug_preview_enabled is True
+    assert application.state_calls == 1
+    assert presentation.locale_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_foundation_runtime_is_bound_to_application_shutdown_and_rejects_late_work() -> None:
+    page = TaskPage()
+    adapter = FletFoundationAdapter(
+        RecordingApplication(),
+        RecordingPresentation(debug_ui_preview=False),
+    )
+    runtime = FletFoundationRuntime(page, adapter)
+    lifecycle = ApplicationShutdownCoordinator(runtime.application_shutdown_callbacks())
+    runtime.bind_application_lifecycle(lifecycle)
+    cancelled = asyncio.Event()
+
+    async def work() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    task = runtime.run_page_task(work, intent_name="foundation-test-work")
+    await asyncio.sleep(0)
+
+    assert task is page.tasks[0]
+    assert runtime.snapshot.accepting_tasks is True
+    assert runtime.snapshot.tracked_task_count == 1
+
+    snapshot = await lifecycle.shutdown()
+
+    assert snapshot.state == "completed"
+    assert cancelled.is_set()
+    assert runtime.snapshot.close_completed is True
+    assert runtime.snapshot.tracked_task_count == 0
+    assert runtime.run_page_task(work, intent_name="late-foundation-test-work") is None
+    assert len(page.tasks) == 1
+
+
+def test_foundation_runtime_requires_one_explicit_lifecycle_owner() -> None:
+    runtime = FletFoundationRuntime(
+        TaskPage(),
+        FletFoundationAdapter(
+            RecordingApplication(),
+            RecordingPresentation(debug_ui_preview=False),
+        ),
+    )
+    first = ApplicationShutdownCoordinator()
+    second = ApplicationShutdownCoordinator()
+
+    with pytest.raises(RuntimeError, match="not bound"):
+        runtime.run_page_task(lambda: None)
+
+    runtime.bind_application_lifecycle(first)
+    runtime.bind_application_lifecycle(first)
+
+    with pytest.raises(RuntimeError, match="another lifecycle"):
+        runtime.bind_application_lifecycle(second)
+
+
+def test_foundation_resource_locator_is_cwd_independent_and_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    icon = DEFAULT_FOUNDATION_RESOURCES.require_file(FOUNDATION_DESIGN_TOKENS.icon_asset)
+
+    assert icon.is_file()
+    assert icon.parent.name == "icons"
+    assert assets_dir() == DEFAULT_FOUNDATION_RESOURCES.assets_root
+    assert font_asset_path("NanumSquareRound") == "/fonts/NanumSquareRoundEB.ttf"
+    assert font_asset_path(FONT_FAMILY_NOTO_SANS_CJK_JP) == "/fonts/NotoSansCJK-Medium.ttc"
+
+    for unsafe in ("", "..", "../icon.ico", "/icons/icon.ico", r"C:\icons\icon.ico"):
+        with pytest.raises(ValueError):
+            DEFAULT_FOUNDATION_RESOURCES.asset_url(unsafe)
+
+
+def test_foundation_preview_copy_has_distinct_inputs_for_all_five_locales() -> None:
+    copies = {locale: foundation_preview_copy(locale) for locale in LOCALES}
+
+    assert all(copy.title != "foundation.preview.title" for copy in copies.values())
+    assert all(copy.body != "foundation.preview.body" for copy in copies.values())
+    assert len({copy.title for copy in copies.values()}) == len(LOCALES)
+
+    for locale in LOCALES:
+        bundle_path = REPO_ROOT / "src" / "puripuly_heart" / "data" / "i18n" / f"{locale}.json"
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        assert FOUNDATION_I18N_KEYS <= set(bundle)
+
+
+def test_foundation_preview_surface_is_deterministic_and_static() -> None:
+    first = FoundationPreviewSurface("en")
+    second = FoundationPreviewSurface("en")
+
+    assert first.copy == second.copy
+    assert first.preview_card.bgcolor == COLOR_SURFACE
+    row = first.preview_card.content.content.controls[2]
+    assert row.controls[0].content.value == "Ready"
+    assert row.controls[1].content == "Sample action"
+    assert row.controls[2].content == "Unavailable"
+    assert row.controls[2].disabled is True
+    assert row.controls[1].on_click is None
+
+
+def test_foundation_preview_action_is_hidden_without_flag_and_has_no_external_calls() -> None:
+    app = app_module.TranslatorApp.__new__(app_module.TranslatorApp)
+    app.page = SimpleNamespace(
+        opened=[],
+        show_dialog=lambda dialog: app.page.opened.append(dialog),
+    )
+    app._foundation_adapter = SimpleNamespace(debug_preview_enabled=False)
+
+    app._preview_foundation_primitives()
+
+    assert app.page.opened == []
+
+    app._foundation_adapter = SimpleNamespace(debug_preview_enabled=True)
+    app._preview_foundation_primitives()
+
+    assert len(app.page.opened) == 1
+    assert isinstance(app.page.opened[0].content, FoundationPreviewSurface)

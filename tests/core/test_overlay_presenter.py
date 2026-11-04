@@ -1,0 +1,4823 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from uuid import uuid4
+
+import pytest
+
+from puripuly_heart.core.clock import FakeClock
+from puripuly_heart.core.overlay.presenter import (
+    PEER_REPLACEMENT_INTERVAL_SECONDS,
+    SELF_TRANSLATION_MIN_VISIBLE_SECONDS,
+    OverlayPresenter,
+)
+from puripuly_heart.core.overlay.protocol import (
+    U64_MAX,
+    NativeFreshRenderGenerations,
+    OverlayPresentationBlock,
+    OverlayPresentationCalibration,
+)
+from puripuly_heart.core.overlay.sink import (
+    OverlayEventAdapter,
+    OverlayPublicationScope,
+    PeerActiveUpdate,
+    SelfActiveClear,
+    SelfActiveUpdate,
+    SelfTranscriptFinal,
+    TranslationFinal,
+)
+from puripuly_heart.core.overlay.state import (
+    ActiveSelfOverlayMetadata,
+    OverlayPresentationState,
+)
+from puripuly_heart.domain.models import Transcript
+from puripuly_heart.ui.overlay_calibration import OverlayCalibration
+
+
+@dataclass(slots=True)
+class RecordingPresentationBridge:
+    snapshots: list[object] = field(default_factory=list)
+    shutdown_calls: int = 0
+
+    async def replace_snapshot(
+        self, snapshot: object, *, block_expirations: object | None = None
+    ) -> None:
+        _ = block_expirations
+        self.snapshots.append(snapshot)
+
+    async def broadcast_shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+
+def _generate_overlay_state_snapshot(
+    state: OverlayPresentationState,
+    *,
+    revision: int,
+    show_translation: bool = True,
+):
+    next_appearance_seq = 0
+
+    def next_appearance() -> int:
+        nonlocal next_appearance_seq
+        next_appearance_seq += 1
+        return next_appearance_seq
+
+    selection = state.visible_block_selection(
+        entries=state.entries,
+        live_self_entry=state.live_entry_for_channel("self"),
+        live_peer_entry=state.live_entry_for_channel("peer"),
+        visible_window_target_blocks=2,
+        show_translation=show_translation,
+        show_peer_original=True,
+        next_appearance_seq=next_appearance,
+    )
+    return state.generate_snapshot(
+        revision=revision,
+        calibration=OverlayPresentationCalibration(),
+        rendered_entries=selection.rendered_entries,
+    )
+
+
+def test_overlay_presentation_state_exposes_active_self_metadata() -> None:
+    state = OverlayPresentationState()
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    utterance_id = uuid4()
+    logical_turn_key = f"self:{utterance_id}"
+
+    result = state.apply_self_active_update(
+        adapter.self_active_update(
+            text="hello live",
+            utterance_id=utterance_id,
+            secondary_text="translated live",
+            occupant_key=f"self:{utterance_id}",
+            update_id="self-active-update-1",
+            origin_wall_clock_ms=123456789,
+            session_scope="self-active-session",
+            source_text_hash="0123456789abcdef",
+            source_text_len=len("hello live"),
+            logical_turn_key=logical_turn_key,
+        ),
+        now=10.0,
+        show_translation=True,
+        terminal_update_reason=lambda _channel, _utterance_id: None,
+    )
+
+    assert result.changed is True
+    assert state.active_self_overlay_metadata() == ActiveSelfOverlayMetadata(
+        text="hello live",
+        secondary_text="translated live",
+        utterance_id=utterance_id,
+        occupant_key=f"self:{utterance_id}",
+        update_id="self-active-update-1",
+        origin_wall_clock_ms=123456789,
+        session_scope="self-active-session",
+        source_text_hash="0123456789abcdef",
+        source_text_len=len("hello live"),
+        logical_turn_key=logical_turn_key,
+    )
+
+    state.apply_self_active_clear(
+        adapter.self_active_clear(created_at=10.1),
+        now=10.1,
+        show_translation=True,
+    )
+    assert state.active_self_overlay_metadata() is None
+
+
+@pytest.mark.asyncio
+async def test_presenter_shows_first_self_transcript_without_waiting_for_next_utterance() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    transcript = Transcript(
+        utterance_id=uuid4(),
+        channel="self",
+        text="hello now",
+        is_final=True,
+        created_at=11.0,
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(
+            transcript,
+            source_language="ko",
+            target_language="en",
+        )
+    )
+
+    assert bridge.snapshots[-1].blocks[-1].channel == "self"
+    assert bridge.snapshots[-1].blocks[-1].block_variant == "finalized"
+    assert bridge.snapshots[-1].blocks[-1].primary_text == "hello now"
+    assert bridge.snapshots[-1].blocks[-1].secondary_text == ""
+    assert bridge.snapshots[-1].blocks[-1].secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_self_rows_use_source_and_target_content_languages() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    self_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=self_turn_id,
+                channel="self",
+                text="안녕하세요",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+    assert block.primary_language == "ko"
+    assert block.secondary_language is None
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=self_turn_id,
+            channel="self",
+            text="hello",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=10.1,
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+    assert block.primary_language == "ko"
+    assert block.secondary_language == "en"
+
+
+@pytest.mark.asyncio
+async def test_presenter_self_active_row_uses_source_and_target_content_languages() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    self_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="안녕 live",
+            secondary_text="hello live",
+            utterance_id=self_turn_id,
+            occupant_key=f"self:{self_turn_id}",
+            source_language="ko",
+            target_language="en",
+            created_at=10.0,
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+    assert block.primary_language == "ko"
+    assert block.secondary_language == "en"
+
+
+@pytest.mark.asyncio
+async def test_presenter_language_only_self_active_update_publishes_without_resetting_visible_identity() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    self_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="こんにちは",
+            utterance_id=self_turn_id,
+            occupant_key=f"self:{self_turn_id}",
+            source_language="ko",
+            target_language="en",
+            created_at=10.0,
+        )
+    )
+
+    initial_snapshot = presenter.snapshot()
+    initial_block = initial_snapshot.blocks[0]
+    entry = presenter._entries[("self", self_turn_id)]
+    initial_visible_since = entry.visible_since
+    initial_last_meaningful_visible_at = entry.last_meaningful_visible_at
+    initial_occupant_key = entry.occupant_key
+    initial_entry_appearance_seq = entry.appearance_seq
+
+    clock.advance(2.0)
+    await presenter.emit(
+        adapter.self_active_update(
+            text="こんにちは",
+            utterance_id=self_turn_id,
+            occupant_key=f"self:{self_turn_id}",
+            source_language="ja",
+            target_language="en",
+            created_at=12.0,
+        )
+    )
+
+    updated_snapshot = presenter.snapshot()
+    updated_block = updated_snapshot.blocks[0]
+
+    assert updated_snapshot.revision == initial_snapshot.revision + 1
+    assert len(bridge.snapshots) == 2
+    assert updated_block.primary_language == "ja"
+    assert updated_block.primary_text == initial_block.primary_text
+    assert updated_block.occupant_key == initial_block.occupant_key == initial_occupant_key
+    assert updated_block.appearance_seq == initial_block.appearance_seq
+    assert entry.appearance_seq == initial_entry_appearance_seq
+    assert entry.visible_since == initial_visible_since == 10.0
+    assert entry.last_meaningful_visible_at == initial_last_meaningful_visible_at == 10.0
+
+
+@pytest.mark.asyncio
+async def test_presenter_does_not_reorder_existing_turn_when_translation_updates() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    first_peer = Transcript(
+        utterance_id=uuid4(), channel="peer", text="peer one", is_final=True, created_at=11.0
+    )
+    second_self = Transcript(
+        utterance_id=uuid4(), channel="self", text="self two", is_final=True, created_at=12.0
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(first_peer, source_language="en", target_language="ko")
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=first_peer.utterance_id,
+            channel="peer",
+            text="피어 하나",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=12.5,
+        )
+    )
+    await presenter.emit(
+        adapter.transcript_final(second_self, source_language="ko", target_language="en")
+    )
+    first_order = presenter.snapshot().blocks[0].appearance_seq
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=first_peer.utterance_id,
+            channel="peer",
+            text="피어 하나 수정",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=13.0,
+        )
+    )
+
+    assert presenter.snapshot().blocks[0].appearance_seq == first_order
+    assert [block.occupant_key for block in presenter.snapshot().blocks] == [
+        f"peer:{first_peer.utterance_id}",
+        f"self:{second_self.utterance_id}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_presenter_reserved_peer_active_update_can_emit_compatibility_row() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer original",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=11.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"peer:{peer_turn_id}"]
+    assert presenter.snapshot().blocks[0].block_variant == "active_peer"
+    assert presenter.snapshot().blocks[0].primary_text == ""
+    assert presenter.snapshot().blocks[0].secondary_text == "peer original"
+    assert presenter.snapshot().blocks[0].secondary_enabled is True
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="상대 번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=12.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"peer:{peer_turn_id}"]
+    assert presenter.snapshot().blocks[0].primary_text == "상대 번역"
+    assert presenter.snapshot().blocks[0].secondary_text == "peer original"
+    assert presenter.snapshot().blocks[0].secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_rows_use_translation_primary_and_source_secondary_languages() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer source",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+
+    source_only_block = presenter.snapshot().blocks[0]
+    assert source_only_block.primary_text == ""
+    assert source_only_block.primary_language is None
+    assert source_only_block.secondary_text == "peer source"
+    assert source_only_block.secondary_language == "en"
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="상대 번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.1,
+        )
+    )
+
+    translated_block = presenter.snapshot().blocks[0]
+    assert translated_block.primary_text == "상대 번역"
+    assert translated_block.primary_language == "ko"
+    assert translated_block.secondary_text == "peer source"
+    assert translated_block.secondary_language == "en"
+
+
+@pytest.mark.asyncio
+async def test_presenter_reserved_peer_active_source_renders_secondary_only_before_translation() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="What about now?",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+    assert block.id == f"peer:{peer_turn_id}"
+    assert block.occupant_key == f"peer:{peer_turn_id}"
+    assert block.channel == "peer"
+    assert block.block_variant == "active_peer"
+    assert block.primary_text == ""
+    assert block.secondary_text == "What about now?"
+    assert block.secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_reserved_peer_active_source_only_block_uses_secondary_language() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="何ですか",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            source_language="ja",
+            target_language="ko",
+            created_at=10.0,
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+    assert block.primary_text == ""
+    assert block.primary_language is None
+    assert block.secondary_text == "何ですか"
+    assert block.secondary_language == "ja"
+
+
+@pytest.mark.asyncio
+async def test_presenter_presentation_state_shell_tracks_self_and_peer_snapshots() -> None:
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    self_turn_id = uuid4()
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="self live shell parity",
+            utterance_id=self_turn_id,
+            occupant_key=f"self:{self_turn_id}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer source shell parity",
+                is_final=True,
+                created_at=10.1,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="피어 셸 동기화",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.2,
+        )
+    )
+
+    presentation_state = getattr(presenter, "_presentation_state", None)
+    assert presentation_state is not None
+    assert presenter.snapshot() == presenter._presentation_state.snapshot()
+
+
+def test_presentation_state_self_active_reducer_rejects_stale_updates() -> None:
+    state = OverlayPresentationState()
+    utterance_id = uuid4()
+    initial_result = state.apply_self_active_update(
+        SelfActiveUpdate(
+            event_id="self-active-newer",
+            seq=2,
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=10.0,
+            text="current preview",
+            occupant_key=f"self:{utterance_id}",
+        ),
+        now=10.0,
+        show_translation=True,
+        terminal_update_reason=lambda _channel, _utterance_id: None,
+    )
+
+    stale_result = state.apply_self_active_update(
+        SelfActiveUpdate(
+            event_id="self-active-stale",
+            seq=1,
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=9.9,
+            text="stale preview",
+            occupant_key=f"self:{utterance_id}",
+        ),
+        now=10.1,
+        show_translation=True,
+        terminal_update_reason=lambda _channel, _utterance_id: None,
+    )
+
+    assert initial_result.changed is True
+    assert stale_result.changed is False
+
+
+def test_presentation_state_coalesced_self_active_update_refreshes_language_metadata() -> None:
+    state = OverlayPresentationState()
+    utterance_id = uuid4()
+
+    initial_result = state.apply_self_active_update(
+        SelfActiveUpdate(
+            event_id="self-active-initial-language",
+            seq=1,
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=10.0,
+            text="こんにちは",
+            secondary_text="",
+            occupant_key=f"self:{utterance_id}",
+            source_language="ko",
+            target_language="en",
+        ),
+        now=10.0,
+        show_translation=True,
+        terminal_update_reason=lambda _channel, _utterance_id: None,
+    )
+
+    metadata = state.active_self_overlay_metadata()
+    assert initial_result.changed is True
+    assert metadata is not None
+    assert metadata.primary_language == "ko"
+
+    language_only_result = state.apply_self_active_update(
+        SelfActiveUpdate(
+            event_id="self-active-provider-language",
+            seq=2,
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=10.1,
+            text="こんにちは",
+            secondary_text="",
+            occupant_key=f"self:{utterance_id}",
+            source_language="ja",
+            target_language="zh-TW",
+        ),
+        now=10.1,
+        show_translation=True,
+        terminal_update_reason=lambda _channel, _utterance_id: None,
+    )
+
+    metadata = state.active_self_overlay_metadata()
+    assert language_only_result.changed is True
+    assert metadata is not None
+    assert metadata.primary_language == "ja"
+    assert metadata.secondary_language is None
+
+
+def test_presentation_state_coalesced_peer_active_update_refreshes_language_metadata() -> None:
+    state = OverlayPresentationState()
+    utterance_id = uuid4()
+    next_appearance_seq = 0
+
+    def next_seq() -> int:
+        nonlocal next_appearance_seq
+        next_appearance_seq += 1
+        return next_appearance_seq
+
+    initial_result = state.apply_peer_active_update(
+        PeerActiveUpdate(
+            event_id="peer-active-initial-language",
+            seq=1,
+            utterance_id=utterance_id,
+            channel="peer",
+            created_at=10.0,
+            text="こんにちは",
+            occupant_key=f"peer:{utterance_id}",
+            source_language="ko",
+            target_language="en",
+        ),
+        now=10.0,
+        show_peer_original=True,
+        next_appearance_seq=next_seq,
+        terminal_update_reason=lambda _channel, _utterance_id: None,
+    )
+    entry = state.entries[("peer", utterance_id)]
+    assert initial_result.changed is True
+    assert entry.original_language == "ko"
+
+    language_only_result = state.apply_peer_active_update(
+        PeerActiveUpdate(
+            event_id="peer-active-provider-language",
+            seq=2,
+            utterance_id=utterance_id,
+            channel="peer",
+            created_at=10.1,
+            text="こんにちは",
+            occupant_key=f"peer:{utterance_id}",
+            source_language="ja",
+            target_language="zh-TW",
+        ),
+        now=10.1,
+        show_peer_original=True,
+        next_appearance_seq=next_seq,
+        terminal_update_reason=lambda _channel, _utterance_id: None,
+    )
+
+    assert language_only_result.changed is True
+    assert entry.original_language == "ja"
+
+
+@pytest.mark.asyncio
+async def test_presenter_hides_peer_source_only_when_peer_original_disabled() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        show_peer_original=False,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer original",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    assert presenter.snapshot().blocks == []
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="상대 번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.1,
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+    assert block.primary_text == "상대 번역"
+    assert block.secondary_text == "peer original"
+    assert block.secondary_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_presenter_hidden_peer_source_waits_past_ttl_for_translation() -> None:
+    clock = FakeClock(_now=10.0)
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        clock=clock,
+        show_peer_original=False,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer original",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=clock.now(),
+        )
+    )
+
+    assert presenter.snapshot().blocks == []
+
+    clock.advance(9.0)
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="상대 번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=clock.now(),
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"peer:{peer_turn_id}"]
+    assert presenter.snapshot().blocks[0].primary_text == "상대 번역"
+    assert presenter.snapshot().blocks[0].secondary_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_transcript_uses_translation_as_primary_text_in_normal_flow() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    transcript = Transcript(
+        utterance_id=peer_turn_id,
+        channel="peer",
+        text="peer source final",
+        is_final=True,
+        created_at=10.0,
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(
+            transcript,
+            source_language="en",
+            target_language="ko",
+        )
+    )
+
+    source_only_blocks = presenter.snapshot().blocks
+    assert all(block.block_variant != "active_peer" for block in source_only_blocks)
+    assert all(block.primary_text != "peer source final" for block in source_only_blocks)
+    assert not any(block.primary_text.strip() for block in source_only_blocks)
+    assert source_only_blocks[0].primary_text == ""
+    assert source_only_blocks[0].secondary_text == "peer source final"
+    assert source_only_blocks[0].secondary_enabled is True
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="피어 최종 번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=11.0,
+        )
+    )
+
+    translated_blocks = presenter.snapshot().blocks
+    assert all(block.block_variant != "active_peer" for block in translated_blocks)
+    translated_block = translated_blocks[0]
+    assert translated_block.block_variant == "finalized"
+    assert translated_block.primary_text == "피어 최종 번역"
+    assert translated_block.secondary_text == "peer source final"
+    assert translated_block.secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_reserved_peer_active_update_can_be_finalized_by_translation_without_reordering() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="Can you hear me?",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=10.0,
+        )
+    )
+    active_block = presenter.snapshot().blocks[0]
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="내 말 들려?",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=11.0,
+        )
+    )
+
+    finalized_block = presenter.snapshot().blocks[0]
+    assert finalized_block.id == active_block.id
+    assert finalized_block.occupant_key == active_block.occupant_key
+    assert finalized_block.appearance_seq == active_block.appearance_seq
+    assert finalized_block.block_variant == "finalized"
+    assert finalized_block.primary_text == "내 말 들려?"
+    assert finalized_block.secondary_text == "Can you hear me?"
+    assert finalized_block.secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_self_active_source_row_remains_allowed_before_translation() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    self_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="self live source",
+            utterance_id=self_turn_id,
+            occupant_key=f"self:{self_turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+    assert block.channel == "self"
+    assert block.block_variant == "active_self"
+    assert block.primary_text == "self live source"
+    assert block.secondary_text == ""
+
+
+@pytest.mark.asyncio
+async def test_presenter_translation_min_visible_deadline_remains_self_only() -> None:
+    clock = FakeClock(_now=10.0)
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        clock=clock,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    self_turn_id = uuid4()
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=self_turn_id,
+                channel="self",
+                text="self original",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=self_turn_id,
+            channel="self",
+            text="self translation",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=10.1,
+        )
+    )
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer original",
+                is_final=True,
+                created_at=10.2,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="peer translation",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.3,
+        )
+    )
+
+    self_entry = presenter._entries[("self", self_turn_id)]
+    peer_entry = presenter._entries[("peer", peer_turn_id)]
+    _, _, self_translation_deadline = presenter._entry_expiration_components(self_entry)
+    _, _, peer_translation_deadline = presenter._entry_expiration_components(peer_entry)
+
+    assert self_entry.translation_visible_since is not None
+    assert self_translation_deadline == (
+        self_entry.translation_visible_since + SELF_TRANSLATION_MIN_VISIBLE_SECONDS
+    )
+    assert peer_entry.translation_visible_since is not None
+    assert peer_translation_deadline is None
+
+
+@pytest.mark.asyncio
+async def test_presenter_retained_hidden_self_entry_accepts_late_translation() -> None:
+    clock = FakeClock(_now=10.0)
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        clock=clock,
+        visible_window_target_blocks=2,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    retained_turn_id = uuid4()
+    visible_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=retained_turn_id,
+                channel="self",
+                text="retained self source",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    retained_entry = presenter._entries[("self", retained_turn_id)]
+    retained_entry.retained_hidden = True
+    retained_entry.window_evicted_at = clock.now()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=visible_turn_id,
+                channel="self",
+                text="visible self source",
+                is_final=True,
+                created_at=10.1,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{visible_turn_id}"]
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=retained_turn_id,
+            channel="self",
+            text="late retained translation",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=10.2,
+        )
+    )
+
+    retained_entry = presenter._entries[("self", retained_turn_id)]
+    blocks_by_id = {block.id: block for block in presenter.snapshot().blocks}
+    assert retained_entry.retained_hidden is False
+    assert retained_entry.window_evicted_at is None
+    assert blocks_by_id[f"self:{retained_turn_id}"].secondary_text == ("late retained translation")
+
+
+@pytest.mark.asyncio
+async def test_presenter_retired_preview_self_seqs_remain_self_only() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    shared_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="self preview only",
+            utterance_id=shared_turn_id,
+            occupant_key=f"self:{shared_turn_id}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(adapter.self_active_clear(created_at=10.1))
+
+    assert ("self", shared_turn_id) in presenter._retired_preview_self_seqs
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="reserved peer active fallback",
+            utterance_id=shared_turn_id,
+            occupant_key=f"peer:{shared_turn_id}",
+            created_at=10.2,
+        )
+    )
+
+    peer_block = presenter.snapshot().blocks[0]
+    assert ("peer", shared_turn_id) not in presenter._retired_preview_self_seqs
+    assert peer_block.id == f"peer:{shared_turn_id}"
+    assert peer_block.block_variant == "active_peer"
+    assert peer_block.secondary_text == "reserved peer active fallback"
+
+
+@pytest.mark.asyncio
+async def test_presenter_late_peer_translation_does_not_reinsert_evicted_old_turn() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        visible_window_target_blocks=2,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn_a = uuid4()
+    turn_b = uuid4()
+    turn_c = uuid4()
+
+    for text, turn_id in [
+        ("old source", turn_a),
+        ("middle source", turn_b),
+        ("latest source", turn_c),
+    ]:
+        await presenter.emit(
+            adapter.peer_active_update(
+                text=text,
+                utterance_id=turn_id,
+                occupant_key=f"peer:{turn_id}",
+                created_at=10.0,
+            )
+        )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"peer:{turn_b}",
+        f"peer:{turn_c}",
+    ]
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=turn_a,
+            channel="peer",
+            text="오래된 번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=12.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"peer:{turn_b}",
+        f"peer:{turn_c}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_source_only_terminalization_finalizes_before_close() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="translation unavailable",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="translation unavailable",
+                is_final=True,
+                created_at=10.5,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+
+    block_before_close = presenter.snapshot().blocks[0]
+    assert block_before_close.block_variant == "finalized"
+    assert block_before_close.primary_text == ""
+    assert block_before_close.secondary_text == "translation unavailable"
+    assert block_before_close.secondary_enabled is True
+
+    await presenter.emit(
+        adapter.utterance_closed(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            is_final=False,
+            created_at=11.0,
+        )
+    )
+
+    assert presenter.snapshot().blocks[0].id == f"peer:{peer_turn_id}"
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_translation_final_with_source_text_publishes_paired_row() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="peer translation",
+            source_text="peer source",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.0,
+        )
+    )
+
+    assert len(presenter.snapshot().blocks) == 1
+    block = presenter.snapshot().blocks[0]
+    assert block.channel == "peer"
+    assert block.block_variant == "finalized"
+    assert block.primary_text == "peer translation"
+    assert block.secondary_text == "peer source"
+    assert block.secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_active_duplicate_is_coalesced() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer source duplicate",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=10.0,
+        )
+    )
+    revision_before_duplicate = presenter.snapshot().revision
+    snapshot_count_before_duplicate = len(bridge.snapshots)
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer source duplicate",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=10.1,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_duplicate
+    assert len(bridge.snapshots) == snapshot_count_before_duplicate
+
+
+@pytest.mark.asyncio
+async def test_presenter_active_turn_replacement_uses_shared_lifecycle_with_channel_publishability() -> (
+    None
+):
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        visible_window_target_blocks=3,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    first_self = uuid4()
+    second_self = uuid4()
+    first_peer = uuid4()
+    second_peer = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="first self live only",
+            utterance_id=first_self,
+            occupant_key=f"self:{first_self}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        adapter.self_active_update(
+            text="second self live",
+            utterance_id=second_self,
+            occupant_key=f"self:{second_self}",
+            created_at=10.1,
+        )
+    )
+
+    self_blocks = [block for block in presenter.snapshot().blocks if block.channel == "self"]
+    assert [block.id for block in self_blocks] == [f"self:{second_self}"]
+    assert self_blocks[0].block_variant == "active_self"
+    assert self_blocks[0].primary_text == "second self live"
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="first peer source",
+            utterance_id=first_peer,
+            occupant_key=f"peer:{first_peer}",
+            created_at=11.0,
+        )
+    )
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="second peer source",
+            utterance_id=second_peer,
+            occupant_key=f"peer:{second_peer}",
+            created_at=11.1,
+        )
+    )
+
+    peer_blocks = [block for block in presenter.snapshot().blocks if block.channel == "peer"]
+    assert [block.id for block in peer_blocks] == [f"peer:{first_peer}", f"peer:{second_peer}"]
+    assert peer_blocks[0].block_variant == "finalized"
+    assert peer_blocks[0].primary_text == ""
+    assert peer_blocks[0].secondary_text == "first peer source"
+    assert peer_blocks[1].block_variant == "active_peer"
+    assert peer_blocks[1].primary_text == ""
+    assert peer_blocks[1].secondary_text == "second peer source"
+
+
+@pytest.mark.asyncio
+async def test_presenter_new_peer_turn_demotes_previous_live_peer_and_protects_new_peer() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        visible_window_target_blocks=2,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    first = uuid4()
+    second = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="first source",
+            utterance_id=first,
+            occupant_key=f"peer:{first}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="second source",
+            utterance_id=second,
+            occupant_key=f"peer:{second}",
+            created_at=10.1,
+        )
+    )
+
+    blocks = presenter.snapshot().blocks
+
+    assert [block.id for block in blocks] == [f"peer:{first}", f"peer:{second}"]
+
+    first_block, second_block = blocks
+    assert first_block.block_variant == "finalized"
+    assert first_block.primary_text == ""
+    assert first_block.secondary_text == "first source"
+    assert first_block.secondary_enabled is True
+
+    assert second_block.block_variant == "active_peer"
+    assert second_block.primary_text == ""
+    assert second_block.secondary_text == "second source"
+    assert second_block.secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_latest_peer_translation_not_displaced_by_older_translated_self_row() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+        visible_window_target_blocks=1,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    self_turn_id = uuid4()
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=self_turn_id,
+                channel="self",
+                text="older self",
+                is_final=True,
+                created_at=10.1,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=self_turn_id,
+            channel="self",
+            text="older self translation",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=10.2,
+        )
+    )
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="newer peer",
+                is_final=True,
+                created_at=10.3,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="newer peer translation",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.4,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"peer:{peer_turn_id}"]
+    assert presenter.snapshot().blocks[0].primary_text == "newer peer translation"
+
+
+@pytest.mark.asyncio
+async def test_presenter_reschedules_closed_peer_expiration_with_translation_min_visibility() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    sleep_calls: list[float] = []
+    cancelled_delays: list[float] = []
+    sleep_events: list[asyncio.Event] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        release = asyncio.Event()
+        sleep_events.append(release)
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled_delays.append(delay)
+            raise
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer original",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        adapter.utterance_closed(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            created_at=10.1,
+        )
+    )
+
+    await asyncio.sleep(0)
+    assert sleep_calls == [8.0]
+
+    clock.advance(7.0)
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="peer translation",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=17.0,
+        )
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert cancelled_delays == [8.0]
+    assert sleep_calls == [8.0, 8.0]
+    assert presenter.snapshot().blocks[0].primary_text == "peer translation"
+    assert presenter.snapshot().blocks[0].secondary_text == "peer original"
+
+    sleep_events[0].set()
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks[0].primary_text == "peer translation"
+
+    sleep_events[1].set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_reschedules_closed_self_expiration_with_translation_min_visibility() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    sleep_calls: list[float] = []
+    cancelled_delays: list[float] = []
+    sleep_events: list[asyncio.Event] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        release = asyncio.Event()
+        sleep_events.append(release)
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled_delays.append(delay)
+            raise
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    transcript = Transcript(
+        utterance_id=uuid4(),
+        channel="self",
+        text="self original",
+        is_final=True,
+        created_at=10.0,
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(
+            transcript,
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    await presenter.emit(
+        adapter.utterance_closed(
+            utterance_id=transcript.utterance_id,
+            channel="self",
+            created_at=10.1,
+        )
+    )
+
+    await asyncio.sleep(0)
+
+    assert sleep_calls == [8.0]
+
+    clock.advance(7.0)
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=transcript.utterance_id,
+            channel="self",
+            text="self translation",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=17.0,
+        )
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert cancelled_delays == [8.0]
+    assert sleep_calls == [8.0, 8.0]
+    assert presenter.snapshot().blocks[0].secondary_text == "self translation"
+
+    sleep_events[0].set()
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks[0].secondary_text == "self translation"
+
+    sleep_events[1].set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_restarts_self_translation_min_visibility_when_translation_changes() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    sleep_calls: list[float] = []
+    cancelled_delays: list[float] = []
+    sleep_events: list[asyncio.Event] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        release = asyncio.Event()
+        sleep_events.append(release)
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled_delays.append(delay)
+            raise
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    transcript = Transcript(
+        utterance_id=uuid4(),
+        channel="self",
+        text="self original",
+        is_final=True,
+        created_at=10.0,
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(
+            transcript,
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    await presenter.emit(
+        adapter.utterance_closed(
+            utterance_id=transcript.utterance_id,
+            channel="self",
+            created_at=10.1,
+        )
+    )
+
+    await asyncio.sleep(0)
+    assert sleep_calls == [8.0]
+
+    clock.advance(7.5)
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=transcript.utterance_id,
+            channel="self",
+            text="self translation one",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=17.5,
+        )
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert cancelled_delays == [8.0]
+    assert sleep_calls == [8.0, 8.0]
+    assert presenter.snapshot().blocks[0].secondary_text == "self translation one"
+
+    clock.advance(2.0)
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=transcript.utterance_id,
+            channel="self",
+            text="self translation two",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=19.5,
+        )
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert cancelled_delays == [8.0, 8.0]
+    assert sleep_calls == [8.0, 8.0, 8.0]
+    assert presenter.snapshot().blocks[0].secondary_text == "self translation two"
+
+    sleep_events[0].set()
+    await asyncio.sleep(0)
+    assert presenter.snapshot().blocks[0].secondary_text == "self translation two"
+
+    sleep_events[1].set()
+    await asyncio.sleep(0)
+    assert presenter.snapshot().blocks[0].secondary_text == "self translation two"
+
+    sleep_events[2].set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_hidden_self_translation_update_does_not_extend_visible_ttl() -> None:
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    sleep_calls: list[float] = []
+    sleep_events: list[asyncio.Event] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        release = asyncio.Event()
+        sleep_events.append(release)
+        await release.wait()
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    utterance_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=utterance_id,
+                channel="self",
+                text="self original",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=utterance_id,
+            channel="self",
+            text="visible translation",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        adapter.utterance_closed(
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=10.0,
+        )
+    )
+
+    await asyncio.sleep(0)
+
+    clock.advance(2.0)
+    await presenter.update_display_preferences(
+        show_translation=False,
+        show_peer_original=True,
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks[0].secondary_enabled is False
+    assert sleep_calls[-1] == 8.0
+
+    clock.advance(7.0)
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=utterance_id,
+            channel="self",
+            text="hidden translation update",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=19.0,
+        )
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks[0].secondary_enabled is False
+    assert sleep_calls[-1] == 1.0
+
+    sleep_events[-1].set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_includes_calibration_inside_snapshot_updates() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+
+    await presenter.update_calibration(
+        OverlayCalibration(
+            anchor="head_locked",
+            offset_x=0.2,
+            offset_y=-0.1,
+            distance=1.5,
+            text_scale=1.1,
+            background_alpha=0.33,
+        )
+    )
+
+    latest = bridge.snapshots[-1]
+
+    assert latest.calibration == OverlayPresentationCalibration(
+        anchor="head_locked",
+        offset_x=0.2,
+        offset_y=-0.1,
+        distance=1.5,
+        text_scale=1.1,
+        background_alpha=0.33,
+    )
+
+
+@pytest.mark.asyncio
+async def test_presenter_shutdown_is_control_plane_only() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+
+    await presenter.broadcast_shutdown()
+
+    assert bridge.shutdown_calls == 1
+    assert bridge.snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_ignores_stale_self_active_clear() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+    active_utterance_id = uuid4()
+
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="active-new",
+            seq=2,
+            utterance_id=active_utterance_id,
+            channel="self",
+            created_at=10.0,
+            text="live self",
+            occupant_key=f"self:{active_utterance_id}",
+        )
+    )
+    revision_before_clear = presenter.snapshot().revision
+
+    await presenter.emit(
+        SelfActiveClear(
+            event_id="clear-old",
+            seq=1,
+            utterance_id=None,
+            channel="self",
+            created_at=9.0,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_clear
+    assert presenter.snapshot().blocks[-1].id == f"self:{active_utterance_id}"
+    assert presenter.snapshot().blocks[-1].occupant_key == f"self:{active_utterance_id}"
+    assert presenter.snapshot().blocks[-1].block_variant == "active_self"
+    assert presenter.snapshot().blocks[-1].primary_text == "live self"
+    assert presenter.snapshot().blocks[-1].secondary_text == ""
+    assert presenter.snapshot().blocks[-1].secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_ignores_stale_cross_turn_self_active_update_without_disturbing_current_live_row() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+    current_turn_id = uuid4()
+    stale_turn_id = uuid4()
+
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="active-current",
+            seq=5,
+            utterance_id=current_turn_id,
+            channel="self",
+            created_at=10.0,
+            text="current live",
+            occupant_key=f"self:{current_turn_id}",
+        )
+    )
+    revision_before_stale = presenter.snapshot().revision
+
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="active-stale-other",
+            seq=4,
+            utterance_id=stale_turn_id,
+            channel="self",
+            created_at=9.0,
+            text="stale live",
+            occupant_key=f"self:{stale_turn_id}",
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_stale
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{current_turn_id}"]
+    assert presenter.snapshot().blocks[0].primary_text == "current live"
+    assert len(bridge.snapshots) == 1
+    assert [block.id for block in bridge.snapshots[-1].blocks] == [f"self:{current_turn_id}"]
+
+
+@pytest.mark.asyncio
+async def test_presenter_ignores_stale_history_updates() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+    utterance_id = uuid4()
+
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="self-new",
+            seq=10,
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=10.0,
+            text="latest original",
+            source_language="ko",
+            target_language="en",
+            is_final=True,
+        )
+    )
+    await presenter.emit(
+        TranslationFinal(
+            event_id="translation-new",
+            seq=12,
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=12.0,
+            text="latest translation",
+            source_language="ko",
+            target_language="en",
+            is_final=True,
+            applied_context_mode=None,
+        )
+    )
+    revision_before_stale = presenter.snapshot().revision
+
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="self-old",
+            seq=9,
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=9.0,
+            text="stale original",
+            source_language="ko",
+            target_language="en",
+            is_final=True,
+        )
+    )
+    await presenter.emit(
+        TranslationFinal(
+            event_id="translation-old",
+            seq=11,
+            utterance_id=utterance_id,
+            channel="self",
+            created_at=11.0,
+            text="stale translation",
+            source_language="ko",
+            target_language="en",
+            is_final=True,
+            applied_context_mode=None,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_stale
+    assert presenter.snapshot().blocks[-1].primary_text == "latest original"
+    assert presenter.snapshot().blocks[-1].secondary_text == "latest translation"
+
+
+@pytest.mark.asyncio
+async def test_presenter_allows_two_self_rows_and_evicts_oldest_on_third_self_turn() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+
+    turn_ids = [uuid4(), uuid4(), uuid4()]
+
+    for index, turn_id in enumerate(turn_ids, start=1):
+        await presenter.emit(
+            SelfTranscriptFinal(
+                event_id=f"self-{index}",
+                seq=index,
+                utterance_id=turn_id,
+                channel="self",
+                created_at=float(index),
+                text=f"original {index}",
+                source_language="ko",
+                target_language="en",
+                is_final=True,
+            )
+        )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"self:{turn_ids[1]}",
+        f"self:{turn_ids[2]}",
+    ]
+    assert [block.primary_text for block in presenter.snapshot().blocks] == [
+        "original 2",
+        "original 3",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_presenter_preserves_input_order_when_two_turns_first_become_visible_in_same_window() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    older = Transcript(
+        utterance_id=uuid4(),
+        channel="peer",
+        text="peer older",
+        is_final=True,
+        created_at=11.0,
+    )
+    newer = Transcript(
+        utterance_id=uuid4(),
+        channel="peer",
+        text="peer newer",
+        is_final=True,
+        created_at=12.0,
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(older, source_language="en", target_language="ko")
+    )
+    await presenter.emit(
+        adapter.transcript_final(newer, source_language="en", target_language="ko")
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=newer.utterance_id,
+            channel="peer",
+            text="피어 둘",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=13.0,
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=older.utterance_id,
+            channel="peer",
+            text="피어 하나",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=13.1,
+        )
+    )
+
+    assert [block.id for block in bridge.snapshots[-1].blocks] == [
+        f"peer:{older.utterance_id}",
+        f"peer:{newer.utterance_id}",
+    ]
+    assert [block.primary_text for block in bridge.snapshots[-1].blocks] == [
+        "피어 하나",
+        "피어 둘",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_presenter_evicted_turn_late_update_is_ignored() -> None:
+    bridge = RecordingPresentationBridge()
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+
+    displaced_turn_id = uuid4()
+    newer_turn_ids = [uuid4(), uuid4()]
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=displaced_turn_id,
+                channel="self",
+                text="original 1",
+                is_final=True,
+                created_at=1.0,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+
+    for index, turn_id in enumerate(newer_turn_ids, start=2):
+        await presenter.emit(
+            adapter.transcript_final(
+                Transcript(
+                    utterance_id=turn_id,
+                    channel="self",
+                    text=f"original {index}",
+                    is_final=True,
+                    created_at=float(index),
+                ),
+                source_language="ko",
+                target_language="en",
+            )
+        )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"self:{newer_turn_ids[0]}",
+        f"self:{newer_turn_ids[1]}",
+    ]
+
+    revision_before_late_update = presenter.snapshot().revision
+    blocks_before_late_update = presenter.snapshot().blocks
+    snapshot_count_before_late_update = len(bridge.snapshots)
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=displaced_turn_id,
+            channel="self",
+            text="late translation",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=9.9,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_late_update
+    assert presenter.snapshot().blocks == blocks_before_late_update
+    assert len(bridge.snapshots) == snapshot_count_before_late_update
+
+
+@pytest.mark.asyncio
+async def test_presenter_evicted_turn_remains_ignored_after_tombstone_cap_overflow() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+
+    total_turns = 67
+    turn_ids = [uuid4() for _ in range(total_turns)]
+    for index, turn_id in enumerate(turn_ids, start=1):
+        await presenter.emit(
+            SelfTranscriptFinal(
+                event_id=f"self-{index}",
+                seq=index,
+                utterance_id=turn_id,
+                channel="self",
+                turn_kind="self",
+                turn_generation=0,
+                turn_order=index - 1,
+                created_at=float(index),
+                text=f"original {index}",
+                source_language="ko",
+                target_language="en",
+                is_final=True,
+            )
+        )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"self:{turn_ids[-2]}",
+        f"self:{turn_ids[-1]}",
+    ]
+
+    revision_before_late_update = presenter.snapshot().revision
+    blocks_before_late_update = presenter.snapshot().blocks
+    snapshot_count_before_late_update = len(bridge.snapshots)
+
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="late-self-1",
+            seq=1000,
+            utterance_id=turn_ids[0],
+            channel="self",
+            turn_kind="self",
+            turn_generation=0,
+            turn_order=0,
+            created_at=1000.0,
+            text="late original",
+            source_language="ko",
+            target_language="en",
+            is_final=True,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_late_update
+    assert presenter.snapshot().blocks == blocks_before_late_update
+    assert len(bridge.snapshots) == snapshot_count_before_late_update
+    assert bridge.snapshots[-1].blocks == blocks_before_late_update
+
+
+@pytest.mark.asyncio
+async def test_scoped_peer_children_survive_earlier_sibling_retirement() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    parent_id = uuid4()
+    children = [uuid4() for _ in range(6)]
+    scopes = [
+        OverlayPublicationScope(
+            turn_kind="peer",
+            parent_utterance_id=parent_id,
+            turn_generation=0,
+            turn_order=0,
+            target_index=index,
+            target_count=len(children),
+        )
+        for index in range(len(children))
+    ]
+    for index, (child_id, scope) in enumerate(zip(children, scopes, strict=True)):
+        receipt = await presenter.emit(
+            adapter.translation_final(
+                utterance_id=child_id,
+                channel="peer",
+                text=f"translated {index}",
+                source_text=f"source {index}",
+                source_language="en",
+                target_language="ko",
+                applied_context_mode=None,
+                output_scope=scope,
+            )
+        )
+        assert receipt.outcome == "applied"
+        assert presenter.snapshot().blocks[-1].id == f"peer:{child_id}"
+        assert presenter.snapshot().blocks[-1].publication_index == index
+        close_receipt = await presenter.emit(
+            adapter.utterance_closed(utterance_id=child_id, channel="peer", output_scope=scope)
+        )
+        assert close_receipt.outcome == "applied"
+        if index == 2:
+            snapshot = presenter.snapshot()
+            assert [block.id for block in snapshot.blocks] == [
+                f"peer:{children[1]}",
+                f"peer:{children[2]}",
+            ]
+            assert [
+                (frontier.order, frontier.index)
+                for frontier in snapshot.semantic_retirement_frontiers
+            ] == [(0, 0)]
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"peer:{children[4]}",
+        f"peer:{children[5]}",
+    ]
+    assert (
+        await presenter.emit(
+            adapter.translation_final(
+                utterance_id=children[0],
+                channel="peer",
+                text="resurrected",
+                source_language="en",
+                target_language="ko",
+                applied_context_mode=None,
+                output_scope=scopes[0],
+            )
+        )
+    ).outcome == "stale"
+    next_child = uuid4()
+    next_scope = OverlayPublicationScope(
+        turn_kind="peer",
+        parent_utterance_id=uuid4(),
+        turn_generation=0,
+        turn_order=1,
+    )
+    assert (
+        await presenter.emit(
+            adapter.translation_final(
+                utterance_id=next_child,
+                channel="peer",
+                text="next parent",
+                source_language="en",
+                target_language="ko",
+                applied_context_mode=None,
+                output_scope=next_scope,
+            )
+        )
+    ).outcome == "applied"
+    assert presenter.snapshot().blocks[-1].id == f"peer:{next_child}"
+
+
+@pytest.mark.asyncio
+async def test_scoped_self_children_use_displayed_parent_target_index() -> None:
+    presenter = OverlayPresenter(calibration=OverlayCalibration(), clock=FakeClock(_now=10.0))
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    children = [uuid4() for _ in range(3)]
+    parent_id = uuid4()
+    for index, child_id in enumerate(children):
+        scope = OverlayPublicationScope(
+            turn_kind="self",
+            parent_utterance_id=parent_id,
+            turn_generation=0,
+            turn_order=0,
+            target_index=index,
+            target_count=3,
+        )
+        await presenter.emit(
+            adapter.transcript_final(
+                Transcript(
+                    utterance_id=child_id,
+                    channel="self",
+                    text=f"source {index}",
+                    is_final=True,
+                    created_at=10.0,
+                ),
+                source_language="ko",
+                target_language="en",
+                output_scope=scope,
+            )
+        )
+        receipt = await presenter.emit(
+            adapter.translation_final(
+                utterance_id=child_id,
+                channel="self",
+                text=f"self child {index}",
+                source_language="ko",
+                target_language="en",
+                applied_context_mode=None,
+                output_scope=scope,
+            )
+        )
+        assert receipt.outcome == "applied"
+        assert presenter.snapshot().blocks[-1].publication_index == index
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"self:{children[1]}",
+        f"self:{children[2]}",
+    ]
+    assert [
+        (frontier.order, frontier.index)
+        for frontier in presenter.snapshot().semantic_retirement_frontiers
+    ] == [(0, 0)]
+
+
+@pytest.mark.asyncio
+async def test_presenter_expires_visible_finalized_entry_after_eight_seconds() -> None:
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    transcript = Transcript(
+        utterance_id=uuid4(),
+        channel="self",
+        text="hello now",
+        is_final=True,
+        created_at=10.0,
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(
+            transcript,
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    await presenter.emit(
+        adapter.utterance_closed(
+            utterance_id=transcript.utterance_id,
+            channel="self",
+            is_final=True,
+            created_at=10.1,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"self:{transcript.utterance_id}"
+    ]
+    assert len(bridge.snapshots) == 1
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert sleep_calls == [8.0]
+    assert presenter.snapshot().blocks == []
+    assert len(bridge.snapshots) == 2
+    assert bridge.snapshots[-1].blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_meaningful_update_refreshes_idle_deadline_but_duplicate_visible_content_does_not() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    sleep_events: list[asyncio.Event] = []
+
+    async def fake_sleep(delay: float) -> None:
+        release = asyncio.Event()
+        sleep_events.append(release)
+        await release.wait()
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live one",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=10.0,
+        )
+    )
+    await asyncio.sleep(0)
+
+    clock.advance(4.0)
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live two",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=14.0,
+        )
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    clock.advance(7.5)
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{turn_id}"]
+    assert presenter.snapshot().blocks[0].primary_text == "live two"
+
+    revision_before_duplicate = presenter.snapshot().revision
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live two",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=21.5,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_duplicate
+
+    sleep_events[0].set()
+    await asyncio.sleep(0)
+    sleep_events[1].set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_idle_hidden_turn_late_update_is_ignored() -> None:
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+
+    async def fake_sleep(delay: float) -> None:
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live self",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks == []
+
+    revision_before_late_update = presenter.snapshot().revision
+    await presenter.emit(
+        adapter.self_active_update(
+            text="late self",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=18.1,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_late_update
+    assert presenter.snapshot().blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_channel_role_mapping_preserves_identity_with_required_text_roles() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    self_turn_id = uuid4()
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="self source live",
+            secondary_text="self translation preview",
+            utterance_id=self_turn_id,
+            occupant_key=f"self:{self_turn_id}",
+            created_at=10.0,
+        )
+    )
+    self_active = presenter.snapshot().blocks[-1]
+
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="self-final-role-mapping",
+            seq=2,
+            utterance_id=self_turn_id,
+            channel="self",
+            text="self source live",
+            source_language="ko",
+            target_language="en",
+            created_at=10.1,
+        )
+    )
+    self_final = next(
+        block for block in presenter.snapshot().blocks if block.id == f"self:{self_turn_id}"
+    )
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer source original",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=11.0,
+        )
+    )
+    peer_active = presenter.snapshot().blocks[-1]
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="peer translation final",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=11.1,
+        )
+    )
+    peer_final = next(
+        block for block in presenter.snapshot().blocks if block.id == f"peer:{peer_turn_id}"
+    )
+
+    assert self_active.id == self_final.id == f"self:{self_turn_id}"
+    assert self_active.occupant_key == self_final.occupant_key == f"self:{self_turn_id}"
+    assert self_active.primary_text == "self source live"
+    assert self_active.secondary_text == "self translation preview"
+    assert self_final.primary_text == "self source live"
+    assert self_final.secondary_text == "self translation preview"
+
+    assert peer_active.id == peer_final.id == f"peer:{peer_turn_id}"
+    assert peer_active.occupant_key == peer_final.occupant_key == f"peer:{peer_turn_id}"
+    assert peer_active.block_variant == "active_peer"
+    assert peer_active.primary_text == ""
+    assert peer_active.secondary_text == "peer source original"
+    assert peer_final.block_variant == "finalized"
+    assert peer_final.primary_text == "peer translation final"
+    assert peer_final.secondary_text == "peer source original"
+
+
+@pytest.mark.asyncio
+async def test_presenter_self_active_self_final_and_self_translation_share_one_row_identity() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="final-1",
+            seq=2,
+            utterance_id=turn_id,
+            channel="self",
+            text="hello live",
+            source_language="ko",
+            target_language="en",
+            created_at=11.0,
+        )
+    )
+    await presenter.emit(
+        TranslationFinal(
+            event_id="translation-1",
+            seq=3,
+            utterance_id=turn_id,
+            channel="self",
+            created_at=12.0,
+            text="translated live",
+            source_language="ko",
+            target_language="en",
+            is_final=True,
+            applied_context_mode=None,
+        )
+    )
+
+    assert all(len(snapshot.blocks) == 1 for snapshot in bridge.snapshots)
+    assert [snapshot.blocks[0].occupant_key for snapshot in bridge.snapshots] == [
+        f"self:{turn_id}"
+    ] * 3
+    assert [snapshot.blocks[0].block_variant for snapshot in bridge.snapshots] == [
+        "active_self",
+        "finalized",
+        "finalized",
+    ]
+    assert [snapshot.blocks[0].id for snapshot in bridge.snapshots[1:]] == [
+        f"self:{turn_id}",
+        f"self:{turn_id}",
+    ]
+    assert bridge.snapshots[-1].blocks[0].secondary_text == "translated live"
+
+
+@pytest.mark.asyncio
+async def test_presenter_promotes_same_turn_preview_secondary_into_finalized_self_row() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            secondary_text="translated live",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="final-promote-preview-secondary",
+            seq=2,
+            utterance_id=turn_id,
+            channel="self",
+            text="hello live",
+            source_language="ko",
+            target_language="en",
+            created_at=11.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{turn_id}"]
+    assert presenter.snapshot().blocks[0].block_variant == "finalized"
+    assert presenter.snapshot().blocks[0].primary_text == "hello live"
+    assert presenter.snapshot().blocks[0].secondary_text == "translated live"
+
+
+@pytest.mark.asyncio
+async def test_presenter_active_self_snapshot_round_trips_update_metadata() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            secondary_text="translated live",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=10.0,
+            update_id="upd-active-self",
+            origin_wall_clock_ms=1712345678901,
+            session_scope="session:self",
+            source_text_hash="activehash123456",
+            source_text_len=10,
+            logical_turn_key=f"self:{turn_id}",
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+
+    assert block.block_variant == "active_self"
+    assert block.update_id == "upd-active-self"
+    assert block.origin_wall_clock_ms == 1712345678901
+    assert block.session_scope == "session:self"
+    assert block.source_text_hash == "activehash123456"
+    assert block.source_text_len == 10
+    assert block.logical_turn_key == f"self:{turn_id}"
+    assert OverlayPresentationBlock.from_dict(block.to_dict()) == block
+
+
+@pytest.mark.asyncio
+async def test_presenter_promoted_finalized_self_snapshot_round_trips_update_metadata() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            secondary_text="translated live",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=10.0,
+            update_id="upd-finalized-self",
+            origin_wall_clock_ms=1712345678902,
+            session_scope="session:self",
+            source_text_hash="selffinalhash123",
+            source_text_len=10,
+            logical_turn_key=f"self:{turn_id}",
+        )
+    )
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="final-promote-preview-secondary-metadata",
+            seq=2,
+            utterance_id=turn_id,
+            channel="self",
+            text="hello live",
+            source_language="ko",
+            target_language="en",
+            created_at=11.0,
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+
+    assert block.block_variant == "finalized"
+    assert block.secondary_text == "translated live"
+    assert block.update_id == "upd-finalized-self"
+    assert block.origin_wall_clock_ms == 1712345678902
+    assert block.session_scope == "session:self"
+    assert block.source_text_hash == "selffinalhash123"
+    assert block.source_text_len == 10
+    assert block.logical_turn_key == f"self:{turn_id}"
+    assert OverlayPresentationBlock.from_dict(block.to_dict()) == block
+
+
+@pytest.mark.asyncio
+async def test_presenter_hidden_self_translation_metadata_update_does_not_bump_revision_or_publish() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        native_retry_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=turn_id,
+                channel="self",
+                text="hello hidden",
+                is_final=True,
+                created_at=11.0,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=turn_id,
+            channel="self",
+            text="translated hidden",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=12.0,
+            update_id="upd-hidden-self-before",
+            origin_wall_clock_ms=1712345678910,
+            session_scope="session:hidden-before",
+            source_text_hash="hiddenbeforehash123",
+            source_text_len=17,
+            logical_turn_key=f"self:{turn_id}",
+        )
+    )
+    await presenter.update_display_preferences(
+        show_translation=False,
+        show_peer_original=True,
+    )
+
+    snapshot_before_metadata = presenter.snapshot()
+    snapshot_count_before_metadata = len(bridge.snapshots)
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=turn_id,
+            channel="self",
+            text="translated hidden",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=13.0,
+            update_id="upd-hidden-self-after",
+            origin_wall_clock_ms=1712345678920,
+            session_scope="session:hidden-after",
+            source_text_hash="hiddenafterhash456",
+            source_text_len=17,
+            logical_turn_key=f"self:{turn_id}",
+        )
+    )
+
+    assert presenter.snapshot() == snapshot_before_metadata
+    assert len(bridge.snapshots) == snapshot_count_before_metadata
+    assert (
+        presenter.snapshot().native_fresh_render_generations
+        == snapshot_before_metadata.native_fresh_render_generations
+    )
+    assert presenter.snapshot().blocks[0].secondary_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_presenter_visible_peer_metadata_update_does_not_refresh_idle_ttl() -> None:
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    sleep_calls: list[float] = []
+    cancelled_delays: list[float] = []
+    sleep_events: list[asyncio.Event] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        release = asyncio.Event()
+        sleep_events.append(release)
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled_delays.append(delay)
+            raise
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=turn_id,
+                channel="peer",
+                text="peer original",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=turn_id,
+            channel="peer",
+            text="peer translation",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.0,
+            update_id="peer-visible-before",
+            origin_wall_clock_ms=1712345678901,
+            session_scope="session:peer:before",
+            source_text_hash="peerbeforehash123",
+            source_text_len=16,
+            logical_turn_key=f"peer:{turn_id}",
+        )
+    )
+    await presenter.emit(
+        adapter.utterance_closed(
+            utterance_id=turn_id,
+            channel="peer",
+            created_at=10.1,
+        )
+    )
+
+    await asyncio.sleep(0)
+
+    entry = presenter._entries[("peer", turn_id)]
+    visible_anchor_before_metadata = entry.last_meaningful_visible_at
+    revision_before_metadata = presenter.snapshot().revision
+
+    assert visible_anchor_before_metadata == 10.0
+    assert sleep_calls == [8.0]
+    assert presenter.snapshot().blocks[0].update_id == "peer-visible-before"
+
+    clock.advance(7.0)
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=turn_id,
+            channel="peer",
+            text="peer translation",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=17.0,
+            update_id="peer-visible-after",
+            origin_wall_clock_ms=1712345678911,
+            session_scope="session:peer:after",
+            source_text_hash="peerafterhash456",
+            source_text_len=16,
+            logical_turn_key=f"peer:{turn_id}",
+        )
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().revision == revision_before_metadata + 1
+    assert presenter.snapshot().blocks[0].primary_text == "peer translation"
+    assert presenter.snapshot().blocks[0].update_id == "peer-visible-after"
+    assert entry.last_meaningful_visible_at == visible_anchor_before_metadata
+    assert cancelled_delays == [8.0]
+    assert sleep_calls == [8.0, 1.0]
+
+    sleep_events[-1].set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_finalized_peer_snapshot_round_trips_update_metadata() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    transcript = Transcript(
+        utterance_id=peer_turn_id,
+        channel="peer",
+        text="peer original",
+        is_final=True,
+        created_at=11.0,
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(
+            transcript,
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="상대 번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=12.0,
+            update_id="upd-finalized-peer",
+            origin_wall_clock_ms=1712345678903,
+            session_scope="session:peer",
+            source_text_hash="peerfinalhash123",
+            source_text_len=13,
+            logical_turn_key=f"peer:{peer_turn_id}",
+        )
+    )
+
+    block = presenter.snapshot().blocks[0]
+
+    assert block.block_variant == "finalized"
+    assert block.primary_text == "상대 번역"
+    assert block.update_id == "upd-finalized-peer"
+    assert block.origin_wall_clock_ms == 1712345678903
+    assert block.session_scope == "session:peer"
+    assert block.source_text_hash == "peerfinalhash123"
+    assert block.source_text_len == 13
+    assert block.logical_turn_key == f"peer:{peer_turn_id}"
+    assert OverlayPresentationBlock.from_dict(block.to_dict()) == block
+
+
+@pytest.mark.asyncio
+async def test_presenter_renders_active_self_secondary_text() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    active_utterance_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            secondary_text="translated live",
+            utterance_id=active_utterance_id,
+            occupant_key=f"self:{active_utterance_id}",
+            created_at=10.0,
+        )
+    )
+
+    blocks = presenter.snapshot().blocks
+    assert len(blocks) == 1
+    assert blocks[0].id == f"self:{active_utterance_id}"
+    assert blocks[0].block_variant == "active_self"
+    assert blocks[0].primary_text == "hello live"
+    assert blocks[0].secondary_text == "translated live"
+    assert blocks[0].secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_updates_active_self_when_secondary_changes_only() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    active_utterance_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            utterance_id=active_utterance_id,
+            occupant_key=f"self:{active_utterance_id}",
+            created_at=10.0,
+        )
+    )
+    revision_before_secondary = presenter.snapshot().revision
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            secondary_text="translated live",
+            utterance_id=active_utterance_id,
+            occupant_key=f"self:{active_utterance_id}",
+            created_at=11.0,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_secondary + 1
+    assert presenter.snapshot().blocks[-1].id == f"self:{active_utterance_id}"
+    assert presenter.snapshot().blocks[-1].secondary_text == "translated live"
+
+
+@pytest.mark.asyncio
+async def test_presenter_self_active_clear_removes_live_only_row_but_keeps_finalized_self_row() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    live_only_turn_id = uuid4()
+    finalized_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live only",
+            utterance_id=live_only_turn_id,
+            occupant_key=f"self:{live_only_turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{live_only_turn_id}"]
+
+    await presenter.emit(adapter.self_active_clear(created_at=10.1))
+
+    assert presenter.snapshot().blocks == []
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live then final",
+            utterance_id=finalized_turn_id,
+            occupant_key=f"self:{finalized_turn_id}",
+            created_at=11.0,
+        )
+    )
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="final-2",
+            seq=4,
+            utterance_id=finalized_turn_id,
+            channel="self",
+            text="live then final",
+            source_language="ko",
+            target_language="en",
+            created_at=11.1,
+        )
+    )
+
+    revision_before_clear = presenter.snapshot().revision
+    await presenter.emit(adapter.self_active_clear(created_at=11.2))
+
+    assert presenter.snapshot().revision == revision_before_clear
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{finalized_turn_id}"]
+    assert presenter.snapshot().blocks[0].block_variant == "finalized"
+
+
+@pytest.mark.asyncio
+async def test_presenter_self_active_clear_retires_live_only_row_from_state() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    live_only_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live only",
+            utterance_id=live_only_turn_id,
+            occupant_key=f"self:{live_only_turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{live_only_turn_id}"]
+
+    await presenter.emit(adapter.self_active_clear(created_at=10.1))
+
+    assert presenter.snapshot().blocks == []
+    assert bridge.snapshots[-1].blocks == []
+
+    revision_before_stale = presenter.snapshot().revision
+    snapshot_count_before_stale = len(bridge.snapshots)
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="stale-live-only",
+            seq=1,
+            utterance_id=live_only_turn_id,
+            channel="self",
+            created_at=10.0,
+            text="late preview",
+            occupant_key=f"self:{live_only_turn_id}",
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_stale
+    assert presenter.snapshot().blocks == []
+    assert len(bridge.snapshots) == snapshot_count_before_stale
+
+
+@pytest.mark.asyncio
+async def test_presenter_self_active_clear_retires_live_only_row_with_preview_secondary_from_state() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    live_only_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live only",
+            secondary_text="preview translation",
+            utterance_id=live_only_turn_id,
+            occupant_key=f"self:{live_only_turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    assert presenter.snapshot().blocks[0].secondary_text == "preview translation"
+
+    await presenter.emit(adapter.self_active_clear(created_at=10.1))
+
+    assert presenter.snapshot().blocks == []
+    assert bridge.snapshots[-1].blocks == []
+
+    revision_before_stale = presenter.snapshot().revision
+    snapshot_count_before_stale = len(bridge.snapshots)
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="stale-live-only-preview",
+            seq=1,
+            utterance_id=live_only_turn_id,
+            channel="self",
+            created_at=10.0,
+            text="late preview",
+            secondary_text="late preview translation",
+            occupant_key=f"self:{live_only_turn_id}",
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_stale
+    assert presenter.snapshot().blocks == []
+    assert len(bridge.snapshots) == snapshot_count_before_stale
+
+
+@pytest.mark.asyncio
+async def test_presenter_ignores_stale_self_active_update_after_preview_only_retirement_but_allows_newer_final() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="preview only",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(adapter.self_active_clear(created_at=10.1))
+
+    assert presenter.snapshot().blocks == []
+    assert bridge.snapshots[-1].blocks == []
+
+    revision_before_stale = presenter.snapshot().revision
+    snapshot_count_before_stale = len(bridge.snapshots)
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="stale-preview",
+            seq=1,
+            utterance_id=turn_id,
+            channel="self",
+            created_at=10.0,
+            text="late preview",
+            occupant_key=f"self:{turn_id}",
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_stale
+    assert presenter.snapshot().blocks == []
+    assert len(bridge.snapshots) == snapshot_count_before_stale
+
+    await presenter.emit(
+        SelfTranscriptFinal(
+            event_id="final-after-retire",
+            seq=3,
+            utterance_id=turn_id,
+            channel="self",
+            text="final text",
+            source_language="ko",
+            target_language="en",
+            created_at=10.2,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{turn_id}"]
+    assert presenter.snapshot().blocks[0].block_variant == "finalized"
+    assert presenter.snapshot().blocks[0].primary_text == "final text"
+    assert [block.id for block in bridge.snapshots[-1].blocks] == [f"self:{turn_id}"]
+
+
+@pytest.mark.asyncio
+async def test_presenter_replacing_preview_only_live_turn_cleans_up_old_row() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    first_turn_id = uuid4()
+    second_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="first live",
+            utterance_id=first_turn_id,
+            occupant_key=f"self:{first_turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{first_turn_id}"]
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="second live",
+            utterance_id=second_turn_id,
+            occupant_key=f"self:{second_turn_id}",
+            created_at=11.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{second_turn_id}"]
+    assert presenter.snapshot().blocks[0].primary_text == "second live"
+
+    revision_before_stale = presenter.snapshot().revision
+    snapshot_count_before_stale = len(bridge.snapshots)
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="stale-first-live",
+            seq=1,
+            utterance_id=first_turn_id,
+            channel="self",
+            created_at=10.0,
+            text="first live",
+            occupant_key=f"self:{first_turn_id}",
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_stale
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{second_turn_id}"]
+    assert len(bridge.snapshots) == snapshot_count_before_stale
+
+
+@pytest.mark.asyncio
+async def test_presenter_ignores_stale_self_active_update_after_preview_secondary_replacement_retirement() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    first_turn_id = uuid4()
+    second_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="first live",
+            secondary_text="first preview translation",
+            utterance_id=first_turn_id,
+            occupant_key=f"self:{first_turn_id}",
+            created_at=10.0,
+        )
+    )
+    await presenter.emit(
+        adapter.self_active_update(
+            text="second live",
+            utterance_id=second_turn_id,
+            occupant_key=f"self:{second_turn_id}",
+            created_at=11.0,
+        )
+    )
+    await presenter.emit(adapter.self_active_clear(created_at=11.1))
+
+    assert presenter.snapshot().blocks == []
+    assert bridge.snapshots[-1].blocks == []
+
+    revision_before_stale = presenter.snapshot().revision
+    snapshot_count_before_stale = len(bridge.snapshots)
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="stale-first-preview",
+            seq=1,
+            utterance_id=first_turn_id,
+            channel="self",
+            created_at=10.0,
+            text="first live",
+            secondary_text="first preview translation",
+            occupant_key=f"self:{first_turn_id}",
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_stale
+    assert presenter.snapshot().blocks == []
+    assert len(bridge.snapshots) == snapshot_count_before_stale
+
+
+@pytest.mark.asyncio
+async def test_presenter_replacing_preview_only_live_turn_with_preview_secondary_cleans_up_old_row() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    first_turn_id = uuid4()
+    second_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="first live",
+            secondary_text="first preview translation",
+            utterance_id=first_turn_id,
+            occupant_key=f"self:{first_turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{first_turn_id}"]
+    assert presenter.snapshot().blocks[0].secondary_text == "first preview translation"
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="second live",
+            secondary_text="second preview translation",
+            utterance_id=second_turn_id,
+            occupant_key=f"self:{second_turn_id}",
+            created_at=11.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{second_turn_id}"]
+    assert presenter.snapshot().blocks[0].secondary_text == "second preview translation"
+
+    revision_before_stale = presenter.snapshot().revision
+    snapshot_count_before_stale = len(bridge.snapshots)
+    await presenter.emit(
+        SelfActiveUpdate(
+            event_id="stale-first-live-preview",
+            seq=1,
+            utterance_id=first_turn_id,
+            channel="self",
+            created_at=10.0,
+            text="first live",
+            secondary_text="first preview translation",
+            occupant_key=f"self:{first_turn_id}",
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_stale
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{second_turn_id}"]
+    assert len(bridge.snapshots) == snapshot_count_before_stale
+
+
+@pytest.mark.asyncio
+async def test_presenter_clears_active_self_secondary_text_on_empty_update() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    active_utterance_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            secondary_text="translated live",
+            utterance_id=active_utterance_id,
+            occupant_key=f"self:{active_utterance_id}",
+            created_at=10.0,
+        )
+    )
+    revision_before_clear = presenter.snapshot().revision
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="hello live",
+            secondary_text="",
+            utterance_id=active_utterance_id,
+            occupant_key=f"self:{active_utterance_id}",
+            created_at=11.0,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_clear + 1
+    assert presenter.snapshot().blocks[-1].id == f"self:{active_utterance_id}"
+    assert presenter.snapshot().blocks[-1].secondary_text == ""
+
+
+@pytest.mark.asyncio
+async def test_presenter_reset_scene_clears_terminal_turn_memory() -> None:
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+
+    async def fake_sleep(delay: float) -> None:
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="before reset",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=10.0,
+        )
+    )
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert presenter.snapshot().blocks == []
+
+    revision_before_retry = presenter.snapshot().revision
+    await presenter.emit(
+        adapter.self_active_update(
+            text="ignored before reset",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=18.1,
+        )
+    )
+
+    assert presenter.snapshot().revision == revision_before_retry
+    assert presenter.snapshot().blocks == []
+
+    presenter.reset_scene()
+
+    await presenter.emit(
+        adapter.self_active_update(
+            text="after reset",
+            utterance_id=turn_id,
+            occupant_key=f"self:{turn_id}",
+            created_at=19.0,
+        )
+    )
+
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{turn_id}"]
+    assert presenter.snapshot().blocks[0].primary_text == "after reset"
+
+
+@pytest.mark.asyncio
+async def test_presenter_assigns_peer_appearance_seq_on_active_source_arrival() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(bridge=bridge, calibration=OverlayCalibration())
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer one",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            created_at=11.0,
+        )
+    )
+    first_visible = presenter.snapshot().blocks[0]
+    assert first_visible.block_variant == "active_peer"
+    assert first_visible.occupant_key == f"peer:{peer_turn_id}"
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="피어 하나",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=12.0,
+        )
+    )
+    first_finalized = presenter.snapshot().blocks[0]
+
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="피어 하나 수정",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=13.0,
+        )
+    )
+
+    assert first_finalized.appearance_seq == first_visible.appearance_seq
+    assert presenter.snapshot().blocks[0].occupant_key == f"peer:{peer_turn_id}"
+    assert presenter.snapshot().blocks[0].appearance_seq == first_visible.appearance_seq
+
+
+@pytest.mark.asyncio
+async def test_presenter_clear_for_runtime_detach_publishes_empty_snapshot_with_higher_revision() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    utterance_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=utterance_id,
+                channel="self",
+                text="hello",
+                is_final=True,
+                created_at=11.0,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    revision_before_clear = presenter.snapshot().revision
+
+    await presenter.clear_for_runtime_detach()
+
+    assert presenter.snapshot().blocks == []
+    assert presenter.snapshot().revision == revision_before_clear + 1
+    assert bridge.snapshots[-1].blocks == []
+
+
+@pytest.mark.asyncio
+async def test_presenter_updates_secondary_visibility_preferences_without_changing_primary_semantics() -> (
+    None
+):
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=40.0)
+    adapter = OverlayEventAdapter(clock=clock)
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+    )
+    self_utterance_id = uuid4()
+    peer_utterance_id = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=self_utterance_id,
+                channel="self",
+                text="self original",
+                is_final=True,
+                created_at=40.0,
+            ),
+            source_language="ko",
+            target_language="en",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=self_utterance_id,
+            channel="self",
+            text="self translation",
+            source_language="ko",
+            target_language="en",
+            applied_context_mode=None,
+            created_at=40.1,
+        )
+    )
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_utterance_id,
+                channel="peer",
+                text="peer original",
+                is_final=True,
+                created_at=41.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_utterance_id,
+            channel="peer",
+            text="peer translation",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=41.1,
+        )
+    )
+
+    await presenter.update_display_preferences(
+        show_translation=False,
+        show_peer_original=False,
+    )
+
+    blocks_by_id = {block.id: block for block in presenter.snapshot().blocks}
+    self_block = blocks_by_id[f"self:{self_utterance_id}"]
+    peer_block = blocks_by_id[f"peer:{peer_utterance_id}"]
+
+    assert self_block.primary_text == "self original"
+    assert self_block.secondary_text == "self translation"
+    assert self_block.secondary_enabled is False
+    assert peer_block.primary_text == "peer translation"
+    assert peer_block.secondary_text == "peer original"
+    assert peer_block.secondary_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_presenter_same_text_from_different_turn_replaces_visible_row() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+        visible_window_target_blocks=1,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    first_turn_id = uuid4()
+    second_turn_id = uuid4()
+
+    for utterance_id, created_at in ((first_turn_id, 10.0), (second_turn_id, 10.1)):
+        await presenter.emit(
+            adapter.transcript_final(
+                Transcript(
+                    utterance_id=utterance_id,
+                    channel="self",
+                    text="same visible text",
+                    is_final=True,
+                    created_at=created_at,
+                ),
+                source_language="ko",
+                target_language="en",
+            )
+        )
+
+    assert len(bridge.snapshots) == 2
+    assert [block.id for block in bridge.snapshots[-1].blocks] == [f"self:{second_turn_id}"]
+
+
+@pytest.mark.asyncio
+async def test_presenter_native_fresh_render_peer_event_matrix_uses_exact_visible_key() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        native_retry_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    visible = uuid4()
+    source_only = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=visible,
+                channel="peer",
+                text="source",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_stream_update(
+            utterance_id=visible,
+            channel="peer",
+            text="번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            update_id="peer-stream",
+        )
+    )
+    assert presenter.snapshot().native_fresh_render_generations.peer == 1
+    stream_episode = presenter.snapshot().native_quiet_tail_episodes.peer
+    assert stream_episode is not None and stream_episode.phase == "stream"
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=source_only,
+                channel="peer",
+                text="hidden source",
+                is_final=True,
+                created_at=10.1,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="still source only",
+            utterance_id=source_only,
+            occupant_key=f"peer:{source_only}",
+        )
+    )
+    assert presenter.snapshot().native_fresh_render_generations.peer == 1
+
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="updated source",
+            utterance_id=visible,
+            occupant_key=f"peer:{visible}",
+        )
+    )
+    assert presenter.snapshot().native_fresh_render_generations.peer == 2
+    assert presenter.snapshot().native_quiet_tail_episodes.peer == stream_episode
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=visible,
+                channel="peer",
+                text="final source",
+                is_final=True,
+                created_at=10.2,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    assert presenter.snapshot().native_fresh_render_generations.peer == 3
+    final_episode = presenter.snapshot().native_quiet_tail_episodes.peer
+    assert final_episode is not None and final_episode.phase == "final"
+    assert final_episode.generation != stream_episode.generation
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=visible,
+            channel="peer",
+            text="최종 번역",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            update_id="peer-final",
+        )
+    )
+    assert presenter.snapshot().native_fresh_render_generations.peer == 4
+    assert presenter.snapshot().native_quiet_tail_episodes.peer == final_episode
+
+
+@pytest.mark.asyncio
+async def test_native_retry_mode_never_schedules_python_refresh_work() -> None:
+    bridge = RecordingPresentationBridge()
+    sleep_calls: list[float] = []
+    sleep_blocked = asyncio.Event()
+
+    async def record_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        await sleep_blocked.wait()
+
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+        sleep=record_sleep,
+        native_retry_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn = uuid4()
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=turn,
+                channel="self",
+                text="native owns retry from first publication",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await asyncio.sleep(0)
+
+    snapshot = presenter.snapshot()
+    assert snapshot.native_fresh_render_targets.self == "scene:self"
+    assert 0.1 not in sleep_calls
+    assert len(bridge.snapshots) == 1
+    await presenter.close()
+
+
+@pytest.mark.asyncio
+async def test_native_retry_epoch_replays_valid_caption_with_fresh_intent_only() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+        native_retry_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=turn,
+                channel="self",
+                text="preserved caption",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    presenter._retry_projection.generations = NativeFreshRenderGenerations(self=4)
+    await presenter._publish_if_changed(force_protocol_publish=True)
+
+    await presenter.begin_native_retry_epoch(enabled=True)
+
+    snapshot = presenter.snapshot()
+    assert snapshot.blocks[0].primary_text == "preserved caption"
+    assert snapshot.native_fresh_render_generations.self == 1
+    assert snapshot.native_fresh_render_targets.self == "scene:self"
+    assert snapshot.native_quiet_tail_episodes.self.generation == 1
+
+    await presenter.begin_native_retry_epoch(enabled=False)
+    desktop_snapshot = presenter.snapshot()
+    assert desktop_snapshot.blocks[0].primary_text == "preserved caption"
+    assert desktop_snapshot.native_fresh_render_generations is None
+    assert desktop_snapshot.native_fresh_render_targets is None
+    assert desktop_snapshot.native_quiet_tail_episodes is None
+    await presenter.close()
+
+
+@pytest.mark.asyncio
+async def test_presenter_native_fresh_render_generations_preserve_channels_and_exact_keys() -> None:
+    bridge = RecordingPresentationBridge()
+    clock = FakeClock(_now=10.0)
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=clock,
+        native_retry_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    self_turn = uuid4()
+    peer_turn = uuid4()
+
+    assert presenter.snapshot().native_fresh_render_generations is None
+    await presenter.update_calibration(OverlayCalibration(distance=1.15))
+    await presenter.update_display_preferences(
+        show_translation=False,
+        show_peer_original=True,
+    )
+    assert presenter.snapshot().native_fresh_render_generations is None
+    await presenter.update_display_preferences(
+        show_translation=True,
+        show_peer_original=True,
+    )
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=self_turn,
+                channel="self",
+                text="same visible text",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    self_generation = presenter.snapshot().native_fresh_render_generations.self
+    self_episode = presenter.snapshot().native_quiet_tail_episodes.self
+    assert self_episode is not None and self_episode.phase == "final"
+    await presenter.emit(
+        adapter.self_active_update(
+            text="live update",
+            utterance_id=self_turn,
+            occupant_key=f"self:{self_turn}",
+        )
+    )
+    assert presenter.snapshot().native_fresh_render_generations.self > self_generation
+    stream_episode = presenter.snapshot().native_quiet_tail_episodes.self
+    assert stream_episode is not None and stream_episode.phase == "stream"
+    assert stream_episode.generation != self_episode.generation
+    self_generation = presenter.snapshot().native_fresh_render_generations.self
+    await presenter.emit(
+        adapter.translation_stream_update(
+            utterance_id=self_turn,
+            channel="self",
+            text="stream update",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+        )
+    )
+    assert presenter.snapshot().native_fresh_render_generations.self > self_generation
+    assert (
+        presenter.snapshot().native_quiet_tail_episodes.self.generation > stream_episode.generation
+    )
+    self_generation = presenter.snapshot().native_fresh_render_generations.self
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn,
+                channel="peer",
+                text="peer source",
+                is_final=True,
+                created_at=10.1,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    assert presenter.snapshot().native_fresh_render_generations.self == self_generation
+    assert presenter.snapshot().native_fresh_render_generations.peer is None
+
+    peer_translation = adapter.translation_final(
+        utterance_id=peer_turn,
+        channel="peer",
+        text="peer translation",
+        source_language="en",
+        target_language="ko",
+        applied_context_mode=None,
+        created_at=10.2,
+        update_id="stable-peer-update",
+    )
+    await presenter.emit(peer_translation)
+    generations = presenter.snapshot().native_fresh_render_generations
+    assert (generations.self, generations.peer) == (self_generation, 1)
+    peer_episode = presenter.snapshot().native_quiet_tail_episodes.peer
+    assert peer_episode is not None and peer_episode.phase == "final"
+
+    await presenter.emit(peer_translation)
+    generations = presenter.snapshot().native_fresh_render_generations
+    assert (generations.self, generations.peer) == (self_generation, 1)
+    assert presenter.snapshot().native_quiet_tail_episodes.peer == peer_episode
+    await presenter.update_display_preferences(
+        show_translation=False,
+        show_peer_original=False,
+    )
+    assert presenter.snapshot().native_fresh_render_generations.self > generations.self
+    assert presenter.snapshot().native_fresh_render_generations.peer == generations.peer
+    generations = presenter.snapshot().native_fresh_render_generations
+    await presenter.update_display_preferences(
+        show_translation=True,
+        show_peer_original=True,
+    )
+    assert presenter.snapshot().native_fresh_render_generations.self > generations.self
+    assert presenter.snapshot().native_fresh_render_generations.peer == generations.peer
+    generations = presenter.snapshot().native_fresh_render_generations
+    self_generation = generations.self
+    await presenter.update_calibration(OverlayCalibration(distance=1.2))
+    assert presenter.snapshot().native_fresh_render_generations == generations
+
+    presenter._retry_projection.generations = NativeFreshRenderGenerations(
+        self=generations.self,
+        peer=U64_MAX,
+    )
+    await presenter.emit(peer_translation)
+    rolled = presenter.snapshot().native_fresh_render_generations
+    assert (rolled.self, rolled.peer) == (self_generation, 1)
+    presenter.reset_scene()
+    assert presenter.snapshot().native_fresh_render_generations is None
+
+
+@pytest.mark.asyncio
+async def test_presenter_episode_generation_is_monotonic_after_target_loss() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        native_retry_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    turn = uuid4()
+    event = adapter.transcript_final(
+        Transcript(
+            utterance_id=turn,
+            channel="self",
+            text="first",
+            is_final=True,
+            created_at=10.0,
+        ),
+        source_language="en",
+        target_language="ko",
+    )
+    await presenter.emit(event)
+    first = presenter.snapshot().native_quiet_tail_episodes.self
+    assert first is not None
+    presenter.reset_scene()
+    assert presenter.snapshot().native_quiet_tail_episodes is None
+    await presenter.emit(event)
+    second = presenter.snapshot().native_quiet_tail_episodes.self
+    assert second is not None
+    assert second.generation > first.generation
+
+
+@pytest.mark.asyncio
+async def test_presenter_native_fresh_render_same_text_new_turn_and_terminal_exclusions() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        native_retry_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    first_self = uuid4()
+    second_self = uuid4()
+    peer_turn = uuid4()
+
+    for turn_id in (first_self, second_self):
+        await presenter.emit(
+            adapter.transcript_final(
+                Transcript(
+                    utterance_id=turn_id,
+                    channel="self",
+                    text="identical text on a distinct turn",
+                    is_final=True,
+                    created_at=10.0,
+                ),
+                source_language="en",
+                target_language="ko",
+            )
+        )
+    assert presenter.snapshot().native_fresh_render_generations.self == 3
+
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn,
+                channel="peer",
+                text="peer source",
+                is_final=True,
+                created_at=10.1,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn,
+            channel="peer",
+            text="peer translation",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+        )
+    )
+    generations = presenter.snapshot().native_fresh_render_generations
+    assert generations.peer == 1
+    assert generations.self >= 3
+
+    await presenter.emit(adapter.self_active_clear())
+    assert presenter.snapshot().native_fresh_render_generations == generations
+    await presenter.emit(adapter.utterance_closed(utterance_id=second_self, channel="self"))
+    assert presenter.snapshot().native_fresh_render_generations == generations
+    await presenter.emit(adapter.utterance_closed(utterance_id=peer_turn, channel="peer"))
+    assert presenter.snapshot().native_fresh_render_generations == generations
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_live_source_promoted_to_primary_when_translation_disabled() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        translation_enabled=False,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer live caption",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            source_language="en",
+            target_language="ko",
+            created_at=10.0,
+        )
+    )
+    block = presenter.snapshot().blocks[0]
+    assert block.channel == "peer"
+    assert block.block_variant == "active_peer"
+    assert block.primary_text == "peer live caption"
+    assert block.secondary_text == ""
+    assert block.secondary_enabled is False
+    assert block.primary_language == "en"
+    assert block.secondary_language is None
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_live_source_primary_when_translation_disabled_ignores_secondary_pref() -> (
+    None
+):
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        show_peer_original=False,
+        translation_enabled=False,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="peer live caption",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            source_language="en",
+            target_language="ko",
+            created_at=10.0,
+        )
+    )
+    block = presenter.snapshot().blocks[0]
+    assert block.block_variant == "active_peer"
+    assert block.primary_text == "peer live caption"
+    assert block.secondary_text == ""
+    assert block.secondary_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_finalized_source_promoted_to_primary_when_translation_disabled() -> (
+    None
+):
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        translation_enabled=False,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer finalized source",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    block = presenter.snapshot().blocks[0]
+    assert block.channel == "peer"
+    assert block.block_variant == "finalized"
+    assert block.primary_text == "peer finalized source"
+    assert block.secondary_text == ""
+    assert block.secondary_enabled is False
+    assert block.primary_language == "en"
+    assert block.secondary_language is None
+
+
+@pytest.mark.asyncio
+async def test_presenter_peer_finalized_source_ignores_secondary_pref_when_translation_disabled() -> (
+    None
+):
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        show_peer_original=False,
+        translation_enabled=False,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer finalized source",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    block = presenter.snapshot().blocks[0]
+    assert block.block_variant == "finalized"
+    assert block.primary_text == "peer finalized source"
+    assert block.secondary_text == ""
+    assert block.secondary_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_presenter_translation_enabled_keeps_pending_and_translated_roles() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        translation_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.peer_active_update(
+            text="pending live source",
+            utterance_id=peer_turn_id,
+            occupant_key=f"peer:{peer_turn_id}",
+            source_language="en",
+            target_language="ko",
+            created_at=10.0,
+        )
+    )
+    live_block = presenter.snapshot().blocks[0]
+    assert live_block.block_variant == "active_peer"
+    assert live_block.primary_text == ""
+    assert live_block.secondary_text == "pending live source"
+    assert live_block.secondary_enabled is True
+    finalized_id = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=finalized_id,
+                channel="peer",
+                text="pending finalized source",
+                is_final=True,
+                created_at=10.1,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    pending_blocks = {block.id: block for block in presenter.snapshot().blocks}
+    pending_block = pending_blocks[f"peer:{finalized_id}"]
+    assert pending_block.block_variant == "finalized"
+    assert pending_block.primary_text == ""
+    assert pending_block.secondary_text == "pending finalized source"
+    assert pending_block.secondary_enabled is True
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=finalized_id,
+            channel="peer",
+            text="translated primary",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.2,
+        )
+    )
+    translated_blocks = {block.id: block for block in presenter.snapshot().blocks}
+    translated_block = translated_blocks[f"peer:{finalized_id}"]
+    assert translated_block.primary_text == "translated primary"
+    assert translated_block.primary_language == "ko"
+    assert translated_block.secondary_text == "pending finalized source"
+    assert translated_block.secondary_language == "en"
+    assert translated_block.secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_translation_toggle_on_to_off_rebuilds_visible_peer_row() -> None:
+    bridge = RecordingPresentationBridge()
+    presenter = OverlayPresenter(
+        bridge=bridge,
+        calibration=OverlayCalibration(),
+        clock=FakeClock(_now=10.0),
+        translation_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer source toggle",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="peer translation toggle",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.1,
+        )
+    )
+    before = presenter.snapshot().blocks[0]
+    assert before.primary_text == "peer translation toggle"
+    assert before.secondary_text == "peer source toggle"
+    snapshots_before = len(bridge.snapshots)
+    await presenter.update_translation_enabled(False)
+    after = presenter.snapshot().blocks[0]
+    assert after.block_variant == "finalized"
+    assert after.primary_text == "peer source toggle"
+    assert after.secondary_text == ""
+    assert after.secondary_enabled is False
+    assert after.primary_language == "en"
+    assert after.secondary_language is None
+    assert len(bridge.snapshots) == snapshots_before + 1
+
+
+@pytest.mark.asyncio
+async def test_presenter_translation_toggle_off_to_on_restores_pending_state() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        translation_enabled=False,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer source pending restore",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    assert presenter.snapshot().blocks[0].primary_text == "peer source pending restore"
+    await presenter.update_translation_enabled(True)
+    block = presenter.snapshot().blocks[0]
+    assert block.block_variant == "finalized"
+    assert block.primary_text == ""
+    assert block.secondary_text == "peer source pending restore"
+    assert block.secondary_enabled is True
+    assert block.secondary_language == "en"
+
+
+@pytest.mark.asyncio
+async def test_presenter_translation_toggle_off_to_on_restores_cached_translation() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        translation_enabled=True,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer source cached",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="peer translation cached",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.1,
+        )
+    )
+    await presenter.update_translation_enabled(False)
+    off_block = presenter.snapshot().blocks[0]
+    assert off_block.primary_text == "peer source cached"
+    assert off_block.secondary_text == ""
+    assert off_block.secondary_enabled is False
+    await presenter.update_translation_enabled(True)
+    on_block = presenter.snapshot().blocks[0]
+    assert on_block.primary_text == "peer translation cached"
+    assert on_block.secondary_text == "peer source cached"
+    assert on_block.secondary_enabled is True
+    assert on_block.primary_language == "ko"
+    assert on_block.secondary_language == "en"
+
+
+@pytest.mark.asyncio
+async def test_presenter_translation_arriving_while_disabled_stays_source_until_enabled() -> None:
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        translation_enabled=False,
+    )
+    adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+    peer_turn_id = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer source early",
+                is_final=True,
+                created_at=10.0,
+            ),
+            source_language="en",
+            target_language="ko",
+        )
+    )
+    await presenter.emit(
+        adapter.translation_final(
+            utterance_id=peer_turn_id,
+            channel="peer",
+            text="peer translation late",
+            source_language="en",
+            target_language="ko",
+            applied_context_mode=None,
+            created_at=10.1,
+        )
+    )
+    off_block = presenter.snapshot().blocks[0]
+    assert off_block.primary_text == "peer source early"
+    assert off_block.secondary_text == ""
+    assert off_block.secondary_enabled is False
+    await presenter.update_translation_enabled(True)
+    on_block = presenter.snapshot().blocks[0]
+    assert on_block.primary_text == "peer translation late"
+    assert on_block.secondary_text == "peer source early"
+    assert on_block.secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_presenter_self_overlay_unchanged_by_translation_enabled() -> None:
+    for translation_enabled in (True, False):
+        presenter = OverlayPresenter(
+            calibration=OverlayCalibration(),
+            translation_enabled=translation_enabled,
+        )
+        adapter = OverlayEventAdapter(clock=FakeClock(_now=10.0))
+        self_turn_id = uuid4()
+        await presenter.emit(
+            adapter.self_active_update(
+                text="self live",
+                utterance_id=self_turn_id,
+                occupant_key=f"self:{self_turn_id}",
+                created_at=10.0,
+            )
+        )
+        live_block = presenter.snapshot().blocks[0]
+        assert live_block.channel == "self"
+        assert live_block.block_variant == "active_self"
+        assert live_block.primary_text == "self live"
+        await presenter.emit(
+            adapter.transcript_final(
+                Transcript(
+                    utterance_id=self_turn_id,
+                    channel="self",
+                    text="self source",
+                    is_final=True,
+                    created_at=10.1,
+                ),
+                source_language="en",
+                target_language="ko",
+            )
+        )
+        await presenter.emit(
+            adapter.translation_final(
+                utterance_id=self_turn_id,
+                channel="self",
+                text="self translation",
+                source_language="en",
+                target_language="ko",
+                applied_context_mode=None,
+                created_at=10.2,
+            )
+        )
+        final_block = presenter.snapshot().blocks[0]
+        assert final_block.channel == "self"
+        assert final_block.block_variant == "finalized"
+        assert final_block.primary_text == "self source"
+        assert final_block.secondary_text == "self translation"
+        assert final_block.secondary_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_expiry_wakes_pending_peer_before_shared_replacement_deadline() -> None:
+    clock = FakeClock(_now=10.0)
+    sleep_waiters: list[tuple[float, asyncio.Event]] = []
+
+    async def controlled_sleep(delay: float) -> None:
+        release = asyncio.Event()
+        sleep_waiters.append((delay, release))
+        await release.wait()
+
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=controlled_sleep,
+        translation_enabled=False,
+        visible_window_target_blocks=2,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    expiring_peer = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=expiring_peer,
+                channel="peer",
+                text="expiring peer",
+                is_final=True,
+                created_at=clock.now(),
+            ),
+            source_language="en",
+            target_language="ja",
+        )
+    )
+    await presenter.emit(
+        adapter.utterance_closed(
+            utterance_id=expiring_peer,
+            channel="peer",
+            is_final=True,
+            created_at=clock.now(),
+        )
+    )
+    await asyncio.sleep(0)
+    clock.advance(7.5)
+    self_turn = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=self_turn,
+                channel="self",
+                text="new self occupant",
+                is_final=True,
+                created_at=clock.now(),
+            ),
+            source_language="en",
+            target_language="ja",
+        )
+    )
+    pending_peer = uuid4()
+    pending = asyncio.create_task(
+        presenter.emit_peer_when_admissible(
+            adapter.transcript_final(
+                Transcript(
+                    utterance_id=pending_peer,
+                    channel="peer",
+                    text="pending peer",
+                    is_final=True,
+                    created_at=clock.now(),
+                ),
+                source_language="en",
+                target_language="ja",
+            )
+        )
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not pending.done()
+    assert any(delay == PEER_REPLACEMENT_INTERVAL_SECONDS for delay, _ in sleep_waiters)
+
+    clock.advance(0.5)
+    expiry_release = next(release for delay, release in sleep_waiters if delay == 8.0)
+    expiry_release.set()
+    receipt = await asyncio.wait_for(pending, timeout=0.5)
+
+    assert receipt.outcome == "applied"
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"self:{self_turn}",
+        f"peer:{pending_peer}",
+    ]
+    await presenter.close()
+
+
+@pytest.mark.asyncio
+async def test_protected_rows_are_not_evicted_by_elapsed_pacing_interval() -> None:
+    clock = FakeClock(_now=10.0)
+    sleep_calls: list[float] = []
+
+    async def controlled_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        if delay > PEER_REPLACEMENT_INTERVAL_SECONDS:
+            await asyncio.Event().wait()
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=controlled_sleep,
+        translation_enabled=False,
+        visible_window_target_blocks=1,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    self_turn = uuid4()
+    await presenter.emit(
+        adapter.self_active_update(
+            text="protected self",
+            utterance_id=self_turn,
+            occupant_key=f"self:{self_turn}",
+            source_language="en",
+            target_language="ja",
+            created_at=clock.now(),
+        )
+    )
+    peer_turn = uuid4()
+    pending = asyncio.create_task(
+        presenter.emit_peer_when_admissible(
+            adapter.transcript_final(
+                Transcript(
+                    utterance_id=peer_turn,
+                    channel="peer",
+                    text="waiting peer",
+                    is_final=True,
+                    created_at=clock.now(),
+                ),
+                source_language="en",
+                target_language="ja",
+            )
+        )
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    clock.advance(10.0)
+    await asyncio.sleep(0)
+    assert not pending.done()
+    assert all(delay != PEER_REPLACEMENT_INTERVAL_SECONDS for delay in sleep_calls)
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{self_turn}"]
+    pending.cancel()
+    await asyncio.gather(pending, return_exceptions=True)
+    await presenter.close()
+
+
+@pytest.mark.asyncio
+async def test_peer_admission_paces_only_new_replacements_after_free_slots_fill() -> None:
+    clock = FakeClock(_now=10.0)
+    expected_admission_times = [10.0, 10.0, 11.0]
+
+    async def fake_sleep(delay: float) -> None:
+        if delay > PEER_REPLACEMENT_INTERVAL_SECONDS:
+            await asyncio.Event().wait()
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+        translation_enabled=False,
+        visible_window_target_blocks=2,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    turn_ids = [uuid4(), uuid4(), uuid4()]
+
+    for index, turn_id in enumerate(turn_ids):
+        receipt = await presenter.emit_peer_when_admissible(
+            adapter.transcript_final(
+                Transcript(
+                    utterance_id=turn_id,
+                    channel="peer",
+                    text=f"peer {index}",
+                    is_final=True,
+                    created_at=clock.now(),
+                ),
+                source_language="en",
+                target_language="ja",
+            )
+        )
+        assert receipt.outcome == "applied"
+        assert clock.now() == expected_admission_times[index]
+
+    assert [block.id for block in presenter.snapshot().blocks] == [
+        f"peer:{turn_ids[1]}",
+        f"peer:{turn_ids[2]}",
+    ]
+
+    await presenter.emit_peer_when_admissible(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=turn_ids[2],
+                channel="peer",
+                text="peer updated",
+                is_final=True,
+                created_at=clock.now(),
+            ),
+            source_language="en",
+            target_language="ja",
+        )
+    )
+    assert clock.now() == 11.0
+    await presenter.close()
+
+
+@pytest.mark.asyncio
+async def test_peer_replacement_uses_self_new_occupant_as_shared_anchor() -> None:
+    clock = FakeClock(_now=20.0)
+
+    async def fake_sleep(delay: float) -> None:
+        if delay > PEER_REPLACEMENT_INTERVAL_SECONDS:
+            await asyncio.Event().wait()
+        clock.advance(delay)
+        await asyncio.sleep(0)
+
+    presenter = OverlayPresenter(
+        calibration=OverlayCalibration(),
+        clock=clock,
+        sleep=fake_sleep,
+        translation_enabled=False,
+        visible_window_target_blocks=1,
+    )
+    adapter = OverlayEventAdapter(clock=clock)
+    self_turn_id = uuid4()
+    await presenter.emit(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=self_turn_id,
+                channel="self",
+                text="self",
+                is_final=True,
+                created_at=clock.now(),
+            ),
+            source_language="en",
+            target_language="ja",
+        )
+    )
+
+    peer_turn_id = uuid4()
+    receipt = await presenter.emit_peer_when_admissible(
+        adapter.transcript_final(
+            Transcript(
+                utterance_id=peer_turn_id,
+                channel="peer",
+                text="peer",
+                is_final=True,
+                created_at=clock.now(),
+            ),
+            source_language="en",
+            target_language="ja",
+        )
+    )
+
+    assert receipt.outcome == "applied"
+    assert clock.now() == 20.0 + PEER_REPLACEMENT_INTERVAL_SECONDS
+    assert presenter.snapshot().blocks[0].id == f"peer:{peer_turn_id}"
+    await presenter.close()

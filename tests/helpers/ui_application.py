@@ -1,0 +1,544 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast
+
+from puripuly_heart.app.ports.application_runtime_logging import (
+    ApplicationRuntimeLoggingPort,
+)
+from puripuly_heart.app.ports.application_runtime_shutdown import (
+    ApplicationRuntimeShutdownPort,
+)
+from puripuly_heart.app.ports.application_startup import ApplicationStartupDiagnostic
+from puripuly_heart.app.ports.settings_view import (
+    ImmediateSettingsIntent,
+    OpenRouterPkceTarget,
+    PromptApplyIntent,
+    ProviderApplyIntent,
+)
+from puripuly_heart.app.ports.ui_application_intents import (
+    UiAudioTestRuntimePort,
+    UiDiagnosticsRuntimePort,
+    UiEngagementRuntimePort,
+    UiInputRuntimePort,
+    UiManagedRuntimePort,
+    UiOverlayRuntimePort,
+    UiPeerCaptureRuntimePort,
+    UiProviderRuntimePort,
+    UiSettingsRuntimePort,
+)
+from puripuly_heart.app.ports.ui_application_state import (
+    UiApplicationStateRuntimePort,
+)
+from puripuly_heart.app.services.application_control import ApplicationControlOwner
+from puripuly_heart.app.services.application_control_events import ControlEvents
+from puripuly_heart.app.services.application_shutdown import (
+    ApplicationShutdownContext,
+    ApplicationShutdownDiagnostic,
+)
+from puripuly_heart.app.services.application_startup import ApplicationStartupOwner
+from puripuly_heart.app.services.canonical_settings_persistence import (
+    materialize_canonical_translation_settings,
+)
+from puripuly_heart.app.services.settings.settings_application import (
+    materialize_immediate_settings_intent,
+    materialize_prompt_apply_intent,
+    materialize_provider_apply_intent,
+    settings_view_surface_snapshots,
+)
+from puripuly_heart.app.services.settings_secrets import SettingsSecretsOwner
+from puripuly_heart.app.services.ui_application import UiApplicationBoundary
+from puripuly_heart.app.services.ui_application_state import UiApplicationStateOwner
+
+
+class ApplicationRuntimeLoggingStub:
+    def __init__(self, backend: object) -> None:
+        self._backend = backend
+
+    def emit_basic(self, message: str, *, level: int = logging.INFO) -> None:
+        sink = getattr(self._backend, "log_basic", None)
+        if callable(sink):
+            sink(message, level=level)
+
+    def emit_diagnostic(
+        self,
+        message: str,
+        *,
+        level: int = logging.INFO,
+        exception: BaseException | None = None,
+    ) -> bool:
+        sink = getattr(self._backend, "log_diagnostic", None)
+        if callable(sink):
+            sink(message, level=level)
+        return exception is not None
+
+    def emit_startup_diagnostic(self, diagnostic: ApplicationStartupDiagnostic) -> None:
+        sink = getattr(self._backend, "emit_startup_diagnostic", None)
+        if callable(sink):
+            sink(diagnostic)
+
+
+class EmptySettingsSecretStore:
+    def get(self, _key: str) -> str | None:
+        return None
+
+    def set(self, _key: str, _value: str) -> None:
+        return None
+
+    def delete(self, _key: str) -> None:
+        return None
+
+
+class UiApplicationRuntimeStub:
+    def __init__(self, backend: object) -> None:
+        self._backend = backend
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._backend, name)
+
+    def capture_settings_view_change(self, settings: object) -> object:
+        capture = getattr(self._backend, "capture_settings_view_change", None)
+        return capture(settings) if callable(capture) else settings
+
+    def merge_settings_view_change_with_current(self, captured: object) -> object:
+        merge = getattr(self._backend, "merge_settings_view_change_with_current", None)
+        return merge(captured) if callable(merge) else captured
+
+    def _compatibility_settings(self):
+        return getattr(self._backend, "settings", None)
+
+    def general_snapshot(self):
+        settings = self._compatibility_settings()
+        return None if settings is None else settings_view_surface_snapshots(settings)[1]
+
+    def overlay_snapshot(self):
+        settings = self._compatibility_settings()
+        return None if settings is None else settings_view_surface_snapshots(settings)[3]
+
+    async def apply_settings_intent(self, intent: ImmediateSettingsIntent) -> object:
+        apply_intent = getattr(self._backend, "apply_settings_intent", None)
+        if callable(apply_intent):
+            return await apply_intent(intent)
+        apply_settings = getattr(self._backend, "apply_settings")
+        current = self._compatibility_settings()
+        pending = (
+            materialize_immediate_settings_intent(current, intent)
+            if current is not None and not isinstance(intent, str)
+            else intent
+        )
+        return await apply_settings(pending)
+
+    async def apply_prompt_intent(self, intent: PromptApplyIntent) -> object:
+        apply_intent = getattr(self._backend, "apply_prompt_intent", None)
+        if callable(apply_intent):
+            return await apply_intent(intent)
+        apply_settings = getattr(self._backend, "apply_settings")
+        current = self._compatibility_settings()
+        pending = (
+            materialize_prompt_apply_intent(current, intent)
+            if current is not None and isinstance(intent, PromptApplyIntent)
+            else intent
+        )
+        return await apply_settings(pending)
+
+    def materialize_provider_intent(self, intent: ProviderApplyIntent) -> object:
+        materialize = getattr(self._backend, "materialize_provider_intent", None)
+        if callable(materialize):
+            return materialize(intent)
+        current = self._compatibility_settings()
+        if current is not None and isinstance(intent, ProviderApplyIntent):
+            return materialize_provider_apply_intent(
+                current,
+                intent,
+                materialize_translation=materialize_canonical_translation_settings,
+            )
+        return intent
+
+    async def connect_openrouter_via_pkce(
+        self,
+        *,
+        target: OpenRouterPkceTarget,
+        launch_source: str,
+        open_browser: bool = True,
+        authorization_url_sink: Callable[[str], None] | None = None,
+    ) -> bool:
+        connect = getattr(self._backend, "connect_openrouter_via_pkce")
+        return bool(
+            await connect(
+                target=target,
+                launch_source=launch_source,
+                open_browser=open_browser,
+                authorization_url_sink=authorization_url_sink,
+            )
+        )
+
+    def build_managed_openrouter_byok_target(self) -> OpenRouterPkceTarget | None:
+        build = getattr(self._backend, "build_managed_openrouter_byok_target", None)
+        return build() if callable(build) else None
+
+    def refresh_settings_projection(
+        self,
+        *,
+        preserve_custom_vocab_draft: bool = False,
+    ) -> bool:
+        refresh = getattr(self._backend, "refresh_settings_projection", None)
+        return (
+            bool(
+                refresh(
+                    preserve_custom_vocab_draft=preserve_custom_vocab_draft,
+                )
+            )
+            if callable(refresh)
+            else False
+        )
+
+    def refresh_settings_after_openrouter_pkce_success(self) -> bool:
+        refresh = getattr(
+            self._backend,
+            "refresh_settings_after_openrouter_pkce_success",
+            None,
+        )
+        return bool(refresh()) if callable(refresh) else False
+
+    async def stop_audio_test(self) -> None:
+        stop = getattr(self._backend, "stop_audio_test", None)
+        if not callable(stop):
+            return
+        result = stop()
+        if hasattr(result, "__await__"):
+            await result
+
+    def release_audio_test_capture_restore(self, channel: str) -> None:
+        release = getattr(self._backend, "release_audio_test_capture_restore", None)
+        if callable(release):
+            release(channel)
+
+    def overlay_peer_presentation_state(self) -> object | None:
+        state = getattr(self._backend, "overlay_peer_presentation_state", None)
+        return state() if callable(state) else None
+
+    def dashboard_managed_auth_action(self) -> str:
+        action = getattr(self._backend, "dashboard_managed_auth_action", None)
+        return str(action()) if callable(action) else "continue"
+
+    def dashboard_managed_auth_prompt_kind(self) -> str:
+        prompt = getattr(self._backend, "dashboard_managed_auth_prompt_kind", None)
+        return str(prompt()) if callable(prompt) else "discord"
+
+    def managed_auth_last_message_key(self) -> str | None:
+        accessor = getattr(self._backend, "managed_auth_last_message_key", None)
+        return accessor() if callable(accessor) else None
+
+    async def apply_telemetry_enabled(self, enabled: bool) -> object | None:
+        apply = getattr(self._backend, "apply_telemetry_enabled", None)
+        return await apply(enabled) if callable(apply) else None
+
+    def reopen_openrouter_pkce_authorization_url(self) -> object:
+        reopen = getattr(
+            self._backend,
+            "reopen_openrouter_pkce_authorization_url",
+            None,
+        )
+        return reopen() if callable(reopen) else None
+
+    def clear_provider_verification(self, provider: str) -> None:
+        clear = getattr(self._backend, "clear_provider_verification", None)
+        if callable(clear):
+            clear(provider)
+
+    async def record_app_active_day(self, active_date_utc: str) -> object | None:
+        record = getattr(
+            self._backend,
+            "record_app_active_day",
+            None,
+        )
+        return await record(active_date_utc) if callable(record) else None
+
+    def should_show_github_star_prompt(self) -> bool:
+        should_show = getattr(self._backend, "should_show_github_star_prompt", None)
+        return bool(should_show()) if callable(should_show) else False
+
+    async def persist_github_star_prompt_eligible_launch(self) -> bool:
+        persist = getattr(
+            self._backend,
+            "persist_github_star_prompt_eligible_launch",
+            None,
+        )
+        return bool(await persist()) if callable(persist) else False
+
+    async def refresh_openrouter_usage_after_launch(self) -> bool:
+        refresh = getattr(self._backend, "refresh_openrouter_usage_after_launch", None)
+        return bool(await refresh()) if callable(refresh) else False
+
+    async def prepare_runtime_after_launch(self) -> None:
+        prepare = getattr(self._backend, "prepare_runtime_after_launch", None)
+        if callable(prepare):
+            await prepare()
+
+    async def persist_github_star_prompt_opened(
+        self,
+        *,
+        should_open=None,
+    ) -> bool:
+        persist = getattr(self._backend, "persist_github_star_prompt_opened", None)
+        return bool(await persist(should_open=should_open)) if callable(persist) else False
+
+    async def persist_github_star_prompt_clicked(self) -> None:
+        persist = getattr(self._backend, "persist_github_star_prompt_clicked", None)
+        if callable(persist):
+            await persist()
+
+
+class UiApplicationStateRuntimeStub:
+    def __init__(self, backend: object) -> None:
+        self._backend = backend
+
+    @property
+    def config_path(self) -> Path:
+        return Path(getattr(self._backend, "config_path", "settings.json"))
+
+    @property
+    def compatibility_settings(self) -> object | None:
+        return getattr(self._backend, "settings", None)
+
+    @property
+    def translation_enabled(self) -> bool:
+        hub = getattr(self._backend, "hub", None)
+        return bool(getattr(hub, "translation_enabled", False))
+
+    @property
+    def translation_runtime_ready(self) -> bool | None:
+        hub = getattr(self._backend, "hub", None)
+        return getattr(hub, "llm", None) is not None if hub is not None else None
+
+    @property
+    def stt_state(self) -> object | None:
+        hub = getattr(self._backend, "hub", None)
+        state = getattr(hub, "stt_session_state", None)
+        return state("self") if callable(state) else None
+
+    @property
+    def peer_translation_eula_accepted(self) -> bool | None:
+        settings = self.compatibility_settings
+        if settings is None:
+            return None
+        peer = getattr(getattr(settings, "state", None), "peer_translation", None)
+        if peer is None:
+            return None
+        return bool(getattr(peer, "eula_accepted", False))
+
+    @property
+    def audio_test_active(self) -> bool:
+        return bool(getattr(self._backend, "audio_test_active", False))
+
+    @property
+    def provider_name(self) -> str | None:
+        from puripuly_heart.app.wiring.wiring_provider_runtime_policy import (
+            provider_llm_for_translation,
+        )
+
+        settings = self.compatibility_settings
+        intent = getattr(settings, "intent", None)
+        translation = getattr(intent, "translation", None)
+        if translation is None:
+            return None
+        return provider_llm_for_translation(translation.model, translation.connection)
+
+    @property
+    def overlay_target(self) -> str | None:
+        settings = self.compatibility_settings
+        target = getattr(
+            getattr(getattr(settings, "intent", None), "overlay", None), "target", None
+        )
+        return str(target) if target is not None else None
+
+    @property
+    def desktop_overlay_captions_locked(self) -> bool:
+        return bool(getattr(self._backend, "desktop_overlay_captions_locked", False))
+
+    @property
+    def overlay_calibration(self) -> object:
+        return getattr(self._backend, "overlay_calibration", None)
+
+
+class ApplicationRuntimeShutdownStub:
+    def application_shutdown_runtime_states(self) -> tuple[object, ...]:
+        states = getattr(self._backend, "application_shutdown_runtime_states", None)
+        return tuple(states()) if callable(states) else ()
+
+    def __init__(self, backend: object) -> None:
+        self._backend = backend
+
+    def freeze_application_ingress(self) -> None:
+        return None
+
+    def stop_github_star_prompt_ingress(self) -> None:
+        return None
+
+    async def release_manual_typing(self) -> None:
+        return None
+
+    async def close_clipboard_runtime(self) -> None:
+        return None
+
+    async def cancel_vrchat_osc_presence_probe(self) -> None:
+        return None
+
+    async def stop_self_capture_ingress(self) -> None:
+        return None
+
+    async def close_vrc_mic_receiver_runtime(self) -> None:
+        return None
+
+    async def close_overlay_runtime(self) -> None:
+        return None
+
+    async def close_peer_runtime(self) -> None:
+        return None
+
+    async def close_github_star_prompt_owner(self) -> None:
+        return None
+
+    async def close_openrouter_oauth_runtime(self) -> None:
+        return None
+
+    async def close_local_asr_provisioning(self) -> None:
+        return None
+
+    async def close_audio_test_runtime(self) -> None:
+        return None
+
+    async def close_self_capture_owner(self) -> None:
+        return None
+
+    async def close_runtime_logging_background_tasks(self) -> None:
+        return None
+
+    async def close_managed_auth_owner(self) -> None:
+        return None
+
+    async def close_translation_enable_owner(self) -> None:
+        return None
+
+    async def close_managed_usage_owner(self) -> None:
+        return None
+
+    async def close_runtime_pipeline_launcher(self) -> None:
+        return None
+
+    async def close_peer_capture_owner(self) -> None:
+        return None
+
+    async def close_vrchat_scene_runtime(self) -> None:
+        return None
+
+    async def close_self_translation_ingress(self) -> None:
+        return None
+
+    async def close_peer_translation_ingress(self) -> None:
+        return None
+
+    async def close_translation_turns(self) -> None:
+        return None
+
+    async def close_output_runtime(self) -> None:
+        return None
+
+    async def close_self_channel_runtime(self) -> None:
+        return None
+
+    async def close_peer_channel_runtime(self) -> None:
+        return None
+
+    async def close_local_asr_runtime(self) -> None:
+        return None
+
+    async def close_llm_runtime(self) -> None:
+        return None
+
+    def close_vrchat_sender(self) -> None:
+        return None
+
+    async def close_managed_openrouter_release_service(self) -> None:
+        return None
+
+    def emit_final_application_shutdown_diagnostics(
+        self,
+        context: ApplicationShutdownContext,
+    ) -> None:
+        return None
+
+    def close_runtime_logging(
+        self,
+        context: ApplicationShutdownContext,
+    ) -> None:
+        return None
+
+    def emit_application_shutdown_diagnostic(
+        self,
+        diagnostic: ApplicationShutdownDiagnostic,
+    ) -> None:
+        sink = getattr(self._backend, "emit_application_shutdown_diagnostic", None)
+        if callable(sink):
+            sink(diagnostic)
+
+
+def compose_test_ui_application_boundary(
+    backend: object,
+    *,
+    runtime_shutdown: ApplicationRuntimeShutdownPort | None = None,
+    runtime_logging: ApplicationRuntimeLoggingPort | None = None,
+    osc_state_publisher: Callable[[], object] | None = None,
+    runtime_control_authority: Callable[[str, asyncio.Task | None], bool | None] | None = None,
+    runtime_control_activity: Callable[[], tuple[tuple[str, bool], ...]] | None = None,
+) -> UiApplicationBoundary:
+    logging_port = runtime_logging or ApplicationRuntimeLoggingStub(backend)
+    state_runtime = cast(
+        UiApplicationStateRuntimePort,
+        UiApplicationStateRuntimeStub(backend),
+    )
+    runtime = UiApplicationRuntimeStub(backend)
+    boundary = UiApplicationBoundary(
+        startup=cast(ApplicationStartupOwner, runtime),
+        input_runtime=cast(UiInputRuntimePort, runtime),
+        peer_capture=cast(UiPeerCaptureRuntimePort, runtime),
+        settings=cast(UiSettingsRuntimePort, runtime),
+        provider=cast(UiProviderRuntimePort, runtime),
+        audio_test=cast(UiAudioTestRuntimePort, runtime),
+        overlay=cast(UiOverlayRuntimePort, runtime),
+        managed=cast(UiManagedRuntimePort, runtime),
+        engagement=cast(UiEngagementRuntimePort, runtime),
+        diagnostics=cast(UiDiagnosticsRuntimePort, runtime),
+        state=UiApplicationStateOwner(state_runtime),
+        runtime_shutdown=runtime_shutdown or ApplicationRuntimeShutdownStub(backend),
+        runtime_logging=logging_port,
+        settings_secrets=SettingsSecretsOwner(
+            secret_store_factory=EmptySettingsSecretStore,
+        ),
+        osc_state_publisher=osc_state_publisher,
+        runtime_control_authority=runtime_control_authority,
+        runtime_control_activity=runtime_control_activity,
+    )
+    boundary.attach_control(
+        ApplicationControlOwner(
+            application=boundary,
+            settings=None,
+            pipeline=None,
+            results=None,
+            events=ControlEvents(),
+            provisioning=lambda: None,
+            gpu=lambda: None,
+            peer=lambda: None,
+            calibration=lambda: None,
+            gemma=lambda: None,
+            sync_ui=lambda: None,
+            locale_choices=("en",),
+            localize=lambda key: key,
+            gemma_selection=lambda _settings: None,
+            instance_id="00000000-0000-0000-0000-000000000231",
+        ),
+    )
+    return boundary

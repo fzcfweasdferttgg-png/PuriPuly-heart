@@ -1,0 +1,362 @@
+"""Prompt file loader utility.
+
+Loads system prompts from files in the prompts/ directory.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
+
+from puripuly_heart.config.llm_profiles import OPENROUTER_MODEL_GPT_6_LUNA
+from puripuly_heart.config.runtime_resolution import OPENAI_MODEL_GPT_6_LUNA
+from puripuly_heart.runtime_layout import current_runtime_layout
+
+TRANSLATION_PROMPT_NAME = "translation_prompt"
+LUNA_TRANSLATION_PROMPT_NAME = "translation_prompt_luna"
+UNSPECIFIED_SOURCE_TEXT_REF = "<input>"
+_LLM_PROVIDER_PROMPT_KEYS = {
+    "index_translate",
+    "gemini",
+    "qwen",
+    "deepseek",
+    "openai",
+    "openrouter",
+    "local_llm",
+    "managed_gemma",
+}
+
+
+@dataclass(frozen=True)
+class PromptAssemblyCache:
+    """Cached prompt pieces used to assemble translation prompts."""
+
+    template: str
+    luna_template: str | None
+    target_language_rules: Mapping[str, str]
+    language_pair_examples: Mapping[str, str]
+    fallback_examples: str
+
+
+_PROMPT_CACHE: PromptAssemblyCache | None = None
+
+_ENGLISH_KEY = "english"
+_FALLBACK_EXAMPLES_KEY = "fallback"
+_TARGET_LANGUAGE_RULE_KEYS = {"english", "japanese", "korean"}
+_CHINESE_SIMPLIFIED_KEYS = {
+    "chinese-simplified",
+    "simplified-chinese",
+    "zh-cn",
+    "zh-hans",
+    "zh-sg",
+}
+_CHINESE_TRADITIONAL_KEYS = {
+    "chinese-traditional",
+    "traditional-chinese",
+    "zh-tw",
+    "zh-hant",
+    "zh-hk",
+    "zh-mo",
+}
+_CHINESE_BASE_KEYS = {"chinese", "zh", "mandarin"}
+_CHINESE_SIMPLIFIED_MARKERS = {"simplified", "hans", "cn", "sg"}
+_CHINESE_TRADITIONAL_MARKERS = {
+    "traditional",
+    "hant",
+    "tw",
+    "taiwan",
+    "hk",
+    "hong-kong",
+    "mo",
+    "macau",
+}
+
+
+def get_prompts_dir() -> Path:
+    """Get the prompts directory path."""
+    env_dir = os.getenv("PURIPULY_HEART_PROMPTS_DIR")
+    if env_dir:
+        return Path(env_dir).resolve()
+    return current_runtime_layout().resource("prompts")
+
+
+def list_prompts() -> list[str]:
+    """List available prompt file names (without extension)."""
+    prompts_dir = get_prompts_dir()
+    if not prompts_dir.exists():
+        return []
+
+    return sorted([f.stem for f in prompts_dir.glob("*.md")])
+
+
+def load_prompt(name: str = "default") -> str:
+    """Load a prompt from file.
+
+    Args:
+        name: Prompt file name (without .txt extension)
+
+    Returns:
+        Prompt content, or empty string if not found
+    """
+    prompts_dir = get_prompts_dir()
+
+    # Try .md first
+    prompt_file = prompts_dir / f"{name}.md"
+    if prompt_file.exists():
+        return prompt_file.read_text(encoding="utf-8").strip()
+
+    # Fallback to .txt
+    prompt_file = prompts_dir / f"{name}.txt"
+    if prompt_file.exists():
+        return prompt_file.read_text(encoding="utf-8").strip()
+
+    # Fallback to default
+    default_file = prompts_dir / "default.md"
+    if default_file.exists():
+        return default_file.read_text(encoding="utf-8").strip()
+
+    # Legacy default.txt
+    default_file = prompts_dir / "default.txt"
+    if default_file.exists():
+        return default_file.read_text(encoding="utf-8").strip()
+
+    return ""
+
+
+def _read_prompt_text(path: Path) -> str:
+    """Read and normalize prompt text from a prompt file."""
+    return path.read_text(encoding="utf-8").strip()
+
+
+def _load_markdown_files(directory: Path) -> dict[str, str]:
+    """Load all Markdown files in a directory keyed by filename stem."""
+    if not directory.exists():
+        return {}
+
+    return {
+        prompt_file.stem: _read_prompt_text(prompt_file)
+        for prompt_file in sorted(directory.glob("*.md"))
+        if prompt_file.is_file()
+    }
+
+
+def _load_prompt_cache() -> PromptAssemblyCache:
+    """Load all translation-prompt assembly files into an immutable cache."""
+    prompts_dir = get_prompts_dir()
+    template_path = prompts_dir / f"{TRANSLATION_PROMPT_NAME}.md"
+    if not template_path.exists():
+        raise FileNotFoundError(f"Required translation prompt not found: {template_path}")
+    luna_template_path = prompts_dir / f"{LUNA_TRANSLATION_PROMPT_NAME}.md"
+
+    target_language_rules = _load_markdown_files(prompts_dir / "prompt-rules" / "target-language")
+    language_pair_examples = _load_markdown_files(prompts_dir / "prompt-examples" / "language-pair")
+
+    return PromptAssemblyCache(
+        template=_read_prompt_text(template_path),
+        luna_template=(
+            _read_prompt_text(luna_template_path) if luna_template_path.exists() else None
+        ),
+        target_language_rules=MappingProxyType(target_language_rules),
+        language_pair_examples=MappingProxyType(language_pair_examples),
+        fallback_examples=language_pair_examples.get(_FALLBACK_EXAMPLES_KEY, ""),
+    )
+
+
+def _get_prompt_cache() -> PromptAssemblyCache:
+    """Return the process-wide translation prompt assembly cache."""
+    global _PROMPT_CACHE
+    if _PROMPT_CACHE is None:
+        _PROMPT_CACHE = _load_prompt_cache()
+    return _PROMPT_CACHE
+
+
+def warm_prompt_cache() -> None:
+    """Preload translation prompt files into the process cache."""
+    _get_prompt_cache()
+
+
+def _reset_prompt_cache_for_tests() -> None:
+    """Reset cached prompt pieces for tests that swap prompt directories."""
+    global _PROMPT_CACHE
+    _PROMPT_CACHE = None
+
+
+def _normalize_language_name(language_name: str) -> str:
+    """Normalize a display language name into a prompt filename key."""
+    normalized = language_name.strip().lower()
+    for old, new in (("_", "-"), ("/", "-"), ("(", " "), (")", " ")):
+        normalized = normalized.replace(old, new)
+    normalized = "-".join(normalized.split())
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+    return normalized.strip("-")
+
+
+def _resolve_language_pair_key(language_name: str) -> str:
+    """Resolve a language display name to a language-pair example key."""
+    language_key = _normalize_language_name(language_name)
+    language_tokens = set(language_key.split("-"))
+    if language_key in _CHINESE_SIMPLIFIED_KEYS:
+        return "chinese-simplified"
+    if language_key in _CHINESE_TRADITIONAL_KEYS:
+        return "chinese-traditional"
+    if language_key in _CHINESE_BASE_KEYS:
+        return "chinese"
+    if (
+        "chinese" in language_tokens
+        or "mandarin" in language_tokens
+        or language_key.startswith("zh-")
+    ):
+        if any(marker in language_key for marker in _CHINESE_TRADITIONAL_MARKERS):
+            return "chinese-traditional"
+        if any(marker in language_tokens for marker in _CHINESE_SIMPLIFIED_MARKERS):
+            return "chinese-simplified"
+        return "chinese"
+    return language_key
+
+
+def _resolve_target_language_rules_key(target_name: str) -> str:
+    """Resolve a target language display name to a target-rule filename key."""
+    language_key = _resolve_language_pair_key(target_name)
+    if language_key in _TARGET_LANGUAGE_RULE_KEYS:
+        return language_key
+    if language_key in {"chinese", "chinese-simplified", "chinese-traditional"}:
+        return "chinese"
+    return ""
+
+
+def _optional_markdown_section(heading: str, body: str) -> str:
+    text = body.strip()
+    if not text:
+        return ""
+    return f"{heading}\n{text}\n\n"
+
+
+def _collapse_extra_blank_lines(text: str) -> str:
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    return text
+
+
+def _select_translation_examples(
+    cache: PromptAssemblyCache, source_name: str, target_name: str
+) -> str:
+    """Select exact language-pair examples or target-English fallback examples."""
+    source_key = _resolve_language_pair_key(source_name)
+    target_key = _resolve_language_pair_key(target_name)
+    exact_key = f"{source_key}-to-{target_key}"
+    exact_examples = cache.language_pair_examples.get(exact_key)
+    if exact_examples is not None:
+        return exact_examples
+    if target_key == _ENGLISH_KEY:
+        return cache.fallback_examples
+    return ""
+
+
+def build_translation_prompt_variables(
+    source_name: str,
+    target_name: str,
+    *,
+    input_channel: str = "self",
+    source_specified: bool = True,
+) -> dict[str, str]:
+    """Build dynamic variables for rendering the shared translation prompt."""
+    if input_channel not in {"self", "peer"}:
+        raise ValueError(f"unsupported input channel: {input_channel!r}")
+    cache = _get_prompt_cache()
+    target_rules_key = _resolve_target_language_rules_key(target_name)
+    target_language_rules = (
+        cache.target_language_rules.get(target_rules_key, "") if target_rules_key else ""
+    )
+    resolved_source_name = source_name if source_specified else UNSPECIFIED_SOURCE_TEXT_REF
+    source_text_ref = f"the {source_name} text" if source_specified else UNSPECIFIED_SOURCE_TEXT_REF
+    translation_examples = (
+        _select_translation_examples(cache, source_name, target_name) if source_specified else ""
+    )
+    translation_examples = translation_examples.replace("${inputChannel}", input_channel)
+
+    return {
+        "sourceName": resolved_source_name,
+        "sourceLanguageSetting": source_name if source_specified else "Unspecified",
+        "sourceTextRef": source_text_ref,
+        "targetName": target_name,
+        "inputChannel": input_channel,
+        "targetLanguageRules": target_language_rules,
+        "targetLanguageRulesSection": _optional_markdown_section(
+            "### Target language Rules",
+            target_language_rules,
+        ),
+        "translationExamples": translation_examples,
+        "translationExamplesSection": _optional_markdown_section(
+            "## Examples",
+            translation_examples,
+        ),
+    }
+
+
+def render_translation_prompt_template(
+    template: str,
+    *,
+    source_name: str,
+    target_name: str,
+    input_channel: str = "self",
+    source_specified: bool = True,
+) -> str:
+    """Render the shared translation prompt template with dynamic variables."""
+    rendered = template
+    variables = build_translation_prompt_variables(
+        source_name,
+        target_name,
+        input_channel=input_channel,
+        source_specified=source_specified,
+    )
+    for key, value in sorted(variables.items(), key=lambda item: len(item[0]), reverse=True):
+        rendered = rendered.replace(f"${{{key}}}", value)
+    return _collapse_extra_blank_lines(rendered)
+
+
+def get_translation_prompt_template(*, model: str | None = None) -> str:
+    cache = _get_prompt_cache()
+    if model in (OPENAI_MODEL_GPT_6_LUNA, OPENROUTER_MODEL_GPT_6_LUNA):
+        if cache.luna_template is None:
+            raise FileNotFoundError(
+                f"Required translation prompt not found: {LUNA_TRANSLATION_PROMPT_NAME}.md"
+            )
+        return cache.luna_template
+    return cache.template
+
+
+def get_default_prompt() -> str:
+    """Load the default prompt."""
+    return get_translation_prompt_template()
+
+
+def resolve_system_prompt(system_prompt_override: str | None, *, model: str | None = None) -> str:
+    if isinstance(system_prompt_override, str) and system_prompt_override.strip():
+        return system_prompt_override
+    return get_translation_prompt_template(model=model)
+
+
+def normalize_system_prompt_override(value: str) -> str | None:
+    if not value.strip() or value == get_default_prompt():
+        return None
+    return value
+
+
+def load_prompt_for_provider(provider: str) -> str:
+    """Load the prompt for a specific LLM provider.
+
+    Args:
+        provider: Provider name ('gemini' or 'qwen')
+
+    Returns:
+        Prompt content for the provider, or default if not found
+    """
+    provider_lower = provider.lower()
+    if provider_lower in _LLM_PROVIDER_PROMPT_KEYS:
+        return get_translation_prompt_template()
+
+    return load_prompt(provider_lower)

@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+import hashlib
+import json
+
+from puripuly_heart.config.alibaba_connection import resolve_alibaba_connection
+from puripuly_heart.config.prompts import resolve_system_prompt
+from puripuly_heart.config.provider_values import STTProviderName
+from puripuly_heart.config.runtime_resolution import (
+    OPENAI_MODEL_GPT_6_LUNA,
+    PROVIDER_CHATGPT,
+    PROVIDER_OPENAI,
+)
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.config.translation_values import (
+    MANAGED_GEMMA_MODELS,
+    provider_llm_for_translation,
+)
+from puripuly_heart.core.http_extensions import HttpExtensionRegistry
+from puripuly_heart.core.openrouter_routing import OpenRouterProviderRouting
+
+_MANAGED_OPENROUTER_CONNECTIONS = frozenset({"managed", "managed_china"})
+
+
+def llm_provider_requires_secret(translation_model: str, provider: str) -> bool:
+    return translation_model != "custom_http" and provider in {
+        "gemini",
+        "openai",
+        "chatgpt",
+        "openrouter",
+        "qwen",
+        "deepseek",
+    }
+
+
+def build_llm_provider_signature(
+    settings: AppSettingsVNext,
+    *,
+    http_extensions: HttpExtensionRegistry | None = None,
+) -> tuple[object, ...]:
+    translation = settings.intent.translation
+    local_llm = settings.intent.local_llm
+    languages = settings.intent.languages
+    provider_llm = provider_llm_for_translation(translation.model, translation.connection)
+    managed_gemma_selected = translation.model in MANAGED_GEMMA_MODELS
+    primary_uses_openrouter = provider_llm == "openrouter"
+    uses_openrouter = primary_uses_openrouter
+    uses_managed_openrouter = bool(
+        primary_uses_openrouter and translation.connection in _MANAGED_OPENROUTER_CONNECTIONS
+    )
+    extension_signature: tuple[object, ...] | None = None
+    if translation.model == "custom_http":
+        selected_id = translation.http_extension_id
+        selected = (
+            http_extensions.snapshot.get(selected_id) if http_extensions is not None else None
+        )
+        extension_signature = (
+            selected_id,
+            selected.fingerprint if selected is not None else None,
+        )
+    return (
+        translation.model,
+        translation.connection,
+        translation.http_extension_id,
+        extension_signature,
+        provider_llm,
+        translation.concurrency_limit,
+        translation.gemini.llm_model if provider_llm == "gemini" else None,
+        OPENAI_MODEL_GPT_6_LUNA if provider_llm in {PROVIDER_OPENAI, PROVIDER_CHATGPT} else None,
+        translation.openrouter_model if primary_uses_openrouter else None,
+        translation.openrouter_routing_mode if uses_openrouter else None,
+        (
+            translation.openrouter_provider_routing
+            if uses_openrouter
+            else OpenRouterProviderRouting.DEFAULT.value
+        ),
+        translation.openrouter_selected_source if primary_uses_openrouter else None,
+        translation.openrouter_selection_alias if primary_uses_openrouter else None,
+        translation.openrouter_broker_base_url if uses_openrouter else None,
+        _managed_openrouter_identity_signature(settings) if uses_managed_openrouter else None,
+        translation.qwen.llm_model if provider_llm == "qwen" else None,
+        translation.qwen.region if provider_llm == "qwen" else None,
+        (
+            resolve_alibaba_connection(
+                translation.qwen.region, getattr(translation.qwen, translation.qwen.region)
+            )
+            if provider_llm == "qwen"
+            else None
+        ),
+        translation.deepseek.llm_model if provider_llm == "deepseek" else None,
+        (
+            (
+                local_llm.backend,
+                local_llm.base_url,
+                local_llm.model,
+                _canonical_json_signature(local_llm.extra_body),
+            )
+            if provider_llm == "local_llm"
+            else None
+        ),
+        (
+            (
+                languages.source_language,
+                languages.target_language,
+                resolve_system_prompt(settings.intent.prompts.system_prompt_override),
+                translation.gpu_device_id,
+            )
+            if managed_gemma_selected
+            else None
+        ),
+    )
+
+
+def provider_runtime_requires_gpu_restart(
+    current_settings: AppSettingsVNext,
+    next_settings: AppSettingsVNext,
+) -> bool:
+    gpu = STTProviderName.LOCAL_QWEN_GPU.value
+    return current_settings.intent.stt.gpu_device_id != next_settings.intent.stt.gpu_device_id and (
+        current_settings.intent.stt.provider == gpu
+        or current_settings.intent.peer_stt.provider == gpu
+        or next_settings.intent.stt.provider == gpu
+        or next_settings.intent.peer_stt.provider == gpu
+    )
+
+
+def _canonical_json_signature(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _sensitive_optional_text_signature(value: str | None) -> tuple[int, str] | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return (len(normalized), digest)
+
+
+def _managed_openrouter_identity_signature(
+    settings: AppSettingsVNext,
+) -> tuple[object, ...]:
+    identity = settings.state.managed_connection
+    return (
+        identity.installation_id,
+        _sensitive_optional_text_signature(identity.release_token),
+        identity.release_token_expires_at,
+        identity.verified_hardware_hash,
+        identity.verified_hardware_hash_salt_version,
+        identity.active_managed_credential_ref,
+        identity.active_managed_expires_at,
+    )
+
+
+__all__ = [
+    "build_llm_provider_signature",
+    "provider_llm_for_translation",
+    "llm_provider_requires_secret",
+    "provider_runtime_requires_gpu_restart",
+]

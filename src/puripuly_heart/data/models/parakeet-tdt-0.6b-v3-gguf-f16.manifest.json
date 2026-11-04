@@ -1,0 +1,30 @@
+{
+  "manifest_version": 2,
+  "model_id": "parakeet-tdt-0.6b-v3-gguf-f16",
+  "engine": "transcribe.cpp-vulkan",
+  "install_dirname": "parakeet-tdt-0.6b-v3-gguf-f16",
+  "sources": {
+    "huggingface": {
+      "repo_id": "fzcfweasdferttgg/asr-gguf-onnx",
+      "revision": "main",
+      "download_url_template": "https://huggingface.co/fzcfweasdferttgg/asr-gguf-onnx/resolve/main/{path}"
+    },
+    "modelscope": {
+      "repo_id": "fzcfweasdferttggpng/asr-gguf-onnx",
+      "revision": "master",
+      "download_url_template": "https://modelscope.cn/models/fzcfweasdferttggpng/asr-gguf-onnx/resolve/master/{path}"
+    },
+    "hf_mirror": {
+      "repo_id": "fzcfweasdferttgg/asr-gguf-onnx",
+      "revision": "main",
+      "download_url_template": "https://hf-mirror.com/fzcfweasdferttgg/asr-gguf-onnx/resolve/main/{path}"
+    }
+  },
+  "files": [
+    {
+      "relative_path": "parakeet-tdt-0.6b-v3/gguf/f16/parakeet-tdt-0.6b-v3-F16.gguf",
+      "size_bytes": 1255869856,
+      "crc32": "cb7adda3"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.core.messages import ErrorDiagnostics
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationStartupState:
+    settings: AppSettingsVNext
+    main_input_first_launch: bool = False
+
+
+ApplicationStartupOutcome = Literal["entered", "completed", "cancelled", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationStartupDiagnostic:
+    outcome: ApplicationStartupOutcome
+    attempt_id: str
+    process_id: int
+    monotonic_ns: int
+    exception_class: str | None = None
+    diagnostics: ErrorDiagnostics | None = None
+
+
+class ApplicationStartupSettingsPort(Protocol):
+    async def prepare_startup_settings(self) -> ApplicationStartupState: ...
+
+
+class ApplicationStartupPresentationPort(Protocol):
+    def apply_startup_presentation(self, state: ApplicationStartupState) -> None: ...
+
+
+class ApplicationStartupRuntimePort(Protocol):
+    async def launch_startup_runtime(self, state: ApplicationStartupState) -> None: ...
+
+
+class ApplicationStartupEventsPort(Protocol):
+    async def start_application_events(self) -> None: ...

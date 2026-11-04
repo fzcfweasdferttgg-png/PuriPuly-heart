@@ -26,8 +26,10 @@ from typing import Any, cast
 
 import click
 
+from huggingface_hub import constants
 from huggingface_hub.errors import ConfirmationError
-from huggingface_hub.utils import ANSI, StatusLine, disable_progress_bars, is_agent, tabulate
+from huggingface_hub.repocard_data import CardData
+from huggingface_hub.utils import ANSI, StatusLine, disable_progress_bars, enable_progress_bars, is_agent, tabulate
 
 
 class OutputFormat(str, Enum):
@@ -65,8 +67,13 @@ class Output:
         if mode == OutputFormat.auto:
             mode = OutputFormat.agent if is_agent() else OutputFormat.human
         self.mode = mode
-        if mode != OutputFormat.human:
-            disable_progress_bars()
+        is_human = mode == OutputFormat.human
+        ANSI.set_enabled(is_human)
+        if constants.HF_HUB_DISABLE_PROGRESS_BARS is None:  # env var has priority
+            if is_human:
+                enable_progress_bars()
+            else:
+                disable_progress_bars()
 
     def set_no_truncate(self, no_truncate: bool) -> None:
         """Toggle off cell truncation for human table output."""
@@ -148,7 +155,7 @@ class Output:
             case OutputFormat.quiet:  # id_key column (or first column), one per line
                 quiet_key = id_key or headers[0]
                 for item in items:
-                    _print_flush(item.get(quiet_key, ""))
+                    _print_flush(_escape_control_chars(str(item.get(quiet_key, ""))))
 
     def dict(self, data: Any, *, id_key: str | None = None) -> None:
         """Print structured data as JSON in all modes (indented for human, compact otherwise).
@@ -271,7 +278,14 @@ def _serialize_value(v: object) -> object:
 
 def _dataclass_to_dict(info: Any) -> dict[str, Any]:
     """Convert a dataclass to a json-serializable dict."""
-    return {k: _serialize_value(v) for k, v in dataclasses.asdict(info).items() if v is not None}
+    data = dataclasses.asdict(info)
+
+    for field in dataclasses.fields(info):
+        value = getattr(info, field.name)
+        if isinstance(value, CardData):
+            data[field.name] = value.to_dict()
+
+    return {k: _serialize_value(v) for k, v in data.items() if v is not None}
 
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
@@ -281,8 +295,13 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+def _escape_control_chars(text: str) -> str:
+    """Escape non-printable characters (CR, LF, ESC, ...) so Hub-provided strings cannot alter the terminal output."""
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in text)
+
+
 def _single_line(text: str) -> str:
-    return " ".join(text.split())
+    return _escape_control_chars(" ".join(text.split()))
 
 
 def _to_header(name: str) -> str:
@@ -308,7 +327,7 @@ def _format_table_value_human(value: Any) -> str:
         return _ascii_safe("✔", "yes") if value else ""
     if isinstance(value, datetime.datetime):
         return value.strftime("%Y-%m-%d")
-    if isinstance(value, str) and re.match(r"^\d{4}-\d{2}-\d{2}T", value):
+    if isinstance(value, str) and re.search(r"^\d{4}-\d{2}-\d{2}T", value):
         return value[:10]
     if isinstance(value, str):
         return _single_line(value)

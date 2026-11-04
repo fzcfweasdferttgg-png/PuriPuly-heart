@@ -1,0 +1,2399 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from datetime import datetime, timezone
+from importlib import import_module
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+from puripuly_heart.config.settings_vnext.schema import (
+    VNEXT_SETTINGS_SCHEMA_VERSION,
+    AppSettingsVNext,
+    CaptureTargetIntent,
+    PersistedOperationalState,
+    ProcessCaptureTargetIntent,
+    TelemetryOperationalState,
+    with_capture_target,
+    with_telemetry_enabled,
+)
+from tests.config.settings_migration_fixtures import (
+    maximal_v24_settings_fixture,
+)
+
+PROVIDER_VERIFICATION_FIELDS = (
+    "deepgram",
+    "soniox",
+    "google",
+    "openrouter",
+    "deepseek",
+    "alibaba_beijing",
+    "alibaba_singapore",
+)
+
+
+def _load_module(name: str) -> ModuleType:
+    try:
+        return import_module(name)
+    except ModuleNotFoundError as exc:
+        pytest.fail(f"{name} should import: {exc}")
+
+
+def _migration() -> ModuleType:
+    return _load_module("puripuly_heart.config.settings_vnext.migration")
+
+
+def _serialization() -> ModuleType:
+    return _load_module("puripuly_heart.config.settings_vnext.serialization")
+
+
+def _compat() -> ModuleType:
+    return _load_module("puripuly_heart.config.settings_vnext.compat")
+
+
+def _write_json_bytes(path: Path, data: dict[str, Any]) -> bytes:
+    raw_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    path.write_bytes(raw_bytes)
+    return raw_bytes
+
+
+@pytest.mark.parametrize(
+    ("version", "saved_limit", "expected"),
+    [(45, 5, 10), (44, 5, 10), (45, 3, 3), (45, 20, 20), (46, 5, 5)],
+)
+def test_concurrency_upgrade_preserves_custom_values_and_runs_once(
+    tmp_path: Path, version: int, saved_limit: int, expected: int
+) -> None:
+    raw = _serialization().to_dict(AppSettingsVNext())
+    raw["settings_version"] = version
+    raw["intent"]["translation"]["concurrency_limit"] = saved_limit
+    path = tmp_path / "settings.json"
+    original = _write_json_bytes(path, raw)
+    result = _compat().load_vnext_settings(path)
+    assert result.ok
+    assert result.settings.intent.translation.concurrency_limit == expected
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["settings_version"] == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert saved["intent"]["translation"]["concurrency_limit"] == expected
+    backups = tuple(tmp_path.glob("settings.json.pre-v*.bak"))
+    if version < 46:
+        assert len(backups) == 1
+        assert backups[0].read_bytes() == original
+    assert (
+        _compat().load_vnext_settings(path).settings.intent.translation.concurrency_limit
+        == expected
+    )
+    assert tuple(tmp_path.glob("settings.json.pre-v*.bak")) == backups
+
+
+def test_main_input_first_launch_flag_survives_reload_and_defaults_off(
+    tmp_path: Path,
+) -> None:
+    current = _serialization().to_dict(AppSettingsVNext())
+    current["state"].pop("main_input_hint")
+    legacy_path = tmp_path / "legacy.json"
+    _write_json_bytes(legacy_path, current)
+
+    legacy = _compat().load_vnext_settings(legacy_path)
+
+    assert legacy.ok
+    assert legacy.settings.state.main_input_hint.first_launch_completed is False
+
+    completed = _serialization().to_dict(AppSettingsVNext())
+    completed["state"]["main_input_hint"]["first_launch_completed"] = True
+    completed_path = tmp_path / "completed.json"
+    _write_json_bytes(completed_path, completed)
+
+    reloaded = _compat().load_vnext_settings(completed_path)
+
+    assert reloaded.ok
+    assert reloaded.settings.state.main_input_hint.first_launch_completed is True
+
+
+def _final_dev_v30_fixture() -> dict[str, Any]:
+    fixture_path = Path(__file__).parent / "fixtures" / "final_dev_v30_settings.json"
+    return json.loads(fixture_path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("settings_version", [25, VNEXT_SETTINGS_SCHEMA_VERSION + 100])
+def test_canonical_migration_loader_rejects_flat_shape(settings_version: int) -> None:
+    migration = _migration()
+    raw = maximal_v24_settings_fixture()
+    raw["settings_version"] = settings_version
+
+    with pytest.raises(ValueError, match="canonical settings"):
+        migration.from_dict(raw)
+
+
+def test_v30_soniox_auto_is_backed_up_and_migrated_once(tmp_path: Path) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 30
+    raw["intent"]["languages"]["peer_source_mode"] = "soniox_auto"
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, raw)
+    fixed_now = datetime(2026, 7, 18, 1, 2, 3, tzinfo=timezone.utc)
+
+    first = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert first.ok
+    assert first.migrated is True
+    assert first.backup_path == tmp_path / "settings.json.pre-v30.20260718T010203Z.bak"
+    assert first.backup_path.read_bytes() == original_bytes
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["settings_version"] == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert persisted["intent"]["languages"]["peer_source_mode"] == "auto"
+    assert "soniox_auto" not in path.read_text(encoding="utf-8")
+
+    second = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert second.ok
+    assert second.migrated is False
+    assert second.backup_path is None
+    assert list(tmp_path.glob("*.bak")) == [first.backup_path]
+
+
+def test_shared_vad_threshold_lower_bound_normalizes_and_persists_without_unrelated_loss(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["desktop_audio"]["vad_speech_threshold"] = 0.05
+    raw["intent"]["stt"]["vad_speech_threshold"] = 0.06
+    raw["intent"]["ui"]["locale"] = "ja"
+    path = tmp_path / "settings.json"
+    _write_json_bytes(path, raw)
+
+    first = compat.load_vnext_settings(path)
+
+    assert first.ok
+    assert first.migrated is True
+    assert first.settings is not None
+    assert first.settings.intent.desktop_audio.vad_speech_threshold == 0.10
+    assert first.settings.intent.stt.vad_speech_threshold == 0.10
+    assert first.settings.intent.ui.locale == "ja"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["intent"]["desktop_audio"]["vad_speech_threshold"] == 0.10
+    assert persisted["intent"]["stt"]["vad_speech_threshold"] == 0.10
+    assert persisted["intent"]["ui"]["locale"] == "ja"
+
+    second = compat.load_vnext_settings(path)
+    assert second.ok
+    assert second.migrated is False
+
+
+def test_final_dev_v30_flat_fixture_archives_then_resets_without_value_continuity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    monkeypatch.setattr(compat.defaults, "detect_system_locale", lambda: "en_US")
+    raw = _final_dev_v30_fixture()
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, raw)
+    fixed_now = datetime(2026, 7, 17, 1, 2, 3, tzinfo=timezone.utc)
+
+    first = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert first.ok
+    assert first.migrated is True
+    assert first.backup_path == tmp_path / "settings.json.pre-v30.20260717T010203Z.bak"
+    assert first.backup_path.read_bytes() == original_bytes
+    assert first.settings is not None
+    canonical = serialization.to_dict(first.settings)
+    assert canonical["intent"]["translation"]["model"] == ""
+    assert canonical["intent"]["translation"]["connection"] == ""
+    assert canonical["intent"]["translation"]["qwen"]["region"] == "beijing"
+    assert canonical["intent"]["stt"]["custom_terms"] == {}
+    assert canonical["state"]["telemetry"]["anonymous_id"] is None
+    assert canonical["state"]["telemetry"]["last_sent_date_utc"] is None
+    assert canonical["state"]["managed_connection"]["pending_delivery_ack_delivery_id"] is None
+    assert all(
+        canonical["state"]["provider_verification"][provider]["status"] == "unknown"
+        for provider in PROVIDER_VERIFICATION_FIELDS
+    )
+
+    canonical_bytes = path.read_bytes()
+    second = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert second.ok
+    assert second.migrated is False
+    assert second.backup_path is None
+    assert path.read_bytes() == canonical_bytes
+    assert list(tmp_path.glob("*.bak")) == [first.backup_path]
+
+
+def test_vnext_dict_migrates_gemini_3_flash_nested_fields() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    translation = canonical["intent"]["translation"]
+    translation["model"] = "gemini3_flash"
+    translation["connection"] = "official_byok"
+    translation["gemini"] = {"llm_model": "gemini-3-flash-preview"}
+    translation["openrouter_model"] = "google/gemini-3-flash-preview"
+    translation["openrouter_selection_alias"] = "gemini3_flash_byok"
+
+    migrated = migration.from_dict(canonical)
+    result = serialization.to_dict(migrated)["intent"]["translation"]
+
+    assert result["model"] == "gemini_flash"
+    assert result["gemini"]["llm_model"] == "gemini-3.8-flash"
+    assert result["openrouter_model"] == "google/gemini-3.8-flash"
+    assert result["openrouter_selection_alias"] == "gemini_flash_byok"
+
+
+def test_vnext_dict_migrates_gemini_flash_version_bump_nested_fields() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    translation = canonical["intent"]["translation"]
+    translation["model"] = "gemini37_flash"
+    translation["connection"] = "official_byok"
+    translation["gemini"] = {"llm_model": "gemini-3.7-flash"}
+    translation["openrouter_model"] = "google/gemini-3.7-flash"
+    translation["openrouter_selection_alias"] = "gemini37_flash_byok"
+    translation["previous_llm_model"] = "gemini37_flash"
+    translation["connection_history"] = {"gemini37_flash": "official_byok"}
+
+    migrated = migration.from_dict(canonical)
+    result = serialization.to_dict(migrated)["intent"]["translation"]
+
+    assert result["model"] == "gemini_flash"
+    assert result["gemini"]["llm_model"] == "gemini-3.8-flash"
+    assert result["openrouter_model"] == "google/gemini-3.8-flash"
+    assert result["openrouter_selection_alias"] == "gemini_flash_byok"
+    assert result["previous_llm_model"] == "gemini_flash"
+    assert result["connection_history"] == {"gemini_flash": "official_byok"}
+
+
+def test_vnext_dict_migrates_legacy_deepseek_openrouter_model() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    translation = canonical["intent"]["translation"]
+    translation["model"] = "deepseek_v4_flash"
+    translation["connection"] = "openrouter"
+    translation["openrouter_model"] = "deepseek/deepseek-v4-flash"
+    translation["openrouter_selected_source"] = "byok"
+    translation["openrouter_selection_alias"] = "deepseek_v4_flash_byok"
+
+    migrated = migration.from_dict(canonical)
+    result = serialization.to_dict(migrated)["intent"]["translation"]
+
+    assert result["openrouter_model"] == "deepseek/deepseek-v4-flash-0731"
+    assert result["openrouter_selection_alias"] == "deepseek_v4_flash_byok"
+
+
+def test_vnext_dict_preserves_selectable_deepseek_40_openrouter_model() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    translation = canonical["intent"]["translation"]
+    translation["model"] = "deepseek_v4_flash"
+    translation["connection"] = "openrouter"
+    translation["openrouter_model"] = "deepseek/deepseek-v4-flash-0731"
+    translation["openrouter_selected_source"] = "byok"
+    translation["openrouter_selection_alias"] = "deepseek_v4_flash_byok"
+
+    migrated = migration.from_dict(canonical)
+    result = serialization.to_dict(migrated)["intent"]["translation"]
+
+    assert result["openrouter_model"] == "deepseek/deepseek-v4-flash-0731"
+    assert result["openrouter_selection_alias"] == "deepseek_v4_flash_byok"
+
+
+@pytest.mark.parametrize(
+    ("saved_model", "expected_model"),
+    [
+        ("deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-flash-0731"),
+        ("deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-1017"),
+    ],
+)
+def test_serialization_from_dict_normalizes_legacy_deepseek_openrouter_model(
+    saved_model: str, expected_model: str
+) -> None:
+    from puripuly_heart.config.settings_vnext import serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["intent"]["translation"]["openrouter_model"] = saved_model
+
+    loaded = serialization.from_dict(canonical)
+
+    assert loaded.intent.translation.openrouter_model == expected_model
+
+
+def test_serialization_from_dict_preserves_deepseek_40_openrouter_model() -> None:
+    from puripuly_heart.config.settings_vnext import serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["intent"]["translation"]["openrouter_model"] = "deepseek/deepseek-v4-flash-0731"
+
+    loaded = serialization.from_dict(canonical)
+
+    assert loaded.intent.translation.openrouter_model == "deepseek/deepseek-v4-flash-0731"
+
+
+def test_compat_load_upgrades_direct_deepseek_metadata(tmp_path: Path) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    translation = raw["intent"]["translation"]
+    translation["model"] = "deepseek_v4_flash"
+    translation["connection"] = "official_byok"
+    translation["deepseek"] = {"llm_model": "deepseek-v4-flash"}
+    translation["openrouter_model"] = "deepseek/deepseek-v4-flash-0731"
+    translation["openrouter_selected_source"] = "byok"
+    translation["openrouter_selection_alias"] = "deepseek_v4_flash_byok"
+    path = tmp_path / "settings.json"
+    _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.ok
+    assert result.migrated is True
+    assert result.settings is not None
+    loaded = serialization.to_dict(result.settings)["intent"]["translation"]
+    assert loaded["deepseek"]["llm_model"] == "deepseek-flash"
+    assert loaded["model"] == "deepseek_v4_flash_41"
+    assert loaded["connection"] == "official_byok"
+    assert loaded["openrouter_model"] == "deepseek/deepseek-v4.1-flash-1017"
+    persisted_text = path.read_text(encoding="utf-8")
+    assert '"llm_model": "deepseek-flash"' in persisted_text
+    assert "deepseek/deepseek-v4.1-flash-1017" in persisted_text
+
+
+@pytest.mark.parametrize("version", [41, VNEXT_SETTINGS_SCHEMA_VERSION])
+@pytest.mark.parametrize("connection", ["managed", "managed_china", "openrouter", "official_byok"])
+def test_saved_deepseek_41_snapshot_upgrade_persists_across_restart(
+    tmp_path: Path, version: int, connection: str
+) -> None:
+    from puripuly_heart.app.wiring.wiring_llm_factory import runtime_resolution_input_from_vnext
+    from puripuly_heart.config.runtime_resolution import resolve_llm_config
+
+    compat = _compat()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = version
+    source = "managed" if connection in {"managed", "managed_china"} else "byok"
+    translation = raw["intent"]["translation"]
+    translation.update(
+        model="deepseek_v4_flash_41",
+        connection=connection,
+        previous_llm_model="deepseek_v4_flash_41",
+        connection_history={
+            "deepseek_v4_flash_41": connection,
+            "gemini_flash": "official_byok",
+        },
+        openrouter_model="deepseek/deepseek-v4.1-flash",
+        openrouter_selected_source=source,
+        openrouter_selection_alias=f"deepseek_v4_flash_41_{source}",
+        openrouter_provider_routing=(
+            "default" if connection == "official_byok" else "deepseek_v4_flash_41_strict"
+        ),
+    )
+    path = tmp_path / "settings.json"
+    original = _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.ok
+    assert result.migrated is True
+    assert result.settings is not None
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original
+    expected = {**translation, "openrouter_model": "deepseek/deepseek-v4.1-flash-1017"}
+    assert serialization.to_dict(result.settings)["intent"]["translation"] == expected
+    persisted = path.read_bytes()
+    assert json.loads(persisted)["intent"]["translation"] == expected
+
+    restarted = compat.load_vnext_settings(path)
+
+    assert restarted.ok
+    assert restarted.migrated is False
+    assert restarted.settings is not None
+    assert restarted.settings == result.settings
+    assert path.read_bytes() == persisted
+    config = resolve_llm_config(runtime_resolution_input_from_vnext(restarted.settings))
+    expected_runtime_model = (
+        "deepseek-flash" if connection == "official_byok" else "deepseek/deepseek-v4.1-flash-1017"
+    )
+    assert config.primary.provider == (
+        "deepseek" if connection == "official_byok" else "openrouter"
+    )
+    assert config.primary.model == expected_runtime_model
+    assert config.primary.models == (expected_runtime_model,)
+    assert (
+        config.primary.credential.reference
+        == {
+            "managed": "openrouter:managed",
+            "managed_china": "openrouter:managed_qq",
+            "openrouter": "openrouter:byok",
+            "official_byok": "deepseek:byok",
+        }[connection]
+    )
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+    assert tuple(attempt.target for attempt in config.attempts[:2]) == (
+        config.primary,
+        config.primary,
+    )
+
+
+def test_restart_roundtrip_preserves_gemma_main_model_with_stale_openrouter_url() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    translation = canonical["intent"]["translation"]
+    translation["model"] = "gemma4_26b_31b"
+    translation["connection"] = "managed"
+    translation["openrouter_model"] = "deepseek/deepseek-v4-flash"
+    translation["openrouter_selected_source"] = "managed"
+    translation["openrouter_selection_alias"] = "gemma4_26b_31b_managed"
+
+    result = serialization.to_dict(migration.from_dict(canonical))["intent"]["translation"]
+
+    assert result["model"] == "gemma4_26b_31b"
+    assert result["connection"] == "managed"
+
+
+def test_current_version_deepseek_v4_pro_remnant_normalizes_to_flash() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["translation"].update(
+        {
+            "model": "deepseek_v4_pro",
+            "connection": "official_byok",
+            "previous_llm_model": "deepseek_v4_pro",
+            "connection_history": {"deepseek_v4_pro": "official_byok"},
+        }
+    )
+
+    loaded = migration.from_dict(raw)
+    translated = loaded.intent.translation
+
+    assert translated.model == "deepseek_v4_flash_41"
+    assert translated.previous_llm_model == "deepseek_v4_flash_41"
+    assert translated.connection_history == {"deepseek_v4_flash_41": "official_byok"}
+    assert "deepseek_v4_pro" not in json.dumps(serialization.to_dict(loaded))
+
+
+@pytest.mark.parametrize(
+    "connection",
+    ["official_byok", "managed", "managed_china"],
+)
+def test_v40_saved_deepseek_service_connections_upgrade_to_41_once(
+    connection: str,
+) -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 40
+    translation = raw["intent"]["translation"]
+    translation.update(
+        {
+            "model": "deepseek_v4_flash",
+            "connection": connection,
+            "connection_history": {"deepseek_v4_flash": connection},
+            "openrouter_model": "deepseek/deepseek-v4-flash-0731",
+            "openrouter_selected_source": "managed",
+            "openrouter_selection_alias": "deepseek_v4_flash_managed",
+        }
+    )
+
+    loaded = migration.from_dict(raw)
+    translated = loaded.intent.translation
+    assert translated.model == "deepseek_v4_flash_41"
+    assert translated.connection == connection
+    assert translated.connection_history == {"deepseek_v4_flash_41": connection}
+    assert translated.openrouter_selected_source == "managed"
+
+    once = serialization.to_dict(loaded)
+    twice = serialization.to_dict(migration.from_dict(once))
+    assert twice == once
+
+
+def test_v40_deepseek_openrouter_stays_40_and_restores_0731_slug() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 40
+    translation = raw["intent"]["translation"]
+    translation.update(
+        {
+            "model": "deepseek_v4_flash",
+            "connection": "openrouter",
+            "connection_history": {"deepseek_v4_flash": "openrouter"},
+            "openrouter_model": "deepseek/deepseek-v4.1-flash",
+            "openrouter_selected_source": "byok",
+            "openrouter_selection_alias": "deepseek_v4_flash_byok",
+            "openrouter_provider_routing": "default",
+        }
+    )
+
+    translated = migration.from_dict(raw).intent.translation
+    assert translated.model == "deepseek_v4_flash"
+    assert translated.connection == "openrouter"
+    assert translated.connection_history == {"deepseek_v4_flash": "openrouter"}
+    assert translated.openrouter_model == "deepseek/deepseek-v4-flash-0731"
+    assert translated.openrouter_selection_alias == "deepseek_v4_flash_byok"
+    assert translated.openrouter_provider_routing == "deepseek_v4_flash_latency"
+
+
+def test_v40_deepseek_official_upgrades_41_metadata() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 40
+    raw["intent"]["translation"].update(
+        {
+            "model": "deepseek_v4_flash",
+            "connection": "official_byok",
+            "openrouter_model": "deepseek/deepseek-v4-flash-0731",
+            "openrouter_provider_routing": "deepseek_v4_flash_latency",
+        }
+    )
+
+    translated = migration.from_dict(raw).intent.translation
+
+    assert translated.model == "deepseek_v4_flash_41"
+    assert translated.connection == "official_byok"
+    assert translated.openrouter_model == "deepseek/deepseek-v4.1-flash-1017"
+    assert translated.openrouter_provider_routing == "default"
+
+
+@pytest.mark.parametrize("connection", ["managed", "managed_china"])
+def test_current_deepseek_v4_managed_choice_migrates_to_41(connection: str) -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["translation"].update(
+        {
+            "model": "deepseek_v4_flash",
+            "connection": connection,
+            "connection_history": {"deepseek_v4_flash": connection},
+            "openrouter_model": "deepseek/deepseek-v4-flash-0731",
+            "openrouter_selected_source": "managed",
+            "openrouter_selection_alias": "deepseek_v4_flash_managed",
+        }
+    )
+
+    loaded = migration.from_dict(raw)
+    translated = loaded.intent.translation
+    assert translated.model == "deepseek_v4_flash_41"
+    assert translated.connection == connection
+    assert translated.connection_history == {"deepseek_v4_flash_41": connection}
+    assert translated.openrouter_model == "deepseek/deepseek-v4.1-flash-1017"
+    assert translated.openrouter_selected_source == "managed"
+    assert translated.openrouter_selection_alias == "deepseek_v4_flash_41_managed"
+    assert translated.openrouter_provider_routing == "deepseek_v4_flash_41_strict"
+
+    once = serialization.to_dict(loaded)
+    twice = serialization.to_dict(migration.from_dict(once))
+    assert twice == once
+
+
+def test_deepseek_v4_managed_history_moves_without_replacing_saved_41_connection() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["translation"].update(
+        {
+            "model": "gemini_flash",
+            "connection": "official_byok",
+            "previous_llm_model": "deepseek_v4_flash",
+            "connection_history": {
+                "deepseek_v4_flash": "managed_china",
+                "deepseek_v4_flash_41": "official_byok",
+                "gemini_flash": "official_byok",
+            },
+        }
+    )
+
+    translated = migration.from_dict(raw).intent.translation
+    assert translated.model == "gemini_flash"
+    assert translated.connection == "official_byok"
+    assert translated.previous_llm_model == "deepseek_v4_flash_41"
+    assert translated.connection_history["deepseek_v4_flash_41"] == "official_byok"
+    assert "deepseek_v4_flash" not in translated.connection_history
+
+
+def test_v40_hidden_managed_openrouter_alias_upgrades_using_original_source() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 40
+    raw["intent"]["translation"].update(
+        {
+            "model": "deepseek_v4_flash",
+            "connection": "openrouter",
+            "openrouter_model": "deepseek/deepseek-v4-flash-0731",
+            "openrouter_selected_source": "managed",
+            "openrouter_selection_alias": "deepseek_v4_flash_managed",
+            "openrouter_provider_routing": "deepseek_only",
+        }
+    )
+
+    translated = migration.from_dict(raw).intent.translation
+    assert translated.model == "deepseek_v4_flash_41"
+    assert translated.connection == "managed_china"
+    assert translated.openrouter_selected_source == "managed"
+    assert translated.openrouter_selection_alias == "deepseek_v4_flash_41_managed"
+    assert translated.openrouter_model == "deepseek/deepseek-v4.1-flash-1017"
+
+
+def test_vnext_dict_retires_qwen_asr_per_channel_and_removes_nested_model() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["intent"]["stt"]["provider"] = "qwen_asr"
+    canonical["intent"]["stt"]["qwen_asr"] = {"model": "qwen3-asr-flash-realtime"}
+    canonical["intent"]["peer_stt"]["provider"] = "qwen_asr"
+    canonical["intent"]["languages"]["source_language"] = "en-US"
+    canonical["intent"]["languages"]["peer_source_language"] = "uk-UA"
+    canonical["intent"]["translation"]["qwen"]["region"] = "singapore"
+    canonical["state"]["provider_verification"]["alibaba_singapore"] = {
+        "status": "verified",
+        "provider": "alibaba_singapore",
+        "secret_key": "alibaba_api_key_singapore",
+        "secret_fingerprint": "sha256:test",
+        "verifier_context": {"flow": "settings.verify_api_key"},
+        "verifier_evidence": {"verifier": "qwen_audio"},
+    }
+
+    migrated = migration.from_dict(canonical)
+    result = serialization.to_dict(migrated)["intent"]
+
+    assert result["stt"]["provider"] == ""
+    assert result["peer_stt"]["provider"] == ""
+    assert "qwen_asr" not in result["stt"]
+    assert result["translation"]["qwen"]["region"] == "singapore"
+    assert migrated.state.provider_verification.alibaba_singapore.status == "verified"
+
+
+def test_vnext_dict_retires_qwen_audio_and_uses_self_language_for_blank_peer() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["intent"]["stt"]["provider"] = "qwen_audio"
+    canonical["intent"]["stt"]["qwen_asr"] = {"model": "qwen-audio-3.0-asr-flash-streaming"}
+    canonical["intent"]["peer_stt"]["provider"] = "qwen_asr"
+    canonical["intent"]["languages"]["source_language"] = "tr"
+    canonical["intent"]["languages"]["peer_source_language"] = ""
+
+    migrated = migration.from_dict(canonical)
+    result = serialization.to_dict(migrated)["intent"]
+
+    assert result["stt"]["provider"] == ""
+    assert result["peer_stt"]["provider"] == ""
+    assert "qwen_asr" not in result["stt"]
+
+
+def test_qwen_asr_retirement_is_backed_up_and_idempotent(tmp_path: Path) -> None:
+    from puripuly_heart.config.settings_vnext import compat, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["intent"]["stt"]["provider"] = "qwen_asr"
+    canonical["intent"]["stt"]["qwen_asr"] = {"model": "qwen3-asr-flash-realtime"}
+    path = tmp_path / "settings.json"
+    original_bytes = json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8")
+    path.write_bytes(original_bytes)
+    fixed_now = datetime(2026, 9, 13, 1, 2, 3, tzinfo=timezone.utc)
+
+    first = compat.load_vnext_settings(path, now=fixed_now)
+    persisted_after_first = path.read_bytes()
+    second = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert first.migrated is True
+    assert first.backup_path is not None
+    assert first.backup_path.read_bytes() == original_bytes
+    assert first.settings is not None
+    assert first.settings.intent.stt.provider == ""
+    assert second.migrated is False
+    assert second.backup_path is None
+    assert path.read_bytes() == persisted_after_first
+
+
+def test_sparse_vnext_peer_qwen_asr_retirement_saves_and_is_idempotent(tmp_path: Path) -> None:
+    from puripuly_heart.config.settings_vnext import compat, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["intent"].pop("stt")
+    canonical["intent"]["peer_stt"]["provider"] = "qwen_asr"
+    canonical["intent"]["languages"]["source_language"] = "en"
+    canonical["intent"]["languages"]["peer_source_language"] = ""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(canonical), encoding="utf-8")
+
+    first = compat.load_vnext_settings(path)
+    second = compat.load_vnext_settings(path)
+
+    assert first.status is compat.SettingsPersistenceStatus.SUCCESS
+    assert first.settings is not None
+    assert first.settings.intent.peer_stt.provider == ""
+    assert first.migrated is True
+    assert first.backup_path is not None
+    assert second.status is compat.SettingsPersistenceStatus.SUCCESS
+    assert second.migrated is False
+    assert second.backup_path is None
+
+
+def test_vnext_dict_migrates_qwen_35_plus_nested_fields() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    translation = canonical["intent"]["translation"]
+    translation["model"] = "qwen35_plus"
+    translation["previous_llm_model"] = "qwen35_plus"
+    translation["connection"] = "official_byok"
+    translation["connection_history"] = {"qwen35_plus": "official_byok"}
+    translation["qwen"] = {"region": "singapore", "llm_model": "qwen3.5-plus"}
+
+    migrated = migration.from_dict(canonical)
+    result = serialization.to_dict(migrated)["intent"]["translation"]
+
+    assert result["model"] == "qwen38_flash"
+    assert result["previous_llm_model"] == "qwen38_flash"
+    assert result["qwen"]["region"] == "singapore"
+    assert result["qwen"]["llm_model"] == "qwen3.8-flash"
+    assert result["qwen"]["beijing"]["endpoint_mode"] == "legacy_shared"
+    assert result["qwen"]["singapore"]["endpoint_mode"] == "legacy_shared"
+    assert result["connection_history"] == {"qwen38_flash": "official_byok"}
+
+
+def test_vnext_dict_migrates_legacy_gemini_byok_alias_only() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    translation = canonical["intent"]["translation"]
+    translation["model"] = "gemini_flash"
+    translation["connection"] = "openrouter"
+    translation["openrouter_selected_source"] = "byok"
+    translation["openrouter_selection_alias"] = "gemini31_flash_lite_byok"
+    translation.pop("openrouter_model", None)
+
+    migrated = migration.from_dict(canonical)
+    result = serialization.to_dict(migrated)["intent"]["translation"]
+
+    assert result["model"] == "gemini_flash"
+    assert result["openrouter_selection_alias"] == "gemini_flash_byok"
+
+
+def test_vnext_dict_migrates_legacy_timestamp_prompt_to_new_default() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+    from puripuly_heart.config.settings_vnext.migration import LEGACY_TIMESTAMP_PROMPT
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["settings_version"] = VNEXT_SETTINGS_SCHEMA_VERSION - 1
+    canonical["intent"]["prompts"]["system_prompt"] = LEGACY_TIMESTAMP_PROMPT
+
+    migrated = migration.from_dict(canonical)
+
+    assert migrated.intent.prompts.system_prompt_override is None
+
+
+def test_current_default_prompt_override_normalizes_to_dynamic_default() -> None:
+    from puripuly_heart.config.prompts import get_default_prompt
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["intent"]["prompts"]["system_prompt_override"] = get_default_prompt()
+
+    migrated = migration.from_dict(canonical)
+
+    assert migrated.intent.prompts.system_prompt_override is None
+
+
+@pytest.mark.parametrize(
+    "settings_version",
+    [VNEXT_SETTINGS_SCHEMA_VERSION - 1, VNEXT_SETTINGS_SCHEMA_VERSION],
+)
+def test_prompt_reset_drops_deprecated_top_level_prompt_extension(
+    settings_version: int,
+) -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["settings_version"] = settings_version
+    canonical["system_prompt"] = "TOP CUSTOM"
+
+    persisted = serialization.to_dict(migration.from_dict(canonical))
+
+    assert "system_prompt" not in persisted
+    assert persisted["intent"]["prompts"] == {"system_prompt_override": None}
+
+
+def test_vnext_dict_preserves_prompt_with_boundary_whitespace() -> None:
+    from puripuly_heart.config.settings_vnext import migration, serialization
+    from puripuly_heart.config.settings_vnext.migration import LEGACY_TIMESTAMP_PROMPT
+
+    stored_prompt = f"  {LEGACY_TIMESTAMP_PROMPT}  "
+    canonical = serialization.to_dict(AppSettingsVNext())
+    canonical["intent"]["prompts"]["system_prompt_override"] = stored_prompt
+
+    migrated = migration.from_dict(canonical)
+
+    assert migrated.intent.prompts.system_prompt_override == stored_prompt
+
+
+def test_v43_translation_fallback_settings_are_discarded_without_touching_other_settings() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 43
+    raw["intent"]["translation"]["fallback"] = {
+        "enabled": False,
+        "model": "deepseek_v4_flash_41",
+        "connection": "official_byok",
+        "selection_alias": "none",
+        "future_nested": {"value": 7},
+    }
+    raw["intent"]["translation"]["fallback_selection_alias"] = "openrouter_gemma4_31b"
+    raw["intent"]["translation"]["openrouter_fallback_selection_alias"] = "deepseek_v4_flash"
+    raw["intent"]["translation"]["future_unrelated"] = {"kept": True}
+
+    loaded = migration.from_dict(raw)
+    persisted = serialization.to_dict(loaded)
+
+    assert loaded.settings_version == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert not hasattr(loaded.intent.translation, "fallback")
+    assert persisted["intent"]["translation"]["future_unrelated"] == {"kept": True}
+    assert "fallback" not in persisted["intent"]["translation"]
+    assert "fallback_selection_alias" not in persisted["intent"]["translation"]
+    assert "openrouter_fallback_selection_alias" not in persisted["intent"]["translation"]
+
+
+@pytest.mark.parametrize("source_version", [33, 34])
+def test_pre_v35_cerebras_model_migrates_to_combined_connection_and_preserves_return_target(
+    source_version: int,
+) -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = source_version
+    raw["intent"]["translation"].update(
+        {
+            "model": "custom_http",
+            "connection": "custom_http",
+            "previous_llm_model": "gemma4_31b_cerebras",
+            "connection_history": {
+                "gemma4_31b": "openrouter",
+                "gemma4_31b_cerebras": "official_byok",
+            },
+            "fallback": {
+                "enabled": True,
+                "model": "gemma4_31b_cerebras",
+                "connection": "official_byok",
+                "selection_alias": "cerebras_gemma4_31b",
+            },
+        }
+    )
+
+    loaded = migration.from_dict(raw)
+    translated = loaded.intent.translation
+
+    assert loaded.settings_version == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert translated.previous_llm_model == "gemma4_26b_31b"
+    assert translated.connection_history == {"gemma4_26b_31b": "openrouter"}
+    persisted = serialization.to_dict(loaded)
+    assert "cerebras" not in json.dumps(persisted)
+
+
+@pytest.mark.parametrize("source_version", [33, 34])
+def test_pre_v35_active_cerebras_model_migrates_to_combined_primary(
+    source_version: int,
+) -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = source_version
+    raw["intent"]["translation"].update(
+        {
+            "model": "gemma4_31b_cerebras",
+            "connection": "official_byok",
+            "connection_history": {
+                "gemma4_31b": "openrouter",
+                "gemma4_31b_cerebras": "official_byok",
+            },
+            "fallback": {
+                "enabled": True,
+                "model": "gemma4_31b_cerebras",
+                "connection": "official_byok",
+                "selection_alias": "none",
+            },
+        }
+    )
+
+    loaded = migration.from_dict(raw)
+    translated = loaded.intent.translation
+
+    assert translated.model == "gemma4_26b_31b"
+    assert translated.connection == "openrouter"
+    assert translated.openrouter_selected_source == "byok"
+    assert translated.openrouter_selection_alias == "gemma4_26b_31b_byok"
+    assert translated.connection_history == {"gemma4_26b_31b": "openrouter"}
+    assert "cerebras" not in json.dumps(serialization.to_dict(loaded))
+
+
+def test_v41_cerebras_retirement_migrates_primary_history_and_drops_extensions() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 41
+    raw["intent"]["translation"].update(
+        {
+            "model": "gemma4_31b",
+            "connection": "cerebras",
+            "previous_llm_model": "gemma4_31b_cerebras",
+            "connection_history": {
+                "gemma4_31b": "cerebras",
+                "gemma4_31b_cerebras": "official_byok",
+            },
+            "fallback": {
+                "enabled": True,
+                "model": "gemma4_31b",
+                "connection": "cerebras",
+                "selection_alias": "cerebras_gemma4_31b",
+            },
+            "cerebras": {"llm_model": "gemma-4-31b"},
+        }
+    )
+    raw["state"]["provider_verification"]["cerebras"] = {"status": "verified"}
+
+    once = migration.from_dict(raw)
+    persisted_once = serialization.to_dict(once)
+    twice = migration.from_dict(persisted_once)
+
+    translated = once.intent.translation
+    assert once.settings_version == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert translated.model == "gemma4_26b_31b"
+    assert translated.connection == "openrouter"
+    assert translated.openrouter_model == "google/gemma-4-26b-a4b-it"
+    assert translated.openrouter_selected_source == "byok"
+    assert translated.openrouter_selection_alias == "gemma4_26b_31b_byok"
+    assert translated.connection_history == {"gemma4_26b_31b": "openrouter"}
+    assert translated.previous_llm_model == "gemma4_26b_31b"
+    assert "cerebras" not in json.dumps(persisted_once)
+    assert serialization.to_dict(twice) == persisted_once
+
+
+def test_v42_managed_gemma_12b_retirement_migrates_primary_to_gpu_e4b() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 42
+    raw["intent"]["translation"].update(
+        {
+            "model": "managed_gemma_12b",
+            "connection": "gpu",
+            "previous_llm_model": "managed_gemma_12b",
+            "connection_history": {
+                "gemma4_26b_31b": "managed",
+                "managed_gemma_12b": "gpu",
+            },
+            "fallback": {
+                "enabled": True,
+                "model": "managed_gemma_12b",
+                "connection": "gpu",
+                "selection_alias": "none",
+            },
+        }
+    )
+
+    once = migration.from_dict(raw)
+    persisted_once = serialization.to_dict(once)
+    twice = migration.from_dict(persisted_once)
+
+    translated = once.intent.translation
+    assert once.settings_version == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert translated.model == "managed_gemma"
+    assert translated.connection == "gpu"
+    assert translated.previous_llm_model == "managed_gemma"
+    assert translated.connection_history == {
+        "gemma4_26b_31b": "managed",
+        "managed_gemma": "gpu",
+    }
+    assert "managed_gemma_12b" not in json.dumps(persisted_once)
+    assert serialization.to_dict(twice) == persisted_once
+
+
+def test_v42_managed_gemma_12b_retirement_migration_applies_once(tmp_path: Path) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 42
+    raw["intent"]["translation"].update(
+        {
+            "model": "managed_gemma_12b",
+            "connection": "gpu",
+        }
+    )
+    path = tmp_path / "settings.json"
+    _write_json_bytes(path, raw)
+
+    first = compat.load_vnext_settings(path)
+    second = compat.load_vnext_settings(path)
+
+    assert first.ok
+    assert first.migrated is True
+    assert first.settings is not None
+    assert first.settings.intent.translation.model == "managed_gemma"
+    assert first.settings.intent.translation.connection == "gpu"
+    assert second.ok
+    assert second.migrated is False
+
+
+@pytest.mark.parametrize("source_version", [34, 35])
+def test_pre_v36_deepseek_v4_pro_migrates_to_deepseek_v4_flash(
+    source_version: int,
+) -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = source_version
+    raw["intent"]["translation"].update(
+        {
+            "model": "deepseek_v4_pro",
+            "connection": "official_byok",
+            "connection_history": {
+                "gemma4_26b_31b": "managed",
+                "deepseek_v4_pro": "official_byok",
+            },
+            "fallback": {
+                "enabled": True,
+                "model": "deepseek_v4_pro",
+                "connection": "official_byok",
+                "selection_alias": "none",
+            },
+        }
+    )
+
+    loaded = migration.from_dict(raw)
+    translated = loaded.intent.translation
+
+    assert loaded.settings_version == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert translated.model == "deepseek_v4_flash_41"
+    assert translated.connection == "official_byok"
+    assert translated.connection_history == {
+        "gemma4_26b_31b": "managed",
+        "deepseek_v4_flash_41": "official_byok",
+    }
+    assert "deepseek_v4_pro" not in json.dumps(serialization.to_dict(loaded))
+
+
+@pytest.mark.parametrize(
+    ("legacy_consent", "expected_enabled"),
+    [
+        ("allow", True),
+        ("unknown", True),
+        ("decline", False),
+        (None, True),
+        ("corrupt", False),
+    ],
+)
+def test_v36_telemetry_states_migrate_once_to_boolean_without_legacy_surfaces(
+    legacy_consent: str | None,
+    expected_enabled: bool,
+) -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 36
+    raw["intent"]["telemetry"] = {} if legacy_consent is None else {"consent": legacy_consent}
+    raw["state"]["telemetry"] = {
+        "anonymous_id": "existing-id",
+        "sent_translation_success_dates_utc": ["2026-07-01", "2026-07-03"],
+    }
+
+    serialized = serialization.to_dict(migration.from_dict(raw))
+
+    assert serialized["intent"]["telemetry"] == {"enabled": expected_enabled}
+    migrated_state = serialized["state"]["telemetry"]
+    assert migrated_state["last_sent_date_utc"] is None
+    if expected_enabled:
+        assert migrated_state["anonymous_id"] not in {None, "existing-id"}
+    else:
+        assert migrated_state["anonymous_id"] is None
+    persisted_text = json.dumps(serialized)
+    assert '\"consent\"' not in persisted_text
+    assert "sent_translation_success_dates_utc" not in persisted_text
+
+
+def test_current_schema_rejects_non_boolean_telemetry_enabled() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["telemetry"] = {"enabled": "yes"}
+
+    with pytest.raises(
+        ValueError,
+        match=r"settings\.intent\.telemetry\.enabled has an invalid type",
+    ):
+        migration.from_dict(raw)
+
+
+def test_current_schema_normalizes_legacy_telemetry_fields_without_extensions() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["telemetry"] = {"consent": "decline"}
+    raw["state"]["telemetry"] = {
+        "anonymous_id": "existing-id",
+        "sent_translation_success_dates_utc": ["2026-07-01", "2026-07-03"],
+    }
+
+    serialized = serialization.to_dict(migration.from_dict(raw))
+
+    assert serialized["intent"]["telemetry"] == {"enabled": False}
+    assert serialized["state"]["telemetry"] == {
+        "anonymous_id": None,
+        "last_sent_date_utc": None,
+    }
+    assert "consent" not in json.dumps(serialized)
+    assert "sent_translation_success_dates_utc" not in json.dumps(serialized)
+
+
+@pytest.mark.parametrize("malformed", [None, []])
+def test_present_malformed_telemetry_blocks_fail_closed(malformed: object) -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 36
+    raw["intent"]["telemetry"] = malformed
+
+    with pytest.raises(
+        ValueError,
+        match=r"settings\.intent\.telemetry must be a JSON object",
+    ):
+        migration.from_dict(raw)
+
+
+def test_telemetry_enabled_transitions_manage_operational_state() -> None:
+    base = AppSettingsVNext(
+        state=PersistedOperationalState(
+            telemetry=TelemetryOperationalState(
+                anonymous_id="existing-id",
+                last_sent_date_utc="2026-07-01",
+            )
+        )
+    )
+
+    enabled = with_telemetry_enabled(base, True, identifier_factory=lambda: "new-id")
+    disabled = with_telemetry_enabled(enabled, False)
+    enabled_again = with_telemetry_enabled(disabled, True, identifier_factory=lambda: "new-id")
+
+    assert enabled.intent.telemetry.enabled is True
+    assert enabled.state.telemetry.anonymous_id == "existing-id"
+    assert enabled.state.telemetry.last_sent_date_utc == "2026-07-01"
+    assert disabled.intent.telemetry.enabled is False
+    assert disabled.state.telemetry.anonymous_id is None
+    assert disabled.state.telemetry.last_sent_date_utc is None
+    assert enabled_again.intent.telemetry.enabled is True
+    assert enabled_again.state.telemetry.anonymous_id == "new-id"
+
+
+def test_malformed_telemetry_last_sent_date_is_ignored() -> None:
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["state"]["telemetry"] = {
+        "anonymous_id": " telemetry-id ",
+        "last_sent_date_utc": "bad-date",
+    }
+
+    loaded = serialization.from_dict(raw)
+
+    assert loaded.state.telemetry.anonymous_id == "telemetry-id"
+    assert loaded.state.telemetry.last_sent_date_utc is None
+
+
+def test_current_vnext_dict_reads_and_serializes_idempotently() -> None:
+    migration = _migration()
+    serialization = _serialization()
+
+    original = with_telemetry_enabled(
+        AppSettingsVNext(),
+        True,
+        identifier_factory=lambda: "current-settings-test-id",
+    )
+    raw = serialization.to_dict(original)
+
+    loaded = migration.from_dict(raw)
+    serialized = serialization.to_dict(loaded)
+
+    assert loaded == original
+    assert serialized == raw
+
+
+def test_canonical_settings_version_must_be_a_supported_integer() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = "not-a-schema-discriminator"
+
+    with pytest.raises(ValueError, match="positive integer"):
+        migration.from_dict(raw)
+
+    raw["settings_version"] = VNEXT_SETTINGS_SCHEMA_VERSION + 1
+    with pytest.raises(ValueError, match="unsupported canonical"):
+        migration.from_dict(raw)
+
+
+@pytest.mark.parametrize(
+    ("legacy_output_device", "kind", "device_name"),
+    [
+        ("", "default_output_device", None),
+        ("Fixture Speakers", "named_output_device", "Fixture Speakers"),
+    ],
+)
+def test_pre_v27_canonical_vnext_output_device_migration_backs_up_before_rewrite(
+    tmp_path: Path,
+    legacy_output_device: str,
+    kind: str,
+    device_name: str | None,
+) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    fixed_now = datetime(2026, 7, 10, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 26
+    raw["intent"]["desktop_audio"].pop("capture_target")
+    raw["intent"]["desktop_audio"]["output_device"] = legacy_output_device
+    original_bytes = _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.migrated is True
+    assert result.backup_path == tmp_path / "settings.json.pre-v26.20260710T010203Z.bak"
+    assert result.backup_path.read_bytes() == original_bytes
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["intent"]["desktop_audio"]["capture_target"] == {
+        "kind": kind,
+        "device_name": device_name,
+        "process": None,
+    }
+    assert persisted["intent"]["desktop_audio"]["output_device"] == legacy_output_device
+
+
+def test_generic_process_identity_is_normalized_without_relocation() -> None:
+    serialization = _serialization()
+    migration = _migration()
+    original_identity = r"C:/Apps/Example/Example.EXE"
+    target = CaptureTargetIntent.process_target(
+        ProcessCaptureTargetIntent.generic_executable(original_identity)
+    )
+    settings = with_capture_target(AppSettingsVNext(), target)
+
+    restored = migration.from_dict(serialization.to_dict(settings))
+
+    assert restored.intent.desktop_audio.capture_target.process is not None
+    assert restored.intent.desktop_audio.capture_target.process.executable_identity == (
+        r"c:\apps\example\example.exe"
+    )
+    assert (
+        restored.intent.desktop_audio.capture_target.process.executable_identity
+        != original_identity
+    )
+
+
+@pytest.mark.parametrize(
+    "process",
+    [
+        ProcessCaptureTargetIntent.generic_executable(r"\\server\share\example.exe"),
+        ProcessCaptureTargetIntent.vrchat(r"\\server\share\VRChat.exe"),
+    ],
+)
+def test_persisted_process_targets_accept_fully_qualified_unc_identities(
+    process: ProcessCaptureTargetIntent,
+) -> None:
+    serialization = _serialization()
+    migration = _migration()
+    settings = AppSettingsVNext(
+        intent=replace(
+            AppSettingsVNext().intent,
+            desktop_audio=replace(
+                AppSettingsVNext().intent.desktop_audio,
+                capture_target=CaptureTargetIntent.process_target(process),
+            ),
+        )
+    )
+
+    restored = migration.from_dict(serialization.to_dict(settings))
+
+    assert restored.intent.desktop_audio.capture_target.process == process
+
+
+@pytest.mark.parametrize(
+    ("process_kind", "identity", "accepted"),
+    [
+        ("generic_executable", r"C:\Apps\example.exe", True),
+        ("generic_executable", r"\\server\share\example.exe", True),
+        ("generic_executable", r"C:example.exe", False),
+        ("generic_executable", r"\??\C:\example.exe", False),
+        ("generic_executable", r"\Device\Audio\example.exe", False),
+        ("vrchat", r"C:\Apps\VRChat.exe", True),
+        ("vrchat", r"\\server\share\VRChat.exe", True),
+        ("vrchat", r"C:VRChat.exe", False),
+        ("vrchat", r"\??\C:\VRChat.exe", False),
+        ("vrchat", r"\Device\Audio\VRChat.exe", False),
+    ],
+)
+def test_persisted_process_identity_path_matrix(
+    process_kind: str,
+    identity: str,
+    accepted: bool,
+) -> None:
+    factory = getattr(ProcessCaptureTargetIntent, process_kind)
+
+    if accepted:
+        assert factory(identity).executable_identity is not None
+        return
+    with pytest.raises(ValueError, match="executable"):
+        factory(identity)
+
+
+@pytest.mark.parametrize(
+    ("process_kind", "identity", "accepted"),
+    [
+        ("generic_executable", r"c:\apps\example.exe", True),
+        ("generic_executable", r"\\server\share\example.exe", True),
+        ("generic_executable", r"c:example.exe", False),
+        ("generic_executable", r"\??\c:\example.exe", False),
+        ("generic_executable", r"\device\audio\example.exe", False),
+        ("vrchat", r"c:\apps\vrchat.exe", True),
+        ("vrchat", r"\\server\share\vrchat.exe", True),
+        ("vrchat", r"c:vrchat.exe", False),
+        ("vrchat", r"\??\c:\vrchat.exe", False),
+        ("vrchat", r"\device\audio\vrchat.exe", False),
+    ],
+)
+def test_resolved_process_identity_path_matrix(
+    process_kind: str,
+    identity: str,
+    accepted: bool,
+) -> None:
+    from puripuly_heart.config.resolved import ResolvedDesktopAudioCaptureTarget
+
+    kwargs = {
+        "kind": "process",
+        "process_kind": process_kind,
+        "executable_identity": identity,
+    }
+    if accepted:
+        assert ResolvedDesktopAudioCaptureTarget(**kwargs).executable_identity == identity
+        return
+    with pytest.raises(ValueError, match="executable identity"):
+        ResolvedDesktopAudioCaptureTarget(**kwargs)
+
+
+def test_capture_target_validation_rejects_ambiguous_or_path_bound_discord_values() -> None:
+    with pytest.raises(ValueError, match="non-empty device name"):
+        CaptureTargetIntent.named_output_device("   ")
+    with pytest.raises(ValueError, match="VRChat.exe"):
+        ProcessCaptureTargetIntent.vrchat(r"C:\Apps\Other.exe")
+    with pytest.raises(ValueError, match="installation path"):
+        ProcessCaptureTargetIntent(
+            kind="discord",
+            executable_identity=r"C:\Users\example\AppData\Discord\app-1.0\Discord.exe",
+            discord_channel="stable",
+        )
+    with pytest.raises(ValueError, match="executable"):
+        ProcessCaptureTargetIntent.generic_executable("Example.exe")
+    with pytest.raises(ValueError, match="executable"):
+        ProcessCaptureTargetIntent.vrchat(r"\VRChat\VRChat.exe")
+    with pytest.raises(ValueError, match="executable"):
+        ProcessCaptureTargetIntent.generic_executable(r"\\server\example.exe")
+    with pytest.raises(ValueError, match="executable"):
+        ProcessCaptureTargetIntent.vrchat(r"\\server\VRChat.exe")
+    with pytest.raises(ValueError, match="executable"):
+        ProcessCaptureTargetIntent.generic_executable(r"\\.\pipe\capture.exe")
+    with pytest.raises(ValueError, match="executable"):
+        ProcessCaptureTargetIntent.vrchat(r"\\.\pipe\VRChat.exe")
+    with pytest.raises(ValueError, match="executable"):
+        ProcessCaptureTargetIntent.generic_executable(r"\\?\c:\capture.exe")
+    with pytest.raises(ValueError, match="executable"):
+        ProcessCaptureTargetIntent.vrchat(r"\\?\c:\VRChat.exe")
+    with pytest.raises(ValueError, match="Discord channel identity"):
+        ProcessCaptureTargetIntent.generic_executable(r"C:\Apps\Discord\Discord.exe")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"kind": "process", "process_kind": "generic_executable"},
+        {
+            "kind": "process",
+            "process_kind": "generic_executable",
+            "executable_identity": r"C:\Apps\Discord\Discord.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "generic_executable",
+            "executable_identity": "example.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "vrchat",
+            "executable_identity": r"C:\Apps\Other.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "vrchat",
+            "executable_identity": r"\VRChat\VRChat.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "generic_executable",
+            "executable_identity": r"\\server\example.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "vrchat",
+            "executable_identity": r"\\server\vrchat.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "generic_executable",
+            "executable_identity": r"\\.\pipe\capture.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "vrchat",
+            "executable_identity": r"\\.\pipe\vrchat.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "generic_executable",
+            "executable_identity": r"\\?\c:\capture.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "vrchat",
+            "executable_identity": r"\\?\c:\vrchat.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "discord",
+            "discord_channel": "stable",
+            "executable_basename": "DiscordPTB.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "discord",
+            "executable_identity": r"C:\Apps\Discord\Discord.exe",
+            "discord_channel": "stable",
+            "executable_basename": "Discord.exe",
+        },
+        {
+            "kind": "process",
+            "process_kind": "discord",
+            "discord_channel": "Stable",
+            "executable_basename": "Discord.exe",
+        },
+    ],
+)
+def test_resolved_process_capture_target_rejects_incomplete_or_malformed_values(
+    kwargs: dict[str, object],
+) -> None:
+    from puripuly_heart.config.resolved import ResolvedDesktopAudioCaptureTarget
+
+    with pytest.raises(ValueError):
+        ResolvedDesktopAudioCaptureTarget(**kwargs)
+
+
+def test_resolved_process_capture_target_accepts_canonical_generic_vrchat_and_discord_values() -> (
+    None
+):
+    from puripuly_heart.config.resolved import ResolvedDesktopAudioCaptureTarget
+
+    generic = ResolvedDesktopAudioCaptureTarget(
+        kind="process",
+        process_kind="generic_executable",
+        executable_identity=r"c:\apps\example\example.exe",
+    )
+    vrchat = ResolvedDesktopAudioCaptureTarget(
+        kind="process",
+        process_kind="vrchat",
+        executable_identity=r"c:\vrchat\vrchat.exe",
+    )
+    discord = ResolvedDesktopAudioCaptureTarget(
+        kind="process",
+        process_kind="discord",
+        discord_channel="canary",
+        executable_basename="DiscordCanary.exe",
+    )
+    generic_unc = ResolvedDesktopAudioCaptureTarget(
+        kind="process",
+        process_kind="generic_executable",
+        executable_identity=r"\\server\share\example.exe",
+    )
+    vrchat_unc = ResolvedDesktopAudioCaptureTarget(
+        kind="process",
+        process_kind="vrchat",
+        executable_identity=r"\\server\share\vrchat.exe",
+    )
+
+    assert generic.process_kind == "generic_executable"
+    assert vrchat.process_kind == "vrchat"
+    assert discord.discord_channel == "canary"
+    assert generic_unc.executable_identity == r"\\server\share\example.exe"
+    assert vrchat_unc.executable_identity == r"\\server\share\vrchat.exe"
+
+
+def test_capture_target_mutation_updates_only_immutable_vnext_intent() -> None:
+    original = AppSettingsVNext()
+    target = CaptureTargetIntent.process_target(
+        ProcessCaptureTargetIntent.generic_executable(r"C:\Apps\Example\Example.exe")
+    )
+
+    updated = with_capture_target(original, target)
+
+    assert updated is not original
+    assert original.intent.desktop_audio.capture_target.kind == "default_output_device"
+    assert updated.intent.desktop_audio.capture_target == target
+    assert updated.state == original.state
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        (
+            CaptureTargetIntent.default_output_device(),
+            {"kind": "default_output_device", "device_name": None},
+        ),
+        (
+            CaptureTargetIntent.named_output_device("Fixture Speakers"),
+            {"kind": "named_output_device", "device_name": "Fixture Speakers"},
+        ),
+        (
+            CaptureTargetIntent.process_target(
+                ProcessCaptureTargetIntent.generic_executable(r"C:\Apps\example.exe")
+            ),
+            {
+                "kind": "process",
+                "process_kind": "generic_executable",
+                "executable_identity": r"c:\apps\example.exe",
+            },
+        ),
+        (
+            CaptureTargetIntent.process_target(
+                ProcessCaptureTargetIntent.vrchat(r"C:\Apps\VRChat.exe")
+            ),
+            {
+                "kind": "process",
+                "process_kind": "vrchat",
+                "executable_identity": r"c:\apps\vrchat.exe",
+            },
+        ),
+        (
+            CaptureTargetIntent.process_target(ProcessCaptureTargetIntent.discord("PTB")),
+            {
+                "kind": "process",
+                "process_kind": "discord",
+                "discord_channel": "ptb",
+                "executable_basename": "DiscordPTB.exe",
+            },
+        ),
+    ],
+)
+def test_capture_target_resolution_covers_all_target_kinds(
+    target: CaptureTargetIntent,
+    expected: dict[str, str | None],
+) -> None:
+    from puripuly_heart.config.capture_target_resolution import resolve_desktop_audio_capture_target
+
+    resolved = resolve_desktop_audio_capture_target(target)
+
+    for field, value in expected.items():
+        assert getattr(resolved, field) == value
+
+
+def test_capture_target_resolution_excludes_pids_and_runtime_state() -> None:
+    from puripuly_heart.config.capture_target_resolution import resolve_desktop_audio_capture_target
+
+    target = CaptureTargetIntent.process_target(
+        ProcessCaptureTargetIntent.vrchat(r"C:\VRChat\VRChat.exe")
+    )
+
+    resolved = resolve_desktop_audio_capture_target(target)
+    serialized = _serialization().to_dict(
+        AppSettingsVNext(
+            intent=replace(
+                AppSettingsVNext().intent,
+                desktop_audio=replace(
+                    AppSettingsVNext().intent.desktop_audio, capture_target=target
+                ),
+            )
+        )
+    )
+
+    assert resolved.kind == "process"
+    assert resolved.process_kind == "vrchat"
+    assert resolved.executable_identity == r"c:\vrchat\vrchat.exe"
+    assert not {"pid", "active", "warning", "retry", "capture_state"}.intersection(
+        serialized["intent"]["desktop_audio"]["capture_target"]
+    )
+
+
+def test_current_vnext_unknown_fields_round_trip_through_compatibility_extensions(
+    tmp_path: Path,
+) -> None:
+    serialization = _serialization()
+    compat = _compat()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["future_product_flag"] = True
+    raw["intent"]["ui"]["future_toggle"] = "keep-me"
+    path = tmp_path / "settings.json"
+    _write_json_bytes(path, raw)
+
+    persisted = serialization.to_dict(serialization.from_dict(raw))
+    assert persisted["future_product_flag"] is True
+    assert persisted["intent"]["ui"]["future_toggle"] == "keep-me"
+
+    result = compat.load_vnext_settings(path)
+    assert result.ok
+    assert result.migrated is False
+    assert result.settings is not None
+    saved = serialization.to_dict(result.settings)
+    assert saved["future_product_flag"] is True
+    assert saved["intent"]["ui"]["future_toggle"] == "keep-me"
+
+
+def test_save_vnext_settings_normalizes_stale_settings_version_to_current(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    path = tmp_path / "settings.json"
+    stale = replace(AppSettingsVNext(), settings_version=VNEXT_SETTINGS_SCHEMA_VERSION - 1)
+
+    result = compat.save_vnext_settings(path, stale)
+
+    assert result.ok
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert set(raw) == {"settings_version", "intent", "state"}
+    assert raw["settings_version"] == VNEXT_SETTINGS_SCHEMA_VERSION
+
+
+def test_migration_on_load_creates_byte_identical_backup_and_writes_vnext_with_collision(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, maximal_v24_settings_fixture())
+    colliding_backup = tmp_path / "settings.json.pre-v25.20260609T010203Z.bak"
+    colliding_backup.write_bytes(b"existing backup")
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.migrated is True
+    assert result.backup_path == tmp_path / "settings.json.pre-v25.20260609T010203Z.1.bak"
+    assert result.backup_path.read_bytes() == original_bytes
+    assert colliding_backup.read_bytes() == b"existing backup"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert set(persisted) == {"settings_version", "intent", "state"}
+    assert persisted["settings_version"] == VNEXT_SETTINGS_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"ui": {"locale": "ja"}, "provider": {"llm": "deepseek"}},
+        {"settings_version": VNEXT_SETTINGS_SCHEMA_VERSION + 100, "unknown": "value"},
+        {"settings_version": 25, "unrecognized_product_field": {"nested": True}},
+        {
+            "settings_version": 25,
+            "secrets": {"encrypted_file_path": "retired-secrets.json"},
+            "api_key_verified": {"openrouter": True},
+            "openrouter_api_key": "raw-secret-must-not-survive",
+        },
+    ],
+    ids=("ordinary", "high-version", "unknown-fields", "secret-references"),
+)
+def test_flat_shape_reset_matrix_discards_all_values(
+    raw: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    monkeypatch.setattr(compat.defaults, "detect_system_locale", lambda: "en_US")
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, raw)
+    secret_file = tmp_path / "retired-secrets.json"
+    secret_file.write_bytes(b"secret-storage-sentinel")
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.ok
+    assert result.migrated is True
+    assert result.settings is not None
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original_bytes
+    persisted = serialization.to_dict(result.settings)
+    assert persisted["intent"]["ui"]["locale"] == "en"
+    assert persisted["intent"]["translation"]["model"] == ""
+    assert persisted["intent"]["secrets"]["encrypted_file_path"] == "secrets.json"
+    assert persisted["state"]["provider_verification"]["openrouter"]["status"] == "unknown"
+    assert "raw-secret-must-not-survive" not in path.read_text(encoding="utf-8")
+    assert secret_file.read_bytes() == b"secret-storage-sentinel"
+
+
+def test_backup_creation_failure_aborts_vnext_save_and_leaves_original_bytes(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, maximal_v24_settings_fixture())
+    first_backup = tmp_path / "settings.json.pre-v25.20260609T010203Z.bak"
+    first_backup.write_bytes(b"collision")
+
+    result = compat.load_vnext_settings(path, now=fixed_now, max_backup_attempts=1)
+
+    assert result.status == compat.SettingsPersistenceStatus.BACKUP_FAILED
+    assert result.settings is None
+    assert path.read_bytes() == original_bytes
+    assert first_backup.read_bytes() == b"collision"
+
+
+def test_save_uses_unique_tempfile_and_ignores_another_writer_stale_temp_name(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, maximal_v24_settings_fixture())
+    stale_temp_path = tmp_path / "settings.json.tmp"
+    stale_temp_path.mkdir()
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.settings is not None
+    assert path.read_bytes() != original_bytes
+    assert stale_temp_path.is_dir()
+    backup_path = tmp_path / "settings.json.pre-v25.20260609T010203Z.bak"
+    assert backup_path.read_bytes() == original_bytes
+
+
+def test_reported_write_failure_restores_original_bytes_and_retains_backup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, maximal_v24_settings_fixture())
+
+    def fail_after_replace(target: Path, _settings: AppSettingsVNext):
+        target.write_bytes(b"partial replacement")
+        return compat.VNextSettingsSaveResult(
+            status=compat.SettingsPersistenceStatus.SAVE_FAILED,
+            error=compat.SettingsPersistenceError(
+                compat.SettingsPersistenceStatus.SAVE_FAILED,
+                "save_failed:OSError",
+            ),
+        )
+
+    monkeypatch.setattr(compat, "save_vnext_settings", fail_after_replace)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.SAVE_FAILED
+    assert path.read_bytes() == original_bytes
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original_bytes
+
+
+def test_post_replace_validation_failure_restores_original_bytes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    fixed_now = datetime(2026, 7, 17, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, _final_dev_v30_fixture())
+
+    def fail_validation(_path: Path, _settings: AppSettingsVNext) -> None:
+        raise ValueError("injected validation failure")
+
+    monkeypatch.setattr(compat, "_validate_persisted_settings", fail_validation)
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SAVE_FAILED
+    assert result.settings is None
+    assert path.read_bytes() == original_bytes
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original_bytes
+
+
+def test_post_replace_validation_and_restoration_failure_returns_safe_error(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, _final_dev_v30_fixture())
+    validation_sentinel = "private-validation-setting-sentinel"
+    restoration_sentinel = "private-restoration-setting-sentinel"
+
+    def fail_validation(_path: Path, _settings: AppSettingsVNext) -> None:
+        raise ValueError(validation_sentinel)
+
+    def fail_restoration(_path: Path, _content: bytes) -> None:
+        raise OSError(restoration_sentinel)
+
+    monkeypatch.setattr(compat, "_validate_persisted_settings", fail_validation)
+    monkeypatch.setattr(compat, "_atomic_write_bytes", fail_restoration)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.SAVE_FAILED
+    assert result.settings is None
+    assert result.error is not None
+    assert result.error.diagnostics.fields["exception_class"] == "ValueError"
+    assert result.error.secondary_diagnostics[0].fields["exception_class"] == "OSError"
+    assert result.error.secondary_diagnostics[0].cause_id == result.error.diagnostics.diagnostic_id
+    assert validation_sentinel not in result.error.message
+    assert restoration_sentinel not in result.error.message
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original_bytes
+
+
+def test_parse_and_migration_failures_return_explicit_results_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    parse_path = tmp_path / "parse-settings.json"
+    parse_path.write_text("not json", encoding="utf-8")
+
+    parse_result = compat.load_vnext_settings(parse_path)
+
+    assert parse_result.status == compat.SettingsPersistenceStatus.PARSE_FAILED
+    assert parse_path.read_text(encoding="utf-8") == "not json"
+
+    migration_path = tmp_path / "migration-settings.json"
+    migration_bytes = _write_json_bytes(
+        migration_path,
+        {
+            "settings_version": VNEXT_SETTINGS_SCHEMA_VERSION,
+            "intent": {},
+            "state": {"provider_verification": []},
+        },
+    )
+
+    migration_result = compat.load_vnext_settings(migration_path)
+    assert migration_result.status == compat.SettingsPersistenceStatus.MIGRATION_FAILED
+    assert migration_result.error is not None
+    assert migration_result.error.message == "migration_failed:ValueError"
+    assert "unsupported_anchor" not in migration_result.error.message
+    assert migration_path.read_bytes() == migration_bytes
+
+
+@pytest.mark.parametrize("original_bytes", [b"[]", b"null", b'"text"'])
+def test_top_level_non_object_json_fails_without_backup_or_overwrite(
+    tmp_path: Path,
+    original_bytes: bytes,
+) -> None:
+    compat = _compat()
+    path = tmp_path / "settings.json"
+    path.write_bytes(original_bytes)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.PARSE_FAILED
+    assert result.settings is None
+    assert result.backup_path is None
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.bak"))
+
+
+@pytest.mark.parametrize(
+    ("field_path", "invalid_value"),
+    [
+        (("intent", "ui", "locale"), []),
+        (("intent", "osc", "chatbox_send"), "true"),
+        (("state", "github_star_prompt", "clicked"), 1),
+        (("intent", "translation"), []),
+        (("intent", "desktop_audio"), []),
+        (("intent", "prompts"), []),
+        (("intent", "translation", "concurrency_limit"), "5"),
+        (("intent", "languages", "peer_expected_languages"), [123]),
+        (("intent", "languages", "recent_source_languages"), [123]),
+        (("intent", "translation", "connection_history"), {"gemma4_26b_31b": 123}),
+        (("intent", "stt", "custom_terms"), {"ko": [123]}),
+        (("state", "telemetry", "last_sent_date_utc"), [7]),
+    ],
+)
+def test_malformed_canonical_nested_value_fails_without_backup_or_overwrite(
+    tmp_path: Path,
+    field_path: tuple[str, ...],
+    invalid_value: object,
+) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    target = raw
+    for segment in field_path[:-1]:
+        target = target[segment]
+    target[field_path[-1]] = invalid_value
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.MIGRATION_FAILED
+    assert result.settings is None
+    assert result.backup_path is None
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.bak"))
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("source_shape", ["flat", "canonical"])
+def test_nonstandard_json_constants_follow_shape_specific_cutover_policy(
+    tmp_path: Path,
+    constant: str,
+    source_shape: str,
+) -> None:
+    compat = _compat()
+    path = tmp_path / f"{source_shape}-{constant}.json"
+    if source_shape == "canonical":
+        raw_text = (
+            f'{{"settings_version": {VNEXT_SETTINGS_SCHEMA_VERSION}, '
+            f'"intent": {{"ui": {{"locale": {constant}}}}}, "state": {{}}}}'
+        )
+    else:
+        raw_text = f'{{"legacy_value": {constant}}}'
+    original_bytes = raw_text.encode("utf-8")
+    path.write_bytes(original_bytes)
+
+    result = compat.load_vnext_settings(path)
+
+    if source_shape == "flat":
+        assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+        assert result.settings is not None
+        assert result.settings.intent.local_llm.extra_body == {
+            "reasoning_effort": "none",
+            "temperature": 0.6,
+        }
+        assert result.backup_path is not None
+        assert result.backup_path.read_bytes() == original_bytes
+        assert path.read_bytes() != original_bytes
+        return
+
+    assert result.status == compat.SettingsPersistenceStatus.PARSE_FAILED
+    assert result.settings is None
+    assert result.backup_path is None
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.bak"))
+
+
+def test_save_rejects_non_finite_canonical_value_without_overwrite(tmp_path: Path) -> None:
+    compat = _compat()
+    path = tmp_path / "settings.json"
+    original_bytes = b"existing-settings"
+    path.write_bytes(original_bytes)
+    settings = AppSettingsVNext()
+    settings = replace(
+        settings,
+        intent=replace(
+            settings.intent,
+            overlay=replace(
+                settings.intent.overlay,
+                desktop_flet=replace(
+                    settings.intent.overlay.desktop_flet,
+                    visual=replace(
+                        settings.intent.overlay.desktop_flet.visual,
+                        background_alpha=float("nan"),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    result = compat.save_vnext_settings(path, settings)
+
+    assert result.status == compat.SettingsPersistenceStatus.SAVE_FAILED
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob(".settings.json.*.tmp"))
+
+
+@pytest.mark.parametrize(
+    ("raw", "case_id"),
+    [
+        (
+            {"settings_version": VNEXT_SETTINGS_SCHEMA_VERSION, "intent": {}},
+            "missing-state",
+        ),
+        (
+            {"settings_version": VNEXT_SETTINGS_SCHEMA_VERSION, "intent": [], "state": {}},
+            "non-object-intent",
+        ),
+        (
+            {"settings_version": VNEXT_SETTINGS_SCHEMA_VERSION, "intent": {}, "state": []},
+            "non-object-state",
+        ),
+    ],
+)
+def test_malformed_current_vnext_top_level_shape_fails_without_backup_or_overwrite(
+    tmp_path: Path,
+    raw: dict[str, Any],
+    case_id: str,
+) -> None:
+    compat = _compat()
+    path = tmp_path / f"{case_id}.json"
+    original_bytes = _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.MIGRATION_FAILED
+    assert result.settings is None
+    assert result.backup_path is None
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.bak"))
+
+
+def test_unsupported_future_canonical_version_fails_without_backup_or_overwrite(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    path = tmp_path / "future-settings.json"
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = VNEXT_SETTINGS_SCHEMA_VERSION + 1
+    original_bytes = _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.MIGRATION_FAILED
+    assert result.settings is None
+    assert result.backup_path is None
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.bak"))
+
+
+def test_older_vnext_version_is_backed_up_and_forward_migrated(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    settings = with_telemetry_enabled(
+        AppSettingsVNext(),
+        True,
+        identifier_factory=lambda: "version-only-test-id",
+    )
+    raw = serialization.to_dict(settings)
+    raw["settings_version"] = VNEXT_SETTINGS_SCHEMA_VERSION - 1
+    raw["intent"]["ui"]["locale"] = "ja"
+    original_bytes = _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.settings is not None
+    assert result.settings.settings_version == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert result.settings.intent.ui.locale == "ja"
+    assert result.migrated is True
+    assert result.backup_path == tmp_path / (
+        f"settings.json.pre-v{VNEXT_SETTINGS_SCHEMA_VERSION - 1}.20260609T010203Z.bak"
+    )
+    assert result.backup_path.read_bytes() == original_bytes
+    assert path.read_bytes() != original_bytes
+    assert json.loads(path.read_text(encoding="utf-8"))["settings_version"] == (
+        VNEXT_SETTINGS_SCHEMA_VERSION
+    )
+
+
+def test_missing_cloud_free_tier_defaults_to_gemini() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 37
+    raw["intent"]["stt"].pop("cloud_free_tier_providers", None)
+    raw["state"]["provider_verification"]["deepgram"] = {
+        "status": "verified",
+        "provider": "deepgram",
+        "secret_key": "deepgram_api_key",
+        "secret_revision": "secret-r1",
+        "secret_fingerprint": None,
+        "verifier_context": {"flow": "settings.verify_api_key"},
+        "verifier_evidence": {"verifier": "deepgram"},
+    }
+
+    loaded = migration.from_dict(raw)
+
+    assert loaded.intent.stt.cloud_free_tier_providers == ["gemini_transcribe"]
+    assert loaded.intent.stt.provider != "rolling_free"
+
+
+def test_explicit_cloud_free_tier_selection_is_preserved() -> None:
+    migration = _migration()
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["stt"]["cloud_free_tier_providers"] = ["elevenlabs_scribe"]
+
+    loaded = migration.from_dict(raw)
+    assert loaded.intent.stt.cloud_free_tier_providers == ["elevenlabs_scribe"]
+
+
+def test_load_writes_system_prompt_backup_and_resets_prompt(tmp_path: Path) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 39
+    raw["intent"]["prompts"]["system_prompt"] = "keep this custom prompt"
+    original_bytes = _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.settings is not None
+    assert result.settings.intent.prompts.system_prompt_override is None
+    persisted_prompts = json.loads(path.read_text(encoding="utf-8"))["intent"]["prompts"]
+    assert persisted_prompts == {"system_prompt_override": None}
+    prompt_backup = tmp_path / "system_prompt.pre-v39.20260609T010203Z.txt"
+    assert prompt_backup.read_text(encoding="utf-8") == "keep this custom prompt"
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original_bytes
+
+
+def test_load_backs_up_custom_prompt_override_and_resets_it(tmp_path: Path) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 51
+    raw["intent"]["prompts"] = {"system_prompt_override": "keep this custom override"}
+    original_bytes = _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.settings is not None
+    assert result.settings.intent.prompts.system_prompt_override is None
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["settings_version"] == VNEXT_SETTINGS_SCHEMA_VERSION
+    assert persisted["intent"]["prompts"] == {"system_prompt_override": None}
+    prompt_backup = tmp_path / "system_prompt.pre-v51.20260609T010203Z.txt"
+    assert prompt_backup.read_text(encoding="utf-8") == "keep this custom override"
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original_bytes
+
+
+def test_load_skips_system_prompt_backup_without_prompt_override(tmp_path: Path) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 51
+    raw["intent"]["prompts"] = {"system_prompt_override": None}
+    _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.migrated is True
+    assert result.settings is not None
+    assert result.settings.intent.prompts.system_prompt_override is None
+    assert not list(tmp_path.glob("system_prompt*.txt"))
+
+
+def test_load_keeps_custom_prompt_override_on_current_version(tmp_path: Path) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    path = tmp_path / "settings.json"
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["prompts"] = {"system_prompt_override": "keep this custom override"}
+    _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.settings is not None
+    assert result.settings.intent.prompts.system_prompt_override == "keep this custom override"
+    assert not list(tmp_path.glob("system_prompt*.txt"))
+
+
+def test_load_skips_system_prompt_backup_when_already_default(tmp_path: Path) -> None:
+    from puripuly_heart.config.prompts import load_prompt_for_provider
+
+    compat = _compat()
+    serialization = _serialization()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = VNEXT_SETTINGS_SCHEMA_VERSION - 1
+    raw["intent"]["prompts"]["system_prompt"] = load_prompt_for_provider("gemini")
+    _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.migrated is True
+    assert not list(tmp_path.glob("system_prompt*.txt"))
+
+
+def test_load_skips_system_prompt_backup_for_v261_released_default(tmp_path: Path) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    released_default = (
+        (Path(__file__).parents[1] / "fixtures/prompts/translation_prompt_v2_6_1.md")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 39
+    raw["intent"]["prompts"]["system_prompt"] = released_default
+    _write_json_bytes(path, raw)
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.settings is not None
+    assert result.settings.intent.prompts.system_prompt_override is None
+    assert not list(tmp_path.glob("system_prompt*.txt"))
+
+
+def test_load_backs_up_pre_vnext_custom_prompt_before_reset(tmp_path: Path) -> None:
+    compat = _compat()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    original_bytes = _write_json_bytes(
+        path,
+        {"system_prompt": "legacy custom prompt", "legacy_setting": True},
+    )
+
+    result = compat.load_vnext_settings(path, now=fixed_now)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.settings is not None
+    assert result.settings.intent.prompts.system_prompt_override is None
+    prompt_backup = tmp_path / "system_prompt.pre-vunknown.20260609T010203Z.txt"
+    assert prompt_backup.read_text(encoding="utf-8") == "legacy custom prompt"
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original_bytes
+
+
+def test_system_prompt_backup_failure_aborts_without_overwriting_settings(
+    tmp_path: Path,
+) -> None:
+    compat = _compat()
+    serialization = _serialization()
+    fixed_now = datetime(2026, 6, 9, 1, 2, 3, tzinfo=timezone.utc)
+    path = tmp_path / "settings.json"
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["settings_version"] = 38
+    raw["intent"]["prompts"]["system_prompt"] = "keep this custom prompt"
+    original_bytes = _write_json_bytes(path, raw)
+    colliding = tmp_path / "system_prompt.pre-v38.20260609T010203Z.txt"
+    colliding.write_text("collision", encoding="utf-8")
+
+    result = compat.load_vnext_settings(path, now=fixed_now, max_backup_attempts=1)
+
+    assert result.status == compat.SettingsPersistenceStatus.BACKUP_FAILED
+    assert result.settings is None
+    assert path.read_bytes() == original_bytes
+    assert colliding.read_text(encoding="utf-8") == "collision"
+    assert not list(tmp_path.glob("*.bak"))
+
+
+def test_managed_operation_identity_round_trips_through_canonical_text() -> None:
+    from puripuly_heart.config.settings_vnext.schema import ManagedConnectionState
+
+    serialization = _serialization()
+    settings = AppSettingsVNext()
+    managed = ManagedConnectionState(
+        installation_id="install-1",
+        pending_managed_operation_id="ph-mop-v1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        pending_managed_operation_source="discord",
+        pending_managed_operation_installation_id="install-1",
+        pending_managed_operation_state="CREATING",
+    )
+    settings = replace(settings, state=replace(settings.state, managed_connection=managed))
+    restored = serialization.from_dict(json.loads(serialization.to_json_text(settings)))
+    persisted = restored.state.managed_connection
+    assert persisted.pending_managed_operation_id == ("ph-mop-v1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    assert persisted.pending_managed_operation_source == "discord"
+    assert persisted.pending_managed_operation_installation_id == "install-1"
+    assert persisted.pending_managed_operation_state == "CREATING"
+
+
+def test_managed_operation_identity_normalizes_all_or_nothing() -> None:
+    from puripuly_heart.config.settings_vnext.schema import ManagedConnectionState
+
+    partial = ManagedConnectionState(
+        installation_id="install-1",
+        pending_managed_operation_id="ph-mop-v1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        pending_managed_operation_source="qq",
+        pending_managed_operation_installation_id="install-1",
+        pending_managed_operation_state="BOGUS",
+    )
+    assert partial.pending_managed_operation_id is None
+    assert partial.pending_managed_operation_source is None
+    assert partial.pending_managed_operation_installation_id is None
+    assert partial.pending_managed_operation_state is None
+    fresh = ManagedConnectionState(installation_id="install-1")
+    assert fresh.pending_managed_operation_id is None
+
+
+@pytest.mark.parametrize(
+    ("path", "invalid"),
+    [
+        (("intent", "osc", "send_port"), "9000"),
+        (("intent", "audio"), []),
+        (("intent", "translation", "connection_history"), {"model": 3}),
+        (("intent", "stt", "custom_terms"), {"en": [1]}),
+        (("state", "telemetry", "anonymous_id"), 42),
+    ],
+)
+def test_repeated_schema_loading_revalidates_wrong_and_nested_types(
+    path: tuple[str, ...], invalid: object
+) -> None:
+    serialization = _serialization()
+    for locale in ("en", "ko"):
+        valid = serialization.to_dict(AppSettingsVNext())
+        valid["intent"]["ui"]["locale"] = locale
+        assert serialization.from_dict(valid).intent.ui.locale == locale
+        malformed = serialization.to_dict(serialization.from_dict(valid))
+        target = malformed
+        for member in path[:-1]:
+            target = target[member]
+        target[path[-1]] = invalid
+        with pytest.raises(ValueError, match=r"settings\."):
+            serialization.from_dict(malformed)
+        assert serialization.from_dict(valid).intent.ui.locale == locale
+
+
+def test_repeated_schema_loading_preserves_independent_mutable_settings() -> None:
+    serialization = _serialization()
+    raw = serialization.to_dict(AppSettingsVNext())
+    raw["intent"]["local_llm"]["extra_body"] = {"options": {"labels": ["alpha"]}}
+    first = serialization.from_dict(raw)
+    second = serialization.from_dict(raw)
+
+    first.intent.local_llm.extra_body["options"]["labels"].append("beta")
+    first.intent.translation.connection_history["synthetic-model"] = "byok"
+
+    assert second.intent.local_llm.extra_body == {"options": {"labels": ["alpha"]}}
+    assert raw["intent"]["local_llm"]["extra_body"] == {"options": {"labels": ["alpha"]}}
+    assert "synthetic-model" not in second.intent.translation.connection_history
+    assert "synthetic-model" not in raw["intent"]["translation"]["connection_history"]

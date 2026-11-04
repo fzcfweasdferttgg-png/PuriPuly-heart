@@ -1,0 +1,484 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+from puripuly_heart.core.llm.latency import current_request, observe_attempt
+from puripuly_heart.core.llm.provider import (
+    LLMProvider,
+    LLMRequestAdmissionPort,
+    LLMRequestExecution,
+)
+from puripuly_heart.core.observability import ProviderObservationPort
+from puripuly_heart.core.translation_policy import FIXED_TRANSLATION_POLICY
+
+if TYPE_CHECKING:
+    from puripuly_heart.domain.models import Translation
+
+
+@dataclass(frozen=True, slots=True)
+class LLMProviderAttempt:
+    provider: LLMProvider
+    start_after_ms: int = 0
+    start_on_primary_error: bool = False
+    log_summary: str | None = None
+    provider_name: str = "unknown"
+    model: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.start_after_ms < 0:
+            raise ValueError("start_after_ms must be >= 0")
+
+
+class LLMProviderRaceError(RuntimeError):
+    def __init__(self, errors: tuple[Exception, ...]) -> None:
+        self.errors = errors
+        super().__init__("all LLM attempts failed")
+
+
+@dataclass(slots=True)
+class _BranchOutcome:
+    result: Translation | None = None
+    error: Exception | None = None
+    elapsed_ms: int | None = None
+
+    @property
+    def resolved(self) -> bool:
+        return self.result is not None or self.error is not None
+
+
+@dataclass(slots=True)
+class FallbackRacingLLMProvider(LLMProvider):
+    primary: LLMProvider | None = None
+    fallback: LLMProvider | None = None
+    fallback_timeout_ms: int = FIXED_TRANSLATION_POLICY.first_hedge_delay_ms
+    loser_grace_ms: int = FIXED_TRANSLATION_POLICY.loser_grace_ms
+    attempts: tuple[LLMProviderAttempt, ...] = ()
+    clock: Callable[[], float] = time.monotonic
+    sleeper: Callable[[float], Awaitable[None]] | None = None
+    runtime_logging: ProviderObservationPort | None = None
+    request_admission: LLMRequestAdmissionPort | None = None
+    _inflight_tasks: set[asyncio.Task[object]] = field(init=False, default_factory=set, repr=False)
+    _operation_tasks: set[asyncio.Task[object]] = field(init=False, default_factory=set, repr=False)
+    _cleanup_tasks: set[asyncio.Task[object]] = field(init=False, default_factory=set, repr=False)
+    _state_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock, repr=False)
+    _closed: bool = field(init=False, default=False, repr=False)
+    _shutdown_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
+    _winner_selected: Callable[[], None] | None = field(init=False, default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        self.fallback_timeout_ms = max(0, int(self.fallback_timeout_ms))
+        self.loser_grace_ms = max(0, int(self.loser_grace_ms))
+        attempts = tuple(self.attempts)
+        if not attempts:
+            if self.primary is None:
+                raise ValueError("at least one LLM provider attempt is required")
+            attempts = (LLMProviderAttempt(provider=self.primary),)
+            if self.fallback is not None:
+                attempts += (
+                    LLMProviderAttempt(
+                        provider=self.fallback,
+                        start_after_ms=self.fallback_timeout_ms,
+                        start_on_primary_error=True,
+                    ),
+                )
+        if not attempts:
+            raise ValueError("at least one LLM provider attempt is required")
+        if self.primary is not None and attempts[0].provider is not self.primary:
+            raise ValueError("the first LLM attempt must be the primary provider")
+        self.primary = attempts[0].provider
+        if self.fallback is None and len(attempts) > 1:
+            self.fallback = attempts[1].provider
+        self.attempts = attempts
+
+    async def translate(
+        self,
+        *,
+        utterance_id: UUID,
+        text: str,
+        system_prompt: str,
+        source_language: str,
+        target_language: str,
+        context: str = "",
+        scene_participant_count: int | None = None,
+        max_output_tokens: int | None = None,
+    ) -> Translation:
+        return await self._translate(
+            utterance_id=utterance_id,
+            text=text,
+            system_prompt=system_prompt,
+            source_language=source_language,
+            target_language=target_language,
+            context=context,
+            scene_participant_count=scene_participant_count,
+            max_output_tokens=max_output_tokens,
+        )
+
+    async def _translate(
+        self,
+        *,
+        utterance_id: UUID,
+        text: str,
+        system_prompt: str,
+        source_language: str,
+        target_language: str,
+        context: str = "",
+        scene_participant_count: int | None = None,
+        max_output_tokens: int | None = None,
+        release_permit: Callable[[], None] | None = None,
+    ) -> Translation:
+        params = {
+            "utterance_id": utterance_id,
+            "text": text,
+            "system_prompt": system_prompt,
+            "source_language": source_language,
+            "target_language": target_language,
+            "context": context,
+            "scene_participant_count": scene_participant_count,
+        }
+        if max_output_tokens is not None:
+            params["max_output_tokens"] = max_output_tokens
+        started_at = self.clock()
+        outcomes = [_BranchOutcome() for _ in self.attempts]
+        provider_tasks: dict[int, asyncio.Task[object]] = {}
+        schedule_tasks: dict[asyncio.Task[object], int] = {}
+        schedule_errors: list[Exception] = []
+        executions: list[LLMRequestExecution] = []
+        recovery_pending = False
+        primary_error = asyncio.Event()
+        winner_event = asyncio.Event()
+        winner_index: int | None = None
+        winner_result: Translation | None = None
+
+        async def admit(max_attempts: int) -> LLMRequestExecution:
+            assert self.request_admission is not None
+            execution = await self.request_admission.admit_request(
+                **params, max_attempts=max_attempts
+            )
+            executions.append(execution)
+            if operation.cancelling():
+                raise asyncio.CancelledError
+            return execution
+
+        async def run_attempt(
+            index: int, execution: LLMRequestExecution | None, local_index: int
+        ) -> Translation:
+            attempt = self.attempts[index]
+            with observe_attempt(
+                provider=attempt.provider_name,
+                model=attempt.model,
+                attempt_index=index,
+            ):
+                if execution is not None:
+                    return await execution.translate_attempt(local_index)
+                return await attempt.provider.translate(**params)
+
+        async def start_attempt(
+            index: int,
+            *,
+            execution: LLMRequestExecution | None = None,
+            local_index: int = 0,
+            trigger_reason: str | None = None,
+        ) -> None:
+            if winner_event.is_set() or index in provider_tasks:
+                return
+            task = await self._create_tracked_task(run_attempt(index, execution, local_index))
+            provider_tasks[index] = task
+
+        operation = asyncio.current_task()
+        assert operation is not None
+        try:
+            async with self._state_lock:
+                if self._closed:
+                    raise asyncio.CancelledError
+                self._operation_tasks.add(operation)
+        except BaseException:
+            if release_permit is not None:
+                release_permit()
+            raise
+        try:
+            if self.request_admission is not None:
+                execution = await admit(2)
+                recovery_pending = (
+                    execution.attempt_count == 1
+                    and len(self.attempts) > 1
+                    and self.attempts[1].start_on_primary_error
+                )
+                for index in range(execution.attempt_count):
+                    await start_attempt(index, execution=execution, local_index=index)
+            else:
+                await start_attempt(0)
+                for index, attempt in enumerate(self.attempts[1:], start=1):
+                    schedule_task = await self._create_tracked_task(
+                        self._wait_for_attempt_start(
+                            attempt,
+                            primary_error=primary_error,
+                            winner_event=winner_event,
+                        )
+                    )
+                    schedule_tasks[schedule_task] = index
+
+            while winner_index is None:
+                active_tasks = set(provider_tasks.values()) | set(schedule_tasks)
+                if not active_tasks:
+                    break
+                done, _ = await asyncio.wait(
+                    active_tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                completed_provider_indices = sorted(
+                    index for index, task in provider_tasks.items() if task in done
+                )
+                for index in completed_provider_indices:
+                    task = provider_tasks.pop(index)
+                    await self._capture_outcome(
+                        task=task,
+                        outcome=outcomes[index],
+                        started_at=started_at,
+                    )
+                    if index == 0 and outcomes[index].error is not None:
+                        primary_error.set()
+                    if outcomes[index].result is not None and winner_index is None:
+                        winner_index = index
+                        winner_result = outcomes[index].result
+                        request = current_request()
+                        if request is not None:
+                            request.winner_attempt = index
+                        winner_event.set()
+                        if self._winner_selected is not None:
+                            with contextlib.suppress(Exception):
+                                self._winner_selected()
+
+                if winner_index is not None:
+                    break
+
+                if recovery_pending and outcomes[0].error is not None:
+                    recovery_pending = False
+                    try:
+                        recovery = await admit(1)
+                    except Exception as exc:
+                        schedule_errors.append(exc)
+                    else:
+                        await start_attempt(1, execution=recovery)
+
+                completed_schedule_tasks = [task for task in done if task in schedule_tasks]
+                for task in completed_schedule_tasks:
+                    index = schedule_tasks.pop(task)
+                    try:
+                        trigger_reason = task.result()
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception as exc:
+                        schedule_errors.append(exc)
+                        continue
+                    if trigger_reason is None or winner_event.is_set():
+                        continue
+                    await start_attempt(index, trigger_reason=str(trigger_reason))
+            if winner_index is not None and winner_result is not None:
+                return winner_result
+
+            errors = tuple(
+                [outcome.error for outcome in outcomes if outcome.error is not None]
+                + schedule_errors
+            )
+            raise LLMProviderRaceError(errors)
+        finally:
+            # Registration is synchronous: close cannot pass the operation handoff
+            # without seeing its cleanup task, even when the caller is cancelled.
+            cleanup = asyncio.create_task(
+                self._finish_race(
+                    started_at=started_at,
+                    provider_tasks=provider_tasks,
+                    schedule_tasks=schedule_tasks,
+                    outcomes=outcomes,
+                    winner=winner_index is not None,
+                    executions=executions,
+                )
+            )
+            self._cleanup_tasks.add(cleanup)
+            cleanup.add_done_callback(self._cleanup_tasks.discard)
+            cleanup.add_done_callback(self._consume_task_result)
+            if release_permit is not None:
+                cleanup.add_done_callback(lambda _task: release_permit())
+            self._operation_tasks.discard(operation)
+
+    async def _finish_race(
+        self,
+        *,
+        started_at: float,
+        provider_tasks: dict[int, asyncio.Task[object]],
+        schedule_tasks: dict[asyncio.Task[object], int],
+        outcomes: list[_BranchOutcome],
+        winner: bool,
+        executions: list[LLMRequestExecution],
+    ) -> None:
+        for task in schedule_tasks:
+            task.cancel()
+        try:
+            if winner:
+                await self._allow_loser_grace(
+                    started_at=started_at,
+                    provider_tasks=provider_tasks,
+                    outcomes=outcomes,
+                )
+        finally:
+            try:
+                for task in schedule_tasks:
+                    await self._cancel_task(task)
+                for task in provider_tasks.values():
+                    await self._cancel_task(task)
+            finally:
+                for execution in executions:
+                    with contextlib.suppress(Exception):
+                        await execution.close()
+
+    async def close(self) -> None:
+        if self._shutdown_task is None:
+            self._closed = True
+            self._shutdown_task = asyncio.create_task(self._close_owned_work())
+            self._shutdown_task.add_done_callback(self._consume_task_result)
+        await asyncio.shield(self._shutdown_task)
+
+    async def _close_owned_work(self) -> None:
+        async with self._state_lock:
+            operations = tuple(self._operation_tasks)
+            inflight = tuple(self._inflight_tasks)
+        for task in (*operations, *inflight):
+            task.cancel()
+        if operations:
+            await asyncio.gather(*operations, return_exceptions=True)
+        # Each operation installs cleanup before retiring; do not cancel
+        # cleanup itself or close provider sessions under running losers.
+        if self._cleanup_tasks:
+            await asyncio.gather(*self._cleanup_tasks, return_exceptions=True)
+        if self._inflight_tasks:
+            await asyncio.gather(*self._inflight_tasks, return_exceptions=True)
+        closed_ids: set[int] = set()
+        for attempt in self.attempts:
+            provider = attempt.provider
+            if id(provider) in closed_ids:
+                continue
+            closed_ids.add(id(provider))
+            with contextlib.suppress(Exception):
+                await provider.close()
+
+    async def _wait_for_attempt_start(
+        self,
+        attempt: LLMProviderAttempt,
+        *,
+        primary_error: asyncio.Event,
+        winner_event: asyncio.Event,
+    ) -> str | None:
+        delay_task = await self._create_tracked_task(self._sleep(attempt.start_after_ms / 1000.0))
+        error_task = (
+            await self._create_tracked_task(primary_error.wait())
+            if attempt.start_on_primary_error
+            else None
+        )
+        waiters = {delay_task}
+        if error_task is not None:
+            waiters.add(error_task)
+        try:
+            done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            if winner_event.is_set():
+                return None
+            if error_task is not None and error_task in done:
+                return "primary_error"
+            return "timeout"
+        finally:
+            for task in waiters:
+                if not task.done():
+                    task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+
+    async def _sleep(self, delay_s: float) -> None:
+        if self.sleeper is None:
+            await asyncio.sleep(delay_s)
+            return
+        await self.sleeper(delay_s)
+
+    async def _allow_loser_grace(
+        self,
+        *,
+        started_at: float,
+        provider_tasks: dict[int, asyncio.Task[object]],
+        outcomes: list[_BranchOutcome],
+    ) -> None:
+        pending = set(provider_tasks.values())
+        if pending and self.loser_grace_ms > 0:
+            done, _ = await asyncio.wait(
+                pending,
+                timeout=self.loser_grace_ms / 1000.0,
+            )
+            for index, task in tuple(provider_tasks.items()):
+                if task in done and not outcomes[index].resolved:
+                    await self._capture_outcome(
+                        task=task,
+                        outcome=outcomes[index],
+                        started_at=started_at,
+                    )
+        for index, task in tuple(provider_tasks.items()):
+            if outcomes[index].resolved:
+                continue
+            await self._cancel_task(task)
+
+    async def _capture_outcome(
+        self,
+        *,
+        task: asyncio.Task[object],
+        outcome: _BranchOutcome,
+        started_at: float,
+    ) -> None:
+        if outcome.resolved:
+            return
+        if task.cancelled():
+            raise asyncio.CancelledError
+        outcome.elapsed_ms = self._elapsed_ms(started_at)
+        try:
+            outcome.result = task.result()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            outcome.error = exc
+
+    async def _create_tracked_task(self, awaitable: Awaitable[object]) -> asyncio.Task[object]:
+        task = asyncio.create_task(awaitable)
+        try:
+            async with self._state_lock:
+                closed = self._closed
+                self._inflight_tasks.add(task)
+        except BaseException:
+            await self._cancel_task(task)
+            raise
+        task.add_done_callback(self._inflight_tasks.discard)
+        task.add_done_callback(self._consume_task_result)
+        if closed:
+            # Do not hold the state lock while a provider acknowledges cancellation.
+            await self._cancel_task(task)
+            raise asyncio.CancelledError
+        return task
+
+    async def _cancel_task(self, task: asyncio.Task[object] | None) -> None:
+        if task is None:
+            return
+        if task.done():
+            self._consume_task_result(task)
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
+    def _elapsed_ms(self, started_at: float) -> int:
+        return max(0, int(round((self.clock() - started_at) * 1000)))
+
+    @staticmethod
+    def _consume_task_result(task: asyncio.Task[object]) -> None:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            task.result()

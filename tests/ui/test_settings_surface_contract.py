@@ -1,0 +1,345 @@
+from __future__ import annotations
+
+import flet as ft
+import pytest
+
+pytest.importorskip("flet")
+
+from puripuly_heart.app.services.settings_secrets import SettingsSecretsOwner
+from puripuly_heart.ui.foundation.tokens import FOUNDATION_DESIGN_TOKENS
+from puripuly_heart.ui.settings.contract import (
+    SettingsApiSurfaceSlots,
+    SettingsGeneralIntents,
+    SettingsOverlayIntents,
+    SettingsOverlaySurfaceSlots,
+    SettingsPromptIntents,
+    SettingsPromptSurfaceSlots,
+    SettingsProviderIntents,
+    SettingsSurfaceIntents,
+)
+from puripuly_heart.ui.settings.renderer import (
+    SETTINGS_ROW_SPACING,
+    compose_settings_api_surface,
+    compose_settings_overlay_surface,
+    compose_settings_prompt_surface,
+)
+from puripuly_heart.ui.views import settings as settings_view_module
+
+
+class _SlotProvider:
+    def __init__(self) -> None:
+        self.controls = {
+            name: ft.Text(name)
+            for name in (
+                "self_stt",
+                "peer_stt",
+                "translation_provider",
+                "translation_connection",
+                "cloud_free_tier",
+                "soniox_speaker_diarization",
+                "gpu_device",
+                "stt_model",
+                "gpu_llm",
+                "model_assets",
+                "local_llm_connection",
+            )
+        }
+
+    def self_stt_control(self) -> ft.Control:
+        return self.controls["self_stt"]
+
+    def peer_stt_control(self) -> ft.Control:
+        return self.controls["peer_stt"]
+
+    def translation_provider_control(self) -> ft.Control:
+        return self.controls["translation_provider"]
+
+    def translation_connection_control(self) -> ft.Control:
+        return self.controls["translation_connection"]
+
+    def cloud_free_tier_control(self) -> ft.Control:
+        return self.controls["cloud_free_tier"]
+
+    def soniox_speaker_diarization_control(self) -> ft.Control:
+        return self.controls["soniox_speaker_diarization"]
+
+    def gpu_device_control(self) -> ft.Control:
+        return self.controls["gpu_device"]
+
+    def stt_model_control(self) -> ft.Control:
+        return self.controls["stt_model"]
+
+    def gpu_llm_control(self) -> ft.Control:
+        return self.controls["gpu_llm"]
+
+    def model_assets_control(self) -> ft.Control:
+        return self.controls["model_assets"]
+
+    def local_llm_connection_control(self) -> ft.Control:
+        return self.controls["local_llm_connection"]
+
+
+def _compose() -> tuple[object, _SlotProvider]:
+    provider = _SlotProvider()
+    surface = compose_settings_api_surface(
+        SettingsApiSurfaceSlots.from_slot_provider(provider),
+    )
+    return surface, provider
+
+
+def test_settings_api_rows_use_the_shared_page_spacing_token() -> None:
+    assert SETTINGS_ROW_SPACING == FOUNDATION_DESIGN_TOKENS.spacing.page
+
+    surface, _ = _compose()
+    for row in (
+        surface.provider_controls,
+        surface.translation_connection_controls,
+        surface.gpu_device_controls,
+    ):
+        assert row.spacing == FOUNDATION_DESIGN_TOKENS.spacing.page
+        assert row.expand is True
+
+
+def test_settings_api_surface_preserves_the_accepted_row_order() -> None:
+    surface, provider = _compose()
+
+    assert surface.rows == (
+        surface.provider_row,
+        surface.translation_connection_row,
+        surface.gpu_device_row,
+        provider.controls["local_llm_connection"],
+    )
+
+
+def test_settings_api_surface_places_every_slot_in_the_accepted_position() -> None:
+    surface, provider = _compose()
+
+    assert surface.provider_controls.controls == [
+        provider.controls["self_stt"],
+        provider.controls["peer_stt"],
+        provider.controls["translation_provider"],
+    ]
+    assert surface.translation_connection_controls.controls == [
+        provider.controls["cloud_free_tier"],
+        provider.controls["soniox_speaker_diarization"],
+        provider.controls["translation_connection"],
+    ]
+    assert surface.gpu_device_controls.controls == [
+        provider.controls["gpu_device"],
+        provider.controls["stt_model"],
+        provider.controls["gpu_llm"],
+        provider.controls["model_assets"],
+    ]
+
+
+def test_settings_api_surface_preserves_accepted_initial_row_visibility() -> None:
+    surface, _ = _compose()
+
+    assert surface.provider_row.visible is True
+    assert surface.translation_connection_row.visible is True
+    assert surface.gpu_device_row.visible is False
+
+
+def test_bind_settings_intents_carries_every_previously_ad_hoc_g14_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings_view_module.SettingsView, "update", lambda self: None)
+    view = settings_view_module.SettingsView()
+
+    def make(tag: str):
+        def _sentinel(*_args, **_kwargs):
+            return tag
+
+        return _sentinel
+
+    surface = SettingsSurfaceIntents(
+        settings_changed=make("settings_changed"),
+        show_snackbar=make("show_snackbar"),
+        runtime_log_basic=make("runtime_log_basic"),
+    )
+    provider = SettingsProviderIntents(
+        providers_changed=make("providers_changed"),
+        verify_api_key=make("verify_api_key"),
+        provider_secret_change=make("provider_secret_change"),
+        secret_cleared=make("secret_cleared"),
+        local_llm_secret_changed=make("local_llm_secret_changed"),
+        gpu_discovery_requested=make("gpu_discovery_requested"),
+        open_model_assets=make("open_model_assets"),
+        settings_secrets=SettingsSecretsOwner(secret_store_factory=lambda: None),
+    )
+    general = SettingsGeneralIntents(
+        start_audio_test=make("start_audio_test"),
+        list_loopback_capture_options=make("list_loopback_capture_options"),
+        list_loopback_process_options=make("list_loopback_process_options"),
+        list_loopback_device_options=make("list_loopback_device_options"),
+        current_loopback_capture_option=make("current_loopback_capture_option"),
+        apply_loopback_capture_option=make("apply_loopback_capture_option"),
+        loopback_capture_summary=make("loopback_capture_summary"),
+    )
+    prompt = SettingsPromptIntents(
+        prompt_apply_settings=make("prompt_apply_settings"),
+        pending_prompt_changed=make("pending_prompt_changed"),
+    )
+    overlay = SettingsOverlayIntents(
+        desktop_overlay_lock_change=make("desktop_overlay_lock_change"),
+        desktop_overlay_size_change=make("desktop_overlay_size_change"),
+        desktop_overlay_recovery_action=make("desktop_overlay_recovery_action"),
+        desktop_overlay_position_reset=make("desktop_overlay_position_reset"),
+        view_logs=make("view_logs"),
+        calibration_begin=make("calibration_begin"),
+        calibration_change=make("calibration_change"),
+        calibration_apply=make("calibration_apply"),
+        calibration_cancel=make("calibration_cancel"),
+    )
+
+    view.bind_settings_intents(
+        surface=surface,
+        provider=provider,
+        general=general,
+        prompt=prompt,
+        overlay=overlay,
+    )
+
+    assert view.on_settings_changed is surface.settings_changed
+    assert view.show_snackbar is surface.show_snackbar
+    assert view.runtime_log_basic is surface.runtime_log_basic
+    assert view.on_providers_changed is provider.providers_changed
+    assert view.on_verify_api_key is provider.verify_api_key
+    assert view.on_provider_secret_change is provider.provider_secret_change
+    assert view.on_secret_cleared is provider.secret_cleared
+    assert view.on_local_llm_secret_changed is provider.local_llm_secret_changed
+    assert view.on_gpu_discovery_requested is provider.gpu_discovery_requested
+    assert view.on_open_model_assets is provider.open_model_assets
+    assert view._settings_secrets is provider.settings_secrets
+    assert view.on_start_audio_test is general.start_audio_test
+    assert view.on_list_loopback_capture_options is general.list_loopback_capture_options
+    assert view.on_list_loopback_process_options is general.list_loopback_process_options
+    assert view.on_list_loopback_device_options is general.list_loopback_device_options
+    assert view.on_current_loopback_capture_option is general.current_loopback_capture_option
+    assert view.on_apply_loopback_capture_option is general.apply_loopback_capture_option
+    assert view.on_loopback_capture_summary is general.loopback_capture_summary
+    assert view.on_prompt_apply_settings is prompt.prompt_apply_settings
+    assert view.on_pending_prompt_changed is prompt.pending_prompt_changed
+    assert view.on_desktop_overlay_lock_change is overlay.desktop_overlay_lock_change
+    assert view.on_desktop_overlay_size_change is overlay.desktop_overlay_size_change
+    assert view.on_desktop_overlay_recovery_action is overlay.desktop_overlay_recovery_action
+    assert view.on_desktop_overlay_position_reset is overlay.desktop_overlay_position_reset
+    assert view.on_view_logs is overlay.view_logs
+    assert view.on_overlay_calibration_begin is overlay.calibration_begin
+    assert view.on_overlay_calibration_change is overlay.calibration_change
+    assert view.on_overlay_calibration_apply is overlay.calibration_apply
+    assert view.on_overlay_calibration_cancel is overlay.calibration_cancel
+
+
+def test_bind_settings_intents_keeps_optional_presentation_sinks_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings_view_module.SettingsView, "update", lambda self: None)
+    view = settings_view_module.SettingsView()
+    existing_basic = view.runtime_log_basic
+    existing_calibration_begin = view.on_overlay_calibration_begin
+
+    view.bind_settings_intents(
+        surface=SettingsSurfaceIntents(
+            settings_changed=lambda *_a, **_k: None,
+            show_snackbar=lambda *_a, **_k: None,
+        ),
+        provider=SettingsProviderIntents(
+            providers_changed=lambda *_a, **_k: None,
+            verify_api_key=lambda *_a, **_k: None,
+            provider_secret_change=lambda *_a, **_k: None,
+            secret_cleared=lambda *_a, **_k: None,
+            local_llm_secret_changed=lambda *_a, **_k: None,
+            gpu_discovery_requested=lambda *_a, **_k: None,
+            settings_secrets=SettingsSecretsOwner(secret_store_factory=lambda: None),
+        ),
+        general=SettingsGeneralIntents(
+            start_audio_test=lambda *_a, **_k: None,
+            list_loopback_capture_options=lambda *_a, **_k: None,
+            list_loopback_process_options=lambda *_a, **_k: None,
+            list_loopback_device_options=lambda *_a, **_k: None,
+            current_loopback_capture_option=lambda *_a, **_k: "",
+            apply_loopback_capture_option=lambda *_a, **_k: None,
+            loopback_capture_summary=lambda *_a, **_k: "",
+        ),
+        prompt=SettingsPromptIntents(prompt_apply_settings=lambda *_a, **_k: None),
+        overlay=SettingsOverlayIntents(
+            desktop_overlay_lock_change=lambda *_a, **_k: None,
+            desktop_overlay_size_change=lambda *_a, **_k: None,
+            desktop_overlay_recovery_action=lambda *_a, **_k: None,
+            desktop_overlay_position_reset=lambda *_a, **_k: None,
+            view_logs=lambda *_a, **_k: None,
+        ),
+    )
+
+    assert view.runtime_log_basic is existing_basic
+    assert view.on_overlay_calibration_begin is existing_calibration_begin
+
+
+def _overlay_slots() -> SettingsOverlaySurfaceSlots:
+    return SettingsOverlaySurfaceSlots(
+        **{name: ft.Text(name) for name in SettingsOverlaySurfaceSlots.__dataclass_fields__}
+    )
+
+
+def test_prompt_surface_preserves_the_accepted_card_order() -> None:
+    vocabulary = ft.Text("vocabulary")
+    peer_expected_language = ft.Text("peer_expected_language")
+    persona = ft.Text("persona")
+    surface = compose_settings_prompt_surface(
+        SettingsPromptSurfaceSlots(
+            custom_vocabulary=vocabulary,
+            peer_expected_language=peer_expected_language,
+            persona=persona,
+        )
+    )
+    assert surface.rows == (vocabulary, peer_expected_language, persona)
+
+
+def test_overlay_surface_preserves_target_specific_and_recovery_visibility() -> None:
+    placeholders: list[ft.Control] = []
+    slots = _overlay_slots()
+    surface = compose_settings_overlay_surface(
+        slots,
+        placeholder_factory=lambda: _track(placeholders),
+    )
+
+    assert len(surface.rows) == 6
+    assert len(placeholders) == 1
+    assert surface.rows[0] is surface.target_row
+    assert surface.vr_rows == (surface.rows[1], surface.rows[2])
+    assert surface.desktop_rows == (surface.rows[3], surface.rows[4])
+    assert surface.desktop_controls_row is surface.rows[3]
+    assert surface.recovery_row is surface.rows[5]
+    assert surface.recovery_row.visible is False
+    for row in surface.rows[:5]:
+        assert row.visible is True
+
+    assert surface.target_row.content.controls == [
+        slots.overlay_target,
+        slots.overlay_translation,
+        slots.overlay_peer_original,
+    ]
+    assert surface.rows[1].content.controls == [slots.anchor, slots.distance, slots.offset_x]
+    assert surface.rows[2].content.controls == [slots.offset_y, slots.text_scale, slots.vr_reset]
+    assert surface.rows[3].content.controls == [
+        slots.desktop_size,
+        slots.desktop_lock,
+        slots.desktop_background_alpha,
+    ]
+    assert surface.rows[4].content.controls == [
+        slots.desktop_swap_caption_languages,
+        slots.desktop_reset,
+        slots.desktop_reset_spacer,
+    ]
+    assert surface.recovery_row.content.controls == [
+        slots.desktop_status,
+        surface.recovery_row_placeholder,
+        slots.desktop_status_trailing,
+    ]
+
+
+def _track(bucket: list[ft.Control]) -> ft.Control:
+    control = ft.Container()
+    bucket.append(control)
+    return control

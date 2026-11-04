@@ -1,0 +1,710 @@
+from __future__ import annotations
+
+import logging
+import textwrap
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Literal
+from uuid import UUID
+
+from puripuly_heart.core.clock import Clock
+from puripuly_heart.core.diagnostic_validation import (
+    DIAGNOSTIC_REDACTION_MARKER,
+    DIAGNOSTIC_SINK_CHATBOX_DISCLOSURE,
+    DIAGNOSTIC_VALIDATION_STATUS_ACCEPTED,
+    redact_text_for_sink,
+)
+from puripuly_heart.core.diagnostics import emit_failure, safe_exception_fields
+from puripuly_heart.core.messages import ErrorDiagnostics
+from puripuly_heart.core.osc.sender import OscSender
+from puripuly_heart.core.output.chatbox import SelfUtterancePublication, SystemDisclosurePublication
+from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService
+from puripuly_heart.domain.models import OSCMessage
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ChatboxPaginator:
+    sender: OscSender
+    clock: Clock
+    max_chars: int = 144
+    page_interval_s: float = 3.0
+    runtime_logging: SessionRuntimeLoggingService | None = None
+    self_speech_waiting_capacity: int = 8
+    self_speech_waiting_ttl_s: float = 12.0
+    stage_recorder: Callable[..., object] | None = None
+    _pending_pages: list[str] | None = None
+    _pending_messages: list[OSCMessage] | None = None
+    _next_page_at: float = 0.0
+    _active_message: OSCMessage | None = field(default=None, init=False, repr=False)
+    _active_page_index: int = field(default=0, init=False, repr=False)
+    _active_page_count: int = field(default=0, init=False, repr=False)
+    _active_message_has_success: bool = field(default=False, init=False, repr=False)
+    _latest_self_turn_key: tuple[int, int] | None = field(default=None, init=False, repr=False)
+    _latest_self_utterance_id: UUID | None = field(default=None, init=False, repr=False)
+    _latest_self_revision: int = field(default=-1, init=False, repr=False)
+    _typing_reasons: set[str] = field(default_factory=set, init=False, repr=False)
+    _legacy_typing_active: bool = field(default=False, init=False, repr=False)
+    _last_typing_state: bool = field(default=False, init=False, repr=False)
+    _delivery_observer: Callable[[OSCMessage, str], None] | None = field(
+        default=None, init=False, repr=False
+    )
+    _stream_final_revisions: dict[tuple[UUID, int], bool] = field(
+        default_factory=dict, init=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        if self.max_chars <= 0:
+            raise ValueError("max_chars must be > 0")
+        if self.page_interval_s <= 0:
+            raise ValueError("page_interval_s must be > 0")
+        if self.self_speech_waiting_capacity < 1:
+            raise ValueError("self_speech_waiting_capacity must be positive")
+        if self.self_speech_waiting_ttl_s <= 0:
+            raise ValueError("self_speech_waiting_ttl_s must be positive")
+        self._pending_pages = []
+        self._pending_messages = []
+
+    def bind_delivery_observer(self, observer: Callable[[OSCMessage, str], None]) -> None:
+        self._delivery_observer = observer
+
+    def _notify_delivery(self, message: OSCMessage, status: str) -> None:
+        if self._delivery_observer is not None:
+            self._delivery_observer(message, status)
+        if status not in {"first_page_sent", "output_send_failed"}:
+            self._stream_final_revisions.pop(
+                (message.utterance_id, message.presentation_revision), None
+            )
+
+    def enqueue_self_turn(self, message: OSCMessage, *, final: bool) -> OSCMessage | None:
+        self._stream_final_revisions[(message.utterance_id, message.presentation_revision)] = final
+        return self.enqueue(message)
+
+    def promote_self_turn(self, utterance_id: UUID, revision: int) -> None:
+        key = (utterance_id, revision)
+        if key in self._stream_final_revisions:
+            self._stream_final_revisions[key] = True
+
+    def enqueue(self, message: OSCMessage) -> OSCMessage | None:
+        page_count = (
+            len(
+                self._split_text(
+                    message.text.strip(),
+                    preserve_newlines=message.presentation_revision > 0,
+                )
+            )
+            if message.text.strip()
+            else 0
+        )
+        if message.self_turn_key is not None:
+            disposition = self._prepare_self_turn_enqueue(message, page_count=page_count)
+            if disposition is not None:
+                if disposition == "rejected":
+                    self._notify_delivery(message, "output_superseded")
+                return None
+        if self._is_paginating():
+            evicted: OSCMessage | None = None
+            if message.self_speech:
+                waiting_speech_indexes = [
+                    index
+                    for index, pending in enumerate(self._pending_messages)
+                    if pending.self_speech
+                ]
+                if len(waiting_speech_indexes) >= self.self_speech_waiting_capacity:
+                    evicted = self._pending_messages.pop(waiting_speech_indexes[0])
+                    self._notify_delivery(evicted, "output_overload")
+                    self._record_stage(
+                        "message_terminal",
+                        utterance_id=str(evicted.utterance_id),
+                        status="output_overload",
+                    )
+            self._pending_messages.append(message)
+            self._record_stage(
+                "message_enqueue",
+                utterance_id=str(message.utterance_id),
+                text_len=len(message.text),
+                page_count=page_count,
+                started=False,
+                turn_generation=message.turn_generation,
+                turn_order=message.turn_order,
+                presentation_revision=message.presentation_revision,
+                target_indexes=message.target_indexes,
+                target_languages=message.target_languages,
+            )
+            return evicted
+        self._record_stage(
+            "message_enqueue",
+            utterance_id=str(message.utterance_id),
+            text_len=len(message.text),
+            page_count=page_count,
+            started=True,
+            turn_generation=message.turn_generation,
+            turn_order=message.turn_order,
+            presentation_revision=message.presentation_revision,
+            target_indexes=message.target_indexes,
+            target_languages=message.target_languages,
+        )
+        self._start_message(message)
+        if not self._is_paginating():
+            self._drain_pending_messages()
+        return None
+
+    def process_due(self) -> None:
+        if not self._is_paginating():
+            self._drain_pending_messages()
+            return
+
+        now = self.clock.now()
+        if now < self._next_page_at:
+            return
+
+        page = self._pending_pages.pop(0)
+        remaining_parts = len(self._pending_pages)
+        self._active_page_index += 1
+        self._send_page(mode="queued", text=page, remaining_parts=remaining_parts)
+
+        if self._pending_pages:
+            self._next_page_at = now + self.page_interval_s
+            return
+
+        self._next_page_at = 0.0
+        if self._active_message is not None:
+            self._stream_final_revisions.pop(
+                (self._active_message.utterance_id, self._active_message.presentation_revision),
+                None,
+            )
+        self._active_message = None
+        self._active_page_index = 0
+        self._active_page_count = 0
+        self._drain_pending_messages()
+
+    def send_immediate(self, text: str) -> tuple[bool, ErrorDiagnostics | None]:
+        """Return local send outcome and safe cause without changing pagination."""
+        text = text.strip()
+        if not text:
+            return False, None
+        try:
+            self.sender.send_chatbox(text)
+        except OSError as exc:
+            return False, self._local_send_diagnostics(exc)
+        return True, None
+
+    def send_typing(self, is_typing: bool) -> None:
+        """Forward typing indicator to the OSC sender."""
+        self._legacy_typing_active = bool(is_typing)
+        if not is_typing and self._typing_reasons:
+            self._apply_typing_state(operation="typing_state")
+            return
+        self._send_typing_state(self._is_typing_active(), operation="typing_state")
+
+    def set_typing_reason(self, reason: str, active: bool) -> None:
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("reason must be non-empty")
+        was_typing = self._is_typing_active()
+        if active:
+            self._typing_reasons.add(reason)
+        else:
+            self._typing_reasons.discard(reason)
+        self._apply_typing_state(was_typing=was_typing)
+
+    def clear_typing_reasons(self) -> None:
+        if not self._typing_reasons and self._last_typing_state == self._is_typing_active():
+            return
+        self._typing_reasons.clear()
+        self._apply_typing_state(operation="typing_clear")
+
+    def _is_typing_active(self) -> bool:
+        return self._legacy_typing_active or bool(self._typing_reasons)
+
+    def _apply_typing_state(
+        self, *, was_typing: bool | None = None, operation: str = "typing_reason"
+    ) -> None:
+        is_typing = self._is_typing_active()
+        previous = self._last_typing_state if was_typing is None else was_typing
+        if is_typing != previous or is_typing != self._last_typing_state:
+            self._send_typing_state(is_typing, operation=operation)
+
+    def _send_typing_state(self, is_typing: bool, *, operation: str) -> None:
+        try:
+            self.sender.send_typing(is_typing)
+            self._last_typing_state = bool(is_typing)
+        except OSError as exc:
+            self._emit_local_send_failure("typing_state", exc, operation=operation)
+
+    def drop_pending(self) -> None:
+        """Drop queued chatbox pages/messages during output runtime shutdown."""
+        assert self._pending_pages is not None
+        assert self._pending_messages is not None
+        dropped_pages = len(self._pending_pages)
+        dropped_messages = len(self._pending_messages)
+        if self._active_message is not None:
+            self._notify_delivery(self._active_message, "output_runtime_closing")
+            self._record_stage(
+                "message_terminal",
+                utterance_id=str(self._active_message.utterance_id),
+                status="output_runtime_closing",
+            )
+        for message in self._pending_messages:
+            self._notify_delivery(message, "output_runtime_closing")
+            self._record_stage(
+                "message_terminal",
+                utterance_id=str(message.utterance_id),
+                status="output_runtime_closing",
+            )
+        self._pending_pages.clear()
+        self._pending_messages.clear()
+        self._stream_final_revisions.clear()
+        self._next_page_at = 0.0
+        self._active_message = None
+        self._active_page_index = 0
+        self._active_page_count = 0
+        if dropped_pages or dropped_messages:
+            self._emit_basic(
+                "[Basic][OSC] chatbox backlog dropped on output shutdown "
+                f"pages={dropped_pages} messages={dropped_messages}"
+            )
+
+    def _is_paginating(self) -> bool:
+        return bool(self._pending_pages)
+
+    def _prepare_self_turn_enqueue(
+        self,
+        message: OSCMessage,
+        *,
+        page_count: int,
+    ) -> Literal["rejected", "queued"] | None:
+        assert self._pending_messages is not None
+        incoming_key = message.self_turn_key
+        assert incoming_key is not None
+        if self._latest_self_turn_key is not None:
+            if self._latest_self_turn_key > incoming_key:
+                return "rejected"
+            if self._latest_self_turn_key == incoming_key:
+                if self._latest_self_utterance_id != message.utterance_id:
+                    raise ValueError("self turn key cannot identify multiple parent utterances")
+                if self._latest_self_revision >= message.presentation_revision:
+                    return "rejected"
+        active = self._active_message if self._is_paginating() else None
+        active_key = None if active is None else active.self_turn_key
+        existing_self_messages = tuple(
+            candidate
+            for candidate in (active, *self._pending_messages)
+            if candidate is not None and candidate.self_turn_key is not None
+        )
+        if any(candidate.self_turn_key > incoming_key for candidate in existing_self_messages):
+            return "rejected"
+        for candidate in existing_self_messages:
+            if (
+                candidate.self_turn_key == incoming_key
+                and candidate.utterance_id != message.utterance_id
+            ):
+                raise ValueError("self turn key cannot identify multiple parent utterances")
+        if any(
+            candidate.self_turn_key == incoming_key
+            and candidate.presentation_revision >= message.presentation_revision
+            for candidate in existing_self_messages
+        ):
+            return "rejected"
+        self._latest_self_turn_key = incoming_key
+        self._latest_self_utterance_id = message.utterance_id
+        self._latest_self_revision = message.presentation_revision
+
+        active_pruned = False
+        dropped_pages = 0
+        if active is not None and active_key == incoming_key:
+            dropped_pages = self._clear_active_message()
+            self._record_stage(
+                "chatbox_revision_replaced",
+                utterance_id=str(message.utterance_id),
+                turn_generation=message.turn_generation,
+                turn_order=message.turn_order,
+                previous_revision=active.presentation_revision,
+                presentation_revision=message.presentation_revision,
+                location="active",
+                dropped_pages=dropped_pages,
+                target_indexes=message.target_indexes,
+                target_languages=message.target_languages,
+            )
+        elif active_key is not None and active_key < incoming_key:
+            self._notify_delivery(active, "output_superseded")
+            dropped_pages = self._clear_active_message()
+            active_pruned = True
+            self._record_stage(
+                "message_terminal",
+                utterance_id=str(active.utterance_id),
+                status="output_superseded",
+            )
+
+        replaced_pending_revision: int | None = None
+        replacement_index: int | None = None
+        pruned_messages = 0
+        next_pending: list[OSCMessage] = []
+        for candidate in self._pending_messages:
+            candidate_key = candidate.self_turn_key
+            if candidate_key is None:
+                next_pending.append(candidate)
+                continue
+            if candidate_key < incoming_key:
+                self._notify_delivery(candidate, "output_superseded")
+                if replacement_index is None:
+                    replacement_index = len(next_pending)
+                pruned_messages += 1
+                self._record_stage(
+                    "message_terminal",
+                    utterance_id=str(candidate.utterance_id),
+                    status="output_superseded",
+                )
+                continue
+            if candidate_key == incoming_key:
+                self._notify_delivery(candidate, "output_superseded")
+                if replacement_index is None:
+                    replacement_index = len(next_pending)
+                replaced_pending_revision = max(
+                    candidate.presentation_revision,
+                    replaced_pending_revision or 0,
+                )
+                continue
+            next_pending.append(candidate)
+        self._pending_messages[:] = next_pending
+
+        if replaced_pending_revision is not None:
+            self._record_stage(
+                "chatbox_revision_replaced",
+                utterance_id=str(message.utterance_id),
+                turn_generation=message.turn_generation,
+                turn_order=message.turn_order,
+                previous_revision=replaced_pending_revision,
+                presentation_revision=message.presentation_revision,
+                location="pending",
+                dropped_pages=0,
+                target_indexes=message.target_indexes,
+                target_languages=message.target_languages,
+            )
+
+        if active_pruned or pruned_messages:
+            self._record_stage(
+                "chatbox_older_turn_pruned",
+                utterance_id=str(message.utterance_id),
+                turn_generation=message.turn_generation,
+                turn_order=message.turn_order,
+                presentation_revision=message.presentation_revision,
+                pruned_messages=pruned_messages,
+                pruned_pages=dropped_pages,
+                target_indexes=message.target_indexes,
+                target_languages=message.target_languages,
+            )
+
+        if self._is_paginating() and replacement_index is not None:
+            self._pending_messages.insert(replacement_index, message)
+            self._record_stage(
+                "message_enqueue",
+                utterance_id=str(message.utterance_id),
+                text_len=len(message.text),
+                page_count=page_count,
+                started=False,
+                replaced=True,
+                turn_generation=message.turn_generation,
+                turn_order=message.turn_order,
+                presentation_revision=message.presentation_revision,
+                target_indexes=message.target_indexes,
+                target_languages=message.target_languages,
+            )
+            return "queued"
+        return None
+
+    def _clear_active_message(self) -> int:
+        assert self._pending_pages is not None
+        dropped_pages = len(self._pending_pages)
+        self._pending_pages.clear()
+        self._next_page_at = 0.0
+        if self._active_message is not None:
+            self._stream_final_revisions.pop(
+                (self._active_message.utterance_id, self._active_message.presentation_revision),
+                None,
+            )
+        self._active_message = None
+        self._active_page_index = 0
+        self._active_page_count = 0
+        return dropped_pages
+
+    def _start_message(self, message: OSCMessage) -> None:
+        text = message.text.strip()
+        if not text:
+            return
+
+        parts = self._split_text(
+            text,
+            preserve_newlines=message.presentation_revision > 0,
+        )
+        head = parts[0]
+        tail = parts[1:]
+        self._active_message = message
+        self._active_page_index = 0
+        self._active_page_count = len(parts)
+        self._active_message_has_success = False
+        self._send_page(mode="queued", text=head, remaining_parts=len(tail))
+
+        if tail:
+            self._pending_pages.extend(tail)
+            self._next_page_at = self.clock.now() + self.page_interval_s
+            return
+        self._stream_final_revisions.pop(
+            (message.utterance_id, message.presentation_revision), None
+        )
+        self._active_message = None
+        self._active_page_index = 0
+        self._active_page_count = 0
+
+    def _drain_pending_messages(self) -> None:
+        while self._pending_messages and not self._is_paginating():
+            next_message = self._pending_messages.pop(0)
+            if (
+                next_message.self_speech
+                and self.clock.now() - next_message.created_at > self.self_speech_waiting_ttl_s
+            ):
+                self._notify_delivery(next_message, "output_timeout")
+                self._record_stage(
+                    "message_terminal",
+                    utterance_id=str(next_message.utterance_id),
+                    status="output_timeout",
+                )
+                continue
+            self._start_message(next_message)
+
+    def _split_text(self, text: str, *, preserve_newlines: bool = False) -> list[str]:
+        if len(text) <= self.max_chars:
+            return [text]
+        if preserve_newlines and "\n" in text:
+            return [
+                text[index : index + self.max_chars]
+                for index in range(0, len(text), self.max_chars)
+            ]
+        return textwrap.wrap(
+            text,
+            width=self.max_chars,
+            break_long_words=True,
+            break_on_hyphens=False,
+        )
+
+    def _send_page(self, *, mode: str, text: str, remaining_parts: int) -> bool:
+        try:
+            self.sender.send_chatbox(text)
+        except OSError as exc:
+            if self._active_message is not None and self._active_page_index == 0:
+                self._notify_delivery(self._active_message, "output_send_failed")
+            self._emit_send_failure(mode=mode, exc=exc)
+            if mode == "queued" and remaining_parts == 0:
+                active = self._active_message
+                self._record_stage(
+                    "message_terminal",
+                    utterance_id=None if active is None else str(active.utterance_id),
+                    status="output_send_failed",
+                )
+            return False
+        if mode == "queued":
+            first_successful_page = not self._active_message_has_success
+            self._active_message_has_success = True
+            if self._active_message is not None and self._active_page_index == 0:
+                self._notify_delivery(self._active_message, "first_page_sent")
+            active = self._active_message
+            self._record_stage(
+                "page_send",
+                utterance_id=None if active is None else str(active.utterance_id),
+                page_index=self._active_page_index,
+                first_successful_page=first_successful_page,
+                page_count=self._active_page_count,
+                remaining_parts=remaining_parts,
+                text_len=len(text),
+                turn_generation=None if active is None else active.turn_generation,
+                turn_order=None if active is None else active.turn_order,
+                presentation_revision=(None if active is None else active.presentation_revision),
+                target_indexes=() if active is None else active.target_indexes,
+                target_languages=() if active is None else active.target_languages,
+                self_turn_final=(
+                    None
+                    if active is None
+                    else self._stream_final_revisions.get(
+                        (active.utterance_id, active.presentation_revision)
+                    )
+                ),
+            )
+        return True
+
+    def _record_stage(self, event: str, **fields: object) -> None:
+        if self.stage_recorder is None:
+            return
+        now = self.clock.now()
+        pending = self._pending_messages or []
+        oldest_created = min(
+            (message.created_at for message in pending),
+            default=None,
+        )
+        if self._active_message is not None:
+            oldest_created = (
+                self._active_message.created_at
+                if oldest_created is None
+                else min(oldest_created, self._active_message.created_at)
+            )
+        self.stage_recorder(
+            event,
+            pending_messages=len(pending),
+            pending_pages=0 if self._pending_pages is None else len(self._pending_pages),
+            oldest_age_s=(
+                None if oldest_created is None else round(max(0.0, now - oldest_created), 3)
+            ),
+            **fields,
+        )
+
+    def _emit_send_failure(self, *, mode: str, exc: OSError) -> None:
+        self._emit_local_send_failure(
+            "chatbox_page", exc, message=self._active_message if mode == "queued" else None
+        )
+
+    def _emit_local_send_failure(
+        self,
+        stage: str,
+        exception: OSError,
+        *,
+        message: OSCMessage | None = None,
+        operation: str = "publish",
+    ) -> None:
+        diagnostics = self._local_send_diagnostics(exception, message=message, operation=operation)
+        emit_failure(logger, diagnostics, severity="warning", disposition="degraded", stage=stage)
+
+    @staticmethod
+    def _local_send_diagnostics(
+        exception: OSError, *, message: OSCMessage | None = None, operation: str = "publish"
+    ) -> ErrorDiagnostics:
+        active = message
+        fields = {
+            "destination": "self_chatbox",
+            "remote_delivery": "unacknowledged",
+            **safe_exception_fields(exception),
+        }
+        if active is not None:
+            fields["publication_id"] = str(active.utterance_id)
+        return ErrorDiagnostics(
+            component="osc_control",
+            operation=operation,
+            code="osc_local_send_failed",
+            category="network",
+            visibility="basic",
+            content_policy="metadata_only",
+            status_code=None,
+            retry_after_ms=None,
+            fields=fields,
+            channel="self" if active is not None else None,
+            turn_id=str(active.utterance_id) if active is not None else None,
+            generation=active.turn_generation if active is not None else None,
+            operation_id=active.operation_id if active is not None else None,
+            request_id=active.request_id if active is not None else None,
+        )
+
+    def _emit_basic(self, message: str, *, level: int = logging.INFO) -> None:
+        if self.runtime_logging is not None:
+            self.runtime_logging.emit_basic(message, level=level)
+            return
+        logger.log(level, message)
+
+    def _emit_diagnostic(self, message: str, *, level: int = logging.INFO) -> None:
+        if self.runtime_logging is not None:
+            self.runtime_logging.emit_diagnostic(message, level=level)
+            return
+        logger.debug(message)
+
+
+@dataclass(slots=True)
+class ChatboxPaginatorOutputAdapter:
+    paginator: ChatboxPaginator
+    render_system_disclosure: Callable[[SystemDisclosurePublication], str]
+    include_source: bool = True
+
+    async def publish_self_utterance(self, publication: SelfUtterancePublication) -> None:
+        metadata = publication.metadata
+        generation = self._non_negative_metadata_int(publication, "turn_generation")
+        order = self._non_negative_metadata_int(publication, "turn_order")
+        revision = self._non_negative_metadata_int(publication, "presentation_revision")
+        target_indexes = self._target_indexes(publication)
+        target_languages = self._target_languages(publication)
+        if "turn_generation" in metadata and generation is None:
+            raise TypeError("turn_generation must be a non-negative integer")
+        if "turn_order" in metadata and order is None:
+            raise TypeError("turn_order must be a non-negative integer")
+        if "presentation_revision" in metadata and revision is None:
+            raise TypeError("presentation_revision must be a non-negative integer")
+        if (generation is None) != (order is None):
+            raise ValueError("turn generation and order must be provided together")
+        revision = revision or 0
+        if generation is None and revision != 0:
+            raise ValueError("presentation_revision requires self turn identity")
+        message = OSCMessage(
+            utterance_id=UUID(publication.utterance_id),
+            text=self._merge_chatbox_text(publication),
+            created_at=self.paginator.clock.now(),
+            turn_generation=generation,
+            turn_order=order,
+            presentation_revision=revision,
+            target_indexes=target_indexes,
+            target_languages=target_languages,
+        )
+        self.paginator.enqueue(message)
+        self.paginator.send_typing(False)
+
+    async def publish_system_disclosure(self, publication: SystemDisclosurePublication) -> None:
+        message = OSCMessage(
+            utterance_id=UUID(publication.disclosure_id),
+            text=_redact_chatbox_disclosure_text(self.render_system_disclosure(publication)),
+            created_at=self.paginator.clock.now(),
+        )
+        self.paginator.enqueue(message)
+
+    def _merge_chatbox_text(self, publication: SelfUtterancePublication) -> str:
+        transcript_text = publication.transcript_text or ""
+        translation_text = publication.translation_text
+        if translation_text is None:
+            return transcript_text
+        if self.include_source and transcript_text:
+            return f"{transcript_text} ({translation_text})"
+        return translation_text
+
+    @staticmethod
+    def _non_negative_metadata_int(
+        publication: SelfUtterancePublication,
+        key: str,
+    ) -> int | None:
+        value = publication.metadata.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
+
+    @staticmethod
+    def _target_indexes(publication: SelfUtterancePublication) -> tuple[int, ...]:
+        metadata = publication.metadata
+        if "target_indexes" not in metadata:
+            return ()
+        value = metadata["target_indexes"]
+        if not isinstance(value, str) or not value:
+            raise TypeError("target_indexes must be a comma-separated string")
+        try:
+            return tuple(int(part) for part in value.split(","))
+        except ValueError as exc:
+            raise TypeError("target_indexes must contain integers") from exc
+
+    @staticmethod
+    def _target_languages(publication: SelfUtterancePublication) -> tuple[str, ...]:
+        metadata = publication.metadata
+        if "target_languages" not in metadata:
+            return ()
+        value = metadata["target_languages"]
+        if not isinstance(value, str) or not value:
+            raise TypeError("target_languages must be a comma-separated string")
+        return tuple(value.split(","))
+
+
+def _redact_chatbox_disclosure_text(text: str) -> str:
+    result = redact_text_for_sink(text, DIAGNOSTIC_SINK_CHATBOX_DISCLOSURE)
+    if result.status == DIAGNOSTIC_VALIDATION_STATUS_ACCEPTED and result.text is not None:
+        return result.text
+    return DIAGNOSTIC_REDACTION_MARKER

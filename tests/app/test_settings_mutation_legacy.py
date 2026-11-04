@@ -1,0 +1,410 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from puripuly_heart.app.services.settings import settings_mutation
+from puripuly_heart.app.services.settings.settings_mutation_legacy import (
+    ORDER21_TRANSLATION_PROVIDER_SETTINGS_PATHS,
+    ORDER22_STT_LANGUAGE_AUDIO_SETTINGS_PATHS,
+    ORDER23_OVERLAY_OSC_OUTPUT_SETTINGS_PATHS,
+    ORDER24_UI_PROMPT_CLIPBOARD_STATE_SETTINGS_PATHS,
+    SettingsPathMutationValidator,
+    SettingsPathPatch,
+    _SettingsPathSnapshot,
+    apply_settings_path_patch,
+    build_stt_language_audio_settings_path_patch,
+    build_translation_provider_settings_path_patch,
+)
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.core import messages
+
+
+def test_order21_patch_carries_custom_http_identity_fields() -> None:
+    previous = AppSettingsVNext()
+    next_settings = replace(
+        previous,
+        intent=replace(
+            previous.intent,
+            translation=replace(
+                previous.intent.translation,
+                model="custom_http",
+                connection="custom_http",
+                http_extension_id="demo",
+                previous_llm_model="gemma4_26b_31b",
+            ),
+        ),
+    )
+
+    patch = build_translation_provider_settings_path_patch(previous, next_settings)
+
+    assert patch["intent.translation.http_extension_id"] == "demo"
+    assert patch["intent.translation.previous_llm_model"] == "gemma4_26b_31b"
+
+
+def test_order22_patch_carries_a_secondary_only_target_change() -> None:
+    previous = AppSettingsVNext()
+    next_settings = replace(
+        previous,
+        intent=replace(
+            previous.intent,
+            languages=replace(previous.intent.languages, secondary_target_language="ja"),
+        ),
+    )
+
+    patch = build_stt_language_audio_settings_path_patch(previous, next_settings)
+
+    assert patch == {"intent.languages.secondary_target_language": "ja"}
+
+
+def test_mutable_patch_values_are_isolated_from_canonical_settings_and_future_patches() -> None:
+    previous = AppSettingsVNext()
+    next_settings = replace(
+        previous,
+        intent=replace(
+            previous.intent,
+            stt=replace(previous.intent.stt, custom_terms={"ko": ["source"]}),
+        ),
+    )
+    patch = build_stt_language_audio_settings_path_patch(previous, next_settings)
+    assert patch == {"intent.stt.custom_terms": {"ko": ["source"]}}
+
+    patch["intent.stt.custom_terms"]["ko"].append("changed")
+    assert next_settings.intent.stt.custom_terms == {"ko": ["source"]}
+    assert build_stt_language_audio_settings_path_patch(previous, next_settings) == {
+        "intent.stt.custom_terms": {"ko": ["source"]}
+    }
+
+
+def test_snapshot_replay_preserves_unrelated_changes_and_isolates_mutable_values() -> None:
+    baseline = AppSettingsVNext()
+    snapshot = _SettingsPathSnapshot.from_settings(
+        baseline,
+        paths=("intent.stt.custom_terms", "intent.languages.source_language"),
+    )
+    next_settings = replace(
+        baseline,
+        intent=replace(
+            baseline.intent,
+            stt=replace(baseline.intent.stt, custom_terms={"ja": ["hello"]}),
+            languages=replace(baseline.intent.languages, source_language="ja"),
+            audio=replace(baseline.intent.audio, input_device="other microphone"),
+        ),
+    )
+    patch = snapshot.patch_to(next_settings)
+    assert patch == {
+        "intent.stt.custom_terms": {"ja": ["hello"]},
+        "intent.languages.source_language": "ja",
+    }
+    patch["intent.stt.custom_terms"]["ja"].append("changed")
+    assert snapshot.patch_to(next_settings)["intent.stt.custom_terms"] == {"ja": ["hello"]}
+    assert next_settings.intent.stt.custom_terms == {"ja": ["hello"]}
+
+    restored = snapshot.materialize_base_from(next_settings)
+    assert restored.intent.stt.custom_terms == {}
+    assert restored.intent.languages.source_language == "ko"
+    assert restored.intent.audio.input_device == "other microphone"
+
+
+def test_invalid_mutable_leaf_patch_rejects_type_without_changing_settings() -> None:
+    settings = AppSettingsVNext()
+    with pytest.raises(ValueError):
+        apply_settings_path_patch(settings, {"intent.stt.custom_terms": ["wrong"]})
+    assert settings.intent.stt.custom_terms == {}
+
+
+def test_settings_path_patch_builds_typed_mutation_request_for_order22_surface() -> None:
+    patch = SettingsPathPatch(
+        values_by_path={
+            "intent.languages.source_language": "ja",
+            "intent.audio.input_device": "Headset Mic",
+        },
+        surface=settings_mutation.SETTINGS_MUTATION_SURFACE_STT_LANGUAGE_AUDIO,
+    )
+
+    request = patch.to_mutation_request(
+        expected_revision="settings-r2",
+        correlation_id="corr-order22",
+    )
+
+    assert request == settings_mutation.SettingsMutationRequest(
+        values={
+            "intent.languages.source_language": "ja",
+            "intent.audio.input_device": "Headset Mic",
+        },
+        expected_revision="settings-r2",
+        reason=settings_mutation.SETTINGS_MUTATION_SURFACE_STT_LANGUAGE_AUDIO,
+        correlation_id="corr-order22",
+    )
+
+
+@pytest.mark.asyncio
+async def test_order21_path_validator_accepts_only_translation_provider_paths() -> None:
+    validator = SettingsPathMutationValidator(
+        allowed_paths=ORDER21_TRANSLATION_PROVIDER_SETTINGS_PATHS,
+        component="settings_mutation",
+        operation="validate_translation_provider_patch",
+    )
+    request = settings_mutation.SettingsMutationRequest(
+        values={
+            "intent.translation.connection": "openrouter",
+            "intent.local_llm.base_url": "http://127.0.0.1:11434/v1",
+            "intent.translation.concurrency_limit": 3,
+        },
+        expected_revision=None,
+        reason=settings_mutation.SETTINGS_MUTATION_SURFACE_TRANSLATION_PROVIDER,
+        correlation_id="corr-valid-paths",
+    )
+
+    result = await validator.validate(request)
+
+    assert result == settings_mutation.SettingsMutationValidationResult(
+        succeeded=True,
+        message=None,
+        diagnostics=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "allowed_paths",
+        "operation",
+        "reason",
+        "values",
+        "first_bad_path",
+        "hidden_values",
+    ),
+    [
+        pytest.param(
+            ORDER21_TRANSLATION_PROVIDER_SETTINGS_PATHS,
+            "validate_translation_provider_patch",
+            settings_mutation.SETTINGS_MUTATION_SURFACE_TRANSLATION_PROVIDER,
+            {
+                "stt.low_latency_mode": False,
+                "audio.input_device": "default microphone",
+                "overlay.target": "desktop",
+                "secrets.openrouter_api_key": "secret-value-must-not-leak",
+            },
+            "audio.input_device",
+            ("secret-value-must-not-leak",),
+            id="order21",
+        ),
+        pytest.param(
+            ORDER22_STT_LANGUAGE_AUDIO_SETTINGS_PATHS,
+            "validate_stt_language_audio_patch",
+            settings_mutation.SETTINGS_MUTATION_SURFACE_STT_LANGUAGE_AUDIO,
+            {
+                "translation.model": "gemma4-secret-ish",
+                "openrouter.selection_alias": "managed-secret-ish",
+                "overlay.target": "desktop-secret-ish",
+                "secrets.deepgram_api_key": "secret-value-must-not-leak",
+            },
+            "openrouter.selection_alias",
+            ("secret-value-must-not-leak", "gemma4-secret-ish"),
+            id="order22",
+        ),
+        pytest.param(
+            ORDER23_OVERLAY_OSC_OUTPUT_SETTINGS_PATHS,
+            "validate_overlay_osc_output_patch",
+            settings_mutation.SETTINGS_MUTATION_SURFACE_OVERLAY_OSC_OUTPUT,
+            {
+                "active_chatbox_channel": "peer-secret-ish",
+                "ui.overlay_enabled": True,
+                "ui.peer_translation_enabled": True,
+                "secrets.openrouter_api_key": "secret-value-must-not-leak",
+            },
+            "active_chatbox_channel",
+            ("secret-value-must-not-leak", "peer-secret-ish"),
+            id="order23",
+        ),
+        pytest.param(
+            ORDER24_UI_PROMPT_CLIPBOARD_STATE_SETTINGS_PATHS,
+            "validate_ui_prompt_clipboard_state_patch",
+            settings_mutation.SETTINGS_MUTATION_SURFACE_UI_PROMPT_CLIPBOARD_STATE,
+            {
+                "api_key_verified.openrouter": True,
+                "managed_identity.installation_id": "device-secret-ish",
+                "system_prompts": {"openrouter": "prompt-secret-ish"},
+                "ui.overlay_enabled": True,
+                "ui.peer_translation_enabled": True,
+                "secrets.openrouter_api_key": "secret-value-must-not-leak",
+            },
+            "api_key_verified.openrouter",
+            ("secret-value-must-not-leak", "device-secret-ish", "prompt-secret-ish"),
+            id="order24",
+        ),
+    ],
+)
+async def test_path_validator_rejects_out_of_scope_paths_without_secret_values(
+    allowed_paths: tuple[str, ...],
+    operation: str,
+    reason: str,
+    values: dict[str, object],
+    first_bad_path: str,
+    hidden_values: tuple[str, ...],
+) -> None:
+    validator = SettingsPathMutationValidator(
+        allowed_paths=allowed_paths,
+        component="settings_mutation",
+        operation=operation,
+    )
+    request = settings_mutation.SettingsMutationRequest(
+        values=values,
+        expected_revision=None,
+        reason=reason,
+        correlation_id="corr-invalid-paths",
+    )
+
+    result = await validator.validate(request)
+
+    assert result.succeeded is False
+    assert result.message is None
+    assert result.diagnostics.code == "settings_path_not_covered"
+    assert result.diagnostics.category == messages.DIAGNOSTIC_CATEGORY_TRANSACTION
+    assert result.diagnostics.fields["path"] == first_bad_path
+    assert len(result.diagnostics.diagnostic_id) == 32
+    for hidden in hidden_values:
+        assert hidden not in repr(result)
+
+
+@pytest.mark.asyncio
+async def test_order22_path_validator_accepts_only_stt_language_audio_paths() -> None:
+    validator = SettingsPathMutationValidator(
+        allowed_paths=ORDER22_STT_LANGUAGE_AUDIO_SETTINGS_PATHS,
+        component="settings_mutation",
+        operation="validate_stt_language_audio_patch",
+    )
+    request = settings_mutation.SettingsMutationRequest(
+        values={
+            "intent.stt.provider": "soniox",
+            "intent.peer_stt.provider": "local_fun_asr_mlt_nano",
+            "intent.languages.source_language": "ja",
+            "intent.languages.secondary_target_language": "fr",
+            "intent.audio.input_device": "Headset Mic",
+            "intent.desktop_audio.vad_hangover_ms": 900,
+            "intent.stt.soniox.trailing_silence_ms": 150,
+        },
+        expected_revision=None,
+        reason=settings_mutation.SETTINGS_MUTATION_SURFACE_STT_LANGUAGE_AUDIO,
+        correlation_id="corr-valid-order22-paths",
+    )
+
+    result = await validator.validate(request)
+
+    assert result == settings_mutation.SettingsMutationValidationResult(
+        succeeded=True,
+        message=None,
+        diagnostics=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_order23_path_validator_accepts_only_overlay_osc_output_paths() -> None:
+    validator = SettingsPathMutationValidator(
+        allowed_paths=ORDER23_OVERLAY_OSC_OUTPUT_SETTINGS_PATHS,
+        component="settings_mutation",
+        operation="validate_overlay_osc_output_patch",
+    )
+    request = settings_mutation.SettingsMutationRequest(
+        values={
+            "intent.overlay.target": "desktop",
+            "intent.overlay.calibration.distance": 1.4,
+            "intent.overlay.desktop_flet.position.x": 24,
+            "intent.overlay.desktop_flet.visual.background_alpha": 0.45,
+            "intent.osc.host": "127.0.0.1",
+            "intent.osc.port": 9001,
+            "intent.osc.chatbox_max_chars": 120,
+            "intent.osc.chatbox_include_source": True,
+        },
+        expected_revision=None,
+        reason=settings_mutation.SETTINGS_MUTATION_SURFACE_OVERLAY_OSC_OUTPUT,
+        correlation_id="corr-valid-order23-paths",
+    )
+
+    result = await validator.validate(request)
+
+    assert result == settings_mutation.SettingsMutationValidationResult(
+        succeeded=True,
+        message=None,
+        diagnostics=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_order24_path_validator_accepts_only_ui_prompt_clipboard_state_paths() -> None:
+    validator = SettingsPathMutationValidator(
+        allowed_paths=ORDER24_UI_PROMPT_CLIPBOARD_STATE_SETTINGS_PATHS,
+        component="settings_mutation",
+        operation="validate_ui_prompt_clipboard_state_patch",
+    )
+    request = settings_mutation.SettingsMutationRequest(
+        values={
+            "intent.secrets.backend": "encrypted_file",
+            "intent.secrets.encrypted_file_path": "secure-secrets.json",
+            "intent.ui.locale": "ja",
+            "state.peer_translation.eula_accepted": True,
+            "state.integrated_context.bootstrapped": True,
+            "intent.clipboard.auto_translate_enabled": True,
+            "state.github_star_prompt.clicked": False,
+            "state.github_star_prompt.last_shown_at": "2026-06-08T00:00:00Z",
+            "state.github_star_prompt.show_count": 2,
+            "state.github_star_prompt.translation_success_observed": True,
+            "state.github_star_prompt.eligible_launch_count": 3,
+            "intent.prompts.system_prompt_override": "custom translation style",
+        },
+        expected_revision=None,
+        reason=settings_mutation.SETTINGS_MUTATION_SURFACE_UI_PROMPT_CLIPBOARD_STATE,
+        correlation_id="corr-valid-order24-paths",
+    )
+
+    result = await validator.validate(request)
+
+    assert result == settings_mutation.SettingsMutationValidationResult(
+        succeeded=True,
+        message=None,
+        diagnostics=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("allowed_paths", "operation", "path"),
+    [
+        (
+            ORDER22_STT_LANGUAGE_AUDIO_SETTINGS_PATHS,
+            "validate_stt_language_audio_patch",
+            "stt.low_latency_mode",
+        ),
+        (
+            ORDER24_UI_PROMPT_CLIPBOARD_STATE_SETTINGS_PATHS,
+            "validate_ui_prompt_clipboard_state_patch",
+            "ui.integrated_context_enabled",
+        ),
+    ],
+)
+async def test_retired_policy_paths_are_rejected(
+    allowed_paths: tuple[str, ...],
+    operation: str,
+    path: str,
+) -> None:
+    validator = SettingsPathMutationValidator(
+        allowed_paths=allowed_paths,
+        component="settings_mutation",
+        operation=operation,
+    )
+
+    result = await validator.validate(
+        settings_mutation.SettingsMutationRequest(
+            values={path: False},
+            expected_revision=None,
+            reason="retired_policy",
+            correlation_id="corr-retired-policy",
+        )
+    )
+
+    assert result.succeeded is False
+    assert result.diagnostics is not None
+    assert result.diagnostics.code == "settings_path_not_covered"
+    assert result.diagnostics.fields == {"path": path}

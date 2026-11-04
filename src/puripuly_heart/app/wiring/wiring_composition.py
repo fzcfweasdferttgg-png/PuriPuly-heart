@@ -1,0 +1,462 @@
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from importlib import import_module
+
+from puripuly_heart.app.ports.audio_test import AudioTestCapturePort
+from puripuly_heart.app.ports.desktop_overlay import (
+    DesktopOverlayPolicy,
+    DesktopWorkAreaPort,
+)
+from puripuly_heart.app.ports.manual_typing import SelfChatboxTypingPort
+from puripuly_heart.app.ports.provider_verifier import ProviderVerifierPort
+from puripuly_heart.app.ports.self_capture_admission import (
+    SelfCaptureAdmissionEffectSink,
+    SelfCaptureAdmissionStateProvider,
+    SelfCaptureGpuActivationValidator,
+)
+from puripuly_heart.app.ports.vrchat_osc_presence import VrchatOscPresencePort
+from puripuly_heart.app.services.gpu_provider_recovery import (
+    GpuProviderRecoveryDiagnosticSink,
+    GpuProviderRecoveryOwner,
+)
+from puripuly_heart.app.services.gpu_provider_recovery_application import (
+    GpuProviderRecoveryApplicationOwner,
+    GpuProviderRecoveryFailureSink,
+    GpuProviderRecoveryPeerOwnerProvider,
+    GpuProviderRecoveryPendingClear,
+    GpuProviderRecoveryPendingProvider,
+    GpuProviderRecoveryRuntimeProvider,
+    GpuProviderRecoverySelfOwnerFactory,
+    GpuProviderRecoverySelfStateSink,
+    GpuProviderRecoveryStateSink,
+)
+from puripuly_heart.app.services.gpu_runtime_interaction import (
+    GpuRuntimeActivationRetry,
+    GpuRuntimeDiagnosticLogSink,
+    GpuRuntimeInstallDiagnosticSink,
+    GpuRuntimeInteractionOwner,
+    GpuRuntimeInteractionStateProvider,
+    GpuRuntimePresentationSink,
+    GpuRuntimeProvider,
+    GpuRuntimeProvisioningProvider,
+)
+from puripuly_heart.app.services.local_asr.local_asr_diagnostics import (
+    LocalASRBasicLogSink,
+    LocalASRDiagnosticLogSink,
+    LocalASRDiagnosticsGpuEffectSink,
+    LocalASRDiagnosticsOwner,
+    LocalASRGpuDiscoveryOriginProvider,
+)
+from puripuly_heart.app.services.local_asr.local_asr_readiness import (
+    LocalASRReadinessGpuPendingSink,
+    LocalASRReadinessGpuStateProvider,
+    LocalASRReadinessGpuValidator,
+    LocalASRReadinessOwner,
+    LocalASRReadinessStateProvider,
+)
+from puripuly_heart.app.services.manual_typing import ManualTypingOwner
+from puripuly_heart.app.services.provider.provider_credential_verification import (
+    ProviderCredentialSelectedModelProvider,
+    ProviderCredentialVerificationErrorSink,
+    ProviderCredentialVerificationInteractionOwner,
+    ProviderCredentialVerificationOwner,
+)
+from puripuly_heart.config.alibaba_connection import AlibabaConnection
+from puripuly_heart.core.local_asr.local_asr_provider_runtime import ProviderRuntimeRecoveryQuiesce
+from puripuly_heart.core.peer_capture import (
+    PeerCaptureAdmissionPort,
+    PeerCaptureTargetResolverPort,
+)
+from puripuly_heart.core.runtime.peer_channel import (
+    PeerCaptureAudioLoop,
+    PeerCaptureSourceFactory,
+    PeerCaptureVadFactory,
+)
+from puripuly_heart.core.runtime.self_capture import (
+    SelfCaptureAudioLoop,
+    SelfCaptureSourceFactory,
+    SelfCaptureVadFactory,
+)
+from puripuly_heart.core.runtime.vrchat_osc_presence import (
+    VrchatOscPresenceProbeOwner,
+    VrchatOscProbeDiagnosticsSink,
+)
+from puripuly_heart.core.self_capture import SelfCaptureAdmissionPort
+
+
+def create_audio_test_capture_adapter(
+    *,
+    log_sink: Callable[[str], None],
+) -> AudioTestCapturePort:
+    from puripuly_heart.app.adapters.audio_test_capture import AudioTestCaptureAdapter
+
+    return AudioTestCaptureAdapter(log_sink=log_sink)
+
+
+def create_audio_test_vad_engine() -> object:
+    from puripuly_heart.core.vad.bundled import bundled_silero_vad_onnx_path
+    from puripuly_heart.core.vad.silero import SileroVadOnnx
+
+    return SileroVadOnnx(model_path=bundled_silero_vad_onnx_path())
+
+
+def create_manual_typing_owner(
+    *,
+    output_provider: Callable[[], SelfChatboxTypingPort | None],
+    completion_provider: Callable[[object], object | None],
+    log_diagnostic: Callable[[str], object],
+    idle_timeout_seconds: float,
+    submit_timeout_seconds: float,
+) -> ManualTypingOwner:
+    return ManualTypingOwner(
+        output_provider=output_provider,
+        completion_provider=completion_provider,
+        log_diagnostic=log_diagnostic,
+        idle_timeout_seconds=idle_timeout_seconds,
+        submit_timeout_seconds=submit_timeout_seconds,
+    )
+
+
+def create_provider_credential_verification_interaction_owner(
+    *,
+    verifier: ProviderVerifierPort,
+    selected_model_provider: ProviderCredentialSelectedModelProvider,
+    connection_provider: Callable[[str], AlibabaConnection] | None = None,
+    low_latency: bool,
+    error_sink: ProviderCredentialVerificationErrorSink | None = None,
+) -> ProviderCredentialVerificationInteractionOwner:
+    return ProviderCredentialVerificationInteractionOwner(
+        verification_owner=ProviderCredentialVerificationOwner(
+            verifier=verifier,
+        ),
+        selected_model_provider=selected_model_provider,
+        connection_provider=connection_provider,
+        low_latency=low_latency,
+        error_sink=error_sink,
+    )
+
+
+def create_gpu_runtime_interaction_owner(
+    *,
+    runtime_provider: GpuRuntimeProvider,
+    provisioning_provider: GpuRuntimeProvisioningProvider,
+    state_provider: GpuRuntimeInteractionStateProvider,
+    presentation_sink: GpuRuntimePresentationSink,
+    diagnostic_log_sink: GpuRuntimeDiagnosticLogSink,
+    retry_activation: GpuRuntimeActivationRetry,
+    install_diagnostic_sink: GpuRuntimeInstallDiagnosticSink | None = None,
+) -> GpuRuntimeInteractionOwner:
+    return GpuRuntimeInteractionOwner(
+        runtime_provider=runtime_provider,
+        provisioning_provider=provisioning_provider,
+        state_provider=state_provider,
+        presentation_sink=presentation_sink,
+        diagnostic_log_sink=diagnostic_log_sink,
+        retry_activation=retry_activation,
+        install_diagnostic_sink=install_diagnostic_sink,
+    )
+
+
+def create_gpu_provider_recovery_application_owner(
+    *,
+    runtime_provider: GpuProviderRecoveryRuntimeProvider,
+    pending_provider: GpuProviderRecoveryPendingProvider,
+    pending_clear: GpuProviderRecoveryPendingClear,
+    failure_sink: GpuProviderRecoveryFailureSink,
+    runtime_state_sink: GpuProviderRecoveryStateSink,
+    quiesce: ProviderRuntimeRecoveryQuiesce,
+    self_owner_factory: GpuProviderRecoverySelfOwnerFactory,
+    peer_owner_provider: GpuProviderRecoveryPeerOwnerProvider,
+    self_state_sink: GpuProviderRecoverySelfStateSink,
+    diagnostic_sink: GpuProviderRecoveryDiagnosticSink,
+) -> GpuProviderRecoveryApplicationOwner:
+    return GpuProviderRecoveryApplicationOwner(
+        recovery_owner=GpuProviderRecoveryOwner(
+            diagnostic_sink=diagnostic_sink,
+        ),
+        runtime_provider=runtime_provider,
+        pending_provider=pending_provider,
+        pending_clear=pending_clear,
+        failure_sink=failure_sink,
+        runtime_state_sink=runtime_state_sink,
+        quiesce=quiesce,
+        self_owner_factory=self_owner_factory,
+        peer_owner_provider=peer_owner_provider,
+        self_state_sink=self_state_sink,
+    )
+
+
+def create_local_asr_diagnostics_owner(
+    *,
+    basic_log_sink: LocalASRBasicLogSink,
+    diagnostic_log_sink: LocalASRDiagnosticLogSink,
+    gpu_effect_sink: LocalASRDiagnosticsGpuEffectSink,
+    gpu_discovery_origin_provider: LocalASRGpuDiscoveryOriginProvider,
+    gpu_provider_id: str,
+) -> LocalASRDiagnosticsOwner:
+    return LocalASRDiagnosticsOwner(
+        basic_log_sink=basic_log_sink,
+        diagnostic_log_sink=diagnostic_log_sink,
+        gpu_effect_sink=gpu_effect_sink,
+        gpu_discovery_origin_provider=gpu_discovery_origin_provider,
+        gpu_provider_id=gpu_provider_id,
+    )
+
+
+def create_local_asr_readiness_owner(
+    *,
+    state_provider: LocalASRReadinessStateProvider,
+    validate_gpu_activation: LocalASRReadinessGpuValidator,
+    gpu_state_provider: LocalASRReadinessGpuStateProvider,
+    retain_gpu_pending: LocalASRReadinessGpuPendingSink,
+) -> LocalASRReadinessOwner:
+    return LocalASRReadinessOwner(
+        state_provider=state_provider,
+        validate_gpu_activation=validate_gpu_activation,
+        gpu_state_provider=gpu_state_provider,
+        retain_gpu_pending=retain_gpu_pending,
+    )
+
+
+def create_vrchat_osc_presence_probe_owner(
+    *,
+    presence_provider: Callable[[], VrchatOscPresencePort | None],
+    port_provider: Callable[[], int | None],
+    publish_notice: Callable[[bool], None],
+    diagnostics_sink: VrchatOscProbeDiagnosticsSink | None = None,
+) -> VrchatOscPresenceProbeOwner:
+    return VrchatOscPresenceProbeOwner(
+        presence_provider=presence_provider,
+        port_provider=port_provider,
+        publish_notice=publish_notice,
+        diagnostics_sink=diagnostics_sink,
+    )
+
+
+def prepare_capture_runtime_dependencies() -> None:
+    for module in (
+        "puripuly_heart.core.runtime.audio_vad_loop",
+        "puripuly_heart.core.vad.bundled",
+        "puripuly_heart.core.vad.silero",
+        "puripuly_heart.app.adapters.self_capture.self_capture_source",
+        "puripuly_heart.app.adapters.self_capture.self_capture_vad",
+        "puripuly_heart.app.adapters.self_capture.self_capture_audio_loop",
+        "puripuly_heart.app.adapters.self_capture.self_capture_vad_sink",
+        "puripuly_heart.app.adapters.peer_capture.peer_capture_source",
+        "puripuly_heart.app.adapters.peer_capture.peer_capture_target_resolver",
+        "puripuly_heart.app.adapters.peer_capture.peer_capture_vad",
+        "puripuly_heart.app.adapters.peer_capture.peer_capture_admission",
+        "puripuly_heart.app.adapters.peer_capture.peer_capture_audio_loop",
+        "puripuly_heart.app.adapters.peer_capture.peer_capture_vad_sink",
+    ):
+        import_module(module)
+
+
+def create_self_capture_source_adapter(
+    *,
+    log_diagnostic: Callable[..., object],
+    wrap_source: Callable[[object], object],
+) -> SelfCaptureSourceFactory:
+    from puripuly_heart.app.adapters.self_capture.self_capture_source import (
+        SelfCaptureSourceAdapter,
+    )
+    from puripuly_heart.config.audio_host_api import normalize_input_host_api
+    from puripuly_heart.core.audio.source import (
+        SoundDeviceAudioSource,
+        determine_self_mic_capture_channels,
+        resolve_sounddevice_input_device,
+    )
+
+    return SelfCaptureSourceAdapter(
+        normalize_host_api=normalize_input_host_api,
+        resolve_device=resolve_sounddevice_input_device,
+        channel_decision=determine_self_mic_capture_channels,
+        source_factory=SoundDeviceAudioSource,
+        log_diagnostic=log_diagnostic,
+        wrap_source=wrap_source,
+    )
+
+
+def create_self_capture_admission_adapter(
+    *,
+    state_provider: SelfCaptureAdmissionStateProvider,
+    validate_gpu_activation: SelfCaptureGpuActivationValidator,
+    effect_sink: SelfCaptureAdmissionEffectSink,
+) -> SelfCaptureAdmissionPort:
+    from puripuly_heart.app.adapters.self_capture.self_capture_admission import (
+        SelfCaptureAdmissionAdapter,
+    )
+
+    return SelfCaptureAdmissionAdapter(
+        state_provider=state_provider,
+        validate_gpu_activation=validate_gpu_activation,
+        effect_sink=effect_sink,
+    )
+
+
+def create_self_capture_vad_adapter() -> SelfCaptureVadFactory:
+    from puripuly_heart.app.adapters.self_capture.self_capture_vad import SelfCaptureVadAdapter
+    from puripuly_heart.core.vad.bundled import bundled_silero_vad_onnx_path
+    from puripuly_heart.core.vad.gating import VadGating
+    from puripuly_heart.core.vad.silero import SileroVadOnnx
+
+    return SelfCaptureVadAdapter(
+        model_path_resolver=bundled_silero_vad_onnx_path,
+        engine_factory=SileroVadOnnx,
+        gating_factory=VadGating,
+    )
+
+
+def create_self_capture_audio_loop_adapter(
+    *,
+    audio_gate_provider: Callable[[], object | None],
+    log_basic: Callable[[str], object],
+) -> SelfCaptureAudioLoop:
+    from puripuly_heart.app.adapters.self_capture.self_capture_audio_loop import (
+        SelfCaptureAudioLoopAdapter,
+    )
+    from puripuly_heart.core.runtime.audio_vad_loop import run_audio_vad_loop
+
+    return SelfCaptureAudioLoopAdapter(
+        runner=run_audio_vad_loop,
+        audio_gate_provider=audio_gate_provider,
+        log_basic=log_basic,
+    )
+
+
+def create_peer_capture_source_adapter(
+    *,
+    log_diagnostic: Callable[[str], object],
+    wrap_source: Callable[[object], object],
+) -> PeerCaptureSourceFactory:
+    from puripuly_heart.app.adapters.peer_capture.peer_capture_source import (
+        PeerCaptureSourceAdapter,
+    )
+    from puripuly_heart.core.audio.desktop_pipeline import DesktopPeerPipeline
+    from puripuly_heart.core.audio.desktop_source import DesktopLoopbackAudioSource
+    from puripuly_heart.core.audio.process_identity import PsutilProcessIdentityWatcher
+    from puripuly_heart.core.audio.process_source import ProcessAudioCaptureSource
+
+    return PeerCaptureSourceAdapter(
+        loopback_source_factory=DesktopLoopbackAudioSource,
+        process_source_factory=ProcessAudioCaptureSource,
+        process_watcher_factory=PsutilProcessIdentityWatcher,
+        pipeline_factory=DesktopPeerPipeline,
+        log_diagnostic=log_diagnostic,
+        wrap_source=wrap_source,
+    )
+
+
+def create_peer_capture_target_resolver_adapter() -> PeerCaptureTargetResolverPort:
+    from puripuly_heart.app.adapters.peer_capture.peer_capture_target_resolver import (
+        PeerCaptureTargetResolverAdapter,
+    )
+    from puripuly_heart.config.process_capture_resolution import ProcessCaptureResolver
+    from puripuly_heart.core.audio.process_identity import (
+        default_current_user_process_snapshots,
+    )
+
+    def create_process_resolver() -> ProcessCaptureResolver:
+        return ProcessCaptureResolver(snapshots=default_current_user_process_snapshots())
+
+    return PeerCaptureTargetResolverAdapter(resolver_factory=create_process_resolver)
+
+
+def create_peer_capture_vad_adapter() -> PeerCaptureVadFactory:
+    from puripuly_heart.app.adapters.peer_capture.peer_capture_vad import PeerCaptureVadAdapter
+    from puripuly_heart.core.vad.bundled import bundled_silero_vad_onnx_path
+    from puripuly_heart.core.vad.gating import create_peer_vad_gating
+    from puripuly_heart.core.vad.silero import SileroVadOnnx
+
+    return PeerCaptureVadAdapter(
+        model_path_resolver=bundled_silero_vad_onnx_path,
+        engine_factory=SileroVadOnnx,
+        gating_factory=create_peer_vad_gating,
+    )
+
+
+def create_peer_capture_audio_loop_adapter(
+    *,
+    log_basic: Callable[[str], object],
+) -> PeerCaptureAudioLoop:
+    from puripuly_heart.app.adapters.peer_capture.peer_capture_audio_loop import (
+        PeerCaptureAudioLoopAdapter,
+    )
+    from puripuly_heart.core.runtime.audio_vad_loop import run_audio_vad_loop
+
+    return PeerCaptureAudioLoopAdapter(
+        runner=run_audio_vad_loop,
+        log_basic=log_basic,
+    )
+
+
+def create_peer_capture_admission_adapter(
+    *,
+    runtime_available: Callable[[], bool],
+    ensure_local_ready: Callable[[], Awaitable[bool]],
+) -> PeerCaptureAdmissionPort:
+    from puripuly_heart.app.adapters.peer_capture.peer_capture_admission import (
+        PeerCaptureAdmissionAdapter,
+    )
+
+    return PeerCaptureAdmissionAdapter(
+        runtime_available=runtime_available,
+        ensure_local_ready=ensure_local_ready,
+    )
+
+
+def create_peer_capture_vad_sink_adapter(
+    *,
+    runtime_provider: Callable[[], object | None],
+) -> object:
+    from puripuly_heart.app.adapters.peer_capture.peer_capture_vad_sink import (
+        PeerCaptureVadSinkAdapter,
+    )
+
+    return PeerCaptureVadSinkAdapter(runtime_provider=runtime_provider)
+
+
+def create_self_capture_vad_sink_adapter(
+    *,
+    runtime_provider: Callable[[], object | None],
+) -> object:
+    from puripuly_heart.app.adapters.self_capture.self_capture_vad_sink import (
+        SelfCaptureVadSinkAdapter,
+    )
+
+    return SelfCaptureVadSinkAdapter(runtime_provider=runtime_provider)
+
+
+def create_provider_verifier() -> ProviderVerifierPort:
+    from puripuly_heart.app.adapters.provider_verifier import ProviderVerifierAdapter
+
+    return ProviderVerifierAdapter()
+
+
+def create_desktop_overlay_policy() -> DesktopOverlayPolicy:
+    from puripuly_heart.config.desktop_overlay_values import (
+        DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
+        DESKTOP_FLET_DEFAULT_SIZE_PRESET,
+        DESKTOP_FLET_DEFAULT_TEXT_SCALE,
+        DESKTOP_FLET_MIN_HEIGHT,
+        DESKTOP_FLET_MIN_WIDTH,
+        DESKTOP_FLET_SIZE_PRESETS,
+    )
+
+    return DesktopOverlayPolicy(
+        minimum_width=DESKTOP_FLET_MIN_WIDTH,
+        minimum_height=DESKTOP_FLET_MIN_HEIGHT,
+        default_text_scale=DESKTOP_FLET_DEFAULT_TEXT_SCALE,
+        default_background_alpha=DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
+        default_size_preset=DESKTOP_FLET_DEFAULT_SIZE_PRESET,
+        size_presets=DESKTOP_FLET_SIZE_PRESETS,
+    )
+
+
+def create_windows_desktop_work_area() -> DesktopWorkAreaPort:
+    from puripuly_heart.app.adapters.windows_desktop_work_area import (
+        WindowsDesktopWorkAreaAdapter,
+    )
+
+    return WindowsDesktopWorkAreaAdapter()

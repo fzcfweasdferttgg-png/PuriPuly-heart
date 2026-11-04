@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from puripuly_heart.app.ports.provider_channel_runtime import ProviderChannelResetPort
+from puripuly_heart.core.local_asr.local_asr_provider_runtime import (
+    LocalASRProviderRuntimePort,
+    ProviderRuntimeBuildRequest,
+    ProviderRuntimeMutationResult,
+)
+from puripuly_heart.core.self_capture import (
+    SelfCaptureIngressError,
+    SelfCaptureProviderMutation,
+    SelfCaptureProviderMutationStatus,
+    SelfCaptureSessionConfig,
+    SelfCaptureTerminalFailureHandler,
+)
+
+
+class SelfCaptureProviderAdapter:
+    def __init__(
+        self,
+        runtime: LocalASRProviderRuntimePort | None,
+        channel_reset: ProviderChannelResetPort | None,
+    ) -> None:
+        self._runtime = runtime
+        self._channel_reset = channel_reset
+        self._config: SelfCaptureSessionConfig | None = None
+
+    def is_ready(self, config: SelfCaptureSessionConfig) -> bool:
+        self._config = config
+        runtime = self._runtime
+        if runtime is None:
+            return False
+        channel = runtime.snapshot.channel_for("self")
+        return (
+            channel.provider_id == config.provider_id
+            and channel.has_resources
+            and channel.provider_live
+        )
+
+    async def replace(
+        self,
+        request: object,
+        *,
+        start: bool,
+        on_terminal_failure: SelfCaptureTerminalFailureHandler,
+    ) -> SelfCaptureProviderMutation:
+        build_request = self._require_request(request)
+        await self._require_channel_reset().reset_provider_channel("self")
+        result = await self._require_runtime().replace_provider(
+            build_request,
+            start=start,
+            on_terminal_failure=on_terminal_failure,
+        )
+        return self._mutation(result)
+
+    async def handoff(
+        self,
+        request: object,
+        *,
+        start: bool,
+        on_terminal_failure: SelfCaptureTerminalFailureHandler,
+    ) -> SelfCaptureProviderMutation:
+        build_request = self._require_request(request)
+        result = await self._require_runtime().handoff_provider(
+            build_request,
+            start=start,
+            on_terminal_failure=on_terminal_failure,
+        )
+        return self._mutation(result)
+
+    async def cancel_handoff(self) -> bool:
+        return await self._require_runtime().cancel_handoff("self")
+
+    async def start_ingress(self) -> None:
+        if self._runtime is None:
+            raise SelfCaptureIngressError("provider_unavailable")
+        runtime = self._runtime
+        await runtime.start_channel("self")
+        config = self._config
+        if config is None:
+            raise SelfCaptureIngressError("provider_unavailable")
+        channel = runtime.snapshot.channel_for("self")
+        if (
+            channel.provider_id != config.provider_id
+            or not channel.has_resources
+            or not channel.provider_live
+        ):
+            raise SelfCaptureIngressError("provider_unavailable")
+        if config.local_gpu:
+            gpu = runtime.snapshot.gpu
+            if gpu.phase != "ready":
+                raise SelfCaptureIngressError("gpu_not_ready")
+            if "self" not in gpu.active_channels:
+                raise SelfCaptureIngressError("self_channel_inactive")
+
+    async def warmup(
+        self,
+        *,
+        operation_id: str | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        await self._require_runtime().warmup_channel(
+            "self", operation_id=operation_id, request_id=request_id
+        )
+
+    async def release(
+        self,
+        *,
+        mode: Literal["drain", "abort"],
+        release_backend_after: float | None = None,
+    ) -> None:
+        runtime = self._runtime
+        if runtime is None:
+            return
+        if mode == "abort":
+            await self._require_channel_reset().reset_provider_channel("self")
+        elif mode != "drain":
+            raise ValueError("unsupported Self provider release mode")
+        await runtime.release_channel(
+            "self",
+            mode=mode,
+            release_backend_after=release_backend_after,
+        )
+
+    def _require_runtime(self) -> LocalASRProviderRuntimePort:
+        if self._runtime is None:
+            raise RuntimeError("Self capture provider adapter requires the production runtime")
+        return self._runtime
+
+    def _require_channel_reset(self) -> ProviderChannelResetPort:
+        if self._channel_reset is None:
+            raise RuntimeError("Self capture provider adapter requires the channel reset port")
+        return self._channel_reset
+
+    @staticmethod
+    def _require_request(request: object) -> ProviderRuntimeBuildRequest:
+        if not isinstance(request, ProviderRuntimeBuildRequest):
+            raise TypeError("Self capture owner requires a provider build request")
+        return request
+
+    @staticmethod
+    def _mutation(result: ProviderRuntimeMutationResult) -> SelfCaptureProviderMutation:
+        try:
+            mapped_status = SelfCaptureProviderMutationStatus(result.status)
+        except ValueError:
+            mapped_status = SelfCaptureProviderMutationStatus.FAILED
+        return SelfCaptureProviderMutation(
+            mapped_status,
+            reason=result.failure_code or result.failure_type,
+            failure_code=result.failure_code,
+            failure_type=result.failure_type,
+            failure_stage=result.failure_stage,
+            failure_diagnostics=result.failure_diagnostics,
+        )
+
+
+__all__ = ["SelfCaptureProviderAdapter"]

@@ -1,0 +1,1309 @@
+from __future__ import annotations
+
+import importlib
+import importlib.util
+import sys
+from dataclasses import FrozenInstanceError, is_dataclass
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+MODULE_NAME = "puripuly_heart.config.runtime_resolution"
+
+
+def _runtime_resolution_module() -> ModuleType:
+    return importlib.import_module(MODULE_NAME)
+
+
+def _resolved_module() -> ModuleType:
+    return importlib.import_module("puripuly_heart.config.resolved")
+
+
+def _profiles_module() -> ModuleType:
+    return importlib.import_module("puripuly_heart.config.llm_profiles")
+
+
+def _load_boundary_guard() -> ModuleType:
+    guard_path = (
+        Path(__file__).resolve().parents[1] / "architecture" / ("test_dependency_boundaries.py")
+    )
+    spec = importlib.util.spec_from_file_location("_runtime_resolution_boundary_guard", guard_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _runtime_input(
+    runtime_resolution: ModuleType,
+    *,
+    model: str,
+    connection: str,
+    openrouter: Any | None = None,
+    direct: Any | None = None,
+    concurrency_limit: int = 5,
+) -> Any:
+    return runtime_resolution.RuntimeResolutionInput(
+        translation=runtime_resolution.TranslationRuntimeIntent(
+            model=model,
+            connection=connection,
+            concurrency_limit=concurrency_limit,
+        ),
+        openrouter=openrouter or runtime_resolution.OpenRouterRuntimeIntent(),
+        direct=direct or runtime_resolution.DirectProviderRuntimeIntent(),
+    )
+
+
+def _credential_assertion(resolved: ModuleType, source: str, reference: str | None) -> Any:
+    return resolved.ResolvedCredentialRequirement(
+        source=source,
+        required=source != resolved.CREDENTIAL_SOURCE_NONE,
+        reference=reference,
+    )
+
+
+def test_runtime_resolution_layer_is_covered_by_dependency_boundary_guard() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    guard = _load_boundary_guard()
+
+    assert guard._layer_for_module(runtime_resolution.__name__) == guard.RUNTIME_RESOLUTION
+    rule = guard._rule_for_layer(guard.RUNTIME_RESOLUTION)
+    assert runtime_resolution.__name__ in rule.prefixes
+    assert rule.rule_id == "runtime-resolution-stays-pure"
+
+
+def test_canonical_runtime_intent_contracts_are_frozen_and_slotted() -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    for class_name in (
+        "DirectProviderRuntimeIntent",
+        "OverlayRuntimeIntent",
+        "OpenRouterRuntimeIntent",
+        "RuntimeResolutionInput",
+        "STTRuntimeIntent",
+        "TranslationRuntimeIntent",
+    ):
+        dto_class = getattr(runtime_resolution, class_name)
+        assert is_dataclass(dto_class)
+        assert dto_class.__dataclass_params__.frozen is True
+        assert hasattr(dto_class, "__slots__")
+        assert "__dict__" not in dto_class.__slots__
+
+    intent = runtime_resolution.TranslationRuntimeIntent(
+        model=runtime_resolution.TRANSLATION_MODEL_GEMMA4_26B_31B,
+        connection=runtime_resolution.TRANSLATION_CONNECTION_MANAGED,
+    )
+    with pytest.raises(FrozenInstanceError):
+        intent.model = runtime_resolution.TRANSLATION_MODEL_LOCAL_LLM
+
+    direct = runtime_resolution.DirectProviderRuntimeIntent()
+    assert direct.local_llm_extra_body == {
+        "reasoning_effort": "none",
+        "temperature": 0.6,
+    }
+
+
+def test_peer_auto_source_mode_requires_provider_capability() -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    gpu = runtime_resolution.resolve_stt_config(
+        runtime_resolution.STTRuntimeIntent(
+            channel="peer",
+            provider=runtime_resolution.STT_PROVIDER_LOCAL_QWEN_GPU,
+            source_language="ja",
+            source_mode="auto",
+        )
+    )
+    unsupported = runtime_resolution.resolve_stt_config(
+        runtime_resolution.STTRuntimeIntent(
+            channel="peer",
+            provider=runtime_resolution.STT_PROVIDER_NONE,
+            source_language="ja",
+            source_mode="auto",
+        )
+    )
+    self_gpu = runtime_resolution.resolve_stt_config(
+        runtime_resolution.STTRuntimeIntent(
+            channel="self",
+            provider=runtime_resolution.STT_PROVIDER_LOCAL_QWEN_GPU,
+            source_language="ja",
+            source_mode="auto",
+        )
+    )
+
+    assert gpu.source_mode == "auto"
+    assert unsupported.source_mode == "manual"
+    assert self_gpu.source_mode == "manual"
+
+
+def test_stt_supports_peer_auto_detection_includes_qwen_audio() -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    assert runtime_resolution.stt_supports_peer_auto_detection("soniox")
+    assert runtime_resolution.stt_supports_peer_auto_detection("local_qwen_gpu")
+    assert runtime_resolution.stt_supports_peer_auto_detection("qwen_audio")
+    assert not runtime_resolution.stt_supports_peer_auto_detection("deepgram")
+    assert runtime_resolution.stt_supports_peer_auto_detection("rolling_free")
+    assert runtime_resolution.stt_supports_peer_auto_detection(
+        "rolling_free", rolling_members=("gemini_transcribe", "deepgram")
+    )
+    assert runtime_resolution.stt_supports_peer_auto_detection(
+        "rolling_free", rolling_members=("elevenlabs_scribe",)
+    )
+    assert not runtime_resolution.stt_supports_peer_auto_detection(
+        "rolling_free", rolling_members=("deepgram",)
+    )
+
+
+def test_default_peer_stt_runtime_intent_uses_desktop_peer_vad_defaults() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+
+    config = runtime_resolution.resolve_stt_config(
+        runtime_resolution.RuntimeResolutionInput().peer_stt
+    )
+
+    assert config.channel == resolved.RUNTIME_CHANNEL_PEER
+    assert config.vad_speech_threshold == 0.4
+    assert config.vad_hangover_ms == 500
+    assert config.vad_pre_roll_ms == 500
+
+
+def test_default_self_stt_runtime_intent_uses_low_latency_vad_defaults() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+
+    config = runtime_resolution.resolve_stt_config(runtime_resolution.STTRuntimeIntent())
+
+    assert config.channel == resolved.RUNTIME_CHANNEL_SELF
+    assert config.vad_speech_threshold == 0.3
+    assert config.vad_hangover_ms == 500
+    assert config.vad_pre_roll_ms == 500
+
+
+@pytest.mark.parametrize("channel", ["self", "peer"])
+def test_stt_runtime_intent_normalizes_legacy_vad_floor_for_both_channels(
+    channel: str,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    config = runtime_resolution.resolve_stt_config(
+        runtime_resolution.STTRuntimeIntent(
+            channel=channel,
+            vad_speech_threshold=0.05,
+        )
+    )
+
+    assert config.vad_speech_threshold == 0.10
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_provider"),
+    [
+        ("local_cpu_auto", ""),
+        ("local_orukeet", ""),
+        ("local_fun_asr_nano", ""),
+        ("local_fun_asr_mlt_nano", ""),
+        ("local_parakeet_ja", ""),
+        ("local_qwen_gpu", "local_qwen_gpu"),
+        ("local_parakeet_v3", ""),
+        ("local_qwen", ""),
+    ],
+)
+def test_stt_runtime_resolution_emits_canonical_local_provider_identity(
+    provider: str, expected_provider: str
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    config = runtime_resolution.resolve_stt_config(
+        runtime_resolution.STTRuntimeIntent(provider=provider)
+    )
+
+    assert config.provider == expected_provider
+    assert config.credential.source == "none"
+    assert config.credential.required is False
+
+
+def test_overlay_runtime_resolution_maps_desktop_options_without_legacy_name() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+
+    config = runtime_resolution.resolve_overlay_config(
+        runtime_resolution.OverlayRuntimeIntent(
+            enabled=True,
+            target=resolved.OVERLAY_TARGET_DESKTOP,
+            show_translation=False,
+            show_peer_original=True,
+            calibration={"distance": 3.0, "offset_x": 1.25},
+            desktop_overlay_options={
+                "size_preset": "large",
+                "position": {"x": 123, "y": 456},
+                "locked": True,
+                "visual": {"background_alpha": 0.42},
+            },
+        )
+    )
+
+    assert isinstance(config, resolved.ResolvedOverlayConfig)
+    assert config.enabled is True
+    assert config.target == resolved.OVERLAY_TARGET_DESKTOP
+    assert config.show_translation is False
+    assert config.show_peer_original is True
+    assert config.calibration["distance"] == 3.0
+    assert config.desktop_overlay_options["size_preset"] == "large"
+    assert config.desktop_overlay_options["position"] == {"x": 123, "y": 456}
+    assert config.desktop_overlay_options["locked"] is True
+    assert "desktop_flet" not in config.desktop_overlay_options
+
+
+@pytest.mark.parametrize(
+    (
+        "model",
+        "connection",
+        "openrouter_source",
+        "expected_provider",
+        "expected_model",
+        "expected_credential_source",
+        "expected_credential_reference",
+        "expected_region",
+        "expected_provider_routing",
+    ),
+    [
+        (
+            "gemma4",
+            "managed",
+            "managed",
+            "openrouter",
+            "google/gemma-4-26b-a4b-it",
+            "managed",
+            "openrouter:managed",
+            None,
+            "gemma4_26b_31b_latency",
+        ),
+        (
+            "gemma4",
+            "openrouter",
+            "byok",
+            "openrouter",
+            "google/gemma-4-26b-a4b-it",
+            "secret_store",
+            "openrouter:byok",
+            None,
+            "gemma4_26b_31b_latency",
+        ),
+        (
+            "gemma4",
+            "openrouter",
+            "none",
+            "openrouter",
+            "google/gemma-4-26b-a4b-it",
+            "secret_store",
+            "openrouter:byok",
+            None,
+            "gemma4_26b_31b_latency",
+        ),
+        (
+            "deepseek_v4_flash",
+            "openrouter",
+            "byok",
+            "openrouter",
+            "deepseek/deepseek-v4-flash-0731",
+            "secret_store",
+            "openrouter:byok",
+            None,
+            "deepseek_v4_flash_latency",
+        ),
+        (
+            "deepseek_v4_flash_41",
+            "managed",
+            "managed",
+            "openrouter",
+            "deepseek/deepseek-v4.1-flash-1017",
+            "managed",
+            "openrouter:managed",
+            None,
+            "deepseek_v4_flash_41_strict",
+        ),
+        (
+            "deepseek_v4_flash_41",
+            "managed_china",
+            "managed",
+            "openrouter",
+            "deepseek/deepseek-v4.1-flash-1017",
+            "managed",
+            "openrouter:managed_qq",
+            None,
+            "deepseek_v4_flash_41_strict",
+        ),
+        (
+            "deepseek_v4_flash_41",
+            "openrouter",
+            "byok",
+            "openrouter",
+            "deepseek/deepseek-v4.1-flash-1017",
+            "secret_store",
+            "openrouter:byok",
+            None,
+            "deepseek_v4_flash_41_strict",
+        ),
+        (
+            "deepseek_v4_flash_41",
+            "official_byok",
+            "byok",
+            "deepseek",
+            "deepseek-flash",
+            "secret_store",
+            "deepseek:byok",
+            None,
+            None,
+        ),
+        (
+            "gemini_flash",
+            "openrouter",
+            "byok",
+            "openrouter",
+            "google/gemini-3.8-flash",
+            "secret_store",
+            "openrouter:byok",
+            None,
+            "google_gemini_latency",
+        ),
+        (
+            "gemini_flash",
+            "official_byok",
+            "byok",
+            "gemini",
+            "gemini-3.8-flash",
+            "secret_store",
+            "gemini:byok",
+            None,
+            None,
+        ),
+        (
+            "qwen38_flash",
+            "official_byok",
+            "byok",
+            "qwen",
+            "qwen3.8-flash",
+            "secret_store",
+            "qwen:beijing",
+            "beijing",
+            None,
+        ),
+        (
+            "gpt_6_luna",
+            "openrouter",
+            "managed",
+            "openrouter",
+            "openai/gpt-6-luna",
+            "secret_store",
+            "openrouter:byok",
+            None,
+            "default",
+        ),
+        (
+            "gpt_6_luna",
+            "official_byok",
+            "managed",
+            "openai",
+            "gpt-6-luna",
+            "secret_store",
+            "openai:byok",
+            None,
+            None,
+        ),
+        (
+            "local_llm",
+            "ollama",
+            "byok",
+            "local_llm",
+            "llama3.1:8b",
+            "none",
+            None,
+            None,
+            None,
+        ),
+    ],
+)
+def test_translation_model_connection_matrix_resolves_llm_config(
+    model: str,
+    connection: str,
+    openrouter_source: str,
+    expected_provider: str,
+    expected_model: str,
+    expected_credential_source: str,
+    expected_credential_reference: str | None,
+    expected_region: str | None,
+    expected_provider_routing: str | None,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+    openrouter_intent = runtime_resolution.OpenRouterRuntimeIntent(
+        selected_source=openrouter_source,
+    )
+
+    config = runtime_resolution.resolve_llm_config(
+        _runtime_input(
+            runtime_resolution,
+            model=model,
+            connection=connection,
+            openrouter=openrouter_intent,
+        )
+    )
+
+    assert isinstance(config, resolved.ResolvedLLMConfig)
+    assert config.provider == expected_provider
+    assert config.model == expected_model
+    assert config.credential == _credential_assertion(
+        resolved,
+        expected_credential_source,
+        expected_credential_reference,
+    )
+    assert config.region == expected_region
+    assert config.provider_routing == expected_provider_routing
+    assert config.concurrency_limit == 5
+    if model in {"custom_http", "managed_gemma", "local_llm"}:
+        assert config.fallback is None
+    else:
+        assert config.fallback is not None
+        assert config.fallback.target == config.primary
+
+
+@pytest.mark.parametrize(
+    ("connection", "backend"),
+    [
+        ("cpu", "cpu"),
+        ("gpu", "gpu"),
+    ],
+)
+def test_managed_gemma_resolves_distinct_local_target_without_provider_fallback(
+    connection: str,
+    backend: str,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+
+    config = runtime_resolution.resolve_llm_config(
+        _runtime_input(
+            runtime_resolution,
+            model=runtime_resolution.TRANSLATION_MODEL_MANAGED_GEMMA,
+            connection=connection,
+        )
+    )
+
+    assert config.provider == runtime_resolution.PROVIDER_MANAGED_GEMMA
+    assert config.model == runtime_resolution.MANAGED_GEMMA_MODEL
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_NONE,
+        required=False,
+        reference=None,
+    )
+    assert config.provider_options == {"backend": backend}
+    assert config.fallback is None
+    assert len(config.attempts) == 1
+    assert config.attempts[0].target == config.primary
+
+
+def test_local_llm_resolves_without_provider_fallback() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+
+    config = runtime_resolution.resolve_llm_config(
+        _runtime_input(
+            runtime_resolution,
+            model=runtime_resolution.TRANSLATION_MODEL_LOCAL_LLM,
+            connection=runtime_resolution.TRANSLATION_CONNECTION_OLLAMA,
+        )
+    )
+
+    assert config.provider == runtime_resolution.PROVIDER_LOCAL_LLM
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_NONE,
+        required=False,
+        reference=None,
+    )
+    assert config.fallback is None
+    assert len(config.attempts) == 1
+    assert config.attempts[0].target == config.primary
+
+
+def test_legacy_managed_gemma_provider_derives_cpu_product_intent() -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm=runtime_resolution.PROVIDER_MANAGED_GEMMA,
+    )
+
+    assert intent.model == runtime_resolution.TRANSLATION_MODEL_MANAGED_GEMMA
+    assert intent.connection == runtime_resolution.TRANSLATION_CONNECTION_CPU
+
+
+def test_direct_cloud_primary_gets_exact_identity_hedge() -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    config = runtime_resolution.resolve_llm_config(
+        _runtime_input(
+            runtime_resolution,
+            model=runtime_resolution.TRANSLATION_MODEL_DEEPSEEK_V4_FLASH_41,
+            connection=runtime_resolution.TRANSLATION_CONNECTION_OFFICIAL_BYOK,
+        )
+    )
+
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+    assert config.fallback.start_after_ms == 1300
+    assert config.fallback.start_on_primary_error is True
+    assert config.fallback.force_managed_wrapper is False
+    assert len(config.attempts) == 2
+    assert config.attempts[0].target == config.attempts[1].target
+
+
+def test_managed_openrouter_primary_gets_identity_hedge_and_emergency_route() -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    config = runtime_resolution.resolve_llm_config(
+        _runtime_input(
+            runtime_resolution,
+            model=runtime_resolution.TRANSLATION_MODEL_DEEPSEEK_V4_FLASH_41,
+            connection=runtime_resolution.TRANSLATION_CONNECTION_MANAGED_CHINA,
+        )
+    )
+
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+    assert config.fallback.force_managed_wrapper is True
+    assert len(config.attempts) == 3
+    assert config.attempts[1].target == config.primary
+    assert config.attempts[1].start_after_ms == 1300
+    assert config.attempts[1].start_on_primary_error is True
+    assert config.attempts[2].start_after_ms == 4400
+    assert config.attempts[2].start_on_primary_error is False
+    assert config.attempts[2].target.provider_routing == "gemma4_31b_modelrun_only"
+
+
+@pytest.mark.parametrize(
+    ("connection", "attempt_count"),
+    [("openrouter", 3), ("official_byok", 2)],
+)
+def test_luna_attempt_plan_retains_same_route_hedge_and_only_router_emergency(
+    connection: str, attempt_count: int
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    config = runtime_resolution.resolve_llm_config(
+        _runtime_input(runtime_resolution, model="gpt_6_luna", connection=connection)
+    )
+    assert config.concurrency_limit == 5
+    assert len(config.attempts) == attempt_count
+    assert config.attempts[0].target == config.attempts[1].target
+    assert config.attempts[1].start_after_ms == 1300
+    assert config.attempts[1].start_on_primary_error is True
+    assert config.fallback is not None
+    assert config.fallback.force_managed_wrapper is False
+    if connection == "openrouter":
+        emergency = config.attempts[2]
+        assert emergency.start_after_ms == 4400
+        assert emergency.start_on_primary_error is False
+        assert emergency.target.model == "google/gemma-4-31b-it"
+        assert emergency.target.credential.reference == "openrouter:byok"
+        assert emergency.target.provider_routing == "gemma4_31b_modelrun_only"
+
+
+@pytest.mark.parametrize("requested_connection", [None, "managed", "managed_china", "cpu"])
+def test_luna_invalid_or_missing_connection_selects_chatgpt_plan(
+    requested_connection: str | None,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    intent = runtime_resolution.normalize_translation_runtime_intent(
+        model="gpt_6_luna", connection=requested_connection
+    )
+    assert intent.model == "gpt_6_luna"
+    assert intent.connection == "chatgpt"
+    target = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(translation=intent)
+    ).primary
+    assert target.provider == "chatgpt"
+    assert target.model == "gpt-6-luna"
+    assert target.credential.reference == "chatgpt:oauth"
+
+
+def test_luna_compatibility_provider_and_profile_resolve_to_same_product() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    direct = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openai",
+    )
+    assert (direct.model, direct.connection) == ("gpt_6_luna", "official_byok")
+    router = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm="openrouter",
+        selection_alias="gpt_6_luna_byok",
+        selected_source="managed",
+    )
+    assert (router.model, router.selected_source) == ("openai/gpt-6-luna", "byok")
+    selected = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openrouter",
+        openrouter_model=router.model,
+        openrouter_selected_source=router.selected_source,
+    )
+    assert (selected.model, selected.connection) == ("gpt_6_luna", "openrouter")
+
+
+@pytest.mark.parametrize("stale_alias", ["gemma4_31b_managed", "unknown", None])
+def test_luna_canonical_product_resolves_independently_of_legacy_alias(
+    stale_alias: str | None,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    normalized = runtime_resolution.normalize_openrouter_runtime_intent(
+        model="google/gemma-4-31b-it",
+        selected_source="managed",
+        selection_alias=stale_alias,
+    )
+    for connection, provider, model in (
+        ("openrouter", "openrouter", "openai/gpt-6-luna"),
+        ("official_byok", "openai", "gpt-6-luna"),
+    ):
+        config = runtime_resolution.resolve_llm_config(
+            _runtime_input(
+                runtime_resolution,
+                model="gpt_6_luna",
+                connection=connection,
+                openrouter=normalized,
+            )
+        )
+        assert (config.provider, config.model) == (provider, model)
+        assert config.credential.source == "secret_store"
+
+
+def test_standard_managed_resolves_standard_managed_credential_reference() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+
+    config = runtime_resolution.resolve_llm_config(
+        _runtime_input(
+            runtime_resolution,
+            model=runtime_resolution.TRANSLATION_MODEL_GEMMA4_26B_31B,
+            connection=runtime_resolution.TRANSLATION_CONNECTION_MANAGED,
+            openrouter=runtime_resolution.OpenRouterRuntimeIntent(
+                selected_source=runtime_resolution.OPENROUTER_SOURCE_MANAGED,
+                managed_credential_kind=runtime_resolution.OPENROUTER_MANAGED_CREDENTIAL_QQ,
+            ),
+        )
+    )
+
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_MANAGED,
+        required=True,
+        reference="openrouter:managed",
+    )
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-1017"],
+)
+def test_openrouter_deepseek_byok_deepseek_only_preserves_routing_with_identity_hedge(
+    model: str,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+    openrouter_intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm="openrouter",
+        model=model,
+        selected_source="byok",
+        routing_mode="parasail_first",
+        provider_routing="deepseek_only",
+        broker_base_url="https://broker.fixture.test/v1",
+    )
+    assert openrouter_intent.model == "deepseek/deepseek-v4.1-flash-1017"
+    assert openrouter_intent.selection_alias == "deepseek_v4_flash_41_byok"
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openrouter",
+        openrouter_model=model,
+        openrouter_selected_source=openrouter_intent.selected_source,
+        openrouter_provider_routing=openrouter_intent.provider_routing,
+        concurrency_limit=8,
+    )
+
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(
+            translation=translation_intent,
+            openrouter=openrouter_intent,
+        )
+    )
+
+    assert translation_intent.model == runtime_resolution.TRANSLATION_MODEL_DEEPSEEK_V4_FLASH_41
+    assert translation_intent.connection == runtime_resolution.TRANSLATION_CONNECTION_OPENROUTER
+    assert config.provider == "openrouter"
+    assert config.model == "deepseek/deepseek-v4.1-flash-1017"
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_SECRET_STORE,
+        required=True,
+        reference="openrouter:byok",
+    )
+    assert config.routing_mode == "latency"
+    assert config.provider_routing == "deepseek_v4_flash_41_strict"
+    assert config.service_endpoint == "https://broker.fixture.test/v1"
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+
+
+def test_openrouter_runtime_intent_normalizes_legacy_deepseek_model() -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm="openrouter",
+        model="deepseek/deepseek-v4-flash",
+        selected_source="byok",
+    )
+
+    assert intent.model == "deepseek/deepseek-v4-flash-0731"
+    assert intent.selection_alias == "deepseek_v4_flash_byok"
+
+
+def test_legacy_gemini_alias_only_normalizes_to_canonical_runtime_target() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    profiles = _profiles_module()
+
+    intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm="openrouter",
+        selection_alias=profiles.LEGACY_OPENROUTER_SELECTION_ALIAS_GEMINI31_FLASH_LITE_BYOK,
+    )
+
+    assert intent.model == profiles.OPENROUTER_MODEL_GEMINI_FLASH
+    assert intent.selected_source == profiles.OPENROUTER_CREDENTIAL_SOURCE_BYOK
+    assert intent.selection_alias == profiles.OPENROUTER_SELECTION_ALIAS_GEMINI_FLASH_BYOK
+
+    translation = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openrouter",
+        openrouter_model=intent.model,
+        openrouter_selected_source=intent.selected_source,
+        openrouter_provider_routing=intent.provider_routing,
+    )
+    resolved = runtime_resolution.resolve_llm_config(
+        _runtime_input(
+            runtime_resolution,
+            model=translation.model,
+            connection=translation.connection,
+            openrouter=intent,
+        )
+    )
+
+    assert translation.model == runtime_resolution.TRANSLATION_MODEL_GEMINI_FLASH
+    assert resolved.provider == "openrouter"
+    assert resolved.model == profiles.OPENROUTER_MODEL_GEMINI_FLASH
+
+
+@pytest.mark.parametrize(
+    (
+        "legacy_alias",
+        "selected_source",
+        "expected_alias",
+        "expected_source",
+        "expected_model",
+        "expected_credential_source",
+        "expected_credential_reference",
+    ),
+    [
+        (
+            "openrouter:byok:google/gemma-4-26b-a4b-it",
+            "managed",
+            "gemma4_26b_31b_byok",
+            "byok",
+            "google/gemma-4-26b-a4b-it",
+            "secret_store",
+            "openrouter:byok",
+        ),
+        (
+            "openrouter:managed:google/gemma-4-26b-a4b-it",
+            "byok",
+            "gemma4_26b_31b_managed",
+            "managed",
+            "google/gemma-4-26b-a4b-it",
+            "managed",
+            "openrouter:managed",
+        ),
+        (
+            "openrouter:none:google/gemma-4-26b-a4b-it",
+            "managed",
+            "gemma4_26b_31b_managed",
+            "managed",
+            "google/gemma-4-26b-a4b-it",
+            "managed",
+            "openrouter:managed",
+        ),
+        (
+            "openrouter:byok:qwen/qwen3.5-flash-02-23",
+            "managed",
+            "qwen35_flash_byok",
+            "byok",
+            "qwen/qwen3.5-flash-02-23",
+            "secret_store",
+            "openrouter:byok",
+        ),
+        (
+            "openrouter:none:qwen/qwen3.5-flash-02-23",
+            "managed",
+            "qwen35_flash_managed",
+            "managed",
+            "qwen/qwen3.5-flash-02-23",
+            "managed",
+            "openrouter:managed",
+        ),
+    ],
+)
+def test_legacy_openrouter_selection_aliases_normalize_before_resolved_runtime(
+    legacy_alias: str,
+    selected_source: str,
+    expected_alias: str,
+    expected_source: str,
+    expected_model: str,
+    expected_credential_source: str,
+    expected_credential_reference: str,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+
+    openrouter_intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm="openrouter",
+        selected_source=selected_source,
+        selection_alias=legacy_alias,
+    )
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openrouter",
+        openrouter_model=openrouter_intent.model,
+        openrouter_selected_source=openrouter_intent.selected_source,
+        openrouter_provider_routing=openrouter_intent.provider_routing,
+        concurrency_limit=5,
+    )
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(
+            translation=translation_intent,
+            openrouter=openrouter_intent,
+        )
+    )
+
+    assert openrouter_intent.selection_alias == expected_alias
+    assert openrouter_intent.selected_source == expected_source
+    assert openrouter_intent.model == expected_model
+    assert config.provider == "openrouter"
+    assert config.model == expected_model
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=expected_credential_source,
+        required=True,
+        reference=expected_credential_reference,
+    )
+    assert not hasattr(config, "selection_alias")
+    assert not hasattr(config, "fallback_selection_alias")
+
+
+def test_derive_runtime_from_openrouter_gemini_compatibility_values() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+
+    openrouter_intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm="openrouter",
+        model="google/gemini-3.1-flash-lite",
+        selected_source="byok",
+        selection_alias="gemini31_flash_lite_byok",
+        routing_mode="latency",
+        provider_routing="google_gemini_latency",
+    )
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openrouter",
+        openrouter_model=openrouter_intent.model,
+        openrouter_selected_source=openrouter_intent.selected_source,
+        openrouter_provider_routing=openrouter_intent.provider_routing,
+        concurrency_limit=6,
+    )
+
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(
+            translation=translation_intent,
+            openrouter=openrouter_intent,
+        )
+    )
+
+    assert openrouter_intent.selection_alias == "gemini_flash_byok"
+    assert translation_intent.model == runtime_resolution.TRANSLATION_MODEL_GEMINI_FLASH
+    assert translation_intent.connection == runtime_resolution.TRANSLATION_CONNECTION_OPENROUTER
+    assert config.provider == "openrouter"
+    assert config.model == "google/gemini-3.8-flash"
+    assert config.provider_routing == "google_gemini_latency"
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_SECRET_STORE,
+        required=True,
+        reference="openrouter:byok",
+    )
+
+
+def test_missing_translation_openrouter_compatibility_values_derive_exact_runtime_config() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+    raw_settings = {
+        "provider": {"llm": "openrouter"},
+        "openrouter": {
+            "llm_model": "google/gemma-4-26b-a4b-it",
+            "selected_source": "managed",
+            "selection_alias": "deepseek_v4_flash_byok",
+            "fallback_selection_alias": "qwen35_flash",
+            "routing_mode": "parasail_first",
+            "provider_routing": "default",
+            "broker_base_url": "https://broker.fixture.test/v1",
+        },
+        "gemini": {"llm_model": "gemini-3.8-flash"},
+        "qwen": {"llm_model": "qwen3.8-flash", "region": "beijing"},
+        "deepseek": {"llm_model": "deepseek-flash"},
+        "local_llm": {
+            "base_url": "http://127.0.0.1:11434/v1",
+            "model": "llama3.1:8b",
+            "extra_body": {},
+        },
+        "llm": {"concurrency_limit": 4},
+    }
+    raw_openrouter = raw_settings["openrouter"]
+    openrouter_intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        model=raw_openrouter["llm_model"],
+        selected_source=raw_openrouter["selected_source"],
+        selection_alias=raw_openrouter["selection_alias"],
+        routing_mode=raw_openrouter["routing_mode"],
+        provider_routing=raw_openrouter["provider_routing"],
+        broker_base_url=raw_openrouter["broker_base_url"],
+    )
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm=raw_settings["provider"]["llm"],
+        openrouter_model=openrouter_intent.model,
+        openrouter_selected_source=openrouter_intent.selected_source,
+        openrouter_provider_routing=openrouter_intent.provider_routing,
+        gemini_model=raw_settings["gemini"]["llm_model"],
+        qwen_model=raw_settings["qwen"]["llm_model"],
+        concurrency_limit=raw_settings["llm"]["concurrency_limit"],
+    )
+
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(
+            translation=translation_intent,
+            openrouter=openrouter_intent,
+            direct=runtime_resolution.DirectProviderRuntimeIntent(
+                qwen_region=raw_settings["qwen"]["region"],
+                local_llm_model=raw_settings["local_llm"]["model"],
+                local_llm_base_url=raw_settings["local_llm"]["base_url"],
+                local_llm_extra_body=raw_settings["local_llm"]["extra_body"],
+            ),
+        )
+    )
+
+    assert translation_intent.model == runtime_resolution.TRANSLATION_MODEL_DEEPSEEK_V4_FLASH
+    assert translation_intent.connection == runtime_resolution.TRANSLATION_CONNECTION_OPENROUTER
+    assert openrouter_intent.model == "deepseek/deepseek-v4-flash-0731"
+    assert openrouter_intent.selected_source == "byok"
+    assert config.provider == "openrouter"
+    assert config.model == "deepseek/deepseek-v4-flash-0731"
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_SECRET_STORE,
+        required=True,
+        reference="openrouter:byok",
+    )
+    assert config.routing_mode == "latency"
+    assert config.provider_routing == "deepseek_v4_flash_latency"
+    assert config.base_url is None
+    assert config.service_endpoint == "https://broker.fixture.test/v1"
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+    assert config.concurrency_limit == 4
+
+
+@pytest.mark.parametrize(
+    ("selected_source", "expected_credential_source", "expected_credential_reference"),
+    [
+        ("byok", "secret_store", "openrouter:byok"),
+        ("managed", "managed", "openrouter:managed"),
+    ],
+)
+def test_openrouter_qwen_primary_compatibility_preserves_model_and_source(
+    selected_source: str,
+    expected_credential_source: str,
+    expected_credential_reference: str,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+    openrouter_intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm="openrouter",
+        model="qwen/qwen3.5-flash-02-23",
+        selected_source=selected_source,
+        routing_mode="parasail_first",
+        provider_routing="default",
+        broker_base_url="https://broker.fixture.test/v1",
+    )
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openrouter",
+        openrouter_model=openrouter_intent.model,
+        openrouter_selected_source=openrouter_intent.selected_source,
+        openrouter_provider_routing=openrouter_intent.provider_routing,
+        concurrency_limit=8,
+    )
+
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(
+            translation=translation_intent,
+            openrouter=openrouter_intent,
+        )
+    )
+
+    assert config.provider == "openrouter"
+    assert config.model == "qwen/qwen3.5-flash-02-23"
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=expected_credential_source,
+        required=True,
+        reference=expected_credential_reference,
+    )
+    assert config.routing_mode == "latency"
+    assert config.provider_routing == "default"
+    assert config.service_endpoint == "https://broker.fixture.test/v1"
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+    assert config.concurrency_limit == 8
+
+
+def test_openrouter_qwen_primary_deepseek_only_preserves_routing_with_identity_hedge() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    openrouter_intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm="openrouter",
+        model="qwen/qwen3.5-flash-02-23",
+        selected_source="byok",
+        routing_mode="parasail_first",
+        provider_routing="deepseek_only",
+        broker_base_url="https://broker.fixture.test/v1",
+    )
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openrouter",
+        openrouter_model=openrouter_intent.model,
+        openrouter_selected_source=openrouter_intent.selected_source,
+        openrouter_provider_routing=openrouter_intent.provider_routing,
+        concurrency_limit=8,
+    )
+
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(
+            translation=translation_intent,
+            openrouter=openrouter_intent,
+        )
+    )
+
+    assert translation_intent.model == runtime_resolution.TRANSLATION_MODEL_OPENROUTER_QWEN_35_FLASH
+    assert config.provider == "openrouter"
+    assert config.model == "qwen/qwen3.5-flash-02-23"
+    assert config.provider_routing == "deepseek_only"
+    assert config.routing_mode == "latency"
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+
+
+def test_missing_openrouter_source_defaults_to_byok_for_openrouter_provider() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+    raw_settings = {
+        "provider": {"llm": "openrouter"},
+        "openrouter": {
+            "llm_model": "google/gemma-4-26b-a4b-it",
+            "fallback_selection_alias": "none",
+            "routing_mode": "latency",
+            "provider_routing": "default",
+            "broker_base_url": "https://broker.fixture.test/v1",
+        },
+        "gemini": {"llm_model": "gemini-3.8-flash"},
+        "qwen": {"llm_model": "qwen3.8-flash", "region": "beijing"},
+        "deepseek": {"llm_model": "deepseek-flash"},
+        "llm": {"concurrency_limit": 3},
+    }
+    raw_openrouter = raw_settings["openrouter"]
+    openrouter_intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        provider_llm=raw_settings["provider"]["llm"],
+        model=raw_openrouter["llm_model"],
+        routing_mode=raw_openrouter["routing_mode"],
+        provider_routing=raw_openrouter["provider_routing"],
+        broker_base_url=raw_openrouter["broker_base_url"],
+    )
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm=raw_settings["provider"]["llm"],
+        openrouter_model=openrouter_intent.model,
+        openrouter_selected_source=openrouter_intent.selected_source,
+        openrouter_provider_routing=openrouter_intent.provider_routing,
+        gemini_model=raw_settings["gemini"]["llm_model"],
+        qwen_model=raw_settings["qwen"]["llm_model"],
+        concurrency_limit=raw_settings["llm"]["concurrency_limit"],
+    )
+
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(
+            translation=translation_intent,
+            openrouter=openrouter_intent,
+        )
+    )
+
+    assert openrouter_intent.model == "google/gemma-4-26b-a4b-it"
+    assert openrouter_intent.selected_source == "byok"
+    assert openrouter_intent.selection_alias == "gemma4_26b_31b_byok"
+    assert translation_intent.model == runtime_resolution.TRANSLATION_MODEL_GEMMA4_26B_31B
+    assert translation_intent.connection == runtime_resolution.TRANSLATION_CONNECTION_OPENROUTER
+    assert config.provider == "openrouter"
+    assert config.model == "google/gemma-4-26b-a4b-it"
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_SECRET_STORE,
+        required=True,
+        reference="openrouter:byok",
+    )
+    assert config.routing_mode == "latency"
+    assert config.provider_routing == "gemma4_26b_31b_latency"
+    assert config.service_endpoint == "https://broker.fixture.test/v1"
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+    assert config.concurrency_limit == 3
+
+
+@pytest.mark.parametrize(
+    "source_kwargs",
+    [
+        {},
+        {"openrouter_selected_source": None},
+    ],
+)
+def test_derive_translation_compatibility_defaults_missing_openrouter_source_to_byok(
+    source_kwargs: dict[str, object],
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm="openrouter",
+        openrouter_model="google/gemma-4-26b-a4b-it",
+        openrouter_provider_routing="default",
+        concurrency_limit=3,
+        **source_kwargs,
+    )
+
+    assert translation_intent.model == runtime_resolution.TRANSLATION_MODEL_GEMMA4_26B_31B
+    assert translation_intent.connection == runtime_resolution.TRANSLATION_CONNECTION_OPENROUTER
+    assert translation_intent.concurrency_limit == 3
+
+
+def test_missing_translation_direct_provider_compatibility_values_derive_exact_config() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+    raw_settings = {
+        "provider": {"llm": "deepseek"},
+        "openrouter": {
+            "llm_model": "google/gemma-4-26b-a4b-it",
+            "selected_source": "managed",
+            "selection_alias": "gemma4_managed",
+            "fallback_selection_alias": "qwen35_flash",
+            "routing_mode": "latency",
+            "provider_routing": "default",
+            "broker_base_url": "https://broker.fixture.test/v1",
+        },
+        "gemini": {"llm_model": "gemini-3.8-flash"},
+        "qwen": {"llm_model": "qwen3.8-flash", "region": "singapore"},
+        "deepseek": {"llm_model": "deepseek-flash"},
+        "llm": {"concurrency_limit": 6},
+    }
+    raw_openrouter = raw_settings["openrouter"]
+    openrouter_intent = runtime_resolution.normalize_openrouter_runtime_intent(
+        model=raw_openrouter["llm_model"],
+        selected_source=raw_openrouter["selected_source"],
+        selection_alias=raw_openrouter["selection_alias"],
+        routing_mode=raw_openrouter["routing_mode"],
+        provider_routing=raw_openrouter["provider_routing"],
+        broker_base_url=raw_openrouter["broker_base_url"],
+    )
+    translation_intent = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
+        provider_llm=raw_settings["provider"]["llm"],
+        openrouter_model=openrouter_intent.model,
+        openrouter_selected_source=openrouter_intent.selected_source,
+        openrouter_provider_routing=openrouter_intent.provider_routing,
+        gemini_model=raw_settings["gemini"]["llm_model"],
+        qwen_model=raw_settings["qwen"]["llm_model"],
+        concurrency_limit=raw_settings["llm"]["concurrency_limit"],
+    )
+
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(
+            translation=translation_intent,
+            openrouter=openrouter_intent,
+            direct=runtime_resolution.DirectProviderRuntimeIntent(
+                deepseek_v4_flash_model=raw_settings["deepseek"]["llm_model"],
+                qwen_region=raw_settings["qwen"]["region"],
+            ),
+        )
+    )
+
+    assert translation_intent.model == runtime_resolution.TRANSLATION_MODEL_DEEPSEEK_V4_FLASH_41
+    assert translation_intent.connection == runtime_resolution.TRANSLATION_CONNECTION_OFFICIAL_BYOK
+    assert config.provider == "deepseek"
+    assert config.model == "deepseek-flash"
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_SECRET_STORE,
+        required=True,
+        reference="deepseek:byok",
+    )
+    assert config.base_url is None
+    assert config.service_endpoint is None
+    assert config.region is None
+    assert config.routing_mode is None
+    assert config.provider_routing is None
+    assert config.fallback is not None
+    assert config.fallback.target == config.primary
+    assert config.concurrency_limit == 6
+
+
+def test_resolved_output_uses_lookup_references_not_raw_secret_values() -> None:
+    runtime_resolution = _runtime_resolution_module()
+    resolved = _resolved_module()
+    config = runtime_resolution.resolve_llm_config(
+        _runtime_input(
+            runtime_resolution,
+            model=runtime_resolution.TRANSLATION_MODEL_GEMMA4_26B_31B,
+            connection=runtime_resolution.TRANSLATION_CONNECTION_OPENROUTER,
+            openrouter=runtime_resolution.OpenRouterRuntimeIntent(
+                selected_source=runtime_resolution.OPENROUTER_SOURCE_BYOK,
+            ),
+        )
+    )
+
+    assert config.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_SECRET_STORE,
+        required=True,
+        reference="openrouter:byok",
+    )
+    assert config.fallback is not None
+    assert config.fallback.target.credential == resolved.ResolvedCredentialRequirement(
+        source=resolved.CREDENTIAL_SOURCE_SECRET_STORE,
+        required=True,
+        reference="openrouter:byok",
+    )
+    assert config.credential.reference is not None
+    assert "sk-" not in config.credential.reference
+    assert "secret" not in config.credential.reference
+    assert config.fallback.target.credential.reference is not None
+    assert "sk-" not in config.fallback.target.credential.reference
+    assert "secret" not in config.fallback.target.credential.reference
+
+
+@pytest.mark.parametrize("connection", ["gpu", "cpu", "managed", "invalid"])
+def test_26b_normalization_and_resolution_never_substitute_model_or_remote_provider(
+    connection: str,
+) -> None:
+    runtime_resolution = _runtime_resolution_module()
+    intent = runtime_resolution.normalize_translation_runtime_intent(
+        model="managed_gemma_26b", connection=connection
+    )
+    assert intent.model == "managed_gemma_26b"
+    assert intent.connection == "gpu"
+    config = runtime_resolution.resolve_llm_config(
+        runtime_resolution.RuntimeResolutionInput(translation=intent)
+    )
+    assert config.provider == "managed_gemma"
+    assert config.model == "puripuly-gemma-4-26b-a4b-q4"
+    assert config.provider_options == {"backend": "gpu"}
+    assert config.fallback is None
+    assert len(config.attempts) == 1
+    assert not config.credential.required

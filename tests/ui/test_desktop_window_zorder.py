@@ -1,0 +1,937 @@
+from __future__ import annotations
+
+import ast
+import asyncio
+import inspect
+from collections.abc import Callable
+
+import pytest
+
+from puripuly_heart.ui import desktop_window_zorder
+
+
+class FakeWin32WindowApi:
+    def __init__(
+        self,
+        *,
+        windows: tuple[int, ...] = (101,),
+        styles: tuple[int, ...] = (desktop_window_zorder._WS_EX_TRANSPARENT,),
+        set_result: tuple[bool, int | None] = (True, None),
+        enum_error: int | None = None,
+        titles: dict[int, str] | None = None,
+        visible: bool = False,
+        hide_after_show: int = 0,
+        show_result: tuple[bool, int | None] = (True, None),
+        bounds: tuple[int, int, int, int] = (0, 0, 800, 600),
+        placement_result: tuple[bool, int | None] = (True, None),
+    ) -> None:
+        self.windows = windows
+        self.styles = list(styles)
+        self.current_style = self.styles[-1] if self.styles else 0
+        self.set_result = set_result
+        self.enum_error = enum_error
+        self.titles = titles if titles is not None else {window: "" for window in windows}
+        self.visible = visible
+        self.hide_after_show = hide_after_show
+        self.show_result = show_result
+        self.bounds = bounds
+        self.placement_result = placement_result
+        self.window_queries: list[int] = []
+        self.all_window_queries: list[int] = []
+        self.title_queries: list[int] = []
+        self.show_calls: list[int] = []
+        self.placement_calls: list[tuple[int, int, int, int, int]] = []
+        self.set_calls: list[int] = []
+        self.pid = 4321
+        self.peer_ahead = False
+        self.watch_callback: Callable[[int, int], None] | None = None
+        self.watch_close_calls = 0
+        self.order_queries = 0
+
+    def all_top_level_windows_for_process(
+        self, pid: int
+    ) -> desktop_window_zorder.WindowEnumerationResult:
+        self.all_window_queries.append(pid)
+        return desktop_window_zorder.WindowEnumerationResult(
+            windows=self.windows,
+            win32_error=self.enum_error,
+        )
+
+    def is_window_visible(self, hwnd: int) -> bool:
+        return self.visible
+
+    def window_title(self, hwnd: int) -> str:
+        self.title_queries.append(hwnd)
+        return self.titles.get(hwnd, "")
+
+    def window_bounds(self, hwnd: int) -> tuple[int, int, int, int] | None:
+        return self.bounds if hwnd in self.windows else None
+
+    def set_window_bounds_no_activate(
+        self,
+        hwnd: int,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+    ) -> tuple[bool, int | None]:
+        self.placement_calls.append((hwnd, x, y, width, height))
+        if self.placement_result[0]:
+            self.bounds = (x, y, width, height)
+        return self.placement_result
+
+    def show_window_no_activate(self, hwnd: int) -> tuple[bool, int | None]:
+        self.show_calls.append(hwnd)
+        if self.show_result[0]:
+            self.visible = True
+            if self.hide_after_show > 0:
+                self.hide_after_show -= 1
+                self.visible = False
+        return self.show_result
+
+    def top_level_windows_for_process(
+        self, pid: int
+    ) -> desktop_window_zorder.WindowEnumerationResult:
+        self.window_queries.append(pid)
+        return desktop_window_zorder.WindowEnumerationResult(
+            windows=self.windows,
+            win32_error=self.enum_error,
+        )
+
+    def is_window(self, hwnd: int) -> bool:
+        return hwnd in self.windows
+
+    def process_id(self, hwnd: int) -> int | None:
+        return self.pid if hwnd in self.windows else None
+
+    def extended_style(self, hwnd: int) -> int:
+        assert hwnd in self.windows
+        if self.styles:
+            self.current_style = self.styles.pop(0)
+        return self.current_style
+
+    def set_topmost_no_activate(self, hwnd: int) -> tuple[bool, int | None]:
+        self.set_calls.append(hwnd)
+        if self.set_result[0]:
+            self.current_style |= desktop_window_zorder._WS_EX_TOPMOST
+        return self.set_result
+
+    def topmost_peers_ahead(self, hwnd: int) -> tuple[int, ...]:
+        assert hwnd in self.windows
+        self.order_queries += 1
+        return (202,) if self.peer_ahead else ()
+
+    def watch_z_order(
+        self, callback: Callable[[int, int], None]
+    ) -> desktop_window_zorder.WindowZOrderWatch:
+        self.watch_callback = callback
+        api = self
+
+        class Watch:
+            def close(self) -> None:
+                api.watch_close_calls += 1
+
+        return Watch()
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_reasserts_bound_process_window_after_click_through() -> None:
+    api = FakeWin32WindowApi()
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result == desktop_window_zorder.WindowZOrderResult(
+        applied=True,
+        reason="applied",
+        click_through_confirmed=True,
+        topmost_style_present=True,
+    )
+    assert api.window_queries == [4321]
+    assert api.set_calls == [101]
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_waits_for_click_through_before_reasserting() -> None:
+    api = FakeWin32WindowApi(
+        styles=(0, 0, desktop_window_zorder._WS_EX_TRANSPARENT),
+    )
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        timeout_s=0.5,
+        poll_interval_s=0.01,
+        sleep=record_sleep,
+    )
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is True
+    assert result.click_through_confirmed is True
+    assert len(sleeps) == 2
+    assert api.set_calls == [101]
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_reasserts_best_effort_when_click_through_is_unconfirmed() -> (
+    None
+):
+    api = FakeWin32WindowApi(styles=(0,))
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api, timeout_s=0)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is True
+    assert result.reason == "applied_unconfirmed"
+    assert result.click_through_confirmed is False
+    assert api.set_calls == [101]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("windows", "expected_reason"),
+    [
+        ((), "window_not_found"),
+        ((101, 102), "ambiguous_window"),
+    ],
+)
+async def test_windows_zorder_port_rejects_missing_or_ambiguous_windows(
+    windows: tuple[int, ...],
+    expected_reason: str,
+) -> None:
+    api = FakeWin32WindowApi(windows=windows)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api, timeout_s=0)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is False
+    assert result.reason == expected_reason
+    assert api.set_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_retries_transient_ambiguity() -> None:
+    class TransientAmbiguityApi(FakeWin32WindowApi):
+        def __init__(self) -> None:
+            super().__init__(windows=(101, 102))
+            self.batches = [(101, 102), (101,)]
+
+        def top_level_windows_for_process(
+            self, pid: int
+        ) -> desktop_window_zorder.WindowEnumerationResult:
+            self.window_queries.append(pid)
+            self.windows = self.batches.pop(0)
+            return desktop_window_zorder.WindowEnumerationResult(windows=self.windows)
+
+        def extended_style(self, hwnd: int) -> int:
+            return desktop_window_zorder._WS_EX_TRANSPARENT | (
+                desktop_window_zorder._WS_EX_TOPMOST if self.set_calls else 0
+            )
+
+    api = TransientAmbiguityApi()
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is True
+    assert api.window_queries == [4321, 4321]
+    assert api.set_calls == [101]
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_reports_window_enumeration_failure() -> None:
+    api = FakeWin32WindowApi(windows=(), enum_error=5)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is False
+    assert result.reason == "enum_windows_failed"
+    assert result.win32_error == 5
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_revalidates_process_before_mutation() -> None:
+    class ReusedWindowApi(FakeWin32WindowApi):
+        def __init__(self) -> None:
+            super().__init__()
+            self.process_queries = 0
+
+        def process_id(self, hwnd: int) -> int | None:
+            self.process_queries += 1
+            return 4321 if self.process_queries == 1 else 9999
+
+    api = ReusedWindowApi()
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is False
+    assert result.reason == "window_changed"
+    assert api.set_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_stops_when_closed_during_polling() -> None:
+    api = FakeWin32WindowApi(styles=(0,))
+    port: desktop_window_zorder.WindowsWindowZOrderPort
+
+    async def close_during_sleep(_delay: float) -> None:
+        port.close()
+
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        sleep=close_during_sleep,
+    )
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is False
+    assert result.reason == "binding_changed"
+    assert api.set_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_reports_set_window_pos_failure() -> None:
+    api = FakeWin32WindowApi(set_result=(False, 5))
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is False
+    assert result.reason == "set_window_pos_failed"
+    assert result.win32_error == 5
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_rejects_missing_topmost_style_after_success() -> None:
+    class MissingTopmostApi(FakeWin32WindowApi):
+        def set_topmost_no_activate(self, hwnd: int) -> tuple[bool, int | None]:
+            self.set_calls.append(hwnd)
+            return True, None
+
+    api = MissingTopmostApi()
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is False
+    assert result.reason == "topmost_style_missing"
+    assert api.set_calls == [101]
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_polls_async_topmost_postcondition() -> None:
+    class DelayedTopmostApi(FakeWin32WindowApi):
+        def set_topmost_no_activate(self, hwnd: int) -> tuple[bool, int | None]:
+            self.set_calls.append(hwnd)
+            return True, None
+
+    api = DelayedTopmostApi(
+        styles=(
+            desktop_window_zorder._WS_EX_TRANSPARENT,
+            desktop_window_zorder._WS_EX_TRANSPARENT,
+            desktop_window_zorder._WS_EX_TRANSPARENT | desktop_window_zorder._WS_EX_TOPMOST,
+        )
+    )
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api, sleep=record_sleep)
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is True
+    assert result.topmost_style_present is True
+    assert len(sleeps) == 1
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_close_discards_process_binding() -> None:
+    api = FakeWin32WindowApi()
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+    port.close()
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is False
+    assert result.reason == "closed"
+    assert api.window_queries == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_confirms_flet_owned_hidden_bounds_without_mutation() -> None:
+    api = FakeWin32WindowApi(
+        titles={101: "PuriPuly Overlay"},
+        visible=False,
+        bounds=(320, 720, 1344, 320),
+    )
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        bounds_retain_s=0.0,
+    )
+    port.bind_process(4321)
+
+    result = await port.confirm_window_bounds(
+        "PuriPuly Overlay",
+        x=320,
+        y=720,
+        width=1344,
+        height=320,
+    )
+
+    assert result == desktop_window_zorder.WindowBoundsConfirmation(
+        confirmed=True,
+        reason="confirmed",
+        hwnd=101,
+        title_confirmed=True,
+        bounds_confirmed=True,
+        observed_bounds=(320, 720, 1344, 320),
+        hwnd_owner_pid=4321,
+    )
+    assert api.placement_calls == []
+    assert api.show_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_waits_for_flet_owned_bounds_to_settle() -> None:
+    class AnimatedBoundsApi(FakeWin32WindowApi):
+        def __init__(self) -> None:
+            super().__init__(
+                titles={101: "PuriPuly Overlay"},
+                bounds=(0, 0, 1344, 320),
+            )
+            self.observed_bounds = [
+                (120, 240, 900, 500),
+                (320, 720, 1344, 320),
+            ]
+
+        def window_bounds(self, hwnd: int) -> tuple[int, int, int, int] | None:
+            if self.observed_bounds:
+                return self.observed_bounds.pop(0)
+            return super().window_bounds(hwnd)
+
+    api = AnimatedBoundsApi()
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        bounds_retain_s=0.0,
+    )
+    port.bind_process(4321)
+
+    result = await port.confirm_window_bounds(
+        "PuriPuly Overlay",
+        x=320,
+        y=720,
+        width=1344,
+        height=320,
+    )
+
+    assert result.confirmed is True
+    assert api.placement_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_uses_flet_native_scale_for_final_bounds() -> None:
+    api = FakeWin32WindowApi(
+        titles={101: "PuriPuly Overlay"},
+        bounds=(400, 900, 1680, 400),
+    )
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        bounds_retain_s=0.0,
+    )
+    port.bind_process(4321)
+
+    result = await port.confirm_window_bounds(
+        "PuriPuly Overlay",
+        x=320,
+        y=720,
+        width=1344,
+        height=320,
+    )
+
+    assert result.confirmed is True
+    assert api.placement_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_bounds_confirmation_has_a_bounded_deadline() -> None:
+    api = FakeWin32WindowApi(windows=())
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        timeout_s=0.02,
+        poll_interval_s=0.001,
+    )
+    port.bind_process(4321)
+
+    result = await asyncio.wait_for(
+        port.confirm_window_bounds(
+            "PuriPuly Overlay",
+            x=320,
+            y=720,
+            width=1344,
+            height=320,
+        ),
+        timeout=0.1,
+    )
+
+    assert result.confirmed is False
+    assert result.reason == "window_not_found"
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_confirms_flet_owned_visible_window_by_title() -> None:
+    api = FakeWin32WindowApi(titles={101: "PuriPuly Overlay"}, visible=True)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        visibility_retain_s=0.0,
+    )
+    port.bind_process(4321)
+
+    result = await port.confirm_window_visible("PuriPuly Overlay", x=0, y=0, width=800, height=600)
+
+    assert result.confirmed is True
+    assert result.reason == "confirmed"
+    assert result.hwnd == 101
+    assert result.title_confirmed is True
+    assert result.visible_confirmed is True
+    assert result.bounds_confirmed is True
+    assert api.show_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_waits_for_flet_visibility_without_revealing() -> None:
+    class DelayedVisibilityApi(FakeWin32WindowApi):
+        def __init__(self) -> None:
+            super().__init__(titles={101: "PuriPuly Overlay"}, visible=False)
+            self.observed_visibility = [False, False, True]
+
+        def is_window_visible(self, hwnd: int) -> bool:
+            if self.observed_visibility:
+                self.visible = self.observed_visibility.pop(0)
+            return self.visible
+
+    api = DelayedVisibilityApi()
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        visibility_retain_s=0.0,
+        poll_interval_s=0.001,
+    )
+    port.bind_process(4321)
+
+    result = await port.confirm_window_visible("PuriPuly Overlay", x=0, y=0, width=800, height=600)
+
+    assert result.confirmed is True
+    assert api.show_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_requires_visibility_to_be_retained() -> None:
+    api = FakeWin32WindowApi(titles={101: "PuriPuly Overlay"}, visible=False)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        visibility_timeout_s=0.05,
+        visibility_retain_s=0.02,
+        poll_interval_s=0.001,
+    )
+    port.bind_process(4321)
+
+    result = await port.confirm_window_visible("PuriPuly Overlay", x=0, y=0, width=800, height=600)
+
+    assert result.confirmed is False
+    assert result.reason == "visible_bounds_not_retained"
+    assert result.hwnd == 101
+    assert result.hwnd_owner_pid == 4321
+    assert api.show_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_rejects_visible_window_that_moved_after_show() -> None:
+    api = FakeWin32WindowApi(
+        titles={101: "PuriPuly Overlay"},
+        visible=True,
+        bounds=(0, 0, 800, 600),
+    )
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        visibility_timeout_s=0.02,
+        visibility_retain_s=0.0,
+        poll_interval_s=0.001,
+    )
+    port.bind_process(4321)
+
+    result = await port.confirm_window_visible(
+        "PuriPuly Overlay", x=320, y=720, width=800, height=600
+    )
+
+    assert result.confirmed is False
+    assert result.visible_confirmed is True
+    assert result.bounds_confirmed is False
+    assert result.reason == "visible_bounds_not_retained"
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_visibility_confirmation_requires_bound_process() -> None:
+    api = FakeWin32WindowApi(titles={101: "PuriPuly Overlay"})
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+
+    result = await port.confirm_window_visible("PuriPuly Overlay", x=0, y=0, width=800, height=600)
+
+    assert result == desktop_window_zorder.WindowVisibilityConfirmation(
+        confirmed=False,
+        reason="process_unbound",
+    )
+    assert api.show_calls == []
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_visibility_confirmation_reports_enumeration_failure() -> None:
+    api = FakeWin32WindowApi(titles={101: "PuriPuly Overlay"}, enum_error=5)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api, visibility_timeout_s=0.02)
+    port.bind_process(4321)
+
+    result = await port.confirm_window_visible("PuriPuly Overlay", x=0, y=0, width=800, height=600)
+
+    assert result.confirmed is False
+    assert result.reason == "enum_windows_failed"
+    assert result.win32_error == 5
+
+
+@pytest.mark.asyncio
+async def test_windows_zorder_port_visibility_falls_back_to_single_window_without_title_match() -> (
+    None
+):
+    api = FakeWin32WindowApi(titles={101: "Flet"}, visible=True)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        visibility_timeout_s=0.02,
+        visibility_retain_s=0.0,
+        poll_interval_s=0.001,
+    )
+    port.bind_process(4321)
+
+    result = await port.confirm_window_visible("PuriPuly Overlay", x=0, y=0, width=800, height=600)
+
+    assert result.confirmed is True
+    assert result.title_confirmed is False
+    assert api.show_calls == []
+
+
+@pytest.mark.asyncio
+async def test_noop_zorder_port_is_immediate_and_unsupported() -> None:
+    port = desktop_window_zorder.NoopWindowZOrderPort()
+    port.bind_process(4321)
+
+    result = await port.reassert_topmost_after_click_through()
+
+    assert result.applied is False
+    assert result.reason == "unsupported_platform"
+
+    placement = await port.confirm_window_bounds(
+        "PuriPuly Overlay",
+        x=320,
+        y=720,
+        width=1344,
+        height=320,
+    )
+
+    visibility = await port.confirm_window_visible(
+        "PuriPuly Overlay", x=320, y=720, width=1344, height=320
+    )
+
+    assert placement.confirmed is True
+    assert placement.reason == "framework_authority"
+    assert visibility.confirmed is True
+    assert visibility.reason == "framework_authority"
+
+
+def test_ctypes_win32_api_sets_topmost_without_moving_sizing_or_activating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class FakeUser32:
+        def SetWindowPos(self, *args: object) -> int:
+            calls.append(args)
+            return 1
+
+    api = object.__new__(desktop_window_zorder._CtypesWin32WindowApi)
+    api._user32 = FakeUser32()
+    monkeypatch.setattr(
+        desktop_window_zorder.ctypes,
+        "set_last_error",
+        lambda _value: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        desktop_window_zorder.ctypes,
+        "get_last_error",
+        lambda: 0,
+        raising=False,
+    )
+
+    result = api.set_topmost_no_activate(101)
+
+    assert result == (True, None)
+    assert len(calls) == 1
+    hwnd, insert_after, x, y, width, height, flags = calls[0]
+    assert hwnd == 101
+    assert (
+        insert_after.value
+        == desktop_window_zorder.wintypes.HWND(desktop_window_zorder._HWND_TOPMOST).value
+    )
+    assert (x, y, width, height) == (0, 0, 0, 0)
+    assert flags == (
+        desktop_window_zorder._SWP_NOMOVE
+        | desktop_window_zorder._SWP_NOSIZE
+        | desktop_window_zorder._SWP_NOACTIVATE
+        | desktop_window_zorder._SWP_ASYNCWINDOWPOS
+    )
+
+
+def test_win32_startup_adapter_is_read_only_for_geometry_and_visibility() -> None:
+    tree = ast.parse(inspect.getsource(desktop_window_zorder))
+    defined: set[str] = set()
+    referenced: set[str] = set()
+    methods_by_class: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.Attribute):
+            referenced.add(node.attr)
+        elif isinstance(node, ast.ClassDef):
+            methods_by_class[node.name] = {
+                item.name
+                for item in node.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+    for forbidden in (
+        "set_window_bounds_no_activate",
+        "show_window_no_activate",
+        "ShowWindow",
+    ):
+        assert forbidden not in defined, f"{forbidden} must not be defined by desktop_window_zorder"
+        assert (
+            forbidden not in referenced
+        ), f"{forbidden} must not be referenced by desktop_window_zorder"
+    assert "set_topmost_no_activate" in methods_by_class.get(
+        "Win32WindowApi", set()
+    ), "Win32WindowApi must expose only set_topmost_no_activate"
+    assert "set_topmost_no_activate" in methods_by_class.get(
+        "_CtypesWin32WindowApi", set()
+    ), "_CtypesWin32WindowApi must implement set_topmost_no_activate"
+    assert "SetWindowPos" in referenced, "SetWindowPos must remain the single mutating Win32 call"
+
+
+class _FlipVisibleApi(FakeWin32WindowApi):
+    def __init__(self, *, flip_after: int = 2, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.flip_after = flip_after
+        self.visible_calls = 0
+
+    def is_window_visible(self, hwnd: int) -> bool:
+        self.visible_calls += 1
+        return self.visible_calls > self.flip_after
+
+
+@pytest.mark.asyncio
+async def test_confirm_visible_fires_first_sample_before_retention() -> None:
+    api = _FlipVisibleApi(titles={101: "PuriPuly Overlay"}, visible=False, flip_after=2)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        timeout_s=2.0,
+        poll_interval_s=0.005,
+        bounds_retain_s=0.0,
+        visibility_timeout_s=2.0,
+        visibility_retain_s=0.2,
+        sleep=asyncio.sleep,
+    )
+    port.bind_process(4321)
+    fired: list[float] = []
+    loop = asyncio.get_running_loop()
+    result = await port.confirm_window_visible(
+        "PuriPuly Overlay",
+        x=0,
+        y=0,
+        width=800,
+        height=600,
+        on_first_visible=lambda: fired.append(loop.time()),
+    )
+    assert result.confirmed is True
+    assert len(fired) == 1
+    assert loop.time() - fired[0] >= 0.1
+
+
+@pytest.mark.asyncio
+async def test_confirm_visible_stale_binding_never_fires_callback() -> None:
+    api = FakeWin32WindowApi(titles={101: "PuriPuly Overlay"}, visible=False)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(
+        api=api,
+        visibility_timeout_s=1.0,
+        poll_interval_s=0.005,
+        sleep=asyncio.sleep,
+    )
+    port.bind_process(4321)
+    fired: list[None] = []
+    task = asyncio.create_task(
+        port.confirm_window_visible(
+            "PuriPuly Overlay",
+            x=0,
+            y=0,
+            width=800,
+            height=600,
+            on_first_visible=lambda: fired.append(None),
+        )
+    )
+    await asyncio.sleep(0.05)
+    port.bind_process(9999)
+    result = await asyncio.wait_for(task, timeout=2.0)
+    assert result.confirmed is False
+    assert result.reason == "binding_changed"
+    assert fired == []
+
+
+@pytest.mark.asyncio
+async def test_topmost_watch_recovers_only_after_peer_event_and_coalesces_callbacks() -> None:
+    api = FakeWin32WindowApi(visible=True)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+    await port.reassert_topmost_after_click_through()
+    await asyncio.sleep(0)
+    assert api.set_calls == [101]
+    assert api.watch_callback is not None
+    api.peer_ahead = True
+    queries = api.order_queries
+
+    for _ in range(20):
+        api.watch_callback(0x8004, 202)
+    await asyncio.sleep(0)
+
+    assert api.order_queries == queries + 1
+    assert api.set_calls == [101, 101]
+    api.peer_ahead = False
+    api.watch_callback(0x8004, 101)
+    await asyncio.sleep(0)
+    assert api.set_calls == [101, 101]
+    port.close()
+    assert api.watch_close_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retirement", ["unlock", "rebind", "close", "reuse", "hidden"])
+async def test_topmost_watch_rejects_queued_and_late_retired_events(retirement: str) -> None:
+    api = FakeWin32WindowApi(visible=True)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+    await port.reassert_topmost_after_click_through()
+    await asyncio.sleep(0)
+    callback = api.watch_callback
+    assert callback is not None
+    api.peer_ahead = True
+    callback(0x8004, 202)
+
+    if retirement == "unlock":
+        port.stop_topmost_watch()
+    elif retirement == "rebind":
+        port.bind_process(5678)
+    elif retirement == "close":
+        port.close()
+    elif retirement == "reuse":
+        api.pid = 9999
+    else:
+        api.visible = False
+    callback(0x8004, 202)
+    await asyncio.sleep(0)
+
+    assert api.set_calls == [101]
+    port.close()
+
+
+@pytest.mark.parametrize(
+    ("visible", "topmost", "bounds", "ahead", "expected"),
+    [
+        (True, True, (20, 20, 100, 100), True, True),
+        (False, True, (20, 20, 100, 100), True, False),
+        (True, False, (20, 20, 100, 100), True, False),
+        (True, True, (800, 0, 100, 100), True, False),
+        (True, True, (20, 20, 100, 100), False, False),
+    ],
+)
+def test_native_peer_gating_requires_visible_topmost_overlap_ahead(
+    visible: bool,
+    topmost: bool,
+    bounds: tuple[int, int, int, int],
+    ahead: bool,
+    expected: bool,
+) -> None:
+    class User32:
+        def GetWindow(self, hwnd: int, command: int) -> int:
+            assert command == 3
+            return 202 if hwnd == 101 and ahead else 0
+
+        def IsIconic(self, hwnd: int) -> bool:
+            return False
+
+    api = desktop_window_zorder._CtypesWin32WindowApi.__new__(
+        desktop_window_zorder._CtypesWin32WindowApi
+    )
+    api._user32 = User32()
+    api.window_bounds = lambda hwnd: (0, 0, 800, 600) if hwnd == 101 else bounds
+    api.is_window_visible = lambda hwnd: visible
+    api.extended_style = lambda hwnd: 8 if topmost else 0
+
+    assert bool(api.topmost_peers_ahead(101)) is expected
+
+
+@pytest.mark.asyncio
+async def test_topmost_watch_settles_with_protected_peers_and_recovers_later_transition() -> None:
+    class ProtectedPeerApi(FakeWin32WindowApi):
+        peers = (301,)
+
+        def topmost_peers_ahead(self, hwnd: int) -> tuple[int, ...]:
+            return self.peers
+
+    api = ProtectedPeerApi(visible=True)
+    port = desktop_window_zorder.WindowsWindowZOrderPort(api=api)
+    port.bind_process(4321)
+    await port.reassert_topmost_after_click_through()
+    await asyncio.sleep(0)
+    callback = api.watch_callback
+    assert callback is not None
+    assert api.set_calls == [101]
+
+    api.peers = (202, 301)
+    callback(0x8004, 202)
+    await asyncio.sleep(0)
+    assert api.set_calls == [101, 101]
+    api.peers = (301,)
+    callback(0x8004, 101)
+    await asyncio.sleep(0)
+    for _ in range(5):
+        callback(0x8004, 301)
+        await asyncio.sleep(0)
+    assert api.set_calls == [101, 101]
+
+    api.peers = (202, 301)
+    callback(0x8004, 202)
+    await asyncio.sleep(0)
+    assert api.set_calls == [101, 101, 101]
+    port.close()

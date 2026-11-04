@@ -1,0 +1,278 @@
+from __future__ import annotations
+
+from enum import Enum
+from urllib.parse import urlsplit, urlunsplit
+
+from puripuly_heart.config.llm_profiles import (
+    OPENROUTER_MODEL_DEEPSEEK_V4_FLASH,
+    OPENROUTER_MODEL_DEEPSEEK_V4_FLASH_41,
+    OPENROUTER_MODEL_GEMINI_FLASH,
+    OPENROUTER_MODEL_GEMMA_4_31B_IT,
+    OPENROUTER_MODEL_GPT_6_LUNA,
+    OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_41_BYOK,
+    OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_41_MANAGED,
+    OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_BYOK,
+    OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_MANAGED,
+    OPENROUTER_SELECTION_ALIAS_GEMINI_FLASH_BYOK,
+    OPENROUTER_SELECTION_ALIAS_GEMMA4_26B_31B_BYOK,
+    OPENROUTER_SELECTION_ALIAS_GEMMA4_26B_31B_MANAGED,
+    OPENROUTER_SELECTION_ALIAS_GPT_6_LUNA_BYOK,
+    OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_BYOK,
+    OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_MANAGED,
+    normalize_legacy_openrouter_model,
+)
+
+MAX_CUSTOM_VOCAB_TERMS = 100
+STT_INTERNAL_SAMPLE_RATE_HZ = 16000
+
+
+LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS = frozenset(
+    {
+        "model",
+        "messages",
+        "stream",
+        "tools",
+        "tool_choice",
+        "functions",
+        "function_call",
+        "max_tokens",
+    }
+)
+LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS = frozenset(
+    {"api_key", "authorization", "headers", "token", "secret", "password"}
+)
+
+
+class STTProviderName(str, Enum):
+    NONE = ""
+    LOCAL_QWEN_GPU = "local_qwen_gpu"
+    DEEPGRAM = "deepgram"
+    GEMINI_TRANSCRIBE = "gemini_transcribe"
+    ELEVENLABS_SCRIBE = "elevenlabs_scribe"
+    QWEN_AUDIO = "qwen_audio"
+    SONIOX = "soniox"
+    ROLLING_FREE = "rolling_free"
+    CUSTOM = "custom"
+    CUSTOM_OFFLINE = "custom_offline"
+    CUSTOM_REALTIME = "custom_realtime"
+
+
+#: STT providers that remain selectable in the GUI.
+LIVE_STT_PROVIDERS: tuple[STTProviderName, ...] = (
+    STTProviderName.LOCAL_QWEN_GPU,
+)
+
+
+def normalize_stt_provider(value: str) -> str:
+    if value in {provider.value for provider in LIVE_STT_PROVIDERS}:
+        return value
+    return STTProviderName.NONE.value
+
+
+CLOUD_FREE_TIER_STT_PROVIDERS: tuple[STTProviderName, ...] = (
+    STTProviderName.ELEVENLABS_SCRIBE,
+    STTProviderName.GEMINI_TRANSCRIBE,
+    STTProviderName.DEEPGRAM,
+)
+DEFAULT_CLOUD_FREE_TIER_STT_PROVIDERS: tuple[STTProviderName, ...] = (
+    STTProviderName.GEMINI_TRANSCRIBE,
+)
+
+
+def normalize_cloud_free_tier_providers(values: object) -> tuple[STTProviderName, ...]:
+    allowed = {provider.value: provider for provider in CLOUD_FREE_TIER_STT_PROVIDERS}
+    selected: list[STTProviderName] = []
+    seen: set[STTProviderName] = set()
+    if isinstance(values, list | tuple):
+        for item in values:
+            raw = getattr(item, "value", item)
+            if not isinstance(raw, str):
+                continue
+            provider = allowed.get(raw.strip())
+            if provider is None or provider in seen:
+                continue
+            selected.append(provider)
+            seen.add(provider)
+    if not selected:
+        return DEFAULT_CLOUD_FREE_TIER_STT_PROVIDERS
+    order = {provider: index for index, provider in enumerate(CLOUD_FREE_TIER_STT_PROVIDERS)}
+    selected.sort(key=lambda provider: order[provider])
+    return tuple(selected)
+
+
+_CUSTOM_STT_PROVIDER_VALUES = frozenset(
+    {
+        STTProviderName.CUSTOM.value,
+        STTProviderName.CUSTOM_OFFLINE.value,
+        STTProviderName.CUSTOM_REALTIME.value,
+    }
+)
+
+
+def is_custom_stt_provider(provider: STTProviderName | str | None) -> bool:
+    if provider is None:
+        return False
+    value = provider.value if isinstance(provider, STTProviderName) else str(provider)
+    return value in _CUSTOM_STT_PROVIDER_VALUES
+
+
+def display_stt_provider(
+    provider: STTProviderName,
+    *,
+    custom_mode: str = "offline",
+) -> STTProviderName:
+    if provider is STTProviderName.CUSTOM:
+        if custom_mode == "realtime":
+            return STTProviderName.CUSTOM_REALTIME
+        return STTProviderName.CUSTOM_OFFLINE
+    return provider
+
+
+def is_qwen_cloud_stt_provider(provider: STTProviderName | str | None) -> bool:
+    if provider is None:
+        return False
+    value = provider.value if isinstance(provider, STTProviderName) else str(provider)
+    return value == STTProviderName.QWEN_AUDIO.value
+
+
+def custom_stt_selection_for_provider(
+    provider: STTProviderName | str,
+    *,
+    stored_mode: str,
+    stored_compatibility: str,
+) -> tuple[str, str]:
+    value = provider.value if isinstance(provider, STTProviderName) else str(provider)
+    if value == STTProviderName.CUSTOM_REALTIME.value:
+        return "realtime", "openai_realtime"
+    if value == STTProviderName.CUSTOM_OFFLINE.value:
+        return "offline", "openai_transcription"
+    return stored_mode, stored_compatibility
+
+
+class LLMProviderName(str, Enum):
+    NONE = "none"
+    INDEX_TRANSLATE = "index_translate"
+    GEMINI = "gemini"
+    OPENAI = "openai"
+    CHATGPT = "chatgpt"
+    OPENROUTER = "openrouter"
+    QWEN = "qwen"
+    DEEPSEEK = "deepseek"
+    MANAGED_GEMMA = "managed_gemma"
+    LOCAL_LLM = "local_llm"
+
+
+class QwenRegion(str, Enum):
+    BEIJING = "beijing"
+    SINGAPORE = "singapore"
+
+
+class QwenLLMModel(str, Enum):
+    QWEN_35_FLASH = "qwen3.5-flash"
+    QWEN_38_FLASH = "qwen3.8-flash"
+
+
+class SecretsBackend(str, Enum):
+    KEYRING = "keyring"
+    ENCRYPTED_FILE = "encrypted_file"
+
+
+class OpenRouterLLMModel(str, Enum):
+    GEMMA_4_26B_A4B_IT = "google/gemma-4-26b-a4b-it"
+    GEMMA_4_31B_IT = OPENROUTER_MODEL_GEMMA_4_31B_IT
+    QWEN_35_FLASH_02_23 = "qwen/qwen3.5-flash-02-23"
+    DEEPSEEK_V4_FLASH = OPENROUTER_MODEL_DEEPSEEK_V4_FLASH
+    DEEPSEEK_V4_FLASH_41 = OPENROUTER_MODEL_DEEPSEEK_V4_FLASH_41
+    GEMINI_FLASH = OPENROUTER_MODEL_GEMINI_FLASH
+    GPT_6_LUNA = OPENROUTER_MODEL_GPT_6_LUNA
+
+
+def parse_openrouter_llm_model(value: object) -> OpenRouterLLMModel:
+    if isinstance(value, OpenRouterLLMModel):
+        return value
+    if isinstance(value, str):
+        normalized = normalize_legacy_openrouter_model(value.strip())
+        return OpenRouterLLMModel(normalized)
+    return OpenRouterLLMModel(value)  # type: ignore[arg-type]
+
+
+class OpenRouterCredentialSource(str, Enum):
+    NONE = "none"
+    MANAGED = "managed"
+    BYOK = "byok"
+
+
+class GeminiLLMModel(str, Enum):
+    GEMINI_FLASH = "gemini-3.8-flash"
+
+
+class DeepSeekLLMModel(str, Enum):
+    DEEPSEEK_V4_FLASH = "deepseek-flash"
+
+
+class LocalLLMBackend(str, Enum):
+    OLLAMA = "ollama"
+
+
+class OpenRouterSelectionAlias(str, Enum):
+    GEMMA4_26B_31B_MANAGED = OPENROUTER_SELECTION_ALIAS_GEMMA4_26B_31B_MANAGED
+    GEMMA4_26B_31B_BYOK = OPENROUTER_SELECTION_ALIAS_GEMMA4_26B_31B_BYOK
+    QWEN35_FLASH_MANAGED = OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_MANAGED
+    QWEN35_FLASH_BYOK = OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_BYOK
+    DEEPSEEK_V4_FLASH_MANAGED = OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_MANAGED
+    DEEPSEEK_V4_FLASH_BYOK = OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_BYOK
+    DEEPSEEK_V4_FLASH_41_MANAGED = OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_41_MANAGED
+    DEEPSEEK_V4_FLASH_41_BYOK = OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_41_BYOK
+    GEMINI_FLASH_BYOK = OPENROUTER_SELECTION_ALIAS_GEMINI_FLASH_BYOK
+    GPT_6_LUNA_BYOK = OPENROUTER_SELECTION_ALIAS_GPT_6_LUNA_BYOK
+
+
+def normalize_local_llm_base_url(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("invalid local llm base url")
+    try:
+        parsed = urlsplit(value.strip())
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError("invalid local llm base url") from exc
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("invalid local llm base url")
+    if not parsed.hostname:
+        raise ValueError("invalid local llm base url")
+    if (
+        "@" in parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("invalid local llm base url")
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+__all__ = [
+    "DeepSeekLLMModel",
+    "GeminiLLMModel",
+    "LLMProviderName",
+    "LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS",
+    "LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS",
+    "LocalLLMBackend",
+    "MAX_CUSTOM_VOCAB_TERMS",
+    "OpenRouterCredentialSource",
+    "OpenRouterLLMModel",
+    "OpenRouterSelectionAlias",
+    "QwenLLMModel",
+    "QwenRegion",
+    "STTProviderName",
+    "CLOUD_FREE_TIER_STT_PROVIDERS",
+    "DEFAULT_CLOUD_FREE_TIER_STT_PROVIDERS",
+    "normalize_cloud_free_tier_providers",
+    "parse_openrouter_llm_model",
+    "SecretsBackend",
+    "STT_INTERNAL_SAMPLE_RATE_HZ",
+    "custom_stt_selection_for_provider",
+    "display_stt_provider",
+    "is_custom_stt_provider",
+    "is_qwen_cloud_stt_provider",
+    "normalize_local_llm_base_url",
+]

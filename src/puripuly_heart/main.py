@@ -1,0 +1,446 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import logging
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from puripuly_heart.runtime_layout import current_runtime_layout
+
+if TYPE_CHECKING:
+    from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+    from puripuly_heart.core.runtime_logging import RuntimeLoggingSinks
+
+logger = logging.getLogger(__name__)
+
+
+def configure_main_logging(*, log_dir: Path | None = None):
+    from puripuly_heart.core.runtime_logging import configure_main_logging as configure
+
+    return configure(log_dir=log_dir)
+
+
+def default_settings_path() -> Path:
+    from puripuly_heart.config.paths import default_settings_path as resolve
+
+    return resolve()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="puripuly-heart")
+    parser.add_argument("--version", action="store_true", help="Print version and exit")
+
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="Path to settings JSON (default: user config dir)",
+    )
+    parser.add_argument(
+        "--debug-ui-preview",
+        action="store_true",
+        default=False,
+        help="Show developer-only GUI preview controls for hidden UI states",
+    )
+
+    sub = parser.add_subparsers(dest="command")
+    desktop_overlay = sub.add_parser(
+        "run-desktop-overlay",
+        help="Run the desktop Flet overlay renderer",
+    )
+    desktop_overlay.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Path to overlay launch manifest JSON",
+    )
+    sub.add_parser(
+        "run-desktop-overlay-preview",
+        help="Run the desktop Flet overlay preview",
+    )
+    desktop_repro = sub.add_parser(
+        "run-desktop-overlay-repro",
+        help="Run Desktop overlay diagnostic repro",
+    )
+    desktop_repro.add_argument("--cycles", type=int, default=100)
+    desktop_repro.add_argument("--dwell-ms", type=int, default=150)
+    desktop_repro.add_argument("--output-dir", type=Path, required=True)
+    verify_desktop_repro = sub.add_parser(
+        "verify-desktop-overlay-repro",
+        help="Verify Desktop overlay repro artifacts",
+    )
+    verify_desktop_repro.add_argument("--output-dir", type=Path, required=True)
+
+    sub.add_parser(
+        "soxr-runtime-check",
+        help="Verify the packaged soxr runtime contract and smoke resample",
+    )
+    sub.add_parser(
+        "hf-xet-runtime-check",
+        help="Verify the packaged Hugging Face/Xet runtime",
+    )
+    sub.add_parser("gui-startup-check", help=argparse.SUPPRESS)
+    hf_xet_worker = sub.add_parser("hf-xet-download-worker", help=argparse.SUPPRESS)
+    hf_xet_worker.add_argument("--request-file", type=Path, required=True)
+    hf_xet_worker.add_argument("--event-file", type=Path, required=True)
+    local_asr_production_evidence = sub.add_parser(
+        "local-asr-production-composition-evidence",
+        help=argparse.SUPPRESS,
+    )
+    local_asr_production_evidence.add_argument("--audio", type=Path, required=True)
+    local_asr_production_evidence.add_argument("--report", type=Path, required=True)
+    local_asr_production_evidence.add_argument("--candidate", required=True)
+    installer_telemetry = sub.add_parser(
+        "installer-telemetry-preference",
+        help=argparse.SUPPRESS,
+    )
+    installer_telemetry.add_argument(
+        "action",
+        choices=("enable", "disable"),
+        help=argparse.SUPPRESS,
+    )
+    local_asr_production_evidence.add_argument("--expected-gpu-name", required=True)
+    cli = sub.add_parser("cli", help="Control a running GUI or headless application")
+    cli.add_argument("cli_args", nargs=argparse.REMAINDER)
+    run_headless = sub.add_parser("run-headless", help="Run the GUI-free application host")
+    run_headless.add_argument("--config", type=Path, default=argparse.SUPPRESS)
+    run_headless.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
+
+    run_gui = sub.add_parser("run-gui", help="Run the Graphical User Interface (Flet)")
+    run_gui.add_argument(
+        "--debug-ui-preview",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Show developer-only GUI preview controls for hidden UI states",
+    )
+
+    return parser
+
+
+def run_soxr_runtime_check() -> int:
+    from puripuly_heart.app.soxr_runtime_check import run_soxr_runtime_check as run
+
+    return run()
+
+
+def run_local_asr_production_composition_evidence(
+    *,
+    audio_path: Path,
+    report_path: Path,
+    candidate: str,
+    expected_gpu_name: str,
+) -> int:
+    from puripuly_heart.release_evidence.local_asr_production_composition import (
+        run_local_asr_production_composition,
+    )
+
+    return run_local_asr_production_composition(
+        audio_path=audio_path,
+        report_path=report_path,
+        candidate=candidate,
+        expected_gpu_name=expected_gpu_name,
+    )
+
+
+def run_hf_xet_runtime_check() -> int:
+    from importlib.metadata import version
+
+    import hf_xet
+
+    if version("huggingface-hub") != "2.3.0" or version("hf-xet") != "1.7.0":
+        raise RuntimeError("unexpected packaged Hugging Face runtime versions")
+    if not Path(hf_xet.__file__).with_name("hf_xet.pyd").is_file():
+        raise RuntimeError("packaged hf_xet native extension is missing")
+    return 0
+
+
+def _load_gui_runtime() -> tuple[Any, Any, Any, Any, Any]:
+    import flet as ft
+
+    from puripuly_heart.app.adapters.vrchat_osc_presence import PsutilVrchatOscPresenceAdapter
+    from puripuly_heart.composition.ui_application import compose_ui_application
+    from puripuly_heart.ui.app import main_gui
+    from puripuly_heart.ui.fonts import assets_dir
+
+    return ft, PsutilVrchatOscPresenceAdapter, compose_ui_application, main_gui, assets_dir
+
+
+def run_gui_startup_check() -> int:
+    _, vrchat_osc_presence_adapter, _, _, assets_dir = _load_gui_runtime()
+    vrchat_osc_presence_adapter()
+    assets_dir()
+    return 0
+
+
+def _run_gui(
+    config_path: Path,
+    *,
+    debug_ui_preview: bool,
+    runtime_logging_sinks: RuntimeLoggingSinks,
+) -> int:
+    ft, vrchat_osc_presence_adapter, compose_ui_application, main_gui, assets_dir = (
+        _load_gui_runtime()
+    )
+    native_embedded = current_runtime_layout().host_kind == "native"
+    view_process_owner = None
+    patch_hidden_view_launcher = None
+    if not native_embedded:
+        from puripuly_heart.ui.flet_desktop_runtime import (
+            FletDesktopViewProcessOwner,
+        )
+        from puripuly_heart.ui.flet_desktop_runtime import (
+            patch_hidden_view_launcher as desktop_view_launcher,
+        )
+
+        view_process_owner = FletDesktopViewProcessOwner()
+        patch_hidden_view_launcher = desktop_view_launcher
+    vrchat_osc_presence = vrchat_osc_presence_adapter()
+
+    from puripuly_heart.cli.host import gui_control_factory
+
+    async def _target(page: ft.Page):
+        try:
+            return await main_gui(
+                page,
+                config_path=config_path,
+                application_factory=gui_control_factory(compose_ui_application),
+                debug_ui_preview=debug_ui_preview,
+                runtime_logging_sinks=runtime_logging_sinks,
+                vrchat_osc_presence=vrchat_osc_presence,
+            )
+        except Exception as exc:
+            from puripuly_heart.core.runtime_logging import emit_basic_log
+
+            emit_basic_log(
+                logger,
+                "The application window failed to start · Cause %s",
+                type(exc).__name__,
+                level=logging.ERROR,
+            )
+            raise
+
+    try:
+        if native_embedded:
+            ft.run(
+                main=_target,
+                assets_dir=str(assets_dir()),
+                view=ft.AppView.FLET_APP_HIDDEN,
+            )
+        else:
+            assert patch_hidden_view_launcher is not None
+            with patch_hidden_view_launcher(process_owner=view_process_owner):
+                ft.run(
+                    main=_target,
+                    assets_dir=str(assets_dir()),
+                    view=ft.AppView.FLET_APP_HIDDEN,
+                )
+    except Exception as exc:
+        from puripuly_heart.core.runtime_logging import emit_basic_log
+
+        emit_basic_log(
+            logger,
+            "The application window stopped after a runtime failure · Cause %s",
+            type(exc).__name__,
+            level=logging.ERROR,
+        )
+        if view_process_owner is not None:
+            try:
+                asyncio.run(view_process_owner.close())
+            except Exception:
+                logger.exception("The Flet desktop view cleanup also failed")
+        raise
+    if view_process_owner is not None:
+        asyncio.run(view_process_owner.close())
+    return 0
+
+
+def _run_desktop_overlay(config_path: Path) -> int:
+    from puripuly_heart.ui.desktop_overlay import main as desktop_overlay_main
+
+    return desktop_overlay_main(["--config", str(config_path)])
+
+
+def _run_desktop_overlay_preview() -> int:
+    from puripuly_heart.ui.desktop_overlay import main as desktop_overlay_main
+
+    return desktop_overlay_main(["--preview"])
+
+
+def _run_desktop_overlay_repro(*, cycles: int, dwell_ms: int, output_dir: Path) -> int:
+    from puripuly_heart.ui.desktop_overlay_repro import run_desktop_overlay_repro
+
+    return run_desktop_overlay_repro(cycles=cycles, dwell_ms=dwell_ms, output_dir=output_dir)
+
+
+def _verify_desktop_overlay_repro(*, output_dir: Path) -> int:
+    from puripuly_heart.core.desktop_overlay_repro_artifacts import verify_desktop_overlay_repro
+
+    return verify_desktop_overlay_repro(output_dir=output_dir)
+
+
+def _load_settings_or_default(
+    path: Path,
+) -> AppSettingsVNext:
+    from puripuly_heart.config.settings_vnext.defaults import new_settings_for_first_run
+    from puripuly_heart.config.settings_vnext.facade import load_vnext_settings
+
+    if path.exists():
+        result = load_vnext_settings(path)
+        if result.settings is None:
+            raise RuntimeError(
+                result.error.message if result.error is not None else str(result.status)
+            )
+        return result.settings
+
+    return new_settings_for_first_run()
+
+
+def _settings_config_path(args: argparse.Namespace) -> tuple[Path, bool]:
+    if hasattr(args, "config"):
+        return args.config, True
+    return default_settings_path(), False
+
+
+def _installer_preference_failure_category(status: object) -> str:
+    value = getattr(status, "value", status)
+    category = str(value).rsplit(".", maxsplit=1)[-1].lower()
+    if category in {
+        "parse_failed",
+        "migration_failed",
+        "backup_failed",
+        "save_failed",
+    }:
+        return category
+    return "unexpected_error"
+
+
+def _run_installer_telemetry_preference(path: Path, action: str) -> int:
+    from puripuly_heart.app.ports.canonical_settings_persistence import (
+        CanonicalSettingsPersistenceError,
+    )
+    from puripuly_heart.app.services.installer_telemetry_preference import (
+        persist_installer_telemetry_preference,
+    )
+
+    try:
+        persist_installer_telemetry_preference(path, action == "enable")
+        return 0
+    except CanonicalSettingsPersistenceError as exc:
+        category = _installer_preference_failure_category(exc.status)
+    except Exception:
+        category = "unexpected_error"
+    with contextlib.suppress(OSError):
+        print(
+            f"installer_telemetry_preference operation={action} "
+            f"status=failure failure_category={category}",
+            file=sys.stderr,
+        )
+    return 23
+
+
+def main(argv: list[str] | None = None) -> int:
+    cli_argv = sys.argv[1:] if argv is None else argv
+    if cli_argv and cli_argv[0] == "cli":
+        from puripuly_heart.cli.main import main as control_main
+
+        return control_main(cli_argv[1:])
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "hf-xet-download-worker":
+        from puripuly_heart.core.local_asr.local_stt_huggingface_xet_adapter import (
+            run_huggingface_xet_worker,
+        )
+
+        return run_huggingface_xet_worker(
+            request_path=args.request_file,
+            event_path=args.event_file,
+        )
+    if args.command == "run-desktop-overlay-repro":
+        return _run_desktop_overlay_repro(
+            cycles=args.cycles,
+            dwell_ms=args.dwell_ms,
+            output_dir=args.output_dir,
+        )
+    if args.command == "verify-desktop-overlay-repro":
+        return _verify_desktop_overlay_repro(output_dir=args.output_dir)
+    if args.command == "installer-telemetry-preference":
+        settings_config_path, _ = _settings_config_path(args)
+        return _run_installer_telemetry_preference(settings_config_path, args.action)
+
+    settings_config_path, explicit_settings_config = _settings_config_path(args)
+    debug_ui_preview = bool(getattr(args, "debug_ui_preview", False))
+    logging_sinks = configure_main_logging(
+        log_dir=(
+            settings_config_path.parent
+            if explicit_settings_config and args.command in {None, "run-gui"}
+            else None
+        )
+    )
+    try:
+        if args.command != "run-desktop-overlay":
+            args.config = settings_config_path
+
+        if args.version:
+            from puripuly_heart import __version__
+
+            print(__version__)
+            return 0
+
+        if args.command == "run-desktop-overlay":
+            return _run_desktop_overlay(args.config)
+
+        if args.command == "run-desktop-overlay-preview":
+            return _run_desktop_overlay_preview()
+
+        if args.command == "run-headless":
+            from puripuly_heart.cli.host import run_headless
+
+            try:
+                return asyncio.run(run_headless(args.config, ready_file=args.ready_file))
+            except KeyboardInterrupt:
+                return 130
+
+        if args.command == "run-gui":
+            return _run_gui(
+                args.config,
+                debug_ui_preview=debug_ui_preview,
+                runtime_logging_sinks=logging_sinks,
+            )
+
+        if args.command == "soxr-runtime-check":
+            return run_soxr_runtime_check()
+
+        if args.command == "hf-xet-runtime-check":
+            return run_hf_xet_runtime_check()
+
+        if args.command == "gui-startup-check":
+            return run_gui_startup_check()
+
+        if args.command == "local-asr-production-composition-evidence":
+            return run_local_asr_production_composition_evidence(
+                audio_path=args.audio,
+                report_path=args.report,
+                candidate=args.candidate,
+                expected_gpu_name=args.expected_gpu_name,
+            )
+
+        # Default: run GUI when no command specified (e.g., double-clicking EXE)
+        if args.command is None:
+            return _run_gui(
+                args.config,
+                debug_ui_preview=debug_ui_preview,
+                runtime_logging_sinks=logging_sinks,
+            )
+
+        parser.print_help()
+        return 2
+    finally:
+        logging_sinks.close(force=True)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,1844 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import replace
+
+import pytest
+
+ft = pytest.importorskip("flet")
+
+from puripuly_heart.config.provider_values import STTProviderName
+from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.ui.dashboard import capture as dashboard_capture_module
+from puripuly_heart.ui.dashboard.contract import (
+    DashboardCaptureIntents,
+    DashboardTranslationIntents,
+)
+from puripuly_heart.ui.gpu_notice import GpuDashboardNotice
+from puripuly_heart.ui.overlay_peer_contract import (
+    OverlayPeerConsumerContract,
+    OverlayPeerToggleContract,
+    build_overlay_peer_consumer_contract,
+)
+from puripuly_heart.ui.views import dashboard as dashboard_module
+from tests.helpers.flet_page import attach_dummy_page
+from tests.helpers.osc_presentation import osc_control_presentation_state
+
+
+class FakePowerButton:
+    def __init__(self, label, icon, on_click, **kwargs):
+        self.icon = icon
+        self.kwargs = dict(kwargs)
+        self.label = label
+        self.on_click = on_click
+        self.states: list[dict[str, object]] = []
+
+    def set_state(
+        self,
+        is_on: bool,
+        needs_key: bool = False,
+        *,
+        is_starting: bool = False,
+        disabled: bool = False,
+        status_text: str | None = None,
+        helper_text: str | None = None,
+    ):
+        _ = disabled
+        state = {
+            "is_on": is_on,
+            "needs_key": needs_key,
+            "status_text": status_text,
+            "helper_text": helper_text,
+        }
+        if is_starting:
+            state["is_starting"] = True
+        self.states.append(state)
+
+    def set_label(self, label: str) -> None:
+        self.label = label
+
+
+class FakeDisplayCard:
+    def __init__(self, on_submit, on_input_focus_change=None, on_input_activity=None):
+        self._on_submit = on_submit
+        self._on_input_focus_change = on_input_focus_change
+        self._on_input_activity = on_input_activity
+        self.statuses: list[tuple[str, str | None]] = []
+        self.display_calls: list[tuple[str, bool, str | None]] = []
+        self.display_metadata_calls: list[dict[str, object]] = []
+        self.translation_calls: list[tuple[str | None, str | None]] = []
+        self.notice_calls: list[tuple[str | None, str | None]] = []
+        self.notice_actions: list[tuple[str | None, object | None]] = []
+        self.notice_yields: list[bool] = []
+        self.input_fonts: list[str | None] = []
+        self.locale_calls: list[tuple[str | None, str | None]] = []
+        self.input_is_focused = False
+        self.focus_calls = 0
+
+    def set_status(
+        self,
+        status: str,
+        font_family: str | None = None,
+        *,
+        letter_spacing: float | None = None,
+    ) -> None:
+        _ = letter_spacing
+        self.statuses.append((status, font_family))
+
+    def set_display(
+        self,
+        text: str,
+        *,
+        is_error: bool = False,
+        font_family: str | None = None,
+        letter_spacing: float | None = None,
+        debug_prefix: str | None = None,
+        as_translation: bool = False,
+    ) -> None:
+        _ = letter_spacing
+        self.display_calls.append((text, is_error, font_family))
+        self.display_metadata_calls.append(
+            {"debug_prefix": debug_prefix, "as_translation": as_translation}
+        )
+
+    def set_display_translation(
+        self,
+        text: str | None,
+        font_family: str | None = None,
+        *,
+        letter_spacing: float | None = None,
+        debug_prefix: str | None = None,
+    ) -> None:
+        _ = letter_spacing
+        self.translation_calls.append((text, font_family))
+
+    def set_notice(
+        self,
+        text: str | None,
+        tone: str | None = None,
+        *,
+        action_label: str | None = None,
+        on_action=None,
+        yields_to_content: bool = False,
+    ) -> None:
+        self.notice_calls.append((text, tone))
+        self.notice_actions.append((action_label, on_action))
+        self.notice_yields.append(bool(yields_to_content))
+
+    def set_input_font(
+        self,
+        font_family: str | None,
+        *,
+        letter_spacing: float | None = None,
+    ) -> None:
+        _ = letter_spacing
+        self.input_fonts.append(font_family)
+
+    def apply_locale(
+        self,
+        display_font_family: str | None,
+        input_font_family: str | None,
+        *,
+        display_letter_spacing: float | None = None,
+        input_letter_spacing: float | None = None,
+    ) -> None:
+        _ = (display_letter_spacing, input_letter_spacing)
+        self.locale_calls.append((display_font_family, input_font_family))
+
+    def set_input_focus_for_test(self, focused: bool) -> None:
+        self.input_is_focused = focused
+        if self._on_input_focus_change is not None:
+            self._on_input_focus_change(focused)
+
+    def set_input_activity_for_test(self, has_text: bool) -> None:
+        if self._on_input_activity is not None:
+            self._on_input_activity(has_text)
+
+    def focus_input(self) -> None:
+        self.focus_calls += 1
+
+
+class FakeLanguageCard:
+    def __init__(
+        self,
+        on_self_source_click,
+        on_self_target_click,
+        on_self_swap_click,
+        on_peer_source_click,
+        on_peer_target_click,
+        on_peer_swap_click,
+        on_self_secondary_target_click=lambda: None,
+    ):
+        self.on_self_source_click = on_self_source_click
+        self.on_self_target_click = on_self_target_click
+        self.on_self_swap_click = on_self_swap_click
+        self.on_peer_source_click = on_peer_source_click
+        self.on_peer_target_click = on_peer_target_click
+        self.on_peer_swap_click = on_peer_swap_click
+        self.on_self_secondary_target_click = on_self_secondary_target_click
+        self.languages: list[tuple[str, str, str, str]] = []
+        self.secondary_targets: list[str] = []
+        self.row_labels: list[tuple[str, str]] = []
+
+    def set_languages(
+        self,
+        self_source: str,
+        self_target: str,
+        peer_source: str,
+        peer_target: str,
+        self_secondary_target: str = "",
+    ) -> None:
+        self.languages.append((self_source, self_target, peer_source, peer_target))
+        self.secondary_targets.append(self_secondary_target)
+
+    def set_row_labels(self, self_label: str, peer_label: str) -> None:
+        self.row_labels.append((self_label, peer_label))
+
+
+class FakeLanguageModal:
+    opened: list[tuple[str, list[str]]] = []
+    languages: list[tuple[str, str]] = []
+    disabled_codes: list[set[str]] = []
+
+    def __init__(
+        self,
+        page,
+        languages,
+        on_select,
+        label_for_code=None,
+        description_for_code=None,
+        disabled_codes=None,
+    ):
+        _ = (page, label_for_code, description_for_code)
+        self.__class__.languages = list(languages)
+        self.__class__.disabled_codes.append(set(disabled_codes or ()))
+        self.on_select = on_select
+
+    def open(self, *, current: str, recent: list[str]) -> None:
+        self.__class__.opened.append((current, list(recent)))
+
+
+def _make_dashboard(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(dashboard_module, "PowerButton", FakePowerButton)
+    monkeypatch.setattr(dashboard_capture_module, "PowerButton", FakePowerButton)
+    monkeypatch.setattr(dashboard_module, "DisplayCard", FakeDisplayCard)
+    monkeypatch.setattr(dashboard_module, "LanguageCard", FakeLanguageCard)
+    monkeypatch.setattr(dashboard_module, "LanguageModal", FakeLanguageModal)
+    monkeypatch.setattr(dashboard_module, "font_for_language", lambda code: f"font-{code}")
+    monkeypatch.setattr(dashboard_module, "language_name", lambda code: f"name-{code}")
+    monkeypatch.setattr(dashboard_module, "get_locale", lambda: "en")
+    view = dashboard_module.DashboardView()
+    FakeLanguageModal.opened = []
+    FakeLanguageModal.disabled_codes = []
+    return view
+
+
+def _make_overlay_peer_contract(
+    *,
+    overlay_intent_enabled: bool,
+    overlay_state: str,
+    overlay_helper_text: str = "",
+    peer_intent_enabled: bool,
+    peer_effective_enabled: bool,
+    peer_helper_text: str = "",
+    peer_state: str | None = None,
+) -> OverlayPeerConsumerContract:
+    return OverlayPeerConsumerContract(
+        overlay=OverlayPeerToggleContract(
+            intent_enabled=overlay_intent_enabled,
+            effective_enabled=overlay_state == "connected",
+            action_enabled=True,
+            state=(
+                "on"
+                if overlay_state == "connected"
+                else ("off" if not overlay_intent_enabled else "warning")
+            ),
+            helper_text=overlay_helper_text,
+        ),
+        peer=OverlayPeerToggleContract(
+            intent_enabled=peer_intent_enabled,
+            effective_enabled=peer_effective_enabled,
+            action_enabled=True,
+            state=(
+                peer_state
+                or (
+                    "on"
+                    if peer_effective_enabled
+                    else ("off" if not peer_intent_enabled else "warning")
+                )
+            ),
+            helper_text=peer_helper_text,
+        ),
+    )
+
+
+def test_dashboard_initial_peer_language_defaults_to_english_to_korean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+
+    assert view._source_lang_code == "ko"
+    assert view._target_lang_code == "en"
+    assert view._peer_source_lang_code == "en"
+    assert view._peer_target_lang_code == "ko"
+    assert view.language_card.languages[-1] == (
+        "name-ko",
+        "name-en",
+        "name-en",
+        "name-ko",
+    )
+
+
+def test_dashboard_stt_toggle_warning_and_enable_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    view = _make_dashboard(monkeypatch)
+    seen: list[bool] = []
+    view.on_toggle_stt = lambda enabled: seen.append(enabled)
+    view.stt_needs_key = True
+    warn_stt = dashboard_module.t("dashboard.warn_stt_key")
+
+    view._toggle_stt()
+    assert view._current_display_text == warn_stt
+    assert view._stt_showing_warning is True
+
+    view._toggle_stt()
+    assert view._current_display_text is None
+    assert view._stt_showing_warning is False
+    assert view.display_card.statuses[-1][0] == "disconnected"
+
+    # Blank leftover must still restore the idle status face.
+    view.set_display_text("")
+    view._stt_showing_warning = True
+    view._toggle_stt()
+    assert view._current_display_text is None
+    assert view.display_card.statuses[-1][0] == "disconnected"
+
+    view.stt_needs_key = False
+    view._toggle_stt()
+    assert view.stt_button.states[-1]["is_starting"] is True
+    view._toggle_stt()
+
+    assert seen == [False, False, False, True, False]
+    assert view.is_stt_on is False
+    assert view._stt_showing_warning is False
+    assert any(call[0] == warn_stt for call in view.display_card.display_calls)
+
+
+def test_dashboard_translation_toggle_controls_power_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    view = _make_dashboard(monkeypatch)
+    seen: list[bool] = []
+    view.on_toggle_translation = lambda enabled: seen.append(enabled)
+    view.translation_needs_key = True
+    warn_llm = dashboard_module.t("dashboard.warn_llm_key")
+
+    view._toggle_translation()
+    assert view._current_display_text == warn_llm
+    assert view._translation_showing_warning is True
+
+    view._toggle_translation()
+    assert view._current_display_text is None
+    assert view._translation_showing_warning is False
+    assert view.display_card.statuses[-1][0] == "disconnected"
+
+    view.set_display_text("")
+    view._translation_showing_warning = True
+    view._toggle_translation()
+    assert view._current_display_text is None
+    assert view.display_card.statuses[-1][0] == "disconnected"
+
+    view.translation_needs_key = False
+    view._toggle_translation()
+    view._toggle_translation()
+
+    assert seen == [False, False, False, True, False]
+    assert view.is_power_on is False
+    assert any(call[0] == warn_llm for call in view.display_card.display_calls)
+
+
+def test_dashboard_submit_and_language_selection_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    view = _make_dashboard(monkeypatch)
+    sends: list[tuple[str, str]] = []
+    lang_changes: list[tuple[str, str, str, str]] = []
+    view.on_send_message = lambda source, text: sends.append((source, text))
+    view.on_language_change = lambda change: lang_changes.append(
+        (change.source_code, change.target_code, change.peer_source_code, change.peer_target_code)
+    )
+
+    view._on_submit("hello")
+    view._on_source_select("ja")
+    view._on_target_select("fr")
+    view._swap_languages()
+
+    assert sends == [("You", "hello")]
+    assert view._recent_langs == ["fr", "ja"]
+    assert lang_changes[-1] == ("fr", "ja", "en", "ko")
+    assert view.language_card.languages[-1] == ("name-fr", "name-ja", "name-en", "name-ko")
+
+
+def test_dashboard_forwards_non_content_message_input_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    activity: list[bool] = []
+    view.on_message_input_activity = activity.append
+
+    view.display_card.set_input_activity_for_test(True)
+    view.display_card.set_input_activity_for_test(False)
+
+    assert activity == [True, False]
+
+
+def test_dashboard_tab_in_focused_message_input_swaps_self_languages_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (change.source_code, change.target_code, change.peer_source_code, change.peer_target_code)
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+    view.display_card.set_input_focus_for_test(True)
+
+    handled = view.handle_message_input_tab_key()
+
+    assert handled is True
+    assert view._source_lang_code == "en"
+    assert view._target_lang_code == "ko"
+    assert view._peer_source_lang_code == "ja"
+    assert view._peer_target_lang_code == "fr"
+    assert changes[-1] == ("en", "ko", "ja", "fr")
+    assert view.language_card.languages[-1] == ("name-en", "name-ko", "name-ja", "name-fr")
+    assert view.display_card.focus_calls == 1
+
+
+def test_dashboard_tab_ignored_when_message_input_is_not_focused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (change.source_code, change.target_code, change.peer_source_code, change.peer_target_code)
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+    view.display_card.set_input_focus_for_test(False)
+
+    handled = view.handle_message_input_tab_key()
+
+    assert handled is False
+    assert view._source_lang_code == "ko"
+    assert view._target_lang_code == "en"
+    assert changes == []
+    assert view.display_card.focus_calls == 0
+
+
+def test_dashboard_recent_languages_are_included_in_language_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes = []
+    view.on_language_change = changes.append
+
+    for idx in range(8):
+        view._add_to_recent(f"s{idx}")
+        view._add_to_recent(f"t{idx}")
+
+    assert view._recent_langs == ["t7", "s7", "t6"]
+    view._notify_language_change()
+    assert changes[-1].recent_source_codes == ("t7", "s7", "t6")
+    assert changes[-1].recent_target_codes == ("t7", "s7", "t6")
+
+
+def test_hint_editor_uses_the_dashboard_recent_language_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from puripuly_heart.ui.components.settings.language_hint_editor import LanguageHintEditor
+
+    view = _make_dashboard(monkeypatch)
+    added: list[str] = []
+    editor = LanguageHintEditor(on_add=added.append)
+    editor.bind_recent_languages(
+        codes=view.recent_language_codes,
+        remember=view.remember_recent_language,
+    )
+
+    view._on_source_select("ja")
+    view._on_target_select("fr")
+    editor._handle_select("de")
+    editor.set_terms(["ko", "en", "zh-CN", "fr"])
+
+    assert view._recent_langs == ["de", "fr", "ja"]
+    assert editor._recent_for_modal() == ["de", "fr", "ja"]
+    assert added == ["de"]
+
+
+def test_hint_editor_remembers_a_language_without_saving_the_language_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from puripuly_heart.ui.components.settings.language_hint_editor import LanguageHintEditor
+
+    view = _make_dashboard(monkeypatch)
+    changes = []
+    view.on_language_change = changes.append
+    order: list[tuple[str, str]] = []
+
+    def remember(code: str) -> None:
+        order.append(("remember", code))
+        view._add_to_recent(code)
+
+    editor = LanguageHintEditor(on_add=lambda code: order.append(("add", code)))
+    editor.bind_recent_languages(
+        codes=view.recent_language_codes,
+        remember=remember,
+    )
+
+    editor._handle_select("ja")
+    editor._handle_select("ar")
+    editor._handle_select("en")
+
+    assert changes == []
+    assert view._recent_langs == ["en", "ar", "ja"]
+    assert order == [
+        ("remember", "ja"),
+        ("add", "ja"),
+        ("remember", "ar"),
+        ("add", "ar"),
+        ("remember", "en"),
+        ("add", "en"),
+    ]
+
+
+def test_dashboard_public_setters_update_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_status("connected")
+    view.set_languages_from_codes("ko", "en")
+    view.set_translation_enabled(False)
+    view.set_stt_enabled(False)
+    view.set_translation_needs_key(True, update_ui=True)
+    view.set_stt_needs_key(True, update_ui=True)
+    view.set_local_stt_notice_model("fun-asr-mlt-nano-2512-q8-0-transcribe-cpu")
+    view.set_local_stt_notice("missing")
+    view.set_managed_auth_pending(True)
+    view.set_display_text("src", language_code="ko")
+    view.set_display_translation_text("dst", language_code="en")
+    view.set_recent_languages(["a", "b", "c", "d", "e", "f", "g"], ["x", "y", "z"])
+
+    assert view.is_connected is True
+    assert view.display_card.statuses[-1] == ("connected", "font-en")
+    assert view.display_card.display_calls[-1] == ("src", False, "font-ko")
+    assert view.display_card.translation_calls[-1] == ("dst", "font-en")
+    assert view.display_card.notice_calls[-1] == (
+        dashboard_module.t(
+            "dashboard.local_stt_notice_missing_model",
+            model="fun-asr-mlt-nano-2512-q8-0-transcribe-cpu",
+        ),
+        "warning",
+    )
+    assert view.language_card.languages[-1] == ("name-ko", "name-en", "name-ko", "name-en")
+    assert view.translation_needs_key is True
+    assert view.stt_needs_key is True
+    assert view._translation_showing_warning is False
+    assert view._stt_showing_warning is False
+    assert view.trans_button.states[-1] == {
+        "is_on": False,
+        "needs_key": False,
+        "status_text": None,
+        "helper_text": None,
+    }
+    assert view.stt_button.states[-1] == {
+        "is_on": False,
+        "needs_key": False,
+        "status_text": None,
+        "helper_text": None,
+    }
+    view._toggle_translation()
+    view._toggle_stt()
+    assert view._translation_showing_warning is True
+    assert view._stt_showing_warning is True
+    assert view.trans_button.states[-1]["needs_key"] is True
+    assert view.stt_button.states[-1]["needs_key"] is True
+    assert view._recent_langs == ["a", "b", "c"]
+
+
+def test_dashboard_projects_osc_state_without_emitting_intents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    attach_dummy_page(monkeypatch, view)
+    emitted: list[tuple[str, object]] = []
+    view.on_toggle_stt = lambda value: emitted.append(("stt", value))
+    view.on_toggle_translation = lambda value: emitted.append(("translation", value))
+    view.on_toggle_peer_translation = lambda value: emitted.append(("peer", value))
+    view.on_toggle_overlay = lambda value: emitted.append(("captions", value))
+    view.on_language_change = lambda value: emitted.append(("languages", value))
+    baseline = AppSettingsVNext()
+    settings = replace(
+        baseline,
+        intent=replace(
+            baseline.intent,
+            languages=replace(
+                baseline.intent.languages,
+                source_language="ja",
+                target_language="fr",
+                secondary_target_language="en",
+                peer_source_language="de",
+                peer_target_language="ko",
+                peer_source_mode="auto",
+            ),
+            peer_stt=replace(baseline.intent.peer_stt, provider=STTProviderName.LOCAL_QWEN_GPU.value),
+        ),
+    )
+
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_Talk",
+            settings=settings,
+            self_capture=True,
+        )
+    )
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_Trans",
+            settings=settings,
+            translation=True,
+        )
+    )
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_SelfSrcLang",
+            settings=settings,
+        )
+    )
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_SelfDstLang2",
+            settings=settings,
+        )
+    )
+    unavailable_settings = replace(
+        baseline,
+        intent=replace(
+            baseline.intent,
+            peer_stt=replace(
+                baseline.intent.peer_stt,
+                provider=STTProviderName.DEEPGRAM.value,
+            ),
+        ),
+    )
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_PeerASR",
+            settings=unavailable_settings,
+        )
+    )
+    view.language_card.on_peer_source_click()
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_PeerASR",
+            settings=settings,
+        )
+    )
+    view.language_card.on_peer_source_click()
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_Listen",
+            settings=settings,
+            peer_capture=True,
+        )
+    )
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_Captions",
+            settings=settings,
+            captions=True,
+        )
+    )
+
+    assert view.is_stt_on is True
+    assert view.is_translation_on is True
+    assert view.language_card.languages[-1] == (
+        "name-ja",
+        "name-fr",
+        dashboard_module.t("dashboard.peer_source.automatic"),
+        "name-ko",
+    )
+    assert view.language_card.secondary_targets[-1] == "name-en"
+    assert FakeLanguageModal.disabled_codes[-2:] == [{"auto"}, set()]
+    assert view.peer_button.states[-1]["is_on"] is True
+    assert view.overlay_button.states[-1]["is_on"] is True
+    assert emitted == []
+
+
+def test_dashboard_osc_projection_preserves_rich_peer_and_overlay_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.is_stt_on = False
+    view._stt_is_starting = True
+    view.set_overlay_peer_contract(
+        _make_overlay_peer_contract(
+            overlay_intent_enabled=True,
+            overlay_state="warning",
+            peer_intent_enabled=True,
+            peer_effective_enabled=False,
+            peer_state="starting",
+        )
+    )
+
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_Talk",
+            self_capture=False,
+        )
+    )
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_Listen",
+            peer_capture=True,
+        )
+    )
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_Captions",
+            captions=True,
+        )
+    )
+
+    assert view.is_stt_on is False
+    assert view._stt_is_starting is True
+    assert view.peer_button.states[-1] == {
+        "is_on": False,
+        "needs_key": False,
+        "status_text": None,
+        "helper_text": None,
+        "is_starting": True,
+    }
+    assert view.overlay_button.states[-1] == {
+        "is_on": False,
+        "needs_key": True,
+        "status_text": None,
+        "helper_text": None,
+    }
+
+    view._stt_is_starting = False
+    view._stt_showing_warning = True
+    view.project_osc_control_state(
+        osc_control_presentation_state(
+            "PuriPuly_Talk",
+            self_capture=False,
+        )
+    )
+    assert view.is_stt_on is False
+    assert view._stt_showing_warning is True
+
+
+def _make_dashboard_with_real_buttons(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(dashboard_module, "DisplayCard", FakeDisplayCard)
+    monkeypatch.setattr(dashboard_module, "LanguageCard", FakeLanguageCard)
+    monkeypatch.setattr(dashboard_module, "LanguageModal", FakeLanguageModal)
+    monkeypatch.setattr(dashboard_module, "font_for_language", lambda code: f"font-{code}")
+    monkeypatch.setattr(dashboard_module, "language_name", lambda code: f"name-{code}")
+    monkeypatch.setattr(dashboard_module, "get_locale", lambda: "en")
+    view = dashboard_module.DashboardView()
+    FakeLanguageModal.opened = []
+    FakeLanguageModal.disabled_codes = []
+    return view
+
+
+def _overlay_button_after_captions_osc(view, *, captions: bool):
+    view.project_osc_control_state(
+        osc_control_presentation_state("PuriPuly_Captions", captions=captions)
+    )
+    return view.overlay_button
+
+
+def _contract_view(monkeypatch, intent_enabled, overlay_state, failure_reason=None):
+    view = _make_dashboard_with_real_buttons(monkeypatch)
+    view.set_overlay_peer_contract(
+        build_overlay_peer_consumer_contract(
+            overlay_intent_enabled=intent_enabled,
+            overlay_state=overlay_state,
+            overlay_failure_reason=failure_reason,
+            peer_intent_enabled=False,
+            peer_effective_enabled=False,
+        )
+    )
+    return view
+
+
+def test_dashboard_captions_osc_preserves_overlay_spinner_while_startup_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for overlay_state in ("starting", "recovering"):
+        button = _overlay_button_after_captions_osc(
+            _contract_view(monkeypatch, True, overlay_state), captions=True
+        )
+        assert button._progress_control.visible is True
+        assert button._icon_control.visible is False
+
+    button = _overlay_button_after_captions_osc(
+        _contract_view(monkeypatch, True, "starting"), captions=False
+    )
+    assert button._progress_control.visible is True
+    assert button._icon_control.visible is False
+
+    connected_button = _overlay_button_after_captions_osc(
+        _contract_view(monkeypatch, True, "connected"), captions=True
+    )
+    assert connected_button._progress_control.visible is False
+    assert connected_button._icon_control.visible is True
+
+    failed_button = _overlay_button_after_captions_osc(
+        _contract_view(monkeypatch, True, "failed", "runtime_crashed"), captions=True
+    )
+    assert failed_button._progress_control.visible is False
+    assert failed_button._icon_control.visible is True
+
+    off_button = _overlay_button_after_captions_osc(
+        _contract_view(monkeypatch, False, "starting"), captions=True
+    )
+    assert off_button._progress_control.visible is False
+    assert off_button._icon_control.visible is True
+
+
+def test_dashboard_managed_auth_pending_restores_local_stt_notice_when_cleared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+
+    view.set_local_stt_notice_model("fun-asr-mlt-nano-2512-q8-0-transcribe-cpu")
+    view.set_local_stt_notice("missing")
+    view.set_managed_auth_pending(True)
+    view.set_managed_auth_pending(False)
+
+    missing_notice = dashboard_module.t(
+        "dashboard.local_stt_notice_missing_model",
+        model="fun-asr-mlt-nano-2512-q8-0-transcribe-cpu",
+    )
+    assert view.display_card.notice_calls == [
+        (None, None),
+        (missing_notice, "warning"),
+        (missing_notice, "warning"),
+        (missing_notice, "warning"),
+    ]
+
+
+def test_dashboard_apply_locale_reapplies_managed_auth_pending_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+
+    view.set_managed_auth_pending(True)
+    view.apply_locale()
+
+    assert view.display_card.notice_calls == [
+        (dashboard_module.t("dashboard.managed_auth_pending"), "info"),
+        (dashboard_module.t("dashboard.managed_auth_pending"), "info"),
+    ]
+
+
+def test_dashboard_apply_locale_and_dialog_open_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    view = _make_dashboard(monkeypatch)
+    attach_dummy_page(monkeypatch, view)
+    view._stt_showing_warning = True
+    view._open_source_dialog()
+    view._open_target_dialog()
+    view.apply_locale()
+    view._translation_showing_warning = True
+    view._stt_showing_warning = False
+    view.apply_locale()
+
+    assert FakeLanguageModal.opened[0][0] == "ko"
+    assert FakeLanguageModal.opened[1][0] == "en"
+    assert view.stt_button.label == dashboard_module.t("dashboard.stt_label")
+    assert view.peer_button.label == dashboard_module.t("dashboard.peer_label")
+    assert view.trans_button.label == dashboard_module.t("dashboard.trans_label")
+    assert view.overlay_button.label == dashboard_module.t("dashboard.overlay_label")
+    warning_texts = [text for text, _is_error, _font in view.display_card.display_calls]
+    assert dashboard_module.t("dashboard.warn_stt_key") in warning_texts
+    assert dashboard_module.t("dashboard.warn_llm_key") in warning_texts
+
+
+def test_dashboard_peer_source_dialog_lists_automatic_detection_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    attach_dummy_page(monkeypatch, view)
+
+    view._open_peer_source_dialog()
+
+    assert FakeLanguageModal.languages[0][0] == dashboard_module.PEER_SOURCE_MODE_AUTO
+
+
+def test_dashboard_automatic_peer_selection_preserves_manual_source_and_emits_auto_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (
+            change.source_code,
+            change.target_code,
+            change.peer_source_code,
+            change.peer_target_code,
+            change.peer_source_mode,
+        )
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+
+    view._on_peer_source_select(dashboard_module.PEER_SOURCE_MODE_AUTO)
+
+    assert view._peer_source_lang_code == "ja"
+    assert changes[-1] == ("ko", "en", "ja", "fr", "auto")
+
+
+def test_dashboard_automatic_peer_callback_type_error_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    calls: list[tuple[str, ...]] = []
+
+    def fail_after_recording(change) -> None:
+        calls.append((change,))
+        raise TypeError("callback failure")
+
+    view.on_language_change = fail_after_recording
+
+    with pytest.raises(TypeError, match="callback failure"):
+        view._on_peer_source_select(dashboard_module.PEER_SOURCE_MODE_AUTO)
+
+    assert len(calls) == 1
+    assert calls[0][0].peer_source_mode == "auto"
+
+
+def test_dashboard_automatic_peer_selection_emits_typed_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    calls = []
+    view.on_language_change = calls.append
+
+    view._on_peer_source_select(dashboard_module.PEER_SOURCE_MODE_AUTO)
+
+    assert calls[-1].peer_source_mode == "auto"
+
+
+def test_dashboard_peer_swap_keeps_automatic_mode_and_valid_languages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (
+            change.source_code,
+            change.target_code,
+            change.peer_source_code,
+            change.peer_target_code,
+            change.peer_source_mode,
+        )
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr", "auto")
+
+    view._swap_peer_languages()
+
+    assert view._peer_source_mode == "auto"
+    assert view._peer_source_lang_code == "fr"
+    assert view._peer_target_lang_code == "ja"
+    assert changes[-1] == ("ko", "en", "fr", "ja", "auto")
+    assert view.language_card.languages[-1] == (
+        "name-ko",
+        "name-en",
+        dashboard_module.t("dashboard.peer_source.automatic"),
+        "name-ja",
+    )
+
+
+def test_dashboard_overlay_peer_buttons_render_consumer_contract_state_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    contract = _make_overlay_peer_contract(
+        overlay_intent_enabled=True,
+        overlay_state="failed",
+        overlay_helper_text="Overlay helper copy",
+        peer_intent_enabled=True,
+        peer_effective_enabled=False,
+        peer_helper_text="Overlay is starting",
+    )
+
+    view.set_overlay_peer_contract(contract)
+
+    assert view.overlay_button.states[-1] == {
+        "is_on": False,
+        "needs_key": True,
+        "status_text": None,
+        "helper_text": None,
+    }
+    assert view.peer_button.states[-1] == {
+        "is_on": False,
+        "needs_key": True,
+        "status_text": None,
+        "helper_text": None,
+    }
+
+
+def test_dashboard_peer_button_renders_starting_contract_with_spinner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    contract = _make_overlay_peer_contract(
+        overlay_intent_enabled=True,
+        overlay_state="connected",
+        peer_intent_enabled=True,
+        peer_effective_enabled=False,
+        peer_state="starting",
+    )
+
+    view.set_overlay_peer_contract(contract)
+
+    assert view.peer_button.states[-1]["is_starting"] is True
+
+
+def test_dashboard_overlay_failure_notice_is_lowest_priority_notice_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    overlay_failure_notice = dashboard_module.t(
+        "settings.overlay.status.failed_with_reason",
+        status=dashboard_module.t("settings.overlay.status.failed"),
+        reason=dashboard_module.t(
+            "settings.overlay.failure.runtime_unavailable",
+            default="runtime_unavailable",
+        ),
+        default="Overlay failed: runtime_unavailable",
+    )
+
+    view.set_overlay_peer_contract(
+        OverlayPeerConsumerContract(
+            overlay=OverlayPeerToggleContract(
+                intent_enabled=True,
+                effective_enabled=False,
+                action_enabled=True,
+                state="warning",
+                failure_reason="runtime_unavailable",
+            ),
+            peer=OverlayPeerToggleContract(
+                intent_enabled=False,
+                effective_enabled=False,
+                action_enabled=True,
+                state="off",
+            ),
+        )
+    )
+    view.set_local_stt_notice("missing")
+    view.set_managed_auth_pending(True)
+    view.set_managed_auth_pending(False)
+    view.set_local_stt_notice(None)
+
+    assert view.display_card.notice_calls == [
+        (overlay_failure_notice, "error"),
+        (overlay_failure_notice, "error"),
+        (overlay_failure_notice, "error"),
+        (overlay_failure_notice, "error"),
+        (overlay_failure_notice, "error"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("status", "key", "action", "action_key", "tone"),
+    (
+        (
+            "discovery_failed",
+            "dashboard.gpu_notice.discovery_failed",
+            "rediscover",
+            "dashboard.gpu_action.rediscover",
+            "error",
+        ),
+        ("unsupported", "dashboard.gpu_notice.unsupported", None, None, "warning"),
+        (
+            "unavailable_device",
+            "dashboard.gpu_notice.unavailable_device",
+            None,
+            None,
+            "warning",
+        ),
+        (
+            "not_installed",
+            "dashboard.gpu_notice.not_installed",
+            None,
+            None,
+            "warning",
+        ),
+        (
+            "invalid",
+            "dashboard.gpu_notice.invalid",
+            None,
+            None,
+            "warning",
+        ),
+        (
+            "install_failed",
+            "dashboard.gpu_notice.install_failed",
+            None,
+            None,
+            "error",
+        ),
+        (
+            "activation_failed",
+            "dashboard.gpu_notice.activation_failed",
+            "restart",
+            "dashboard.gpu_action.restart",
+            "error",
+        ),
+    ),
+)
+def test_dashboard_gpu_notice_text_tone_and_action(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    key: str,
+    action: str | None,
+    action_key: str | None,
+    tone: str,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+
+    view.set_gpu_notice(GpuDashboardNotice(status=status, action=action))
+
+    assert view.display_card.notice_calls[-1] == (dashboard_module.t(key), tone)
+    assert view.display_card.notice_actions[-1][0] == (
+        dashboard_module.t(action_key) if action_key is not None else None
+    )
+
+
+def test_dashboard_gpu_download_preempts_and_restores_first_active_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_vrchat_osc_notice(True)
+    view.set_managed_auth_pending(True)
+
+    view.set_gpu_notice(GpuDashboardNotice(status="installing", progress_percent=37))
+    assert view.display_card.notice_calls[-1] == (
+        dashboard_module.t("dashboard.gpu_notice.installing", percent=37),
+        "info",
+    )
+
+    view.set_gpu_notice(None)
+    assert view.display_card.notice_calls[-1] == (
+        dashboard_module.t("dashboard.vrchat_osc_disabled"),
+        "warning",
+    )
+
+
+@pytest.mark.asyncio
+async def test_dashboard_gpu_action_runs_as_page_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    tasks: list[asyncio.Task[None]] = []
+    actions: list[str] = []
+
+    class Page:
+        def run_task(self, callback) -> None:
+            tasks.append(asyncio.create_task(callback()))
+
+    async def on_action(action: str) -> None:
+        actions.append(action)
+
+    attach_dummy_page(monkeypatch, view, Page())
+    view.on_gpu_notice_action = on_action
+    view.set_gpu_notice(GpuDashboardNotice(status="not_installed", action="install"))
+    action_callback = view.display_card.notice_actions[-1][1]
+    assert callable(action_callback)
+
+    action_callback()
+    await tasks[-1]
+
+    assert actions == ["install"]
+
+
+@pytest.mark.parametrize("status", ["checking", "downloading", "preparing"])
+def test_dashboard_managed_gemma_progress_notice_has_no_cancel_action(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    from puripuly_heart.app.ports.ui_models import ManagedGemmaDashboardNotice
+
+    view = _make_dashboard(monkeypatch)
+    view.set_managed_gemma_notice(
+        ManagedGemmaDashboardNotice(status=status, progress_percent=37, action="cancel")
+    )
+    label, callback = view.display_card.notice_actions[-1]
+    assert label is None
+    assert callback is None
+
+
+def test_dashboard_steamvr_overlay_failure_notice_uses_actionable_reason_without_status_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    expected_notice = dashboard_module.t(
+        "settings.overlay.failure.steamvr_not_running",
+        default="steamvr_not_running",
+    )
+
+    view.set_overlay_peer_contract(
+        OverlayPeerConsumerContract(
+            overlay=OverlayPeerToggleContract(
+                intent_enabled=True,
+                effective_enabled=False,
+                action_enabled=True,
+                state="warning",
+                failure_reason="steamvr_not_running",
+            ),
+            peer=OverlayPeerToggleContract(
+                intent_enabled=False,
+                effective_enabled=False,
+                action_enabled=True,
+                state="off",
+            ),
+        )
+    )
+
+    assert view.display_card.notice_calls[-1] == (expected_notice, "error")
+    assert view.display_card.notice_yields[-1] is True
+
+
+def test_dashboard_overlay_notices_yield_to_content_while_others_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fallback_view = _make_dashboard(monkeypatch)
+    fallback_view.set_overlay_session_fallback_notice(True)
+    assert fallback_view.display_card.notice_yields[-1] is True
+
+    failure_view = _make_dashboard(monkeypatch)
+    failure_view.set_overlay_peer_contract(
+        OverlayPeerConsumerContract(
+            overlay=OverlayPeerToggleContract(
+                intent_enabled=True,
+                effective_enabled=False,
+                action_enabled=True,
+                state="warning",
+                failure_reason="steamvr_not_running",
+            ),
+            peer=OverlayPeerToggleContract(
+                intent_enabled=False,
+                effective_enabled=False,
+                action_enabled=True,
+                state="off",
+            ),
+        )
+    )
+    assert failure_view.display_card.notice_yields[-1] is True
+
+    gpu_view = _make_dashboard(monkeypatch)
+    gpu_view.set_gpu_notice(GpuDashboardNotice(status="install_failed"))
+    assert gpu_view.display_card.notice_yields[-1] is False
+
+    osc_view = _make_dashboard(monkeypatch)
+    osc_view.set_vrchat_osc_notice(True)
+    assert osc_view.display_card.notice_yields[-1] is False
+
+
+@pytest.mark.parametrize("source", ["local_stt", "gpu", "managed_gemma"])
+def test_model_progress_yields_to_source_and_translation(
+    source: str,
+) -> None:
+    from puripuly_heart.app.ports.ui_models import ManagedGemmaDashboardNotice
+
+    view = dashboard_module.DashboardView()
+
+    def progress(percent: int) -> None:
+        if source == "local_stt":
+            view.set_local_stt_notice("downloading", percent=percent)
+        elif source == "gpu":
+            view.set_gpu_notice(GpuDashboardNotice(status="installing", progress_percent=percent))
+        else:
+            view.set_managed_gemma_notice(
+                ManagedGemmaDashboardNotice(status="downloading", progress_percent=percent)
+            )
+
+    progress(37)
+    assert "37%" in view.display_card._display_text.value
+
+    view.set_display_text("새 인식문")
+    assert view.display_card._display_text.value == "새 인식문"
+    progress(63)
+    assert view.display_card._display_text.value == "새 인식문"
+
+    view.set_display_translation_text("New translation")
+    assert view.display_card._display_text.value == "New translation"
+    progress(100)
+    assert view.display_card._display_text.value == "New translation"
+
+
+def test_dashboard_overlay_failure_notice_relocalizes_on_apply_locale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_overlay_peer_contract(
+        OverlayPeerConsumerContract(
+            overlay=OverlayPeerToggleContract(
+                intent_enabled=True,
+                effective_enabled=False,
+                action_enabled=True,
+                state="warning",
+                failure_reason="runtime_disconnected",
+            ),
+            peer=OverlayPeerToggleContract(
+                intent_enabled=False,
+                effective_enabled=False,
+                action_enabled=True,
+                state="off",
+            ),
+        )
+    )
+
+    def localized_t(key: str, **kwargs: object) -> str:
+        if key == "settings.overlay.status.failed":
+            return "localized failed"
+        if key == "settings.overlay.failure.runtime_disconnected":
+            return "localized disconnect"
+        if key == "settings.overlay.status.failed_with_reason":
+            return f"{kwargs['status']} :: {kwargs['reason']}"
+        return f"i18n:{key}"
+
+    monkeypatch.setattr(dashboard_module, "t", localized_t)
+
+    view.apply_locale()
+
+    assert view.display_card.notice_calls[-1] == (
+        "localized failed :: localized disconnect",
+        "error",
+    )
+    assert view.display_card.notice_calls[-1][0] != "stale contract literal"
+
+
+def test_dashboard_overlay_and_peer_buttons_toggle_live_from_contract_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    peer_toggles: list[bool] = []
+    overlay_toggles: list[bool] = []
+    view.on_toggle_peer_translation = lambda enabled: peer_toggles.append(enabled)
+    view.on_toggle_overlay = lambda enabled: overlay_toggles.append(enabled)
+
+    view.set_overlay_peer_contract(
+        _make_overlay_peer_contract(
+            overlay_intent_enabled=False,
+            overlay_state="off",
+            peer_intent_enabled=False,
+            peer_effective_enabled=False,
+        )
+    )
+    view.peer_button.on_click()
+    view.overlay_button.on_click()
+
+    view.set_overlay_peer_contract(
+        _make_overlay_peer_contract(
+            overlay_intent_enabled=True,
+            overlay_state="connected",
+            peer_intent_enabled=True,
+            peer_effective_enabled=True,
+        )
+    )
+    view.peer_button.on_click()
+    view.overlay_button.on_click()
+
+    assert peer_toggles == [True, False]
+    assert overlay_toggles == [True, False]
+
+
+def test_dashboard_peer_source_selection_restores_follow_self_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (change.source_code, change.target_code, change.peer_source_code, change.peer_target_code)
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+
+    view._on_peer_source_select("ko")
+
+    assert view._peer_source_lang_code == ""
+    assert view._peer_target_lang_code == "fr"
+    assert view._recent_langs == ["ko"]
+    assert changes[-1] == ("ko", "en", "", "fr")
+    assert view.language_card.languages[-1] == ("name-ko", "name-en", "name-ko", "name-fr")
+
+
+def test_dashboard_peer_target_selection_restores_follow_self_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (change.source_code, change.target_code, change.peer_source_code, change.peer_target_code)
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+
+    view._on_peer_target_select("en")
+
+    assert view._peer_source_lang_code == "ja"
+    assert view._peer_target_lang_code == ""
+    assert view._recent_langs == ["en"]
+    assert changes[-1] == ("ko", "en", "ja", "")
+    assert view.language_card.languages[-1] == ("name-ko", "name-en", "name-ja", "name-en")
+
+
+def test_dashboard_self_source_change_preserves_explicit_peer_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (change.source_code, change.target_code, change.peer_source_code, change.peer_target_code)
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+
+    view._on_source_select("ja")
+    view._on_source_select("de")
+
+    assert view._peer_source_lang_code == "ja"
+    assert view._peer_target_lang_code == "fr"
+    assert changes[-2] == ("ja", "en", "ja", "fr")
+    assert changes[-1] == ("de", "en", "ja", "fr")
+    assert view.language_card.languages[-1] == ("name-de", "name-en", "name-ja", "name-fr")
+
+
+def test_dashboard_peer_language_edits_share_controller_update_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (change.source_code, change.target_code, change.peer_source_code, change.peer_target_code)
+    )
+
+    view._on_peer_source_select("ja")
+    view._on_peer_target_select("fr")
+
+    assert changes == [("ko", "en", "ja", "ko"), ("ko", "en", "ja", "fr")]
+
+
+def test_dashboard_peer_swap_exchanges_source_and_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (change.source_code, change.target_code, change.peer_source_code, change.peer_target_code)
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+
+    view._swap_peer_languages()
+
+    assert view._peer_source_lang_code == "fr"
+    assert view._peer_target_lang_code == "ja"
+    assert changes[-1] == ("ko", "en", "fr", "ja")
+    assert view.language_card.languages[-1] == ("name-ko", "name-en", "name-fr", "name-ja")
+
+
+def test_dashboard_language_card_has_no_row_label_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard_module, "t", lambda key, **_kwargs: f"i18n:{key}")
+    view = _make_dashboard(monkeypatch)
+
+    assert view.language_card.row_labels == []
+
+    view.apply_locale()
+
+    assert view.language_card.row_labels == []
+
+
+def test_dashboard_peer_and_overlay_button_labels_render_from_i18n(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard_module, "t", lambda key, **_kwargs: f"i18n:{key}")
+    monkeypatch.setattr(dashboard_capture_module, "t", lambda key, **_kwargs: f"i18n:{key}")
+    view = _make_dashboard(monkeypatch)
+
+    assert view.peer_button.label == "i18n:dashboard.peer_label"
+    assert view.overlay_button.label == "i18n:dashboard.overlay_label"
+
+    view.apply_locale()
+
+    assert view.peer_button.label == "i18n:dashboard.peer_label"
+    assert view.overlay_button.label == "i18n:dashboard.overlay_label"
+
+
+def test_dashboard_local_stt_notice_can_change_and_clear_without_touching_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+
+    view.set_local_stt_notice_model("fun-asr-mlt-nano-2512-q8-0-transcribe-cpu")
+    view.set_local_stt_notice("missing")
+    view.set_display_text("hello", language_code="ko")
+    view.set_local_stt_notice("downloading", percent=63)
+    view.set_local_stt_notice(None)
+
+    model_label = "fun-asr-mlt-nano-2512-q8-0-transcribe-cpu"
+    assert view.display_card.display_calls == [("hello", False, "font-ko")]
+    assert view.display_card.notice_calls == [
+        (None, None),
+        (
+            dashboard_module.t("dashboard.local_stt_notice_missing_model", model=model_label),
+            "warning",
+        ),
+        (
+            dashboard_module.t(
+                "dashboard.local_stt_notice_downloading_progress_model",
+                model=model_label,
+                percent=63,
+            ),
+            "info",
+        ),
+        (None, None),
+    ]
+
+
+def test_dashboard_bound_intents_receive_every_owned_interaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    calls: dict[str, list] = {
+        "submit": [],
+        "translation": [],
+        "language": [],
+        "activity": [],
+        "self_capture": [],
+        "peer_capture": [],
+        "overlay": [],
+        "retry_peer": [],
+        "gpu": [],
+        "managed_gemma": [],
+    }
+    view.bind_dashboard_intents(
+        translation=DashboardTranslationIntents(
+            submit_message=lambda source, text: calls["submit"].append((source, text)),
+            toggle_translation=lambda enabled: calls["translation"].append(enabled),
+            change_language=lambda change: calls["language"].append(change),
+            report_input_activity=lambda has_text: calls["activity"].append(has_text),
+        ),
+        capture=DashboardCaptureIntents(
+            toggle_self_capture=lambda enabled: calls["self_capture"].append(enabled),
+            toggle_peer_capture=lambda enabled: calls["peer_capture"].append(enabled),
+            toggle_overlay=lambda enabled: calls["overlay"].append(enabled),
+            retry_peer_process_capture=lambda: calls["retry_peer"].append(True),
+            run_gpu_notice_action=lambda action: calls["gpu"].append(action),
+            run_managed_gemma_notice_action=lambda action: calls["managed_gemma"].append(action),
+        ),
+    )
+
+    view._on_submit("hello")
+    view._on_message_input_activity(True)
+    view._toggle_translation()
+    view._toggle_stt()
+    view._toggle_peer_translation()
+    view._toggle_overlay()
+    view._on_source_select("ja")
+
+    assert calls["submit"] == [("You", "hello")]
+    assert calls["activity"] == [True]
+    assert calls["translation"] == [True]
+    assert calls["self_capture"] == [True]
+    assert calls["peer_capture"] == [True]
+    assert calls["overlay"] == [True]
+    assert [change.source_code for change in calls["language"]] == ["ja"]
+    assert calls["retry_peer"] == []
+    assert calls["gpu"] == []
+    assert calls["managed_gemma"] == []
+
+
+def test_dashboard_secondary_target_dialog_offers_none_and_blocks_the_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    attach_dummy_page(monkeypatch, view)
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+    FakeLanguageModal.opened.clear()
+    FakeLanguageModal.languages.clear()
+    FakeLanguageModal.disabled_codes.clear()
+
+    view._open_secondary_target_dialog()
+
+    assert FakeLanguageModal.languages[0] == (dashboard_module.SECONDARY_TARGET_NONE, "")
+    assert FakeLanguageModal.disabled_codes[-1] == {"en"}
+    assert FakeLanguageModal.opened[-1][0] == dashboard_module.SECONDARY_TARGET_NONE
+
+
+def test_dashboard_secondary_target_selection_emits_and_renders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[str] = []
+    view.on_language_change = lambda change: changes.append(change.secondary_target_code)
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+
+    view._on_secondary_target_select("ja")
+
+    assert view._secondary_target_lang_code == "ja"
+    assert changes[-1] == "ja"
+    assert view.language_card.secondary_targets[-1] == "name-ja"
+
+
+def test_dashboard_secondary_target_none_clears_the_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[str] = []
+    view.on_language_change = lambda change: changes.append(change.secondary_target_code)
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+    view._on_secondary_target_select("ja")
+
+    view._on_secondary_target_select(dashboard_module.SECONDARY_TARGET_NONE)
+
+    assert view._secondary_target_lang_code == ""
+    assert changes[-1] == ""
+    assert view.language_card.secondary_targets[-1] == ""
+
+
+def test_dashboard_secondary_target_cannot_duplicate_the_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+
+    view._on_secondary_target_select("en")
+
+    assert view._secondary_target_lang_code == ""
+
+
+def test_dashboard_primary_target_change_drops_a_colliding_secondary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+    view._on_secondary_target_select("ja")
+
+    view._on_target_select("ja")
+
+    assert view._target_lang_code == "ja"
+    assert view._secondary_target_lang_code == ""
+
+
+def test_dashboard_language_swap_does_not_change_talk_button(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    talk_states = list(view.stt_button.states)
+
+    view._swap_languages()
+
+    assert view.is_stt_on is False
+    assert view._stt_is_starting is False
+    assert view.stt_button.states == talk_states
+
+
+def test_dashboard_language_swap_keeps_talk_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_stt_enabled(True)
+    talk_states = list(view.stt_button.states)
+
+    view._swap_languages()
+
+    assert view.is_stt_on is True
+    assert view._stt_is_starting is False
+    assert view.stt_button.states == talk_states
+
+
+def test_dashboard_talk_starting_clears_when_stt_becomes_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+
+    view._toggle_stt()
+    assert view.is_stt_on is True
+    assert view._stt_is_starting is True
+    assert view.stt_button.states[-1]["is_starting"] is True
+
+    view.set_stt_enabled(True)
+
+    assert view.is_stt_on is True
+    assert view._stt_is_starting is False
+    assert "is_starting" not in view.stt_button.states[-1]
+
+
+@pytest.mark.parametrize("effective_enabled", (False, True))
+def test_dashboard_trans_loading_click_requests_off_and_clears_starting(
+    monkeypatch: pytest.MonkeyPatch, effective_enabled: bool
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    requests: list[bool] = []
+    view.on_toggle_translation = requests.append
+    view.set_translation_enabled(effective_enabled)
+    view.set_translation_starting(True)
+
+    view.trans_button.on_click()
+
+    assert requests == [False]
+    assert view.is_translation_on is False
+    assert view._translation_is_starting is False
+    assert view.trans_button.states[-1]["is_on"] is False
+    assert "is_starting" not in view.trans_button.states[-1]
+
+
+def test_dashboard_talk_loading_click_requests_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    requests: list[bool] = []
+    view.on_toggle_stt = requests.append
+    view.set_stt_enabled(False)
+    view.set_stt_starting(True)
+
+    view.stt_button.on_click()
+
+    assert requests == [False]
+    assert view.is_stt_on is False
+    assert view._stt_is_starting is False
+
+
+def test_dashboard_self_swap_keeps_the_secondary_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    changes: list[tuple[str, str, str]] = []
+    view.on_language_change = lambda change: changes.append(
+        (change.source_code, change.target_code, change.secondary_target_code)
+    )
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+    view._on_secondary_target_select("ja")
+
+    view._swap_languages()
+
+    assert changes[-1] == ("en", "ko", "ja")
+
+
+def test_dashboard_self_swap_clears_a_secondary_that_would_collide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_languages_from_codes("ko", "en", "ja", "fr")
+    view._on_secondary_target_select("ko")
+
+    view._swap_languages()
+
+    assert view._target_lang_code == "ko"
+    assert view._secondary_target_lang_code == ""
+
+
+def test_dashboard_accepts_a_secondary_target_from_settings_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+
+    view.set_languages_from_codes("ko", "en", "ja", "fr", "manual", "ja")
+
+    assert view._secondary_target_lang_code == "ja"
+    assert view.language_card.secondary_targets[-1] == "name-ja"
+
+
+def test_dashboard_drops_a_projected_secondary_that_equals_the_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+
+    view.set_languages_from_codes("ko", "en", "ja", "fr", "manual", "en")
+
+    assert view._secondary_target_lang_code == ""
+
+
+def test_dashboard_peer_toggle_blocked_with_warning_when_peer_needs_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    seen: list[bool] = []
+    view.on_toggle_peer_translation = lambda enabled: seen.append(enabled)
+    view.set_peer_needs_key(True, update_ui=False)
+    warn_stt = dashboard_module.t("dashboard.warn_stt_key")
+
+    view._toggle_peer_translation()
+    assert seen == []
+    assert view._current_display_text == warn_stt
+    assert view._peer_showing_warning is True
+    assert view.peer_button.states[-1]["needs_key"] is True
+
+    view._toggle_peer_translation()
+    assert seen == []
+    assert view._peer_showing_warning is False
+    assert view.peer_button.states[-1]["needs_key"] is False
+
+
+def test_dashboard_peer_toggle_passes_through_once_peer_key_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    seen: list[bool] = []
+    view.on_toggle_peer_translation = lambda enabled: seen.append(enabled)
+    view.set_peer_needs_key(True, update_ui=False)
+
+    view.set_peer_needs_key(False, update_ui=False)
+    view._toggle_peer_translation()
+
+    assert seen == [True]
+
+
+def test_dashboard_needs_key_shows_warning_only_after_press(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_stt_needs_key(True, update_ui=True)
+    view.set_translation_needs_key(True, update_ui=True)
+    view.set_peer_needs_key(True, update_ui=True)
+
+    assert view._stt_showing_warning is False
+    assert view._translation_showing_warning is False
+    assert view._peer_showing_warning is False
+    assert view.stt_button.states[-1]["needs_key"] is False
+    assert view.trans_button.states[-1]["needs_key"] is False
+    assert view.peer_button.states[-1]["needs_key"] is False
+
+    view._toggle_stt()
+    view._toggle_translation()
+    view._toggle_peer_translation()
+
+    assert view._stt_showing_warning is True
+    assert view._translation_showing_warning is True
+    assert view._peer_showing_warning is True
+    assert view.stt_button.states[-1]["needs_key"] is True
+    assert view.trans_button.states[-1]["needs_key"] is True
+    assert view.peer_button.states[-1]["needs_key"] is True
+
+    view.set_stt_needs_key(False, update_ui=True)
+    view.set_translation_needs_key(False, update_ui=True)
+    view.set_peer_needs_key(False, update_ui=True)
+
+    assert view._stt_showing_warning is False
+    assert view._translation_showing_warning is False
+    assert view._peer_showing_warning is False
+    assert view.stt_button.states[-1]["needs_key"] is False
+    assert view.trans_button.states[-1]["needs_key"] is False
+    assert view.peer_button.states[-1]["needs_key"] is False
+
+
+def test_dashboard_api_key_warnings_use_translation_tone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _make_dashboard(monkeypatch)
+    view.set_stt_needs_key(True, update_ui=False)
+    view.set_translation_needs_key(True, update_ui=False)
+    warn_stt = dashboard_module.t("dashboard.warn_stt_key")
+    warn_llm = dashboard_module.t("dashboard.warn_llm_key")
+
+    view._toggle_stt()
+    assert view.display_card.display_metadata_calls[-1].get("as_translation") is True
+    assert view._current_display_text == warn_stt
+
+    view._toggle_translation()
+    assert view.display_card.display_metadata_calls[-1].get("as_translation") is True
+    assert view._current_display_text == warn_llm
+    assert view._peer_showing_warning is False
