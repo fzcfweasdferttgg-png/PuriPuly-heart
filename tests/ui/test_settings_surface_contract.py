@@ -137,7 +137,7 @@ def test_settings_api_surface_preserves_accepted_initial_row_visibility() -> Non
 
     assert surface.provider_row.visible is True
     assert surface.translation_connection_row.visible is True
-    assert surface.gpu_device_row.visible is False
+    assert surface.gpu_device_row.visible is True
 
 
 def test_bind_settings_intents_carries_every_previously_ad_hoc_g14_callback(

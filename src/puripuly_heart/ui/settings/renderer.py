@@ -49,7 +49,7 @@ def compose_settings_api_surface(
         expand=True,
     )
     gpu_device_row = ft.Container(content=gpu_device_controls)
-    gpu_device_row.visible = False
+    gpu_device_row.visible = True
 
     rows: list[ft.Control] = [
         provider_row,

@@ -88,29 +88,38 @@ class _LocalHuggingFaceTransport:
         return path
 
 
-@pytest.mark.parametrize("selected", ["huggingface", "hf_mirror"])
-@pytest.mark.parametrize("corrupt_selected", [False, True])
-async def test_explicit_choice_is_the_only_source_and_requires_pinned_bytes(
-    tmp_path, file_server, selected, corrupt_selected
+@pytest.mark.parametrize(
+    ("selected", "corrupt", "expected_source", "expected_requests"),
+    [
+        # «Скачать · HF» — пара huggingface → hf_mirror: зеркало резервирует первое звено.
+        ("huggingface", (), "huggingface", 0),
+        ("huggingface", ("mirror",), "huggingface", 0),
+        ("huggingface", ("hf",), "hf_mirror", 1),
+        ("huggingface", ("hf", "mirror"), None, 1),
+        # Явный hf_mirror остаётся строго одним источником.
+        ("hf_mirror", (), "hf_mirror", 1),
+        ("hf_mirror", ("hf",), "hf_mirror", 1),
+        ("hf_mirror", ("mirror",), None, 1),
+    ],
+)
+async def test_explicit_choice_bounds_its_source_pair_and_requires_pinned_bytes(
+    tmp_path, file_server, selected, corrupt, expected_source, expected_requests
 ):
     directory, url = file_server
     manifest, payload = _local_manifest(FUN_ASR_NANO_MODEL_ID, directory, url)
-    selected_prefix = "hf" if selected == "huggingface" else "mirror"
-    rejected_prefix = "mirror" if selected == "huggingface" else "hf"
-    corrupted = selected_prefix if corrupt_selected else rejected_prefix
-    (directory / corrupted / manifest.files[0].relative_path).write_bytes(b"x" * len(payload))
+    for prefix in corrupt:
+        (directory / prefix / manifest.files[0].relative_path).write_bytes(b"x" * len(payload))
     transport = _LocalHuggingFaceTransport(url)
     statuses = []
     options = dict(
         model_root=tmp_path / "models",
         manifest=manifest,
-        locale="zh-CN" if selected == "huggingface" else "en",
         preferred_source=selected,
         huggingface_downloader=transport,
         on_status=statuses.append,
     )
     install_dir = options["model_root"] / manifest.install_dirname
-    if corrupt_selected:
+    if expected_source is None:
         with pytest.raises(LocalSTTRuntimeInstallError) as rejected:
             await ensure_local_stt_installed(**options)
         assert rejected.value.failure_code == "checksum_failed"
@@ -118,13 +127,13 @@ async def test_explicit_choice_is_the_only_source_and_requires_pinned_bytes(
         assert statuses[-1].status == "download_failed"
     else:
         installed = await ensure_local_stt_installed(**options)
-        assert installed.selected_source == selected
+        assert installed.selected_source == expected_source
         assert installed.selected_revision == manifest.sources["huggingface"].revision
         assert validate_local_stt_install(install_dir, manifest=manifest) == installed
         assert (install_dir / manifest.files[0].relative_path).read_bytes() == payload
         assert statuses[-1].status == "ready"
     assert not list(options["model_root"].glob("*.staging-*"))
-    assert len(transport.requests) == (1 if selected == "hf_mirror" else 0)
+    assert len(transport.requests) == expected_requests
 
 
 @pytest.mark.parametrize("model_id", (*REQUIRED_CPU_LOCAL_STT_MODEL_IDS, LOCAL_QWEN_GPU_MODEL_ID))

@@ -1246,6 +1246,8 @@ class SettingsView(ft.Column):
             title=self._model_assets_title,
             value=self._model_assets_text,
         )
+        for card in (self._gpu_device_card, self._stt_model_card, self._gpu_llm_card):
+            card.visible = False
 
         self._overlay_translation_title = ft.Text(
             t("settings.overlay.show_translation"),
@@ -2005,7 +2007,9 @@ class SettingsView(ft.Column):
         self._set_unit_card_value_text(self._gpu_llm_text, llm_label)
         self._sync_stt_model_card()
         visible = self._local_model_selected(settings)
-        self._gpu_device_row.visible = visible
+        self._gpu_device_card.visible = visible
+        self._stt_model_card.visible = visible
+        self._gpu_llm_card.visible = visible
         _update_control_if_mounted(self._gpu_device_row)
 
     def set_gpu_devices(

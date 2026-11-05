@@ -37,7 +37,13 @@ def test_candidates_skip_unregistered_sources_and_derive_the_mirror_from_hugging
     assert (
         model_download_source_candidates(("huggingface",), locale="en", explicit="modelscope") == ()
     )
-
+    assert model_download_source_candidates(
+        ("huggingface", "hf_mirror"), locale="en", explicit="huggingface"
+    ) == ("huggingface", "hf_mirror")
+    assert (
+        model_download_source_candidates(("huggingface",), locale="en", explicit="huggingface")
+        == ("huggingface",)
+    )
 
 def test_removal_deletes_the_install_and_previous_residue(tmp_path) -> None:
     install = tmp_path / "model"

@@ -130,10 +130,11 @@ async def test_modal_lists_models_by_purpose_and_shows_actions_for_the_selection
     assert t("model_assets.group.translation") in texts
     assert f"2.0 GB ({t('model_assets.status.missing')})" in texts
     assert dialog.selected_model_id == "asr"
-    assert "·" not in " ".join(texts)
+    assert "·" not in " ".join(_texts(dialog._model_list))
     assert texts.count("Orukeet") == 1
     assert [label for card in dialog._actions.controls for label in _texts(card)] == [
-        t("model_assets.action.download")
+        f"{t('model_assets.action.download')} · HF",
+        f"{t('model_assets.action.download')} · ModelScope",
     ]
 
     dialog.select("gemma")
@@ -150,9 +151,13 @@ async def test_download_and_two_step_delete_call_the_application() -> None:
     dialog = _dialog(app, tasks)
     dialog.open()
 
-    _action(dialog, t("model_assets.action.redownload")).on_click(None)
+    _action(dialog, f"{t('model_assets.action.redownload')} · HF").on_click(None)
     await _run(tasks)
-    assert ("download", "asr", None) in app.calls
+    assert ("download", "asr", "huggingface") in app.calls
+
+    _action(dialog, f"{t('model_assets.action.redownload')} · ModelScope").on_click(None)
+    await _run(tasks)
+    assert ("download", "asr", "modelscope") in app.calls
 
     _action(dialog, t("model_assets.action.delete")).on_click(None)
     await _run(tasks)

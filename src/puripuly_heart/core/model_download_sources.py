@@ -27,6 +27,10 @@ def model_download_source_candidates(
     if explicit is not None:
         if explicit not in MODEL_DOWNLOAD_SOURCES or explicit not in available:
             return ()
+        # The explicit HF choice is the pair huggingface -> hf_mirror: the mirror
+        # is a fallback inside the pair, and only when the manifest pins it.
+        if explicit == "huggingface" and "hf_mirror" in registered:
+            return ("huggingface", "hf_mirror")
         return (explicit,)
     return tuple(name for name in model_download_source_order(locale) if name in available)
 

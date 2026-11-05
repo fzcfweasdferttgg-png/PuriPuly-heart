@@ -25,7 +25,7 @@ LOCAL_STT_MODEL_FAMILIES = (
     "qwen3-asr-0.6b",
     "qwen3-asr-1.7b",
 )
-LOCAL_STT_QUANTIZATIONS = ("q8_0", "q6_k", "f16")
+LOCAL_STT_QUANTIZATIONS = ("q6_k", "q8_0", "f16")
 LOCAL_STT_MODEL_IDS = tuple(
     f"{family}-gguf-{quant}"
     for quant in LOCAL_STT_QUANTIZATIONS

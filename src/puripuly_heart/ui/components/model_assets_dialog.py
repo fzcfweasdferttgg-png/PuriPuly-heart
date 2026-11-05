@@ -199,17 +199,25 @@ class ModelAssetsDialog:
                 )
         else:
             enabled = not busy
-            controls.append(
-                ModalCard(
-                    t(
-                        "model_assets.action.redownload"
-                        if status == "installed"
-                        else "model_assets.action.download"
-                    ),
-                    on_click=self._on_download,
-                    enabled=enabled,
-                )
+            base_label = t(
+                "model_assets.action.redownload"
+                if status == "installed"
+                else "model_assets.action.download"
             )
+            if entry.purpose == "asr":
+                sources = (("huggingface", "HF"), ("modelscope", "ModelScope"))
+                for source, source_label in sources:
+                    controls.append(
+                        ModalCard(
+                            f"{base_label} · {source_label}",
+                            on_click=lambda source=source: self._on_download(source),
+                            enabled=enabled,
+                        )
+                    )
+            else:
+                controls.append(
+                    ModalCard(base_label, on_click=self._on_download, enabled=enabled)
+                )
             if entry.importable:
                 controls.append(
                     ModalCard(
@@ -306,12 +314,14 @@ class ModelAssetsDialog:
         except Exception:
             logger.debug("Model list scroll failed", exc_info=True)
 
-    def _on_download(self) -> None:
+    def _on_download(self, source: str | None = None) -> None:
         model_id = self._selected
         if model_id is None:
             return
         self._confirm_delete = None
-        self._run(lambda: self.application.download_model_asset(model_id))
+        self._run(
+            lambda: self.application.download_model_asset(model_id, source=source)
+        )
 
     def _on_cancel(self) -> None:
         model_id = self._selected
