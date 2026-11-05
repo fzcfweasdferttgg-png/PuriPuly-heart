@@ -1346,33 +1346,6 @@ class TranslatorApp:
 
     async def close_oauth_runtime(self) -> None:
         await self.application.close_managed_auth_tasks()
-
-    def _api_key_verification_matches_current_field(self, provider: str, key: str) -> bool:
-        field_by_provider = {
-            "deepgram": "_deepgram_key",
-            "gemini_transcribe": "_gemini_transcribe_key",
-            "elevenlabs_scribe": "_elevenlabs_scribe_key",
-            "soniox": "_soniox_key",
-            "google": "_google_key",
-            "openrouter": "_openrouter_key",
-            "deepseek": "_deepseek_key",
-            "alibaba_beijing": "_alibaba_key_beijing",
-            "alibaba_singapore": "_alibaba_key_singapore",
-        }
-        field_name = field_by_provider.get(provider)
-        if field_name is None:
-            return True
-
-        field = getattr(getattr(self, "view_settings", None), field_name, None)
-        if field is None:
-            return True
-
-        current_key = getattr(field, "value", None)
-        if current_key is None:
-            return True
-
-        return current_key == key
-
     def _peer_api_key_provider_tag(self) -> str | None:
         """Return the verification provider tag required by the peer STT channel."""
         try:
@@ -1441,9 +1414,6 @@ class TranslatorApp:
 
     async def _on_verify_api_key(self, provider: str, key: str) -> tuple[bool, str]:
         success, msg = await self.application.verify_api_key(provider, key)
-
-        if not self._api_key_verification_matches_current_field(provider, key):
-            return success, msg
 
         self.application.persist_api_key_verification(provider, key, success)
 
