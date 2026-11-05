@@ -95,8 +95,6 @@ def _compose_kwargs() -> dict:
         "config_path": Path("settings.json"),
         "clock": SystemClock(),
         "runtime_logging": None,
-        "managed_release": ManagedRelease(),
-        "managed_delegate_ready": lambda: None,
         "local_asr_factory": lambda _secrets: PrebuiltLocalASRProviderRuntimeFactory(
             self_provider=None,
             peer_provider=None,
@@ -193,8 +191,6 @@ async def test_launcher_reuses_scene_across_rebuilds_and_closes_on_shutdown(
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=object(),
-        managed_release=ManagedRelease(),
-        managed_delegate_ready=lambda: None,
         local_asr_factory=lambda _secrets: object(),
         self_capture_factory=lambda *args: CaptureOwner(),
         peer_capture_factory=lambda *args: CaptureOwner(),

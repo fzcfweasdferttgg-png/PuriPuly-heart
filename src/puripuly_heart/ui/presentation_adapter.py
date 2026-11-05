@@ -118,11 +118,6 @@ class FletUiPresentationAdapter:
             get_language_codes=getattr(self._app, "get_event_language_codes", None),
             is_translation_enabled=getattr(self._app, "is_event_translation_enabled", None),
             get_stt_state=getattr(self._app, "get_event_stt_state", None),
-            clear_managed_auth_pending=getattr(
-                self._app,
-                "clear_managed_auth_pending_state",
-                None,
-            ),
             on_overlay_state_changed=getattr(self._app, "on_overlay_state_changed", None),
         )
 
@@ -171,13 +166,6 @@ class FletUiPresentationAdapter:
     def dashboard_translation_enabled(self) -> bool:
         dashboard = getattr(self._app, "view_dashboard", None)
         return bool(getattr(dashboard, "is_translation_on", True))
-
-    def set_dashboard_managed_auth_pending(self, pending: bool) -> None:
-        dashboard = getattr(self._app, "view_dashboard", None)
-        setter = getattr(dashboard, "set_managed_auth_pending", None)
-        if callable(setter):
-            setter(pending)
-
     def set_dashboard_gpu_state(
         self,
         *,
@@ -408,19 +396,6 @@ class FletUiPresentationAdapter:
         refresh = getattr(settings_view, "refresh_loopback_capture_target", None)
         if callable(refresh):
             refresh(general)
-
-    def set_settings_managed_key_state(
-        self,
-        *,
-        visible: bool,
-        remaining_percent: int | None,
-    ) -> None:
-        settings_view = getattr(self._app, "view_settings", None)
-        setter = getattr(settings_view, "set_managed_key_state", None)
-        if callable(setter):
-            setter(visible=visible, remaining_percent=remaining_percent)
-            return
-
     def add_history_entry(self, *args: Any, **kwargs: Any) -> None:
         callback = getattr(self._app, "add_history_entry", None)
         if callable(callback):
@@ -437,12 +412,6 @@ class FletUiPresentationAdapter:
     def get_event_stt_state(self) -> object | None:
         callback = getattr(self._app, "get_event_stt_state", None)
         return callback() if callable(callback) else None
-
-    def clear_managed_auth_pending_state(self) -> None:
-        callback = getattr(self._app, "clear_managed_auth_pending_state", None)
-        if callable(callback):
-            callback()
-
     def show_snackbar(self, *args: Any, **kwargs: Any) -> None:
         callback = getattr(self._app, "show_snackbar", None)
         if not callable(callback):
@@ -464,21 +433,6 @@ class FletUiPresentationAdapter:
         callback = getattr(self._app, "on_desktop_overlay_state_changed", None)
         if callable(callback):
             callback(*args, **kwargs)
-
-    def show_qq_managed_auth_dialog(self) -> bool:
-        callback = getattr(self._app, "show_qq_managed_auth_dialog", None)
-        if callable(callback):
-            callback()
-            return True
-        return False
-
-    def show_founder_letter_dialog(self) -> bool:
-        callback = getattr(self._app, "show_founder_letter_dialog", None)
-        if callable(callback):
-            callback()
-            return True
-        return False
-
     async def close_after_launch_tasks(self) -> None:
         callback = getattr(self._app, "close_after_launch_tasks", None)
         if callable(callback):

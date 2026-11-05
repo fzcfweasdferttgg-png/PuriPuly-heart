@@ -7,17 +7,11 @@ from pathlib import Path
 from typing import Literal
 
 from puripuly_heart.app.language_selection import LanguageSelectionChange
-from puripuly_heart.app.ports.chatgpt_account import (
-    ChatGptAccountSnapshot,
-    ChatGptConnectResult,
-    ChatGptSignOutResult,
-)
 from puripuly_heart.app.ports.settings_view import (
     AlibabaConnectionApplyResult,
     AlibabaConnectionDraftSnapshot,
     GeneralSettingsSnapshot,
     ImmediateSettingsIntent,
-    OpenRouterPkceTarget,
     OverlaySettingsSnapshot,
     PromptApplyIntent,
     ProviderApplyIntent,
@@ -36,7 +30,6 @@ from puripuly_heart.app.services.canonical_settings_persistence import SettingsO
 from puripuly_heart.app.services.capture.self_capture_application import (
     SelfCaptureApplicationOwner,
 )
-from puripuly_heart.app.services.chatgpt_account import ChatGptAccountOwner
 from puripuly_heart.app.services.desktop_overlay_application import (
     DesktopOverlayApplicationOwner,
 )
@@ -72,7 +65,6 @@ from puripuly_heart.app.services.settings.settings_projection import (
 )
 from puripuly_heart.app.services.translation_enable import TranslationEnableOwner
 from puripuly_heart.app.wiring.wiring_audio_test import AudioTestRuntime
-from puripuly_heart.app.wiring.wiring_managed_account import ManagedAccountComponents
 from puripuly_heart.app.wiring.wiring_peer_application import PeerApplicationRuntime
 from puripuly_heart.app.wiring.wiring_runtime_pipeline import RuntimePipelineHandle
 from puripuly_heart.config.alibaba_connection import AlibabaEndpointMode, AlibabaRegion
@@ -231,51 +223,6 @@ class UiOverlayRuntimeAdapter:
 
 
 @dataclass(slots=True)
-class UiManagedRuntimeAdapter:
-    managed: ManagedAccountComponents
-
-    def dashboard_managed_auth_action(self) -> str:
-        return self.managed.auth.dashboard_action()
-
-    def dashboard_managed_auth_prompt_kind(self) -> str:
-        return self.managed.auth.dashboard_prompt_kind()
-
-    async def start_qq_managed_auth_from_dialog(self, **kwargs: object) -> object:
-        return await self.managed.auth.start_qq(
-            qq_identity=str(kwargs.get("qq_identity", "")),
-            credential=str(kwargs.get("credential", "")),
-        )
-
-    async def start_discord_managed_auth_from_dialog(self, **kwargs: object) -> object:
-        callback = kwargs.get("on_callback_received")
-        recovery_hook = kwargs.get("on_recovery_started")
-        url_sink = kwargs.get("authorization_url_sink")
-        return await self.managed.auth.start_discord(
-            on_callback_received=callback if callable(callback) else None,
-            on_recovery_started=recovery_hook if callable(recovery_hook) else None,
-            authorization_url_sink=url_sink if callable(url_sink) else None,
-            open_browser=kwargs.get("open_browser", True) is True,
-        )
-
-    async def logout_local_managed(self, provider: str) -> dict[str, object]:
-        return await self.managed.auth_runtime.logout_local_managed(provider)
-
-    def managed_auth_last_failure_kind(self) -> str:
-        kind = getattr(self.managed.auth, "last_failure_kind", "failed")
-        return kind if isinstance(kind, str) else "failed"
-
-    def managed_auth_last_message_key(self) -> str | None:
-        return self.managed.auth.last_message_key
-
-    def clear_managed_auth_pending_state(self) -> None:
-        self.managed.auth.clear_pending()
-
-    async def refresh_openrouter_usage_after_launch(self) -> bool:
-        await self.managed.usage.refresh(auto_show_founder_letter=True)
-        return self.managed.usage.is_exhausted
-
-
-@dataclass(slots=True)
 class UiSettingsRuntimeAdapter:
     settings: SettingsOwner
     projection: SettingsProjectionOwner
@@ -399,13 +346,10 @@ class UiProviderRuntimeAdapter:
     settings: SettingsOwner
     provider_application: ProviderApplicationOwner
     gpu: GpuRuntimeInteractionOwner
-    managed: ManagedAccountComponents
     credential_verification: ProviderCredentialVerificationInteractionOwner
     provider_settings: ProviderSettingsOwner
-    build_byok_target_settings: Callable[[AppSettingsVNext | None], AppSettingsVNext | None]
     managed_gemma: ManagedGemmaTranslationOwner | None = None
     llm_devices_sink: Callable[[tuple[GpuDeviceOption, ...]], None] | None = None
-    chatgpt: ChatGptAccountOwner | None = None
     connection_readiness: LlmConnectionReadinessOwner | None = None
     model_assets: ModelAssetsApplication | None = None
     _alibaba_workspace: AlibabaWorkspaceOwner | None = field(default=None, init=False)
@@ -503,107 +447,6 @@ class UiProviderRuntimeAdapter:
         if sink is None:
             return
         sink(await asyncio.to_thread(_llama_gpu_device_options))
-
-    async def connect_openrouter_via_pkce(
-        self,
-        *,
-        target: OpenRouterPkceTarget,
-        launch_source: str,
-        open_browser: bool = True,
-        authorization_url_sink: Callable[[str], None] | None = None,
-    ) -> bool:
-        return await self.managed.pkce.connect(
-            target=target,
-            launch_source=launch_source,
-            open_browser=open_browser,
-            authorization_url_sink=authorization_url_sink,
-        )
-
-    def reopen_openrouter_pkce_authorization_url(self) -> object:
-        return self.managed.pkce_flow.reopen_authorization_url()
-
-    def chatgpt_account_snapshot(self) -> ChatGptAccountSnapshot:
-        if self.chatgpt is None:
-            return ChatGptAccountSnapshot(signed_in=False)
-        return self.chatgpt.snapshot()
-
-    async def connect_chatgpt(
-        self,
-        *,
-        open_browser: bool = True,
-        authorization_url_sink: Callable[[str], None] | None = None,
-    ) -> ChatGptConnectResult:
-        if self.chatgpt is None:
-            return ChatGptConnectResult(succeeded=False, failure_code="unavailable")
-        result = await self.chatgpt.connect(
-            open_browser=open_browser,
-            authorization_url_sink=authorization_url_sink,
-        )
-        if result.succeeded and self.chatgpt_route_active():
-            await self.apply_providers(force_rebuild_llm=True, persist_settings=False)
-        return result
-
-    def reopen_chatgpt_authorization_url(self) -> bool:
-        return self.chatgpt is not None and self.chatgpt.reopen_authorization_url()
-
-    async def sign_out_chatgpt(self) -> ChatGptSignOutResult:
-        if self.chatgpt is None:
-            return ChatGptSignOutResult(remote_revoked=False)
-        readiness = self.connection_readiness if self.chatgpt_route_active() else None
-        if readiness is not None:
-            await readiness.suspend()
-        try:
-            result = await self.chatgpt.sign_out()
-            if self.chatgpt_route_active():
-                await self.apply_providers(force_rebuild_llm=True, persist_settings=False)
-            return result
-        finally:
-            if readiness is not None:
-                readiness.resume()
-
-    def cancel_chatgpt_sign_in(self) -> None:
-        if self.chatgpt is not None:
-            self.chatgpt.cancel()
-
-    def chatgpt_sign_in_required(self) -> bool:
-        return self.chatgpt_route_active() and not self.chatgpt_account_snapshot().signed_in
-
-    def chatgpt_route_active(self) -> bool:
-        canonical = self.settings.canonical
-        if canonical is None:
-            return False
-        translation = canonical.intent.translation
-        return provider_llm_for_translation(translation.model, translation.connection) == "chatgpt"
-
-    def build_managed_openrouter_byok_target(self) -> OpenRouterPkceTarget | None:
-        from puripuly_heart.config.provider_values import OpenRouterSelectionAlias
-
-        target_settings = self.build_byok_target_settings(self.settings.canonical)
-        if target_settings is None:
-            return None
-        alias = target_settings.intent.translation.openrouter_selection_alias
-        if alias is None:
-            return None
-        provider, _general, _prompt, _overlay = settings_view_surface_snapshots(target_settings)
-        return OpenRouterPkceTarget(
-            OpenRouterSelectionAlias(alias),
-            provider_intent=ProviderApplyIntent(
-                (
-                    TranslationSelectionEdit(
-                        provider.translation,
-                        (
-                            (
-                                provider.translation.model,
-                                provider.translation.connection,
-                            ),
-                        ),
-                    ),
-                )
-            ),
-            system_prompt=resolve_system_prompt(
-                target_settings.intent.prompts.system_prompt_override
-            ),
-        )
 
     async def verify_api_key(self, provider: str, key: str) -> tuple[bool, str]:
         return await self.credential_verification.verify(provider, key)

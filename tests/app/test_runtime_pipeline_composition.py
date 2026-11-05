@@ -126,8 +126,6 @@ async def test_pipeline_composes_each_durable_owner_once_and_injects_same_identi
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=None,
-        managed_release=ManagedRelease(),
-        managed_delegate_ready=lambda: None,
         local_asr_factory=lambda _secrets: PrebuiltLocalASRProviderRuntimeFactory(
             self_provider=None,
             peer_provider=None,
@@ -214,8 +212,6 @@ async def test_pipeline_binds_stt_event_ingress_observer_to_translation_diagnost
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=None,
-        managed_release=ManagedRelease(),
-        managed_delegate_ready=lambda: None,
         local_asr_factory=lambda _secrets: asr_factory,
         self_capture_factory=lambda *_args: CaptureOwner("self"),
         peer_capture_factory=lambda *_args: CaptureOwner("peer"),
@@ -299,8 +295,6 @@ async def test_managed_gemma_startup_constructs_provider_without_preparing(
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=None,
-        managed_release=ManagedRelease(),
-        managed_delegate_ready=lambda: None,
         managed_gemma=ManagedGemma(),
         local_asr_factory=lambda _secrets: PrebuiltLocalASRProviderRuntimeFactory(
             self_provider=None,
@@ -383,8 +377,6 @@ async def test_pipeline_composition_preserves_runtime_configuration_and_gate(
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=runtime_logging,
-        managed_release=ManagedRelease(),
-        managed_delegate_ready=lambda: None,
         local_asr_factory=lambda _secrets: PrebuiltLocalASRProviderRuntimeFactory(
             self_provider=None,
             peer_provider=None,
@@ -450,8 +442,6 @@ async def test_pipeline_launcher_replaces_owned_runtime_in_order(
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=object(),
-        managed_release=ManagedRelease(),
-        managed_delegate_ready=lambda: None,
         local_asr_factory=lambda _secrets: object(),
         self_capture_factory=lambda *_args: new_self,
         peer_capture_factory=lambda *_args: new_peer,
@@ -520,8 +510,6 @@ async def test_pipeline_output_keeps_peer_off_chatbox_and_channels_separate(
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=None,
-        managed_release=ManagedRelease(),
-        managed_delegate_ready=lambda: None,
         local_asr_factory=lambda _secrets: PrebuiltLocalASRProviderRuntimeFactory(
             self_provider=None,
             peer_provider=None,
@@ -877,8 +865,6 @@ async def test_pipeline_composition_closes_pending_llm_on_early_failure(
             config_path=Path("settings.json"),
             clock=SystemClock(),
             runtime_logging=None,
-            managed_release=ManagedRelease(),
-            managed_delegate_ready=lambda: None,
             local_asr_factory=lambda _secrets: PrebuiltLocalASRProviderRuntimeFactory(
                 self_provider=None,
                 peer_provider=None,
@@ -927,8 +913,6 @@ async def test_pipeline_launcher_retains_failed_cleanup_for_retry(
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=object(),
-        managed_release=ManagedRelease(),
-        managed_delegate_ready=lambda: None,
         local_asr_factory=lambda _secrets: object(),
         self_capture_factory=lambda *_args: failed_self,
         peer_capture_factory=lambda *_args: object(),
@@ -1007,8 +991,6 @@ async def test_pipeline_dependency_preparation_remains_responsive_and_drains_can
             config_path=Path("settings.json"),
             clock=SystemClock(),
             runtime_logging=None,
-            managed_release=ManagedRelease(),
-            managed_delegate_ready=lambda: None,
             local_asr_factory=lambda _secrets: PrebuiltLocalASRProviderRuntimeFactory(
                 self_provider=None, peer_provider=None
             ),

@@ -131,21 +131,9 @@ def compose_application_runtime_shutdown_callbacks(
         ),
         application_shutdown_callback(
             phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
-            owner_name="ManagedAuthOwner",
-            callback_name="close",
-            callback=runtime.close_managed_auth_owner,
-        ),
-        application_shutdown_callback(
-            phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
             owner_name="TranslationEnableOwner",
             callback_name="close",
             callback=runtime.close_translation_enable_owner,
-        ),
-        application_shutdown_callback(
-            phase=SHUTDOWN_PHASE_OWNER_DRAIN_CANCEL,
-            owner_name="ManagedUsageOwner",
-            callback_name="close",
-            callback=runtime.close_managed_usage_owner,
         ),
         application_shutdown_callback(
             phase=SHUTDOWN_PHASE_CLOSE_PROVIDERS_OUTPUT_ADAPTERS,
@@ -212,12 +200,6 @@ def compose_application_runtime_shutdown_callbacks(
             owner_name="VrchatOscUdpSender",
             callback_name="close",
             callback=runtime.close_vrchat_sender,
-        ),
-        application_shutdown_callback(
-            phase=SHUTDOWN_PHASE_CLOSE_PROVIDERS_OUTPUT_ADAPTERS,
-            owner_name="ManagedOpenRouterReleaseService",
-            callback_name="close",
-            callback=runtime.close_managed_openrouter_release_service,
         ),
         ApplicationShutdownCallback(
             phase=SHUTDOWN_PHASE_FINAL_DIAGNOSTICS,

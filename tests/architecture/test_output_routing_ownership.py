@@ -92,7 +92,7 @@ def test_flet_composition_uses_owner_without_importing_output_implementation() -
     ):
         assert retired_assembly not in composition_source
     for extracted_construction in (
-        "compose_managed_account(",
+        "compose_translation_enable(",
         "compose_provider_runtime(",
         "CaptureOwnerFactory(",
         "RuntimePipelineLauncher(",
@@ -102,7 +102,7 @@ def test_flet_composition_uses_owner_without_importing_output_implementation() -
     assert "PeerTranslationChannelOwner(" in pipeline_source
     assert "ClientHub" not in pipeline_source
     assert "compose_application_runtime(" in ui_composition_source
-    assert "compose_managed_account(" in composition_source
+    assert "compose_translation_enable(" in composition_source
     assert "compose_provider_runtime(" in composition_source
     assert "CaptureOwnerFactory(" in composition_source
     assert "RuntimePipelineLauncher(" in composition_source

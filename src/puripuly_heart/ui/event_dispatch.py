@@ -181,11 +181,9 @@ class AppErrorEventDestination:
         self,
         *,
         runtime_logging: RuntimeLoggingPort | None,
-        clear_managed_auth_pending: object | None = None,
         get_stt_state: object | None = None,
     ) -> None:
         self._runtime_logging = runtime_logging
-        self._clear_managed_auth_pending = clear_managed_auth_pending
         self._get_stt_state = get_stt_state
 
     def publish_error(
@@ -198,8 +196,6 @@ class AppErrorEventDestination:
         self._emit_runtime_error_log(text, runtime_log_handled=event.runtime_log_handled)
         if _is_legacy_raw_error_payload(payload):
             self._emit_legacy_raw_payload_deprecation_diagnostic()
-        if _is_managed_openrouter_error_payload(payload):
-            self._clear_managed_auth_pending_state()
         return self._should_display_dashboard_error(text)
 
     def _emit_runtime_error_log(self, text: str, *, runtime_log_handled: bool) -> None:
@@ -218,12 +214,6 @@ class AppErrorEventDestination:
             return
         with contextlib.suppress(Exception):
             emit_diagnostic(_RAW_STRING_ERROR_DEPRECATION_DIAGNOSTIC, level=logging.WARNING)
-
-    def _clear_managed_auth_pending_state(self) -> None:
-        if callable(self._clear_managed_auth_pending):
-            with contextlib.suppress(Exception):
-                self._clear_managed_auth_pending()
-
     def _should_display_dashboard_error(self, text: str) -> bool:
         stt_state = self._get_stt_state() if callable(self._get_stt_state) else None
         msg_lower = text.lower()
@@ -267,25 +257,11 @@ def _safe_i18n_params(params: Mapping[str, object]) -> dict[str, object]:
     return safe_params
 
 
-def _is_managed_openrouter_error_payload(payload: object | None) -> bool:
-    if isinstance(payload, ManagedOpenRouterUserFacingError):
-        return True
-    if isinstance(payload, UserErrorReport):
-        return _is_managed_openrouter_message(payload.message)
-    if isinstance(payload, UserMessageRef):
-        return _is_managed_openrouter_message(payload)
-    return False
-
-
 def _is_legacy_raw_error_payload(payload: object | None) -> bool:
     return payload is not None and not isinstance(
         payload,
         ManagedOpenRouterUserFacingError | UserErrorReport | UserMessageRef,
     )
-
-
-def _is_managed_openrouter_message(message: UserMessageRef) -> bool:
-    return message.key.startswith("managed_release.")
 
 
 class UIEventBridge:
@@ -300,7 +276,6 @@ class UIEventBridge:
         get_language_codes: object | None = None,
         is_translation_enabled: object | None = None,
         get_stt_state: object | None = None,
-        clear_managed_auth_pending: object | None = None,
         on_overlay_state_changed: object | None = None,
     ):
         self.event_queue = event_queue
@@ -313,7 +288,6 @@ class UIEventBridge:
         self.history_destination = history_destination
         self.error_destination = error_destination or AppErrorEventDestination(
             runtime_logging=runtime_logging,
-            clear_managed_auth_pending=clear_managed_auth_pending,
             get_stt_state=self._get_stt_state_callback,
         )
         self.projection_service = EventProjectionService()

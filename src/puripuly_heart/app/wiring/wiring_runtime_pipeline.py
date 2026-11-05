@@ -85,7 +85,6 @@ from .wiring_llm_factory import (
     runtime_resolution_input_from_vnext,
 )
 from .wiring_local_asr_provider_runtime import LocalASRProviderRuntimeFactory
-from .wiring_managed_account import ManagedOpenRouterReleaseRuntime
 from .wiring_managed_gemma import noop_managed_gemma_release
 from .wiring_provider_runtime import (
     project_translation_runtime_settings_from_vnext,
@@ -596,8 +595,6 @@ class RuntimePipelineLauncher:
     config_path: Path
     clock: Clock
     runtime_logging: TranslationRuntimeLoggingPort
-    managed_release: ManagedOpenRouterReleaseRuntime
-    managed_delegate_ready: Callable[[], None]
     local_asr_factory: Callable[
         [object],
         LocalASRProviderRuntimeFactoryPort,
@@ -628,7 +625,6 @@ class RuntimePipelineLauncher:
     managed_gemma: ManagedGemmaTranslationOwner | None = None
     http_extensions: HttpExtensionRegistry | None = None
     vrchat_scene_factory: Callable[[], VrchatSceneService] | None = None
-    chatgpt_session: ChatGptAccessTokenPort | None = None
     failed_resources: RuntimePipelineResourceOwner | None = field(
         init=False,
         default=None,
@@ -685,8 +681,6 @@ class RuntimePipelineLauncher:
                 config_path=self.config_path,
                 clock=self.clock,
                 runtime_logging=self.runtime_logging,
-                managed_release=self.managed_release,
-                managed_delegate_ready=self.managed_delegate_ready,
                 managed_gemma=self.managed_gemma,
                 local_asr_factory=self.local_asr_factory,
                 self_capture_factory=self.self_capture_factory,
@@ -698,7 +692,6 @@ class RuntimePipelineLauncher:
                 http_extensions=self.http_extensions,
                 resources=resources,
                 vrchat_scene=scene,
-                chatgpt_session=self.chatgpt_session,
             )
             if pipeline.prepare_self_provider:
                 snapshot = await pipeline.self_capture.prepare_provider(inputs.self_capture_session)
@@ -737,8 +730,6 @@ async def compose_runtime_pipeline(
     config_path: Path,
     clock: Clock,
     runtime_logging: TranslationRuntimeLoggingPort,
-    managed_release: ManagedOpenRouterReleaseRuntime,
-    managed_delegate_ready: Callable[[], None],
     local_asr_factory: Callable[
         [object],
         LocalASRProviderRuntimeFactoryPort,
@@ -768,7 +759,6 @@ async def compose_runtime_pipeline(
     http_extensions: HttpExtensionRegistry | None = None,
     resources: RuntimePipelineResourceOwner | None = None,
     vrchat_scene: VrchatSceneService | None = None,
-    chatgpt_session: ChatGptAccessTokenPort | None = None,
 ) -> RuntimePipelineComponents:
     owned_resources = resources is None
     await run_owned_thread_call(prepare_capture_runtime_dependencies)
@@ -780,8 +770,6 @@ async def compose_runtime_pipeline(
             config_path=config_path,
             clock=clock,
             runtime_logging=runtime_logging,
-            managed_release=managed_release,
-            managed_delegate_ready=managed_delegate_ready,
             managed_gemma=managed_gemma,
             local_asr_factory=local_asr_factory,
             self_capture_factory=self_capture_factory,
@@ -793,7 +781,6 @@ async def compose_runtime_pipeline(
             http_extensions=http_extensions,
             resources=pipeline_resources,
             vrchat_scene=vrchat_scene,
-            chatgpt_session=chatgpt_session,
         )
     except BaseException as exc:
         if not owned_resources:
@@ -815,8 +802,6 @@ async def _compose_runtime_pipeline(
     config_path: Path,
     clock: Clock,
     runtime_logging: TranslationRuntimeLoggingPort,
-    managed_release: ManagedOpenRouterReleaseRuntime,
-    managed_delegate_ready: Callable[[], None],
     managed_gemma: ManagedGemmaTranslationOwner | None,
     local_asr_factory: Callable[[object], LocalASRProviderRuntimeFactoryPort],
     self_capture_factory: Callable[
@@ -843,7 +828,6 @@ async def _compose_runtime_pipeline(
     http_extensions: HttpExtensionRegistry | None,
     resources: RuntimePipelineResourceOwner,
     vrchat_scene: VrchatSceneService | None,
-    chatgpt_session: ChatGptAccessTokenPort | None = None,
 ) -> RuntimePipelineComponents:
     _ = config_path
     if http_extensions is None and inputs.translation_model == TranslationModel.CUSTOM_HTTP.value:
@@ -851,11 +835,6 @@ async def _compose_runtime_pipeline(
         http_extensions.reload()
     if inputs.translation_model not in MANAGED_GEMMA_MODELS and managed_gemma is not None:
         await managed_gemma.deactivate()
-    if inputs.translation_model not in {
-        TranslationModel.CUSTOM_HTTP.value,
-        *MANAGED_GEMMA_MODELS,
-    }:
-        await managed_release.rebuild(secrets=secrets)
 
     llm = None
     with contextlib.suppress(Exception):
@@ -886,12 +865,9 @@ async def _compose_runtime_pipeline(
             extras=llm_extras,
             http_extension_id=inputs.http_extension_id,
             concurrency_limit=inputs.concurrency_limit,
-            managed_release_service=managed_release.service,
-            managed_delegate_ready=managed_delegate_ready,
             runtime_logging=runtime_logging,
             managed_gemma_runtime=gemma_runtime,
             managed_gemma_release=gemma_release,
-            chatgpt_session=chatgpt_session,
         )
         resources.pending_llm = llm
 

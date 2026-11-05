@@ -43,10 +43,6 @@ class DebugPreviewPanel(ft.Container):
         on_github_star_snackbar: Callable[[], None],
         on_foundation_primitives: Callable[[], None],
         on_http_extension_form: Callable[[], None] | None = None,
-        on_brake_notice: Callable[[], None] | None = None,
-        on_revoked_notice: Callable[[], None] | None = None,
-        on_pkce_failure: Callable[[], None] | None = None,
-        on_pkce_button_cycle: Callable[[], None] | None = None,
         on_capture_fault_cycle: Callable[[], None] | None = None,
         on_stt_fault_cycle: Callable[[], None] | None = None,
         on_audio_fault_clear: Callable[[], None] | None = None,
@@ -84,14 +80,6 @@ class DebugPreviewPanel(ft.Container):
                 )
             )
         extended_callbacks = (
-            ("brake_notice", "debug_preview.brake_notice", on_brake_notice),
-            ("revoked_notice", "debug_preview.revoked_notice", on_revoked_notice),
-            ("pkce_failure", "debug_preview.pkce_failure", on_pkce_failure),
-            (
-                "pkce_button_cycle",
-                "debug_preview.pkce_button_cycle",
-                on_pkce_button_cycle,
-            ),
             (
                 "capture_fault_cycle",
                 "debug_preview.capture_fault_cycle",

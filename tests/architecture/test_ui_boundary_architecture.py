@@ -68,7 +68,6 @@ def test_ui_application_contract_covers_every_translator_app_boundary_access() -
         "provider",
         "audio_test",
         "overlay",
-        "managed",
         "engagement",
         "diagnostics",
         "state",

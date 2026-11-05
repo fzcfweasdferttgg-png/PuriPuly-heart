@@ -12,7 +12,6 @@ from puripuly_heart.app.services.overlay.overlay_calibration_application import 
     OverlayCalibrationApplicationOwner,
 )
 from puripuly_heart.app.wiring.wiring_audio_test import AudioTestRuntime
-from puripuly_heart.app.wiring.wiring_managed_account import ManagedAccountComponents
 from puripuly_heart.app.wiring.wiring_runtime_pipeline import RuntimePipelineHandle
 from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
 
@@ -23,7 +22,6 @@ class ApplicationUiStateAdapter:
     settings: SettingsOwner
     pipeline: RuntimePipelineHandle
     desktop_overlay: DesktopOverlayApplicationOwner
-    managed: ManagedAccountComponents
     calibration: OverlayCalibrationApplicationOwner
     audio_test: Callable[[], AudioTestRuntime | None]
 

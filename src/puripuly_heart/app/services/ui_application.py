@@ -21,11 +21,6 @@ from puripuly_heart.app.ports.application_runtime_shutdown import (
     ApplicationRuntimeShutdownPort,
 )
 from puripuly_heart.app.ports.application_startup import ApplicationStartupDiagnostic
-from puripuly_heart.app.ports.chatgpt_account import (
-    ChatGptAccountSnapshot,
-    ChatGptConnectResult,
-    ChatGptSignOutResult,
-)
 from puripuly_heart.app.ports.settings_secrets import SettingsSecretsPort
 from puripuly_heart.app.ports.settings_view import (
     AlibabaConnectionApplyResult,
@@ -33,7 +28,6 @@ from puripuly_heart.app.ports.settings_view import (
     GeneralSettingsSnapshot,
     ImmediateSettingsIntent,
     LoopbackCaptureSettingsIntent,
-    OpenRouterPkceTarget,
     OverlaySettingsSnapshot,
     PromptApplyIntent,
     ProviderApplyIntent,
@@ -49,7 +43,6 @@ from puripuly_heart.app.ports.ui_application_intents import (
     UiDiagnosticsRuntimePort,
     UiEngagementRuntimePort,
     UiInputRuntimePort,
-    UiManagedRuntimePort,
     UiOverlayRuntimePort,
     UiPeerCaptureRuntimePort,
     UiProviderRuntimePort,
@@ -90,16 +83,6 @@ from puripuly_heart.core.runtime.github_star_prompt import GithubStarPromptRunti
 from puripuly_heart.core.updater import check_for_update
 
 
-class _InertOAuthRuntime:
-    """Compat placeholder: the OAuth runtime was removed with managed auth."""
-
-    def __getattr__(self, name: str):
-        async def _noop(*args: object, **kwargs: object) -> None:
-            return None
-
-        return _noop
-
-
 UI_APPLICATION_USER_INTENT_METHODS = frozenset(
     {
         "accept_peer_translation_eula_and_enable",
@@ -116,14 +99,11 @@ UI_APPLICATION_USER_INTENT_METHODS = frozenset(
         "begin_overlay_calibration",
         "begin_alibaba_connection_draft",
         "cancel_alibaba_connection_draft",
-        "cancel_discord_managed_auth",
         "cancel_overlay_calibration",
         "capture_settings_view_change",
         "check_for_update",
         "clear_debug_audio_fault_profiles",
-        "clear_managed_auth_pending_state",
         "clear_provider_verification",
-        "connect_openrouter_via_pkce",
         "cycle_debug_capture_fault_profile",
         "cycle_debug_stt_fault_profile",
         "ensure_gpu_device_discovery",
@@ -144,9 +124,6 @@ UI_APPLICATION_USER_INTENT_METHODS = frozenset(
         "persist_provider_secret_change",
         "prepare_runtime_after_launch",
         "record_app_active_day",
-        "refresh_openrouter_usage_after_launch",
-        "reopen_discord_managed_auth_browser",
-        "reopen_openrouter_pkce_authorization_url",
         "reset_desktop_overlay_position",
         "retry_peer_process_capture",
         "schedule_github_star_prompt_translation_success_observed",
@@ -159,11 +136,8 @@ UI_APPLICATION_USER_INTENT_METHODS = frozenset(
         "set_stt_enabled",
         "set_translation_enabled",
         "start",
-        "start_discord_managed_auth_from_dialog",
         "start_github_star_prompt",
-        "start_managed_auth_task",
         "start_audio_test",
-        "start_qq_managed_auth_from_dialog",
         "stop_audio_test",
         "submit_text",
         "verify_alibaba_connection_draft",
@@ -331,7 +305,6 @@ class UiApplicationBoundary:
         provider: UiProviderRuntimePort,
         audio_test: UiAudioTestRuntimePort,
         overlay: UiOverlayRuntimePort,
-        managed: UiManagedRuntimePort,
         engagement: UiEngagementRuntimePort,
         diagnostics: UiDiagnosticsRuntimePort,
         state: UiApplicationStatePort,
@@ -357,7 +330,6 @@ class UiApplicationBoundary:
         self._provider = provider
         self._audio_test = audio_test
         self._overlay = overlay
-        self._managed = managed
         self._engagement = engagement
         self._diagnostics = diagnostics
         self._runtime_logging = runtime_logging
@@ -377,7 +349,6 @@ class UiApplicationBoundary:
         self._github_star_prompt_runtime = GithubStarPromptRuntime(
             diagnostics_sink=self._github_star_prompt_runtime_diagnostics_sink,
         )
-        self._managed_auth_runtime = _InertOAuthRuntime()
         self._registered_application_shutdown_callbacks: list[ApplicationShutdownCallback] = []
         self._owned_application_shutdown_callbacks = (
             *self._boundary_application_shutdown_callbacks(),
@@ -414,12 +385,6 @@ class UiApplicationBoundary:
                 owner_name="GithubStarPromptRuntime",
                 callback_name="close",
                 callback=self.close_github_star_prompt_runtime,
-            ),
-            application_shutdown_callback(
-                phase=SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
-                owner_name="OAuthRuntime",
-                callback_name="close",
-                callback=self.close_managed_auth_tasks,
             ),
         )
 
@@ -915,24 +880,6 @@ class UiApplicationBoundary:
     def overlay_peer_presentation_state(self) -> OverlayPeerPresentationState | None:
         return self._peer_capture.overlay_peer_presentation_state()
 
-    def dashboard_managed_auth_action(self) -> str:
-        if self._managed_auth_runtime.external_task_names:
-            return "in_progress"
-        return str(self._managed.dashboard_managed_auth_action())
-
-    def dashboard_managed_auth_prompt_kind(self) -> str:
-        return str(self._managed.dashboard_managed_auth_prompt_kind())
-
-    def managed_auth_last_failure_kind(self) -> str:
-        accessor = getattr(self._managed, "managed_auth_last_failure_kind", None)
-        if not callable(accessor):
-            return "failed"
-        kind = accessor()
-        return kind if isinstance(kind, str) else "failed"
-
-    def managed_auth_last_message_key(self) -> str | None:
-        return self._managed.managed_auth_last_message_key()
-
     async def apply_telemetry_enabled(self, enabled: bool) -> Any | None:
         return await self._settings.apply_telemetry_enabled(enabled)
 
@@ -1038,101 +985,6 @@ class UiApplicationBoundary:
     def local_llm_selected(self) -> bool:
         return self.state().provider_name == "local_llm"
 
-    async def connect_openrouter_via_pkce(
-        self,
-        *,
-        target: OpenRouterPkceTarget,
-        launch_source: str,
-        open_browser: bool = True,
-        authorization_url_sink: Callable[[str], None] | None = None,
-    ) -> bool:
-        return bool(
-            await self._provider.connect_openrouter_via_pkce(
-                target=target,
-                launch_source=launch_source,
-                open_browser=open_browser,
-                authorization_url_sink=authorization_url_sink,
-            )
-        )
-
-    def reopen_openrouter_pkce_authorization_url(self) -> None:
-        self._provider.reopen_openrouter_pkce_authorization_url()
-
-    def chatgpt_account_snapshot(self) -> ChatGptAccountSnapshot:
-        return self._provider.chatgpt_account_snapshot()
-
-    async def connect_chatgpt(
-        self,
-        *,
-        open_browser: bool = True,
-        authorization_url_sink: Callable[[str], None] | None = None,
-    ) -> ChatGptConnectResult:
-        result = await self._provider.connect_chatgpt(
-            open_browser=open_browser,
-            authorization_url_sink=authorization_url_sink,
-        )
-        await self._publish_osc_state()
-        return result
-
-    def reopen_chatgpt_authorization_url(self) -> bool:
-        return bool(self._provider.reopen_chatgpt_authorization_url())
-
-    def cancel_chatgpt_sign_in(self) -> None:
-        self._provider.cancel_chatgpt_sign_in()
-
-    def chatgpt_sign_in_required(self) -> bool:
-        return bool(self._provider.chatgpt_sign_in_required())
-
-    async def select_chatgpt_translation(self) -> object:
-        from dataclasses import replace
-
-        from puripuly_heart.app.ports.settings_view import TranslationSelectionEdit
-        from puripuly_heart.app.services.settings.settings_application import (
-            settings_view_surface_snapshots,
-        )
-        from puripuly_heart.config.translation_values import (
-            TranslationConnection,
-            TranslationModel,
-        )
-
-        settings = self.compatibility_settings()
-        if settings is None:
-            return None
-        selection = settings_view_surface_snapshots(settings)[0].translation
-        model = TranslationModel.GPT_6_LUNA
-        connection = TranslationConnection.CHATGPT
-        if selection.model == model and selection.connection == connection:
-            return True
-        history = dict(selection.connection_history)
-        history[model] = connection
-        edit = TranslationSelectionEdit(
-            replace(
-                selection,
-                model=model,
-                connection=connection,
-                connection_history=tuple(
-                    (candidate, history[candidate])
-                    for candidate in TranslationModel
-                    if candidate in history
-                ),
-                previous_llm_model=None,
-            ),
-            ((model, connection),),
-        )
-        return await self.apply_provider_intent(ProviderApplyIntent((edit,)))
-
-    async def sign_out_chatgpt(self) -> ChatGptSignOutResult:
-        settings = self.compatibility_settings()
-        if settings is not None and self.state().translation_enabled:
-            translation = settings.intent.translation
-            if provider_llm_for_translation(translation.model, translation.connection) == "chatgpt":
-                await self.set_translation_enabled(False)
-        result = await self._provider.sign_out_chatgpt()
-        await self._publish_osc_state()
-        return result
-
-    def build_managed_openrouter_byok_target(self) -> OpenRouterPkceTarget | None:
-        return self._provider.build_managed_openrouter_byok_target()
 
     async def begin_alibaba_connection_draft(self) -> AlibabaConnectionDraftSnapshot:
         return await self._provider.begin_alibaba_connection_draft()
@@ -1191,24 +1043,6 @@ class UiApplicationBoundary:
     def clear_provider_verification(self, provider: str) -> None:
         self._provider.clear_provider_verification(provider)
 
-    async def start_qq_managed_auth_from_dialog(self, **kwargs: Any) -> object:
-        return await self._managed.start_qq_managed_auth_from_dialog(**kwargs)
-
-    async def start_discord_managed_auth_from_dialog(self, **kwargs: Any) -> object:
-        return await self._managed.start_discord_managed_auth_from_dialog(**kwargs)
-
-    async def logout_local_managed(self, provider: str) -> dict[str, object]:
-        return await self._managed.logout_local_managed(provider)
-
-    def reopen_discord_managed_auth_browser(self) -> object:
-        return None
-
-    def supports_discord_managed_auth_reopen(self) -> bool:
-        return False
-
-    def cancel_discord_managed_auth(self) -> object:
-        return None
-
     def translation_enable_succeeded(self, result: object) -> bool:
         if result is False:
             return False
@@ -1216,9 +1050,6 @@ class UiApplicationBoundary:
         if state.translation_runtime_ready is not None:
             return bool(state.translation_runtime_ready and state.translation_enabled)
         return result is True
-
-    def clear_managed_auth_pending_state(self) -> None:
-        self._managed.clear_managed_auth_pending_state()
 
     def get_event_language_codes(self) -> tuple[str | None, str | None]:
         return self._engagement.get_event_language_codes()
@@ -1234,9 +1065,6 @@ class UiApplicationBoundary:
 
     async def persist_github_star_prompt_eligible_launch(self) -> bool:
         return bool(await self._engagement.persist_github_star_prompt_eligible_launch())
-
-    async def refresh_openrouter_usage_after_launch(self) -> bool:
-        return bool(await self._managed.refresh_openrouter_usage_after_launch())
 
     async def prepare_runtime_after_launch(self) -> None:
         await self._engagement.prepare_runtime_after_launch()
@@ -1258,43 +1086,6 @@ class UiApplicationBoundary:
 
     async def close_github_star_prompt_runtime(self) -> None:
         await self._github_star_prompt_runtime.close()
-
-    def start_managed_auth_task(
-        self,
-        *,
-        task_runner: Callable[[Callable[[], Awaitable[Any]]], object],
-        task_factory: Callable[[], Awaitable[Any]],
-        task_name: str,
-        generation: int,
-    ) -> object:
-        if self.dashboard_managed_auth_action() == "in_progress":
-            raise RuntimeError("Managed authentication is already in progress")
-        return self._managed_auth_runtime.start_external_task(
-            task_runner=task_runner,
-            task_factory=task_factory,
-            task_name=task_name,
-            generation=generation,
-        )
-
-    def clear_managed_auth_task(self, task_name: str) -> None:
-        self._managed_auth_runtime.clear_external_task(task_name)
-
-    def cancel_managed_auth_task(
-        self,
-        handle: object | None,
-        *,
-        task_name: str,
-    ) -> None:
-        self._managed_auth_runtime.cancel_external_task(handle, task_name=task_name)
-
-    def managed_auth_task_names(self) -> tuple[str, ...]:
-        return self._managed_auth_runtime.external_task_names
-
-    def managed_auth_tasks_open(self) -> bool:
-        return not self._managed_auth_runtime.is_closed
-
-    async def close_managed_auth_tasks(self) -> None:
-        await self._managed_auth_runtime.close()
 
     def _github_star_prompt_runtime_diagnostics_sink(
         self,

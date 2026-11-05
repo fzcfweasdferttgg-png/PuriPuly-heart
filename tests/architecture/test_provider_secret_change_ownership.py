@@ -28,10 +28,8 @@ async def test_ui_secret_change_waits_for_transaction_owner_before_rebinding(suc
         settings=SimpleNamespace(canonical=None),
         provider_application=SimpleNamespace(rebind_rolling_stt_secret=rebind),
         gpu=None,
-        managed=None,
         credential_verification=None,
         provider_settings=settings,
-        build_byok_target_settings=lambda _settings: None,
     )
 
     assert (

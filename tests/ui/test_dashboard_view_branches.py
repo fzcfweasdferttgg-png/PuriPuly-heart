@@ -516,7 +516,6 @@ def test_dashboard_public_setters_update_components(monkeypatch: pytest.MonkeyPa
     view.set_stt_needs_key(True, update_ui=True)
     view.set_local_stt_notice_model("fun-asr-mlt-nano-2512-q8-0-transcribe-cpu")
     view.set_local_stt_notice("missing")
-    view.set_managed_auth_pending(True)
     view.set_display_text("src", language_code="ko")
     view.set_display_translation_text("dst", language_code="en")
     view.set_recent_languages(["a", "b", "c", "d", "e", "f", "g"], ["x", "y", "z"])
@@ -797,44 +796,6 @@ def test_dashboard_captions_osc_preserves_overlay_spinner_while_startup_pending(
     )
     assert off_button._progress_control.visible is False
     assert off_button._icon_control.visible is True
-
-
-def test_dashboard_managed_auth_pending_restores_local_stt_notice_when_cleared(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    view = _make_dashboard(monkeypatch)
-
-    view.set_local_stt_notice_model("fun-asr-mlt-nano-2512-q8-0-transcribe-cpu")
-    view.set_local_stt_notice("missing")
-    view.set_managed_auth_pending(True)
-    view.set_managed_auth_pending(False)
-
-    missing_notice = dashboard_module.t(
-        "dashboard.local_stt_notice_missing_model",
-        model="fun-asr-mlt-nano-2512-q8-0-transcribe-cpu",
-    )
-    assert view.display_card.notice_calls == [
-        (None, None),
-        (missing_notice, "warning"),
-        (missing_notice, "warning"),
-        (missing_notice, "warning"),
-    ]
-
-
-def test_dashboard_apply_locale_reapplies_managed_auth_pending_notice(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    view = _make_dashboard(monkeypatch)
-
-    view.set_managed_auth_pending(True)
-    view.apply_locale()
-
-    assert view.display_card.notice_calls == [
-        (dashboard_module.t("dashboard.managed_auth_pending"), "info"),
-        (dashboard_module.t("dashboard.managed_auth_pending"), "info"),
-    ]
-
-
 def test_dashboard_apply_locale_and_dialog_open_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     view = _make_dashboard(monkeypatch)
     attach_dummy_page(monkeypatch, view)
@@ -1029,13 +990,9 @@ def test_dashboard_overlay_failure_notice_is_lowest_priority_notice_source(
         )
     )
     view.set_local_stt_notice("missing")
-    view.set_managed_auth_pending(True)
-    view.set_managed_auth_pending(False)
     view.set_local_stt_notice(None)
 
     assert view.display_card.notice_calls == [
-        (overlay_failure_notice, "error"),
-        (overlay_failure_notice, "error"),
         (overlay_failure_notice, "error"),
         (overlay_failure_notice, "error"),
         (overlay_failure_notice, "error"),
@@ -1113,7 +1070,6 @@ def test_dashboard_gpu_download_preempts_and_restores_first_active_notice(
 ) -> None:
     view = _make_dashboard(monkeypatch)
     view.set_vrchat_osc_notice(True)
-    view.set_managed_auth_pending(True)
 
     view.set_gpu_notice(GpuDashboardNotice(status="installing", progress_percent=37))
     assert view.display_card.notice_calls[-1] == (

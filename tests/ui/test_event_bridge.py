@@ -199,9 +199,6 @@ def make_bridge(app: object, **kwargs: object) -> UIEventBridge:
             "is_translation_enabled", getattr(app, "is_event_translation_enabled", None)
         ),
         get_stt_state=kwargs.pop("get_stt_state", getattr(app, "get_event_stt_state", None)),
-        clear_managed_auth_pending=kwargs.pop(
-            "clear_managed_auth_pending", getattr(app, "clear_managed_auth_pending_state", None)
-        ),
         on_overlay_state_changed=kwargs.pop(
             "on_overlay_state_changed", getattr(app, "on_overlay_state_changed", None)
         ),
@@ -1294,105 +1291,6 @@ async def test_event_bridge_error_with_broken_runtime_logging_uses_safe_standard
     assert seen == ["A user interface operation failed."]
     assert app.view_logs.lines == []
     assert app.view_dashboard.display_calls[-1] == ("broken runtime", None, True)
-
-
-@pytest.mark.asyncio
-async def test_event_bridge_managed_report_clears_auth_pending_and_displays_dashboard_error() -> (
-    None
-):
-    previous_locale = get_locale()
-    set_locale("en")
-    try:
-        app = DummyApp()
-        app.controller.managed_auth_pending = True
-        bridge = make_bridge(app, event_queue=asyncio.Queue())
-        payload = messages.UserErrorReport(
-            message=messages.UserMessageRef(
-                key="managed_release.retry_after_ms",
-                params={"retry_after_ms": 9000},
-                severity=messages.SEVERITY_ERROR,
-            ),
-            diagnostics=messages.ErrorDiagnostics(
-                component="provider.llm",
-                operation="translate",
-                code="provider.unknown",
-                category=messages.DIAGNOSTIC_CATEGORY_UNKNOWN,
-                visibility=messages.DIAGNOSTIC_VISIBILITY_BASIC,
-                content_policy=messages.CONTENT_POLICY_METADATA_ONLY,
-                status_code=None,
-                retry_after_ms=9000,
-                fields={
-                    "exception_type": "ManagedOpenRouterUserFacingError",
-                    "managed_operation": "issue",
-                    "managed_code": "trial_unavailable",
-                    "managed_error_class": "retryable",
-                    "managed_subcode": "broker_backoff",
-                },
-            ),
-        )
-
-        await bridge._handle_event(
-            UIEvent(type=UIEventType.ERROR, payload=payload, runtime_log_handled=True)
-        )
-
-        expected = t("managed_release.retry_after_ms", retry_after_ms=9000)
-        assert app.snackbar_calls == []
-        assert app.clear_managed_auth_pending_calls == 1
-        assert app.view_dashboard.display_calls == [(expected, None, True)]
-    finally:
-        set_locale(previous_locale)
-
-
-@pytest.mark.asyncio
-async def test_event_bridge_managed_auth_error_clears_pending_and_displays_dashboard_error() -> (
-    None
-):
-    previous_locale = get_locale()
-    set_locale("en")
-    try:
-        app = DummyApp()
-        app.controller.managed_auth_pending = True
-        bridge = make_bridge(app, event_queue=asyncio.Queue())
-        payload = ManagedOpenRouterUserFacingError(
-            message_key="managed_release.retry_after_ms",
-            message_kwargs={"retry_after_ms": 9000},
-            diagnostics=ManagedOpenRouterReleaseDiagnostics(
-                operation="issue",
-                code="trial_unavailable",
-                error_class="retryable",
-                subcode="broker_backoff",
-                retry_after_ms=9000,
-                message="broker is temporarily unavailable",
-            ),
-        )
-
-        await bridge._handle_event(
-            UIEvent(type=UIEventType.ERROR, payload=payload, runtime_log_handled=True)
-        )
-
-        expected = t("managed_release.retry_after_ms", retry_after_ms=9000)
-        assert app.snackbar_calls == []
-        assert app.clear_managed_auth_pending_calls == 1
-        assert app.view_dashboard.display_calls == [(expected, None, True)]
-    finally:
-        set_locale(previous_locale)
-
-
-@pytest.mark.asyncio
-async def test_event_bridge_keeps_general_error_display_when_managed_auth_is_pending() -> None:
-    app = DummyApp()
-    app.controller.managed_auth_pending = True
-    bridge = make_bridge(app, event_queue=asyncio.Queue())
-
-    await bridge._handle_event(
-        UIEvent(type=UIEventType.ERROR, payload="managed auth boom", runtime_log_handled=True)
-    )
-
-    assert app.snackbar_calls == []
-    assert app.clear_managed_auth_pending_calls == 0
-    assert app.view_dashboard.display_calls == [("managed auth boom", None, True)]
-
-
 def test_event_bridge_reports_overlay_state_to_app() -> None:
     app = DummyApp()
     bridge = make_bridge(app, event_queue=asyncio.Queue())

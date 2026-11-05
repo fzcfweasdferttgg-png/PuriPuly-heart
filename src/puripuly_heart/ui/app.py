@@ -15,7 +15,6 @@ from puripuly_heart.app.language_selection import LanguageSelectionChange
 from puripuly_heart.app.ports.settings_view import (
     ImmediateSettingsIntent,
     LoopbackCaptureSettingsIntent,
-    OpenRouterPkceTarget,
     PromptApplyIntent,
     ProviderApplyIntent,
     TelemetrySettingsIntent,
@@ -152,13 +151,6 @@ class TranslatorApp:
         self.overlay_peer_contract = None
         self.debug_ui_preview = bool(debug_ui_preview)
         self.debug_preview_panel: DebugPreviewPanel | None = None
-        self._openrouter_pkce_request_active = False
-        self._discord_managed_auth_generation = 0
-        self._discord_managed_auth_cancelled = False
-        self._discord_managed_auth_task_handle = None
-        self._qq_managed_auth_generation = 0
-        self._qq_managed_auth_cancelled = False
-        self._qq_managed_auth_task_handle = None
         self._after_launch_task_handle = None
         self._telemetry_reporting: TelemetryReportingOwner | None = None
         self._launch_high_priority_feedback_shown = False
@@ -347,12 +339,6 @@ class TranslatorApp:
                 callback_name="close_after_launch_tasks",
                 callback=self._close_after_launch_ui_tasks,
             ),
-            application_shutdown_callback(
-                phase=SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
-                owner_name="TranslatorApp",
-                callback_name="close_managed_auth_tasks",
-                callback=self.close_oauth_runtime,
-            ),
         )
 
     def _freeze_ui_ingress(self) -> None:
@@ -472,10 +458,6 @@ class TranslatorApp:
             on_github_star_snackbar=self._debug_preview_noop,
             on_foundation_primitives=self._preview_foundation_primitives,
             on_http_extension_form=self._preview_http_extension_form,
-            on_brake_notice=self._preview_brake_notice,
-            on_revoked_notice=self._preview_revoked_notice,
-            on_pkce_failure=self._debug_preview_noop,
-            on_pkce_button_cycle=self._debug_preview_noop,
             on_capture_fault_cycle=self._preview_capture_fault_cycle,
             on_stt_fault_cycle=self._preview_stt_fault_cycle,
             on_audio_fault_clear=self._preview_audio_fault_clear,
@@ -537,22 +519,8 @@ class TranslatorApp:
 
     async def _run_launch_notification_flow(self) -> None:
         await asyncio.gather(
-            self._refresh_openrouter_usage_after_launch(),
             self._check_for_update_after_launch(),
         )
-
-    async def _refresh_openrouter_usage_after_launch(self) -> bool:
-        try:
-            return await self.application.refresh_openrouter_usage_after_launch()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self._log_diagnostic(
-                f"[Startup] OpenRouter usage refresh failed: {exc!r}",
-                level=logging.WARNING,
-            )
-            return False
-
     async def _check_for_update_after_launch(self) -> None:
         update_kwargs = {"log_diagnostic": self._log_diagnostic}
         try:
@@ -621,13 +589,6 @@ class TranslatorApp:
 
     async def close_after_launch_tasks(self) -> None:
         await self._close_after_launch_ui_tasks()
-
-    def _preview_brake_notice(self) -> None:
-        self.view_dashboard.set_display_text(t("managed_release.brake"), is_error=True)
-
-    def _preview_revoked_notice(self) -> None:
-        self.view_dashboard.set_display_text(t("managed_release.revoked_contact"), is_error=True)
-
     def _debug_preview_noop(self) -> None:
         return None
 
@@ -1312,150 +1273,9 @@ class TranslatorApp:
             )
 
         self._queue_settings_mutation_task(_task)
-
-    def _on_request_openrouter_pkce(
-        self,
-        target: OpenRouterPkceTarget,
-        *,
-        launch_source: str = "settings",
-    ) -> None:
-        if getattr(self, "_openrouter_pkce_request_active", False):
-            reopen_authorization_url = getattr(
-                self.application,
-                "reopen_openrouter_pkce_authorization_url",
-                None,
-            )
-            if callable(reopen_authorization_url):
-                reopen_authorization_url()
-            return
-        self._openrouter_pkce_request_active = True
-
-        async def _task() -> None:
-            try:
-                ok = await self.application.connect_openrouter_via_pkce(
-                    target=target,
-                    launch_source=launch_source,
-                )
-                if ok:
-                    self.application.refresh_settings_after_openrouter_pkce_success()
-                    self._show_snackbar(t("openrouter.pkce.connected"), COLOR_SUCCESS)
-            finally:
-                self._openrouter_pkce_request_active = False
-
-        self._queue_settings_mutation_task(_task)
-
-    async def close_oauth_runtime(self) -> None:
-        await self.application.close_managed_auth_tasks()
-    def _peer_api_key_provider_tag(self) -> str | None:
-        """Return the verification provider tag required by the peer STT channel."""
-        try:
-            settings = self.application.compatibility_settings()
-        except Exception:
-            return None
-        if settings is None:
-            return None
-        try:
-            peer_provider = settings.intent.peer_stt.provider
-        except Exception:
-            return None
-        if peer_provider == "qwen_audio":
-            try:
-                region = settings.intent.translation.qwen.region
-            except Exception:
-                return None
-            return "alibaba_beijing" if region == QwenRegion.BEIJING.value else "alibaba_singapore"
-        if peer_provider == "rolling_free":
-            return "rolling_free"
-        if peer_provider in (
-            "deepgram",
-            "gemini_transcribe",
-            "elevenlabs_scribe",
-            "soniox",
-        ):
-            return peer_provider
-        return None
-
-    def _rolling_member_verified(self) -> bool:
-        try:
-            settings = self.application.compatibility_settings()
-        except Exception:
-            return False
-        if settings is None:
-            return False
-        try:
-            verification = settings.state.provider_verification
-        except Exception:
-            return False
-        try:
-            selected_members = tuple(settings.intent.stt.cloud_free_tier_providers)
-        except Exception:
-            selected_members = ("gemini_transcribe",)
-        if not selected_members:
-            selected_members = ("gemini_transcribe",)
-        for member in selected_members:
-            try:
-                if getattr(getattr(verification, member, None), "status", None) == "verified":
-                    return True
-            except Exception:
-                continue
-        return False
-
-    def _is_self_rolling(self) -> bool:
-        try:
-            settings = self.application.compatibility_settings()
-        except Exception:
-            return False
-        if settings is None:
-            return False
-        try:
-            return settings.intent.stt.provider == "rolling_free"
-        except Exception:
-            return False
-
     async def _on_verify_api_key(self, provider: str, key: str) -> tuple[bool, str]:
         success, msg = await self.application.verify_api_key(provider, key)
-
         self.application.persist_api_key_verification(provider, key, success)
-
-        # Sync verification result with dashboard needs_key flags (UI update on user click)
-        if provider in (
-            "deepgram",
-            "gemini_transcribe",
-            "elevenlabs_scribe",
-            "soniox",
-            "alibaba_beijing",
-            "alibaba_singapore",
-        ):
-            if provider in ("deepgram", "gemini_transcribe", "elevenlabs_scribe"):
-                if self._is_self_rolling():
-                    self.view_dashboard.set_stt_needs_key(
-                        not self._rolling_member_verified(), update_ui=False
-                    )
-                else:
-                    self.view_dashboard.set_stt_needs_key(not success, update_ui=False)
-            else:
-                self.view_dashboard.set_stt_needs_key(not success, update_ui=False)
-        if provider in (
-            "google",
-            "openrouter",
-            "openai",
-            "deepseek",
-            "alibaba_beijing",
-            "alibaba_singapore",
-        ):
-            self.view_dashboard.set_translation_needs_key(not success, update_ui=False)
-        peer_tag = self._peer_api_key_provider_tag()
-        if provider == peer_tag or (
-            peer_tag == "rolling_free"
-            and provider in ("deepgram", "gemini_transcribe", "elevenlabs_scribe")
-        ):
-            if peer_tag == "rolling_free":
-                self.view_dashboard.set_peer_needs_key(
-                    not self._rolling_member_verified(), update_ui=False
-                )
-            else:
-                self.view_dashboard.set_peer_needs_key(not success, update_ui=False)
-
         return success, msg
 
     async def _on_provider_secret_change(self, key: str, value: str) -> bool:
@@ -1500,7 +1320,7 @@ class TranslatorApp:
             "alibaba_singapore",
         }:
             self.view_dashboard.set_translation_needs_key(True, update_ui=False)
-        peer_tag = self._peer_api_key_provider_tag()
+        peer_tag = None
         if provider is not None and (
             provider == peer_tag
             or (
@@ -1563,7 +1383,7 @@ class TranslatorApp:
                 "alibaba_singapore",
             ):
                 self.view_dashboard.set_translation_needs_key(True, update_ui=False)
-            peer_tag = self._peer_api_key_provider_tag()
+            peer_tag = None
             if provider == peer_tag or (
                 peer_tag == "rolling_free"
                 and provider in ("deepgram", "gemini_transcribe", "elevenlabs_scribe")
@@ -1591,10 +1411,6 @@ class TranslatorApp:
 
     def show_snackbar(self, message: str, bgcolor) -> None:
         self._show_snackbar(message, bgcolor)
-
-    def clear_managed_auth_pending_state(self) -> None:
-        self.application.clear_managed_auth_pending_state()
-
     def get_event_language_codes(self) -> tuple[str | None, str | None]:
         return self.application.get_event_language_codes()
 

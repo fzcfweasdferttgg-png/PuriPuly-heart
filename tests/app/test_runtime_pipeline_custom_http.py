@@ -20,16 +20,6 @@ from puripuly_heart.core.runtime.prebuilt_local_asr_provider_runtime import (
 from puripuly_heart.core.storage.secrets import InMemorySecretStore
 
 
-class RecordingRelease:
-    service = None
-
-    def __init__(self) -> None:
-        self.rebuild_calls = 0
-
-    async def rebuild(self, *, secrets: object) -> None:
-        self.rebuild_calls += 1
-
-
 class RecordingBackend:
     def __init__(self) -> None:
         self.closed = False
@@ -77,7 +67,7 @@ class RecordingCapture:
 
 
 @pytest.mark.asyncio
-async def test_custom_http_pipeline_skips_managed_rebuild_and_owns_backend_close(
+async def test_custom_http_pipeline_owns_backend_close(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -94,7 +84,6 @@ async def test_custom_http_pipeline_skips_managed_rebuild_and_owns_backend_close
             ),
         ),
     )
-    release = RecordingRelease()
     backend = RecordingBackend()
     registry = HttpExtensionRegistry(tmp_path)
     registry.reload()
@@ -114,8 +103,6 @@ async def test_custom_http_pipeline_skips_managed_rebuild_and_owns_backend_close
         config_path=Path("settings.json"),
         clock=SystemClock(),
         runtime_logging=None,
-        managed_release=release,
-        managed_delegate_ready=lambda: None,
         local_asr_factory=lambda _secrets: PrebuiltLocalASRProviderRuntimeFactory(
             self_provider=None,
             peer_provider=None,
@@ -130,7 +117,6 @@ async def test_custom_http_pipeline_skips_managed_rebuild_and_owns_backend_close
     )
 
     assert created == [backend]
-    assert release.rebuild_calls == 0
     assert pipeline.llm_runtime.provider is backend
 
     await pipeline.resource_owner.close()

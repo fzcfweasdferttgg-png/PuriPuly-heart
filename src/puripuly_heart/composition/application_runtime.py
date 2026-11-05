@@ -21,7 +21,6 @@ from puripuly_heart.app.adapters.ui_runtime import (
     UiDiagnosticsRuntimeAdapter,
     UiEngagementRuntimeAdapter,
     UiInputRuntimeAdapter,
-    UiManagedRuntimeAdapter,
     UiOverlayRuntimeAdapter,
     UiPeerCaptureRuntimeAdapter,
     UiProviderRuntimeAdapter,
@@ -65,7 +64,6 @@ from puripuly_heart.app.services.capture.self_capture_application import (
     SelfCaptureApplicationOwner,
     SelfCaptureApplicationSettings,
 )
-from puripuly_heart.app.services.chatgpt_account import ChatGptAccountOwner
 from puripuly_heart.app.services.clipboard_auto_translation import (
     ClipboardAutoTranslationOwner,
 )
@@ -186,12 +184,7 @@ from puripuly_heart.app.wiring.wiring_local_asr_application import (
     LocalASRApplicationRuntime,
     compose_local_asr_application,
 )
-from puripuly_heart.app.wiring.wiring_managed_account import (
-    ManagedAccountComponents,
-    ManagedOpenRouterReleaseRuntime,
-    ManagedTranslationRuntimeAccess,
-    compose_managed_account,
-)
+from puripuly_heart.app.services.translation_enable import TranslationEnableOwner
 from puripuly_heart.app.wiring.wiring_managed_gemma import (
     create_managed_gemma_runtime,
     managed_gemma_selection,
@@ -236,9 +229,12 @@ from puripuly_heart.config.provider_values import (
 )
 from puripuly_heart.config.resolved import OVERLAY_TARGET_STEAMVR
 from puripuly_heart.config.runtime_resolution import stt_supports_peer_auto_detection
+from puripuly_heart.app.wiring.wiring_translation_enable import (
+    ManagedTranslationRuntimeAccess,
+    compose_translation_enable,
+)
 from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
 from puripuly_heart.config.translation_values import TranslationModel
-from puripuly_heart.core.chatgpt.session import ChatGptSession
 from puripuly_heart.core.clipboard.watcher import create_clipboard_watcher
 from puripuly_heart.core.clock import SystemClock
 from puripuly_heart.core.http_extensions import HttpExtensionRegistry
@@ -503,7 +499,7 @@ def compose_application_runtime(
     credential_verification: ProviderCredentialVerificationInteractionOwner | None = None
     github_prompt: GithubStarPromptOwner | None = None
     vrchat_presence: VrchatOscPresenceProbeOwner | None = None
-    managed_account: ManagedAccountComponents | None = None
+    translation_enable: TranslationEnableOwner | None = None
     runtime_components: RuntimeCompositionComponents | None = None
 
     def current_settings() -> AppSettingsVNext | None:
@@ -1137,12 +1133,11 @@ def compose_application_runtime(
                     ),
                     peer_capture=bool(peer_owner.snapshot().effective_enabled),
                     translation=bool(
-                        managed_account is not None
-                        and managed_account.translation.state_provider().translation_enabled
+                        translation_enable is not None
+                        and translation_enable.state_provider().translation_enabled
                     ),
                     captions=settings.overlay_enabled(),
                 )
-
             def language_state() -> tuple[str, str, str, str]:
                 value = current_settings()
                 if value is None:
@@ -1530,9 +1525,7 @@ def compose_application_runtime(
         if github_prompt is None:
             github_prompt = compose_github_star_prompt_owner(
                 settings=settings,
-                managed_remaining_percent=lambda: (
-                    require_runtime_components().managed_account.usage.remaining_percent
-                ),
+                managed_remaining_percent=lambda: None,
                 transaction_result_sink=(require_settings_application().results.set),
                 save_failure_sink=github_save_failure,
                 runtime_diagnostics_sink=github_diagnostic,
@@ -1719,26 +1712,6 @@ def compose_application_runtime(
     def self_capture_owner() -> SelfCaptureSessionOwner:
         return _require_self_capture_owner(pipeline, capture_factory)
 
-    def require_managed_account() -> ManagedAccountComponents:
-        if managed_account is None:
-            raise RuntimeError("managed-account composition is incomplete")
-        return managed_account
-
-    def managed_release() -> ManagedOpenRouterReleaseRuntime:
-        return require_managed_account().release
-
-    def set_managed_pending(pending: bool) -> None:
-        require_managed_account().auth.set_pending(pending)
-
-    def managed_pending() -> bool:
-        return bool(managed_account is not None and managed_account.auth.pending)
-
-    def managed_delegate_ready() -> None:
-        require_managed_account().usage.delegate_ready()
-
-    async def refresh_managed_usage() -> None:
-        await require_managed_account().usage.refresh_best_effort()
-
     async def refresh_peer_for_settings(value: AppSettingsVNext) -> None:
         peer_runtime = require_peer()
         await peer_runtime.owner.refresh_runtime_with_config(
@@ -1761,14 +1734,6 @@ def compose_application_runtime(
                 peer_enabled=settings.peer_translation_enabled(),
             )
         )
-
-    chatgpt_session = ChatGptSession(secret_store=create_settings_secret_store)
-    chatgpt_account = ChatGptAccountOwner(
-        session=chatgpt_session,
-        locale_provider=lambda: (
-            settings.canonical.intent.ui.locale if settings.canonical is not None else None
-        ),
-    )
 
     def translation_runtime_enabled() -> bool:
         owner = pipeline.translation_runtime_configuration
@@ -1801,10 +1766,6 @@ def compose_application_runtime(
             if verification_provider is not None:
                 entry = getattr(current.state.provider_verification, verification_provider)
                 needs_key = needs_key or entry.status != "verified"
-            elif needs_key:
-                auth_state = require_managed_account().auth_runtime.state()
-                if auth_state.managed_selected:
-                    needs_key = not auth_state.local_key_available
         presentation.set_dashboard_translation_needs_key(needs_key)
         llm_connection_readiness.sync()
 
@@ -1824,9 +1785,6 @@ def compose_application_runtime(
         canonical_settings=canonical_settings,
         clear_local_pending=lambda: None,
         sync_local_notice=lambda: require_local_asr().adapters.notice.sync(),
-        managed_pending_sink=set_managed_pending,
-        managed_pending_provider=managed_pending,
-        dashboard_managed_pending_sink=(presentation.set_dashboard_managed_auth_pending),
         sync_effective_flags=sync_effective_flags,
         refresh_overlay=refresh_overlay_presentation,
         refresh_peer_runtime=refresh_peer_for_settings,
@@ -1834,30 +1792,14 @@ def compose_application_runtime(
         self_state_sink=on_self_capture_state,
         self_availability=require_self_application().project_availability,
         gpu_recovery=recover_gpu,
-        managed_release=managed_release,
-        managed_delegate_ready=managed_delegate_ready,
         runtime_logging=runtime_logging,
         translation_needs_key_sink=on_llm_availability_changed,
-        usage_refresh=refresh_managed_usage,
         failure_sink=log_error,
         success_sink=log_basic,
         additional_signature_sink=sync_non_provider_signatures,
         managed_gemma=managed_gemma,
         signatures=signatures,
-        chatgpt_session=chatgpt_session,
     )
-
-    def apply_managed_usage_view(state) -> None:
-        presentation.set_settings_managed_key_state(
-            visible=state.visible,
-            remaining_percent=state.remaining_percent,
-        )
-
-    def maybe_show_founder_letter(launch_source: str) -> None:
-        if launch_source != "letter":
-            return
-        with contextlib.suppress(Exception):
-            presentation.show_founder_letter_dialog()
 
     def on_translation_runtime_state_changed() -> None:
         llm_connection_readiness.sync()
@@ -1866,24 +1808,18 @@ def compose_application_runtime(
         if current_overlay is not None:
             current_overlay.notify_translation_runtime_state_changed()
 
-    managed_account = compose_managed_account(
-        config_path=config_path,
-        settings=settings,
-        provider_settings=require_provider_settings(),
-        provider_runtime=provider_runtime.runtime,
-        verifier=require_provider_verifier(),
-        results=require_settings_application().results,
-        runtime=ManagedTranslationRuntimeAccess(
-            llm_runtime_provider=lambda: pipeline.llm_runtime,
-            context_provider=lambda: pipeline.translation_requests,
-            translation_runtime_configuration_provider=(
-                lambda: pipeline.translation_runtime_configuration
-            ),
-            rebuild_llm=provider_runtime.llm_rebuild.rebuild,
+    translation_runtime_access = ManagedTranslationRuntimeAccess(
+        llm_runtime_provider=lambda: pipeline.llm_runtime,
+        context_provider=lambda: pipeline.translation_requests,
+        translation_runtime_configuration_provider=(
+            lambda: pipeline.translation_runtime_configuration
         ),
+        rebuild_llm=provider_runtime.llm_rebuild.rebuild,
+    )
+    translation_enable = compose_translation_enable(
+        settings=settings,
+        runtime=translation_runtime_access,
         ingress_provider=lambda: ingress.frozen,
-        pending_sink=presentation.set_dashboard_managed_auth_pending,
-        usage_view_sink=apply_managed_usage_view,
         dashboard_sink=presentation.set_dashboard_translation_enabled,
         starting_sink=presentation.set_dashboard_translation_starting,
         runtime_state_changed=on_translation_runtime_state_changed,
@@ -1892,21 +1828,10 @@ def compose_application_runtime(
             is_error=True,
             **dict(values),
         ),
-        qq_dialog_sink=presentation.show_qq_managed_auth_dialog,
-        founder_dialog=presentation.show_founder_letter_dialog,
-        failure_route=maybe_show_founder_letter,
+        results=require_settings_application().results,
         log_basic=log_basic,
         log_diagnostic=log_diagnostic,
         log_error=log_error,
-        basic_warning_sink=lambda message: log_basic(
-            message,
-            level=logging.WARNING,
-        ),
-        diagnostic_warning_sink=lambda message, exception: log_diagnostic(
-            message,
-            level=logging.WARNING,
-            exception=exception,
-        ),
         managed_gemma=managed_gemma,
         sync_local_translation_demand=sync_local_translation_demand,
     )
@@ -1998,7 +1923,7 @@ def compose_application_runtime(
                         or not await index_allowance.destination_credential_available()
                     )
                 ):
-                    managed_account.translation.disable_for_provider_transition()
+                    translation_enable.disable_for_provider_transition()
                 return result
 
     index_allowance = IndexManagedAllowanceObserver(
@@ -2017,7 +1942,7 @@ def compose_application_runtime(
             diagnostic, severity="warning", disposition="degraded"
         ),
         selected_runtime_applied=selected_translation_runtime_applied,
-        timeout_sink=managed_account.translation.disable_for_provider_transition,
+        timeout_sink=translation_enable.disable_for_provider_transition,
     )
 
     def install_pipeline(components: RuntimePipelineComponents) -> None:
@@ -2030,8 +1955,6 @@ def compose_application_runtime(
         config_path=config_path,
         clock=clock,
         runtime_logging=runtime_logging,
-        managed_release=managed_account.release,
-        managed_delegate_ready=managed_delegate_ready,
         local_asr_factory=build_local_asr_factory,
         self_capture_factory=capture_factory.compose_self,
         peer_capture_factory=capture_factory.compose_peer,
@@ -2043,13 +1966,11 @@ def compose_application_runtime(
         cleanup_failure_sink=lambda message, exc: log_error(f"{message}: {exc}"),
         managed_gemma=managed_gemma,
         http_extensions=http_extensions,
-        chatgpt_session=chatgpt_session,
     )
 
     runtime_components = RuntimeCompositionComponents(
         self_capture_owner=self_capture_owner,
         provider_runtime=provider_runtime,
-        managed_account=managed_account,
         provider_application=provider_application,
         pipeline_launcher=pipeline_launcher,
     )
@@ -2143,13 +2064,7 @@ def compose_application_runtime(
             await provisioning.close()
 
     async def close_openrouter_oauth() -> None:
-        try:
-            await llm_connection_readiness.close()
-        finally:
-            try:
-                await managed_account.pkce_flow.close()
-            finally:
-                await chatgpt_account.close()
+        await llm_connection_readiness.close()
 
     def clear_event_runtime() -> None:
         nonlocal event_bridge, bridge_task
@@ -2160,7 +2075,7 @@ def compose_application_runtime(
         ingress=ingress,
         pipeline=pipeline,
         runtime_logging=runtime_logging,
-        managed=managed_account,
+        translation=translation_enable,
         pipeline_launcher=pipeline_launcher,
         stop_self_capture=stop_self_capture,
         release_manual_typing_owner=require_manual_typing().release,
@@ -2216,7 +2131,7 @@ def compose_application_runtime(
 
     def runtime_control_authority(parameter: str, task: asyncio.Task | None) -> bool | None:
         if parameter == "PuriPuly_Trans":
-            return managed_account.translation.mutation_authority(task)
+            return translation_enable.mutation_authority(task)
         if parameter == "PuriPuly_Listen":
             return peer_runtime.owner.mutation_authority(task)
         if parameter == "PuriPuly_Talk" and pipeline.self_capture is not None:
@@ -2225,7 +2140,7 @@ def compose_application_runtime(
 
     def runtime_control_activity() -> tuple[tuple[str, bool], ...]:
         pending = [
-            ("PuriPuly_Trans", value) for value in managed_account.translation.pending_mutations()
+            ("PuriPuly_Trans", value) for value in translation_enable.pending_mutations()
         ]
         pending.extend(
             ("PuriPuly_Listen", value) for value in peer_runtime.owner.pending_mutations()
@@ -2241,7 +2156,7 @@ def compose_application_runtime(
         input_runtime=UiInputRuntimeAdapter(
             pipeline=pipeline,
             manual_typing=require_manual_typing(),
-            translation=managed_account.translation,
+            translation=translation_enable,
             self_capture=require_self_application(),
             connection_readiness=llm_connection_readiness,
         ),
@@ -2261,12 +2176,9 @@ def compose_application_runtime(
             settings=settings,
             provider_application=provider_application,
             gpu=gpu_owner,
-            managed=managed_account,
             credential_verification=require_credential_verification(),
             provider_settings=require_provider_settings(),
-            build_byok_target_settings=settings.build_managed_openrouter_byok_target,
             managed_gemma=managed_gemma,
-            chatgpt=chatgpt_account,
             connection_readiness=llm_connection_readiness,
             model_assets=model_assets,
             llm_devices_sink=lambda devices: presentation.set_dashboard_llm_gpu_devices(
@@ -2279,7 +2191,6 @@ def compose_application_runtime(
             desktop=desktop_owner,
             calibration=calibration_owner,
         ),
-        managed=UiManagedRuntimeAdapter(managed_account),
         engagement=UiEngagementRuntimeAdapter(
             settings=settings,
             settings_application=settings_owner,
@@ -2300,7 +2211,6 @@ def compose_application_runtime(
                 settings=settings,
                 pipeline=pipeline,
                 desktop_overlay=desktop_owner,
-                managed=managed_account,
                 calibration=calibration_owner,
                 audio_test=lambda: audio_test,
             ),

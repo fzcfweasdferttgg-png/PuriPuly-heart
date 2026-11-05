@@ -145,7 +145,6 @@ class HeadlessApplicationPresentation:
             get_language_codes=app.get_event_language_codes,
             is_translation_enabled=lambda: app.state().translation_enabled,
             get_stt_state=lambda: app.state().stt_state,
-            clear_managed_auth_pending=app.clear_managed_auth_pending_state,
             on_overlay_state_changed=lambda **values: self._remember("overlay_state", values),
         )
 
@@ -169,10 +168,6 @@ class HeadlessApplicationPresentation:
 
     def dashboard_translation_enabled(self) -> bool:
         return bool(self.projections.get("translation_enabled", False))
-
-    def set_dashboard_managed_auth_pending(self, pending: bool) -> None:
-        self._remember("managed_auth_pending", pending)
-
     def set_dashboard_gpu_state(
         self,
         *,
@@ -246,21 +241,6 @@ class HeadlessApplicationPresentation:
 
     def refresh_settings_loopback_capture_target(self, general: object) -> None:
         self._remember("general", general)
-
-    def set_settings_managed_key_state(
-        self,
-        *,
-        visible: bool,
-        remaining_percent: int | None,
-    ) -> None:
-        self._remember(
-            "managed_key",
-            {
-                "visible": visible,
-                "remaining_percent": remaining_percent,
-            },
-        )
-
     def add_history_entry(self, *args: Any, **kwargs: Any) -> None:
         pass
 
@@ -275,10 +255,6 @@ class HeadlessApplicationPresentation:
     def get_event_stt_state(self) -> object | None:
         app = self.application
         return app.state().stt_state if app is not None else None
-
-    def clear_managed_auth_pending_state(self) -> None:
-        self._remember("managed_auth_pending", False)
-
     def show_snackbar(self, *args: Any, **kwargs: Any) -> None:
         logger.warning("Application notification received")
 
@@ -292,14 +268,6 @@ class HeadlessApplicationPresentation:
 
     def on_desktop_overlay_state_changed(self, *args: Any, **kwargs: Any) -> None:
         self._remember("desktop_overlay_state", (args, kwargs))
-
-    def show_qq_managed_auth_dialog(self) -> bool:
-        self._remember("auth_action_required", "qq_browser_authorization")
-        return False
-
-    def show_founder_letter_dialog(self) -> bool:
-        return False
-
     async def close_after_launch_tasks(self) -> None:
         tasks = tuple(self.tasks)
         for task in tasks:
@@ -311,13 +279,6 @@ class HeadlessApplicationPresentation:
         app = self.application
         if app is not None:
             await app.close_github_star_prompt_runtime()
-
-    async def close_oauth_runtime(self) -> None:
-        app = self.application
-        if app is not None:
-            await app.close_managed_auth_tasks()
-
-
 def compose_headless_application(
     config_path: Path, *, runtime_logging_sinks: RuntimeLoggingSinks | None = None
 ) -> UiApplicationPort:

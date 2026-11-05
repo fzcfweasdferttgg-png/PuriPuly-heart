@@ -87,14 +87,8 @@ class RecordingShutdownRuntime(ApplicationRuntimeShutdownStub):
     async def close_runtime_logging_background_tasks(self) -> None:
         self.events.append("logging-background")
 
-    async def close_managed_auth_owner(self) -> None:
-        self.events.append("managed-auth")
-
     async def close_translation_enable_owner(self) -> None:
         self.events.append("translation-enable")
-
-    async def close_managed_usage_owner(self) -> None:
-        self.events.append("managed-usage")
 
     async def close_runtime_pipeline_launcher(self) -> None:
         self.events.append("pipeline")
@@ -126,14 +120,10 @@ class RecordingShutdownRuntime(ApplicationRuntimeShutdownStub):
     async def close_llm_runtime(self) -> None:
         self.events.append("llm-runtime")
 
-    async def close_managed_gemma_runtime(self) -> None:
         self.events.append("managed-gemma")
 
     def close_vrchat_sender(self) -> None:
         self.events.append("vrchat-sender")
-
-    async def close_managed_openrouter_release_service(self) -> None:
-        self.events.append("managed-release")
 
     def emit_final_application_shutdown_diagnostics(
         self,
@@ -173,10 +163,6 @@ async def test_runtime_shutdown_graph_preserves_order_and_logging_last_after_fai
         async def close(self) -> None:
             runtime.events.append("boundary-prompt-close")
 
-    class AuthRuntime:
-        async def close(self) -> None:
-            runtime.events.append("boundary-auth-close")
-
     class FoundationRuntime:
         def application_shutdown_callbacks(self):
             return (
@@ -207,12 +193,8 @@ async def test_runtime_shutdown_graph_preserves_order_and_logging_last_after_fai
         async def close_after_launch_ui_tasks(self) -> None:
             runtime.events.append("ui-after-launch")
 
-        async def close_managed_auth_ui_tasks(self) -> None:
-            runtime.events.append("ui-managed-auth")
-
     ui = UiHooks()
     boundary._github_star_prompt_runtime = PromptRuntime()
-    boundary._managed_auth_runtime = AuthRuntime()
     foundation_runtime = FoundationRuntime()
     callbacks = (
         application_shutdown_callback(
@@ -227,12 +209,6 @@ async def test_runtime_shutdown_graph_preserves_order_and_logging_last_after_fai
             owner_name="TranslatorApp",
             callback_name="close_after_launch_tasks",
             callback=ui.close_after_launch_ui_tasks,
-        ),
-        application_shutdown_callback(
-            phase=SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
-            owner_name="TranslatorApp",
-            callback_name="close_managed_auth_tasks",
-            callback=ui.close_managed_auth_ui_tasks,
         ),
     )
     lifecycle = TranslatorApp.compose_application_lifecycle(
@@ -262,9 +238,11 @@ async def test_runtime_shutdown_graph_preserves_order_and_logging_last_after_fai
 
     # External producers stop before owner drain, and boundary producers close
     # in the same phase.
-    for marker in ("foundation-page-tasks", "ui-after-launch", "ui-managed-auth"):
-        assert position(marker) < position("manual")
-    for marker in ("boundary-prompt-close", "boundary-auth-close"):
+    for marker in (
+        "foundation-page-tasks",
+        "ui-after-launch",
+        "boundary-prompt-close",
+    ):
         assert position(marker) < position("manual")
 
     # Owner drain and provider close proceed in phase order after producers.
@@ -275,7 +253,6 @@ async def test_runtime_shutdown_graph_preserves_order_and_logging_last_after_fai
     assert position("diagnostic:OverlayApplicationOwner:close") < position("peer-after-failure")
     assert position("peer-after-failure") < position("managed-gemma")
     assert position("managed-gemma") < position("vrchat-sender")
-    assert position("vrchat-sender") < position("managed-release")
 
     # Final diagnostics run before logging closes, and both record the single
     # failure; logging is the last event of the shutdown.

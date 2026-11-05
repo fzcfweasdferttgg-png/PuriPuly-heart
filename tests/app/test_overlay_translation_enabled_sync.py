@@ -19,8 +19,8 @@ from puripuly_heart.app.services.translation_enable import (
     TranslationEnableOwner,
     TranslationEnableState,
 )
-from puripuly_heart.app.wiring import wiring_managed_account
-from puripuly_heart.app.wiring.wiring_managed_account import ManagedTranslationRuntimeAccess
+from puripuly_heart.app.wiring import wiring_translation_enable as wiring_managed_account
+from puripuly_heart.app.wiring.wiring_translation_enable import ManagedTranslationRuntimeAccess
 from puripuly_heart.app.wiring.wiring_translation_runtime_configuration import (
     replace_translation_runtime_enabled,
 )

@@ -12,16 +12,10 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from puripuly_heart.app.adapters.ui_runtime import UiManagedRuntimeAdapter
 from puripuly_heart.app.services.application_control import ApplicationControlOwner
 from puripuly_heart.app.services.application_control_events import ControlEvents
 from puripuly_heart.app.services.capture.peer_capture_target_application import (
     PeerCaptureTargetUnavailable,
-)
-from puripuly_heart.app.services.managed.managed_auth import (
-    ManagedAuthExecutionResult,
-    ManagedAuthOwner,
-    ManagedAuthState,
 )
 from puripuly_heart.app.services.overlay.overlay_application import OverlayApplicationOwner
 from puripuly_heart.app.services.settings.settings_transaction_result import (
@@ -148,7 +142,6 @@ def headless_event_bridge():
     presentation.application = SimpleNamespace(
         get_event_language_codes=lambda: ("fr", "en"),
         state=lambda: SimpleNamespace(translation_enabled=True, stt_state=None),
-        clear_managed_auth_pending_state=lambda: None,
         schedule_github_star_prompt_translation_success_observed=lambda: None,
     )
     bridge = presentation.create_ui_event_bridge(event_queue=asyncio.Queue(), runtime_logging=None)
@@ -962,7 +955,7 @@ async def test_declared_extension_secret_roundtrip_is_private_and_revision_safe(
         assert after["revision"] == unchanged["revision"]
         assert current["revision"] <= unchanged["revision"]
         capabilities = control.capabilities()
-        assert "referral_id" not in capabilities["commands"]["auth.login"]["arguments"]
+        assert "auth.login" not in capabilities["commands"]
         assert "managed.referral_id" not in capabilities["settings_fields"]
         bad_operations = (
             (
@@ -991,37 +984,7 @@ async def test_declared_extension_secret_roundtrip_is_private_and_revision_safe(
             ("overlay.calibrate", {"action": "change", "field": "distance", "value": True}),
             ("overlay.calibrate", {"action": "begin", "field": "anchor", "value": "top"}),
             ("secrets.set", {"name": key, "value": 1}),
-            (
-                "auth.login",
-                {
-                    "provider": "discord",
-                    "referral_id": 5,
-                    "open_browser": False,
-                },
-            ),
-            (
-                "auth.login",
-                {"provider": "discord", "referral_id": "retired-code"},
-            ),
-            (
-                "auth.login",
-                {
-                    "provider": "qq",
-                    "qq_identity": "offline",
-                    "credential": "offline",
-                    "referral_id": "retired-code",
-                },
-            ),
             ("settings.apply", {"changes": {"managed.referral_id": "retired-code"}}),
-            (
-                "auth.login",
-                {
-                    "provider": "qq",
-                    "qq_identity": "offline",
-                    "credential": "offline",
-                    "open_browser": True,
-                },
-            ),
         )
         for index, (command, arguments) in enumerate(bad_operations):
             pending = await control.submit(
@@ -1248,60 +1211,6 @@ async def test_control_audio_test_reports_channel_failures_pending_stop_and_live
         assert (await control.wait(end["operation_id"], timeout=5))["status"] == "applied"
     finally:
         await app.stop()
-
-
-@pytest.mark.asyncio
-async def test_auth_challenge_stays_pending_until_owner_finishes_and_cancel_does_not_fake_success(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("PURIPULY_HEART_SECRETS_PASSPHRASE", "isolated-test-passphrase")
-    monkeypatch.setattr(
-        application_runtime, "default_http_extensions_dir", lambda: tmp_path / "extensions"
-    )
-    path = tmp_path / "settings.json"
-    isolated_settings(path)
-    app = compose_headless_application(path)
-    try:
-        await app.start()
-        control = app.control()
-        control.bind_instance("isolated-auth")
-        for outcome in (True, False):
-            finish = asyncio.Event()
-            entered = asyncio.Event()
-
-            async def authorization(*, authorization_url_sink, open_browser, **_kwargs):
-                assert open_browser is False
-                authorization_url_sink("https://example.test/authorize?challenge=public")
-                entered.set()
-                await finish.wait()
-                return outcome
-
-            monkeypatch.setattr(app, "start_discord_managed_auth_from_dialog", authorization)
-            receipt = await control.submit(
-                "auth.login",
-                {"provider": "discord", "open_browser": False},
-                request_id=f"auth-{outcome}",
-            )
-            await asyncio.wait_for(entered.wait(), 2)
-            pending = await control.operation(receipt["operation_id"])
-            assert pending["status"] == "running" and pending["terminal"] is False
-            assert (await control.wait(receipt["operation_id"], timeout=0.01))["terminal"] is False
-            challenge = (await control.query("auth.status", {}))["challenge"]
-            assert challenge["operation_id"] == receipt["operation_id"]
-            assert challenge["authorization_url"].startswith("https://example.test/authorize")
-            cancellation = await control.cancel(receipt["operation_id"])
-            assert cancellation["cancellation"] == "unsupported"
-            assert cancellation["terminal"] is False
-            finish.set()
-            finished = await control.wait(receipt["operation_id"], timeout=2)
-            assert finished["status"] == ("applied" if outcome else "failed")
-            assert finished["terminal"] is True
-            assert (await control.query("auth.status", {}))["challenge"] is None
-            assert "authorization_url" not in finished
-    finally:
-        await app.stop()
-
-
 @pytest.mark.asyncio
 async def test_interleaved_transactions_retain_per_operation_outcome() -> None:
     results = SettingsTransactionResultOwner()
@@ -1335,19 +1244,10 @@ async def test_gui_cli_and_osc_mutations_share_revision_and_preserve_focused_edi
     tmp_path, monkeypatch
 ):
     from puripuly_heart.app.ports.settings_view import LocaleSettingsIntent
-    from puripuly_heart.app.wiring import wiring_managed_account
-    from puripuly_heart.core.openrouter.managed_openrouter_release import (
-        UnavailableManagedOpenRouterReleaseClient,
-    )
 
     monkeypatch.setenv("PURIPULY_HEART_SECRETS_PASSPHRASE", "isolated-test-passphrase")
     monkeypatch.setattr(
         application_runtime, "default_http_extensions_dir", lambda: tmp_path / "extensions"
-    )
-    monkeypatch.setattr(
-        wiring_managed_account,
-        "HttpManagedOpenRouterBrokerClient",
-        lambda **_kwargs: UnavailableManagedOpenRouterReleaseClient(),
     )
     path = tmp_path / "settings.json"
     isolated_settings(path)
@@ -1560,157 +1460,6 @@ async def test_activation_notice_cli_catalog_apply_and_durable_reload(
         ] is False
     finally:
         await restarted.stop()
-
-
-class _ManagedStatusApplication(UiManagedRuntimeAdapter):
-    def state(self):
-        return SimpleNamespace(peer_translation_eula_accepted=False)
-
-
-def _managed_status_control(owner: ManagedAuthOwner) -> ApplicationControlOwner:
-    return ApplicationControlOwner(
-        application=_ManagedStatusApplication(SimpleNamespace(auth=owner)),
-        settings=SimpleNamespace(committed_settings=AppSettingsVNext()),
-        pipeline=None,
-        results=SettingsTransactionResultOwner(),
-        events=ControlEvents(),
-        provisioning=lambda: None,
-        gpu=lambda: None,
-        peer=lambda: None,
-        calibration=lambda: None,
-        gemma=lambda: None,
-        sync_ui=lambda: None,
-        locale_choices=("en",),
-        localize=lambda key: key,
-        gemma_selection=lambda _settings: None,
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("source", ["qq", "discord"])
-@pytest.mark.parametrize(
-    ("outcome", "expected_failure"),
-    [
-        ("success", "none"),
-        ("exception", "failed"),
-        ("terminal", "failed"),
-        ("action_required", "action_required"),
-        ("pending", "idle_resumable"),
-        ("cancel", "cancelled"),
-        ("degraded", "runtime_degraded"),
-    ],
-)
-async def test_auth_status_reports_only_observed_failure_across_reconstruction_and_retry(
-    source, outcome, expected_failure
-) -> None:
-    state = ManagedAuthState(
-        settings_available=True,
-        managed_selected=True,
-        managed_china=source == "qq",
-        local_key_available=True,
-        release_service_available=True,
-        runtime_available=True,
-        ingress_frozen=False,
-    )
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    calls = []
-
-    async def execute(*_args, **_kwargs):
-        calls.append(source)
-        if len(calls) == 1:
-            raise RuntimeError("controlled initial authentication failure")
-        entered.set()
-        await release.wait()
-        if outcome == "exception":
-            raise RuntimeError("controlled retry authentication failure")
-        if outcome in {"terminal", "action_required", "pending"}:
-            suffix = {
-                "terminal": "retry",
-                "action_required": "authorization_expired",
-                "pending": "recovery_pending",
-            }[outcome]
-            return ManagedAuthExecutionResult(
-                succeeded=False,
-                delivery_ack_pending=outcome == "pending",
-                message_key=f"{source}_auth.error.{suffix}",
-            )
-        return ManagedAuthExecutionResult(succeeded=True, runtime_rebuild="always")
-
-    async def ensure_runtime(_mode):
-        return outcome != "degraded"
-
-    def build_owner():
-        return ManagedAuthOwner(
-            state_provider=lambda: state,
-            pending_sink=lambda _pending: None,
-            qq_executor=execute,
-            discord_executor=execute,
-            runtime_ensurer=ensure_runtime,
-            usage_refresh_sink=lambda: None,
-            message_sink=lambda *_args: None,
-            result_sink=lambda _result: None,
-            log_sink=lambda _message: None,
-        )
-
-    owner = build_owner()
-    control = _managed_status_control(owner)
-
-    async def attempt():
-        if source == "qq":
-            return await control.application.start_qq_managed_auth_from_dialog(
-                qq_identity="synthetic-account", credential="synthetic-credential"
-            )
-        return await control.application.start_discord_managed_auth_from_dialog()
-
-    initial = await control.query("auth.status", {})
-    assert (initial["action"], initial["prompt_kind"], initial["failure_kind"]) == (
-        "continue",
-        source,
-        "none",
-    )
-    assert calls == []
-    assert await attempt() is not True
-    failed = await control.query("auth.status", {})
-    assert failed["action"] == "continue"
-    assert failed["failure_kind"] == "failed"
-
-    retry = asyncio.create_task(attempt())
-    try:
-        await asyncio.wait_for(entered.wait(), 1)
-        active = await control.query("auth.status", {})
-        assert active["action"] == "in_progress"
-        assert active["failure_kind"] == "none"
-        assert owner.last_message_key is None
-        assert await attempt() is not True
-        assert len(calls) == 2
-        assert (await control.query("auth.status", {}))["failure_kind"] == "none"
-        if outcome == "cancel":
-            retry.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await retry
-        else:
-            release.set()
-            result = await retry
-            assert (result is True) is (outcome in {"success", "degraded"})
-    finally:
-        release.set()
-        if not retry.done():
-            retry.cancel()
-        await asyncio.gather(retry, return_exceptions=True)
-
-    finished = await control.query("auth.status", {})
-    assert finished["action"] == "continue"
-    assert finished["failure_kind"] == expected_failure
-    assert owner.pending is False
-    reconstructed = _managed_status_control(build_owner())
-    fresh = await reconstructed.query("auth.status", {})
-    assert (fresh["action"], fresh["prompt_kind"], fresh["failure_kind"]) == (
-        "continue",
-        source,
-        "none",
-    )
-    assert calls == [source, source]
 
 
 @pytest.mark.asyncio

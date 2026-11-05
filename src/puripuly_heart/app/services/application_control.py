@@ -136,8 +136,7 @@ COMMANDS = {
     "secrets.set": "Store provider credential (value never returned)",
     "secrets.delete": "Delete provider credential",
     "secrets.verify": "Verify provider credential separately from storage",
-    "auth.login": "Authorize a QQ, Discord, OpenRouter, or ChatGPT account with explicit browser consent",
-    "auth.logout": "Remove locally stored account authorization (ChatGPT also requests remote revocation)",
+    "auth.logout": "Remove locally stored OpenRouter authorization",
     "overlay.set": "Set overlay enabled state",
     "overlay.lock": "Lock/unlock desktop caption positioning",
     "overlay.size": "Select desktop overlay size",
@@ -204,13 +203,7 @@ COMMAND_ARGUMENTS = {
     "overlay.set": {"enabled": "boolean"},
     "overlay.lock": {"locked": "boolean"},
     "overlay.size": {"preset": "settings.choices overlay size"},
-    "auth.login": {
-        "provider": ["qq", "discord", "openrouter", "chatgpt"],
-        "qq_identity": "required non-empty string for QQ",
-        "credential": "required non-empty secret for QQ (stdin/hidden input only)",
-        "open_browser": "optional boolean, default false (OAuth only)",
-    },
-    "auth.logout": {"provider": ["qq", "discord", "openrouter", "chatgpt"]},
+    "auth.logout": {"provider": ["openrouter"]},
     "models.cancel": {
         "backend": "cpu or gpu (optional; default gpu)",
         "model_id": "optional models.status assets ID; cancels that model's download instead",
@@ -500,7 +493,6 @@ class ApplicationControlOwner:
     _fingerprint: str | None = None
     _open: bool = True
     _lock_owner: asyncio.Task | None = None
-    _auth_challenge: dict | None = None
     _runtime_toggle_sequence: int = 0
     _runtime_toggle_stops: dict[str, int] = field(default_factory=dict)
     _operation_runtime_toggles: dict[asyncio.Task, _RuntimeToggleIntent] = field(
@@ -1152,7 +1144,7 @@ class ApplicationControlOwner:
                 "capture.set.channel": ["self", "peer"],
                 "provider.apply.channel": ["self", "peer", "both"],
                 "models.backend": list(MODEL_BACKENDS),
-                "auth.provider": COMMAND_ARGUMENTS["auth.login"]["provider"],
+                "auth.provider": COMMAND_ARGUMENTS["auth.logout"]["provider"],
                 "overlay.calibration.action": COMMAND_ARGUMENTS["overlay.calibrate"]["action"],
                 "overlay.calibration.fields": {
                     "anchor": list(OVERLAY_CALIBRATION_ANCHORS),
@@ -1414,14 +1406,7 @@ class ApplicationControlOwner:
         if name == "auth.status":
             return {
                 **base,
-                "action": self.application.dashboard_managed_auth_action(),
-                "prompt_kind": self.application.dashboard_managed_auth_prompt_kind(),
-                "failure_kind": self.application.managed_auth_last_failure_kind(),
                 "consent_accepted": self.application.state().peer_translation_eula_accepted,
-                "challenge": (
-                    dict(self._auth_challenge) if self._auth_challenge is not None else None
-                ),
-                "chatgpt": _chatgpt_status(self.application, self._retain_diagnostic),
             }
         if name == "consent.peer_translation":
             return {
@@ -1991,14 +1976,6 @@ class ApplicationControlOwner:
             operation.receipt["terminal"] = operation.receipt["status"] in TERMINAL
             if self._lock_owner is asyncio.current_task():
                 self._lock_owner = None
-            if (
-                self._auth_challenge is not None
-                and self._auth_challenge.get("operation_id") == operation_id
-            ):
-                self._auth_challenge = None
-                self.events.publish(
-                    {"topic": "auth", "operation_id": operation_id, "phase": "finished"}
-                )
             self.events.publish(
                 {
                     "topic": "operation",
@@ -2190,11 +2167,6 @@ class ApplicationControlOwner:
             )
             if matched:
                 return {"status": "applied", "translation_enabled": state.translation_enabled}
-            if enabled and app.dashboard_managed_auth_prompt_kind() not in ("none", ""):
-                return {
-                    "status": "action_required",
-                    "action": app.dashboard_managed_auth_prompt_kind(),
-                }
             return {
                 "status": "degraded",
                 "translation_enabled": state.translation_enabled,
@@ -2339,8 +2311,6 @@ class ApplicationControlOwner:
             else:
                 status = "applied"
             return {"status": status, "gpu": _json(snapshot)}
-        if command == "auth.login":
-            return await self._login(args, operation_id)
         if command == "auth.logout":
             return await self._logout(args)
         if command in {"secrets.set", "secrets.delete"}:
@@ -2457,265 +2427,38 @@ class ApplicationControlOwner:
             raise InvalidArgumentsError("unknown calibration action")
         raise InvalidArgumentsError("unsupported command")
 
-    async def _login(self, args: dict, operation_id: str) -> dict:
-        provider = _string(args, "provider")
-        if provider not in {"qq", "discord", "openrouter", "chatgpt"}:
-            raise InvalidArgumentsError("unsupported account provider")
-        app = self.application
-        before = getattr(self.results, "current", None)
-        if provider == "qq":
-            identity = _string(args, "qq_identity")
-            credential = _string(args, "credential")
-            if not identity or not credential:
-                raise InvalidArgumentsError("QQ account and credential are required")
-            result = await app.start_qq_managed_auth_from_dialog(
-                qq_identity=identity, credential=credential
-            )
-        else:
-            open_browser = args.get("open_browser", False)
-            if not isinstance(open_browser, bool):
-                raise InvalidArgumentsError("open_browser must be boolean")
-
-            def authorization_url(url: str) -> None:
-                self._auth_challenge = {
-                    "operation_id": operation_id,
-                    "provider": provider,
-                    "authorization_url": url,
-                }
-                self.events.publish(
-                    {
-                        "topic": "auth",
-                        "operation_id": operation_id,
-                        "phase": "authorization_required",
-                        "provider": provider,
-                        "authorization_url": url,
-                    }
-                )
-
-            if provider == "chatgpt":
-                connect = await app.connect_chatgpt(
-                    open_browser=open_browser,
-                    authorization_url_sink=authorization_url,
-                )
-                primary = (
-                    self._retain_diagnostic(connect.diagnostics, disposition="failed")
-                    if connect.diagnostics is not None
-                    else None
-                )
-                evidence = {
-                    "diagnostics": primary,
-                    "diagnostic_id": primary["diagnostic_id"] if primary is not None else None,
-                    "secondary_diagnostics": [
-                        self._retain_diagnostic(item, disposition="degraded")
-                        for item in connect.secondary_diagnostics[:4]
-                    ],
-                    "secondary_omitted_count": connect.secondary_omitted_count
-                    + max(0, len(connect.secondary_diagnostics) - 4),
-                    "secondary_truncated": connect.secondary_omitted_count > 0
-                    or len(connect.secondary_diagnostics) > 4,
-                }
-                self._notify_presentation(evidence, primary)
-                if connect.succeeded:
-                    return {
-                        "status": "applied",
-                        "provider": provider,
-                        "authorization": "complete",
-                        "first_sign_in": connect.first_sign_in,
-                        **evidence,
-                    }
-                return {
-                    "status": (
-                        "rejected"
-                        if connect.failure_code in {"access_denied", "plan_scope_missing"}
-                        else "failed"
-                    ),
-                    "provider": provider,
-                    "reason": connect.failure_code or "authorization_failed",
-                    **evidence,
-                }
-            if provider == "discord":
-                result = await app.start_discord_managed_auth_from_dialog(
-                    open_browser=open_browser,
-                    authorization_url_sink=authorization_url,
-                    on_callback_received=lambda: self.events.publish(
-                        {
-                            "topic": "auth",
-                            "operation_id": operation_id,
-                            "phase": "callback_received",
-                            "provider": provider,
-                        }
-                    ),
-                    on_recovery_started=lambda: self.events.publish(
-                        {
-                            "topic": "auth",
-                            "operation_id": operation_id,
-                            "phase": "recovery_started",
-                            "provider": provider,
-                        }
-                    ),
-                )
-            else:
-                target = app.build_managed_openrouter_byok_target()
-                if target is None:
-                    from puripuly_heart.app.ports.settings_view import OpenRouterPkceTarget
-                    from puripuly_heart.config.provider_values import OpenRouterSelectionAlias
-
-                    current = app.compatibility_settings()
-                    alias = current.intent.translation.openrouter_selection_alias
-                    if alias is None:
-                        return {
-                            "status": "action_required",
-                            "action": "select_openrouter_byok_model",
-                            "provider": provider,
-                        }
-                    target = OpenRouterPkceTarget(OpenRouterSelectionAlias(alias))
-                result = await app.connect_openrouter_via_pkce(
-                    target=target,
-                    launch_source="cli",
-                    open_browser=open_browser,
-                    authorization_url_sink=authorization_url,
-                )
-        transaction = getattr(self.results, "current", None)
-        transaction_data = (
-            {
-                "transaction": self._transaction_receipt(
-                    transaction, _transaction_status(transaction)
-                )
-            }
-            if transaction is not None and transaction is not before
-            else {}
-        )
-        if result is True:
-            status = _transaction_status(transaction) if transaction_data else "applied"
-            if (
-                provider in {"qq", "discord"}
-                and app.managed_auth_last_failure_kind() == "runtime_degraded"
-            ):
-                status = "degraded"
-            return {
-                "status": status,
-                "provider": provider,
-                "authorization": "complete",
-                **transaction_data,
-            }
-        if transaction_data:
-            status = _transaction_status(transaction)
-            if status in {"degraded", "persistence_failed"}:
-                return {"status": status, "provider": provider, **transaction_data}
-        if isinstance(result, tuple) and result:
-            reason = result[0]
-            action = (
-                provider == "qq"
-                and bool(transaction_data)
-                and transaction.status == TRANSACTION_STATUS_REMOTE_DELIVERY_ACK_PENDING
-            ) or (
-                isinstance(reason, str)
-                and reason.endswith((".action_required", ".recovery_pending"))
-            )
-            return {
-                "status": "action_required" if action else "rejected",
-                "provider": provider,
-                "reason": "resolve_pending_authorization" if action else "authorization_failed",
-                **transaction_data,
-            }
-        kind = app.managed_auth_last_failure_kind() if provider == "discord" else None
-        return {
-            "status": (
-                "action_required" if kind in {"action_required", "idle_resumable"} else "failed"
-            ),
-            "provider": provider,
-            "reason": "authorization_failed",
-            **transaction_data,
-        }
-
     async def _logout(self, args: dict) -> dict:
         provider = _string(args, "provider")
-        if provider not in {"qq", "discord", "openrouter", "chatgpt"}:
+        if provider != "openrouter":
             raise InvalidArgumentsError("unsupported account provider")
         app = self.application
-        if provider == "chatgpt":
-            signed_out = await app.sign_out_chatgpt()
-            diagnostics = signed_out.diagnostics
-            status = "applied" if signed_out.local_credentials_removed is True else "failed"
-            diagnostic = (
-                self._retain_diagnostic(
-                    diagnostics, disposition="failed" if status == "failed" else "degraded"
-                )
-                if diagnostics is not None
-                else None
-            )
-            result = {
-                "status": status,
-                "provider": provider,
-                "local_credentials_removed": signed_out.local_credentials_removed,
-                "remote_revoked": signed_out.remote_revoked,
-                "scope": (
-                    "remote_revoked"
-                    if signed_out.remote_revoked
-                    else "local_only" if signed_out.local_credentials_removed is True else "unknown"
-                ),
-                "diagnostics": diagnostic,
-                "diagnostic_id": diagnostic["diagnostic_id"] if diagnostic is not None else None,
-                "secondary_diagnostics": [
-                    self._retain_diagnostic(item, disposition="degraded")
-                    for item in signed_out.secondary_diagnostics[:4]
-                ],
-                "secondary_omitted_count": signed_out.secondary_omitted_count
-                + max(0, len(signed_out.secondary_diagnostics) - 4),
-                "secondary_truncated": signed_out.secondary_omitted_count > 0
-                or len(signed_out.secondary_diagnostics) > 4,
-            }
-            self._notify_presentation(result, diagnostic)
-            return result
         current = app.compatibility_settings()
-        managed = current.state.managed_connection
-        if provider in {"qq", "discord"} and (
-            managed.pending_delivery_ack_source or managed.pending_managed_operation_id
-        ):
-            return {"status": "action_required", "action": "resolve_pending_managed_authorization"}
         translation = current.intent.translation
         connection = translation.connection
         active_route = provider_llm_for_translation(
             translation.model, connection
         ) == "openrouter" and (
-            (
-                provider == "qq"
-                and connection == "managed_china"
-                and translation.openrouter_selected_source == "managed"
-            )
-            or (
-                provider == "discord"
-                and connection == "managed"
-                and translation.openrouter_selected_source == "managed"
-            )
-            or (
-                provider == "openrouter"
-                and connection == "openrouter"
-                and translation.openrouter_selected_source == "byok"
-            )
+            connection == "openrouter" and translation.openrouter_selected_source == "byok"
         )
         stopped = active_route and app.state().translation_enabled
         if stopped:
             await app.set_translation_enabled(False)
             if app.state().translation_enabled:
                 return {"status": "degraded", "reason": "translation_stop_failed"}
-        if provider == "openrouter":
-            before = getattr(self.results, "current", None)
-            succeeded = await app.persist_provider_secret_change("openrouter_api_key", "")
-            transaction = getattr(self.results, "current", None)
-            if transaction is not None and transaction is not before:
-                status = _transaction_status(transaction)
-                result = {
-                    "status": status,
-                    "transaction": self._transaction_receipt(
-                        transaction, _transaction_status(transaction)
-                    ),
-                }
-            else:
-                result = {"status": "applied" if succeeded else "failed"}
-            result.update(provider=provider, scope="local_only")
+        before = getattr(self.results, "current", None)
+        succeeded = await app.persist_provider_secret_change("openrouter_api_key", "")
+        transaction = getattr(self.results, "current", None)
+        if transaction is not None and transaction is not before:
+            status = _transaction_status(transaction)
+            result = {
+                "status": status,
+                "transaction": self._transaction_receipt(
+                    transaction, _transaction_status(transaction)
+                ),
+            }
         else:
-            result = await app.logout_local_managed(provider)
+            result = {"status": "applied" if succeeded else "failed"}
+        result.update(provider=provider, scope="local_only")
         if result["status"] != "applied":
             if stopped:
                 await app.set_translation_enabled(True)
@@ -3135,7 +2878,6 @@ def _validate_command_args(command: str, args: dict, *, locale_choices: tuple[st
         "overlay.lock": {"locked"},
         "overlay.size": {"preset"},
         "overlay.calibrate": {"action"},
-        "auth.login": {"provider"},
         "auth.logout": {"provider"},
         "models.download": {"model_id"},
         "models.import": {"model_id", "directory"},
@@ -3213,66 +2955,12 @@ def _validate_command_args(command: str, args: dict, *, locale_choices: tuple[st
             "verify_checksums" in args and type(args["verify_checksums"]) is not bool
         ):
             raise InvalidArgumentsError("verify_checksums must be a boolean")
-    elif command in {"auth.login", "auth.logout"}:
+    elif command == "auth.logout":
         provider = args["provider"]
-        if type(provider) is not str or provider not in {"qq", "discord", "openrouter", "chatgpt"}:
+        if type(provider) is not str or provider != "openrouter":
             raise InvalidArgumentsError("unsupported account provider")
-        if command == "auth.login":
-            _validate_auth_login_args(args, provider)
     elif command == "overlay.calibrate":
         _validate_calibration_args(args)
-
-
-def _validate_auth_login_args(args: dict, provider: str) -> None:
-    open_browser = args.get("open_browser", False)
-    if type(open_browser) is not bool:
-        raise InvalidArgumentsError("open_browser must be a boolean")
-    if provider == "qq":
-        if args.keys() - {
-            "provider",
-            "qq_identity",
-            "credential",
-            "open_browser",
-        }:
-            raise InvalidArgumentsError("QQ login has unsupported arguments")
-        if (
-            type(args.get("qq_identity")) is not str
-            or not args["qq_identity"]
-            or type(args.get("credential")) is not str
-            or not args["credential"]
-        ):
-            raise InvalidArgumentsError("QQ identity and credential are required")
-        if open_browser:
-            raise InvalidArgumentsError("QQ login does not support browser opening")
-        return
-    if args.keys() - {"provider", "open_browser"}:
-        raise InvalidArgumentsError("OAuth login has unsupported arguments")
-
-
-def _chatgpt_status(application: object, retain: Callable[..., dict]) -> dict:
-    snapshot_provider = getattr(application, "chatgpt_account_snapshot", None)
-    if not callable(snapshot_provider):
-        return {
-            "signed_in": None,
-            "in_progress": None,
-            "sign_in_required": None,
-            "availability": "unavailable",
-        }
-    snapshot = snapshot_provider()
-    required = getattr(application, "chatgpt_sign_in_required", None)
-    diagnostics = snapshot.diagnostics
-    evidence = (
-        retain(diagnostics, disposition="degraded", severity="warning")
-        if diagnostics is not None
-        else None
-    )
-    return {
-        "signed_in": snapshot.signed_in,
-        "in_progress": snapshot.in_progress,
-        "sign_in_required": required() if callable(required) else None,
-        "diagnostics": evidence,
-        "diagnostic_id": evidence["diagnostic_id"] if evidence is not None else None,
-    }
 
 
 def _validate_calibration_args(args: dict) -> None:

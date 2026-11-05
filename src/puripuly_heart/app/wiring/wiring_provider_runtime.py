@@ -43,7 +43,6 @@ from .wiring_llm_factory import (
     llm_factory_extras_from_vnext,
     runtime_resolution_input_from_vnext,
 )
-from .wiring_managed_account import ManagedOpenRouterReleaseRuntime
 from .wiring_managed_gemma import (
     managed_gemma_selection,
     managed_gemma_translation_desired,
@@ -210,9 +209,6 @@ class ProviderRuntimeEffects:
     canonical_settings: Callable[[AppSettingsVNext], AppSettingsVNext]
     clear_local_pending: Callable[[], None]
     sync_local_notice: Callable[[], None]
-    managed_pending_sink: Callable[[bool], None]
-    managed_pending_provider: Callable[[], bool]
-    dashboard_managed_pending_sink: Callable[[bool], None]
     sync_effective_flags: Callable[[], None]
     refresh_overlay: Callable[[], None]
     refresh_peer_runtime: Callable[[AppSettingsVNext], Awaitable[None]]
@@ -307,17 +303,8 @@ class ProviderRuntimeEffects:
     def apply_common(self, settings: AppSettingsVNext) -> None:
         canonical = self.canonical_settings(settings)
         translation = canonical.intent.translation
-        provider_llm = provider_llm_for_translation(translation.model, translation.connection)
         self.clear_local_pending()
         self.sync_local_notice()
-        if (
-            translation.model == "custom_http"
-            or provider_llm != "openrouter"
-            or translation.openrouter_selected_source != "managed"
-        ):
-            self.managed_pending_sink(False)
-        else:
-            self.dashboard_managed_pending_sink(self.managed_pending_provider())
         config_owner = self.translation_runtime_configuration_provider()
         if config_owner is None:
             return
@@ -397,9 +384,6 @@ def compose_provider_runtime(
     canonical_settings: Callable[[AppSettingsVNext], AppSettingsVNext],
     clear_local_pending: Callable[[], None],
     sync_local_notice: Callable[[], None],
-    managed_pending_sink: Callable[[bool], None],
-    managed_pending_provider: Callable[[], bool],
-    dashboard_managed_pending_sink: Callable[[bool], None],
     sync_effective_flags: Callable[[], None],
     refresh_overlay: Callable[[], None],
     refresh_peer_runtime: Callable[[AppSettingsVNext], Awaitable[None]],
@@ -407,17 +391,13 @@ def compose_provider_runtime(
     self_state_sink: Callable[[SelfCaptureSessionSnapshot], None],
     self_availability: Callable[[SelfCaptureSessionSnapshot], bool],
     gpu_recovery: Callable[[AppSettingsVNext, ProviderRuntimeApplyPlan], Awaitable[None]],
-    managed_release: Callable[[], ManagedOpenRouterReleaseRuntime],
-    managed_delegate_ready: Callable[[], None],
     runtime_logging: ProviderObservationPort,
     translation_needs_key_sink: Callable[[bool], None],
-    usage_refresh: Callable[[], Awaitable[None]],
     failure_sink: Callable[[str], None],
     success_sink: Callable[[str], None],
     additional_signature_sink: Callable[[AppSettingsVNext], None],
     managed_gemma: ManagedGemmaTranslationOwner | None = None,
     signatures: ProviderRuntimeSignatures | None = None,
-    chatgpt_session: ChatGptAccessTokenPort | None = None,
 ) -> ProviderRuntimeComponents:
     effective_http_extensions = http_extensions
     if effective_http_extensions is None:
@@ -438,9 +418,6 @@ def compose_provider_runtime(
         canonical_settings=canonical_settings,
         clear_local_pending=clear_local_pending,
         sync_local_notice=sync_local_notice,
-        managed_pending_sink=managed_pending_sink,
-        managed_pending_provider=managed_pending_provider,
-        dashboard_managed_pending_sink=dashboard_managed_pending_sink,
         sync_effective_flags=sync_effective_flags,
         refresh_overlay=refresh_overlay,
         refresh_peer_runtime=refresh_peer_runtime,
@@ -501,16 +478,13 @@ def compose_provider_runtime(
             **backend_kwargs,
         )
 
+    async def _noop_usage_refresh() -> None:
+        return None
+
     async def create_llm(settings_value: object) -> object | None:
         canonical = canonical_settings(settings_value)
         translation = canonical.intent.translation
-        if translation.model == "gemma4_26b_31b":
-            selection_at_admission = settings.canonical
-            secrets = await run_owned_thread_call(
-                lambda: create_secret_store(canonical.intent.secrets, config_path=config_path)
-            )
-        else:
-            secrets = create_secret_store(canonical.intent.secrets, config_path=config_path)
+        secrets = create_secret_store(canonical.intent.secrets, config_path=config_path)
         if translation.model in MANAGED_GEMMA_MODELS:
             if managed_gemma is None:
                 raise RuntimeError("managed Gemma translation runtime is unavailable")
@@ -544,36 +518,10 @@ def compose_provider_runtime(
                 settings_value,
                 secrets=secrets,
             )
-        release = managed_release()
-        await release.rebuild(secrets=secrets)
-        if translation.model == "gemma4_26b_31b":
-            backend = await run_owned_thread_call(
-                lambda: _translation_backend_from_canonical(
-                    settings_value,
-                    secrets=secrets,
-                    managed_release_service=release.service,
-                    managed_delegate_ready=managed_delegate_ready,
-                    runtime_logging=runtime_logging,
-                    chatgpt_session=chatgpt_session,
-                )
-            )
-            current = settings.canonical
-            if (
-                current is None
-                or selection_at_admission is None
-                or current.intent.translation != selection_at_admission.intent.translation
-            ):
-                if backend is not None:
-                    await cast(TranslationBackend, backend).close()
-                raise asyncio.CancelledError
-            return backend
         return _translation_backend_from_canonical(
             settings_value,
             secrets=secrets,
-            managed_release_service=release.service,
-            managed_delegate_ready=managed_delegate_ready,
             runtime_logging=runtime_logging,
-            chatgpt_session=chatgpt_session,
         )
 
     def sync_llm_signature(current: object) -> None:
@@ -583,7 +531,7 @@ def compose_provider_runtime(
         context_provider=lambda: llm_context(settings.committed_settings),
         provider_factory=create_llm,
         availability_sink=translation_needs_key_sink,
-        usage_refresh=usage_refresh,
+        usage_refresh=_noop_usage_refresh,
         failure_sink=failure_sink,
         success_sink=success_sink,
         signature_sink=sync_llm_signature,

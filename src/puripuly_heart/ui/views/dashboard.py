@@ -99,7 +99,6 @@ class DashboardView(ft.Column):
         self._translation_showing_warning = False
         self._stt_showing_warning = False
         self._peer_showing_warning = False
-        self._managed_auth_pending = False
         self._local_stt_notice_status: str | None = None
         self._local_stt_notice_percent: int | None = None
         self._local_stt_notice_model_id: str | None = None
@@ -836,11 +835,6 @@ class DashboardView(ft.Column):
             ),
             new_turn=previous is None or previous.utterance_id != snapshot.utterance_id,
         )
-
-    def set_managed_auth_pending(self, pending: bool) -> None:
-        self._managed_auth_pending = bool(pending)
-        self._sync_notice()
-
     def set_local_stt_notice(self, status: str | None, percent: int | None = None) -> None:
         self._local_stt_notice_status = status
         self._local_stt_notice_percent = percent if status == "downloading" else None
@@ -928,8 +922,6 @@ class DashboardView(ft.Column):
 
     def _notice_candidates(self) -> dict[str, tuple[str, str | None, str | None]]:
         candidates: dict[str, tuple[str, str | None, str | None]] = {}
-        if self._managed_auth_pending:
-            candidates["managed_auth"] = (t("dashboard.managed_auth_pending"), "info", None)
         notice_text, tone = self._current_local_stt_notice()
         if notice_text is not None:
             candidates["local_stt"] = (notice_text, tone, None)

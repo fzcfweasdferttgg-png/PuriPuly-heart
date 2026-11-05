@@ -96,9 +96,6 @@ def test_provider_apply_switches_default_prompt_without_changing_override(
     effects.canonical_settings = lambda value: value
     effects.clear_local_pending = lambda: None
     effects.sync_local_notice = lambda: None
-    effects.managed_pending_sink = lambda _value: None
-    effects.managed_pending_provider = lambda: False
-    effects.dashboard_managed_pending_sink = lambda _value: None
     effects.translation_runtime_configuration_provider = lambda: owner
     effects.peer = lambda: SimpleNamespace(effective_enabled=lambda: False)
     luna_settings = replace(

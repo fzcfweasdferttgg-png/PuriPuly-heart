@@ -154,22 +154,6 @@ class RecordingBackend:
         self.events.append(("secret", key, value))
         return True
 
-    async def start_qq_managed_auth_from_dialog(self, **kwargs: object) -> object:
-        self.events.append(("qq-auth", kwargs))
-        return "qq-result"
-
-    async def start_discord_managed_auth_from_dialog(self, **kwargs: object) -> object:
-        self.events.append(("discord-auth", kwargs))
-        return "discord-result"
-
-    def reopen_discord_managed_auth_browser(self) -> bool:
-        self.events.append(("discord-reopen",))
-        return True
-
-    def cancel_discord_managed_auth(self) -> bool:
-        self.events.append(("discord-cancel",))
-        return True
-
     async def set_desktop_overlay_captions_locked(self, locked: bool) -> None:
         self.events.append(("overlay-lock", locked))
 

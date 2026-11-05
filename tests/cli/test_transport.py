@@ -438,7 +438,7 @@ async def test_cli_subprocess_discovers_authenticates_and_keeps_valid_queries_af
 
             private = "SYNTHETIC_PRIVATE_CREDENTIAL"
             code, stdout, stderr = await invoke(
-                "command", "auth.login", "--arguments", json.dumps({"credential": private})
+                "command", "auth.logout", "--arguments", json.dumps({"credential": private})
             )
             assert code == 3
             assert stdout == ""

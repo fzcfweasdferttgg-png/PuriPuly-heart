@@ -18,10 +18,8 @@ async def test_ui_interactive_verification_returns_the_owner_result(outcome) -> 
         settings=None,
         provider_application=None,
         gpu=None,
-        managed=None,
         credential_verification=verification,
         provider_settings=None,
-        build_byok_target_settings=lambda _settings: None,
     )
 
     assert await adapter.verify_api_key("openai", "synthetic-secret") == outcome

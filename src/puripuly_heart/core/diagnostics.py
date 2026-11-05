@@ -564,7 +564,6 @@ _BOUNDARIES = (
             "secrets.set",
             "secrets.delete",
             "secrets.verify",
-            "auth.login",
             "auth.logout",
             "overlay.set",
             "overlay.lock",

@@ -5,11 +5,6 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from puripuly_heart.app.language_selection import LanguageSelectionChange
-from puripuly_heart.app.ports.chatgpt_account import (
-    ChatGptAccountSnapshot,
-    ChatGptConnectResult,
-    ChatGptSignOutResult,
-)
 from puripuly_heart.app.ports.settings_view import (
     AlibabaConnectionApplyResult,
     AlibabaConnectionDraftSnapshot,
@@ -132,38 +127,6 @@ class UiProviderRuntimePort(Protocol):
 
     async def ensure_gpu_device_discovery(self) -> None: ...
 
-    async def connect_openrouter_via_pkce(
-        self,
-        *,
-        target: OpenRouterPkceTarget,
-        launch_source: str,
-        open_browser: bool = True,
-        authorization_url_sink: Callable[[str], None] | None = None,
-    ) -> bool: ...
-
-    def reopen_openrouter_pkce_authorization_url(self) -> object: ...
-
-    def chatgpt_account_snapshot(self) -> ChatGptAccountSnapshot: ...
-
-    async def connect_chatgpt(
-        self,
-        *,
-        open_browser: bool = True,
-        authorization_url_sink: Callable[[str], None] | None = None,
-    ) -> ChatGptConnectResult: ...
-
-    def reopen_chatgpt_authorization_url(self) -> bool: ...
-
-    async def sign_out_chatgpt(self) -> ChatGptSignOutResult: ...
-
-    def cancel_chatgpt_sign_in(self) -> None: ...
-
-    def chatgpt_sign_in_required(self) -> bool: ...
-
-    async def select_chatgpt_translation(self) -> object: ...
-
-    def build_managed_openrouter_byok_target(self) -> OpenRouterPkceTarget | None: ...
-
     async def begin_alibaba_connection_draft(self) -> AlibabaConnectionDraftSnapshot: ...
     async def alibaba_connection_draft(self) -> AlibabaConnectionDraftSnapshot: ...
     async def alibaba_active_connection(self) -> AlibabaConnectionDraftSnapshot: ...
@@ -248,32 +211,6 @@ class UiOverlayRuntimePort(Protocol):
     def cancel_overlay_calibration(self) -> object: ...
 
 
-class UiManagedRuntimePort(Protocol):
-    def dashboard_managed_auth_action(self) -> str: ...
-
-    def dashboard_managed_auth_prompt_kind(self) -> str: ...
-
-    def managed_auth_last_failure_kind(self) -> str: ...
-
-    def managed_auth_last_message_key(self) -> str | None: ...
-
-    async def start_qq_managed_auth_from_dialog(
-        self,
-        **kwargs: object,
-    ) -> object: ...
-
-    async def start_discord_managed_auth_from_dialog(
-        self,
-        **kwargs: object,
-    ) -> object: ...
-
-    async def logout_local_managed(self, provider: str) -> dict[str, object]: ...
-
-    def clear_managed_auth_pending_state(self) -> None: ...
-
-    async def refresh_openrouter_usage_after_launch(self) -> bool: ...
-
-
 class UiEngagementRuntimePort(Protocol):
     def get_event_language_codes(self) -> tuple[str | None, str | None]: ...
 
@@ -309,7 +246,6 @@ __all__ = [
     "UiDiagnosticsRuntimePort",
     "UiEngagementRuntimePort",
     "UiInputRuntimePort",
-    "UiManagedRuntimePort",
     "UiOverlayRuntimePort",
     "UiPeerCaptureRuntimePort",
     "UiProviderRuntimePort",

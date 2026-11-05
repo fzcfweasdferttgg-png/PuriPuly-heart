@@ -21,7 +21,7 @@ from puripuly_heart.app.services.osc.control_runtime import OscControlIntegratio
 from puripuly_heart.app.services.overlay.overlay_application import OverlayApplicationOwner
 from puripuly_heart.app.services.peer_application import PeerApplicationOwner
 from puripuly_heart.app.wiring.wiring_audio_test import AudioTestRuntime
-from puripuly_heart.app.wiring.wiring_managed_account import ManagedAccountComponents
+from puripuly_heart.app.services.translation_enable import TranslationEnableOwner
 from puripuly_heart.app.wiring.wiring_runtime_pipeline import (
     RuntimePipelineHandle,
     RuntimePipelineLauncher,
@@ -36,7 +36,7 @@ class ApplicationRuntimeShutdownAdapter:
     ingress: ApplicationIngressGate
     pipeline: RuntimePipelineHandle
     runtime_logging: ApplicationRuntimeLoggingOwner
-    managed: ManagedAccountComponents
+    translation: TranslationEnableOwner
     pipeline_launcher: RuntimePipelineLauncher
     stop_self_capture: Callable[[], Awaitable[None]]
     release_manual_typing_owner: Callable[[], Awaitable[None]]
@@ -171,9 +171,7 @@ class ApplicationRuntimeShutdownAdapter:
         if vrc_mic_sync is not None:
             vrc_mic_sync.stop_ingress()
         self.runtime_logging.stop_ingress()
-        self.managed.usage.stop_ingress()
-        self.managed.auth.stop_ingress()
-        self.managed.translation.stop_ingress()
+        self.translation.stop_ingress()
 
     def stop_github_star_prompt_ingress(self) -> None:
         owner = self.github_prompt()
@@ -243,14 +241,8 @@ class ApplicationRuntimeShutdownAdapter:
     async def close_runtime_logging_background_tasks(self) -> None:
         await self.runtime_logging.close_background_tasks()
 
-    async def close_managed_auth_owner(self) -> None:
-        await self.managed.auth.close()
-
     async def close_translation_enable_owner(self) -> None:
-        await self.managed.translation.close()
-
-    async def close_managed_usage_owner(self) -> None:
-        await self.managed.usage.close()
+        await self.translation.close()
 
     async def close_runtime_pipeline_launcher(self) -> None:
         await self.pipeline_launcher.close()
@@ -344,9 +336,6 @@ class ApplicationRuntimeShutdownAdapter:
             self.pipeline.osc = None
         if not components.resource_owner.has_resources:
             self.pipeline.clear(components)
-
-    async def close_managed_openrouter_release_service(self) -> None:
-        await self.managed.release.close()
 
     def emit_final_application_shutdown_diagnostics(
         self,

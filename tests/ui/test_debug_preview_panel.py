@@ -25,10 +25,6 @@ PRIMARY_ACTION_KEYS = [
     "http_extension_form",
 ]
 EXTENDED_ACTION_KEYS = [
-    "brake_notice",
-    "revoked_notice",
-    "pkce_failure",
-    "pkce_button_cycle",
     "capture_fault_cycle",
     "stt_fault_cycle",
     "audio_fault_clear",
@@ -89,7 +85,11 @@ def test_debug_preview_panel_expands_diagnostics_with_bounded_scroll_height() ->
     panel._toggle_extended_actions(None)
 
     assert panel._extended_actions_container.visible is True
-    assert panel._popover.content.height == DEBUG_PREVIEW_POPOVER_MAX_HEIGHT
+    assert panel._popover.content.height == min(
+        (len(PRIMARY_ACTION_KEYS) + len(EXTENDED_ACTION_KEYS) + 1)
+        * DEBUG_PREVIEW_ACTION_ROW_HEIGHT,
+        DEBUG_PREVIEW_POPOVER_MAX_HEIGHT,
+    )
     assert panel._popover.content.scroll == panel_module.ft.ScrollMode.AUTO
 
     panel._toggle_extended_actions(None)

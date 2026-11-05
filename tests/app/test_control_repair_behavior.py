@@ -1263,37 +1263,6 @@ def test_native_manual_admission_preserves_ids_without_output_ack():
         ApplicationControlOwner._text_admission_data(True)
 
 
-def test_unknown_account_observation_preserves_owning_diagnostic():
-    from puripuly_heart.app.services.application_control import _chatgpt_status
-    from puripuly_heart.core.messages import ErrorDiagnostics
-
-    cause = ErrorDiagnostics(
-        component="chatgpt_account",
-        operation="read",
-        code="chatgpt_secret_store_failed",
-        category="auth",
-        visibility="basic",
-        content_policy="metadata_only",
-        status_code=None,
-        retry_after_ms=None,
-        fields={},
-    )
-    observed = []
-
-    def retain(diagnostic, **_):
-        observed.append(diagnostic)
-        return {"diagnostic_id": diagnostic.diagnostic_id}
-
-    app = SimpleNamespace(
-        chatgpt_account_snapshot=lambda: SimpleNamespace(
-            signed_in=None, in_progress=False, diagnostics=cause
-        )
-    )
-    result = _chatgpt_status(app, retain)
-    assert result["signed_in"] is None and result["sign_in_required"] is None
-    assert result["diagnostic_id"] == cause.diagnostic_id and observed == [cause]
-
-
 @pytest.mark.asyncio
 async def test_real_peer_fault_queries_project_safe_original_cause(offline):
     from uuid import uuid4
