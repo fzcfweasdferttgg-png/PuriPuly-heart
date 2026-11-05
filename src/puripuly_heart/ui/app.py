@@ -3,7 +3,6 @@ import contextlib
 import inspect
 import json
 import logging
-import tempfile
 import webbrowser
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -13,10 +12,6 @@ from uuid import uuid4
 import flet as ft
 
 from puripuly_heart.app.language_selection import LanguageSelectionChange
-from puripuly_heart.app.ports.chatgpt_account import (
-    CHATGPT_USAGE_SETTINGS_URL,
-    ChatGptConnectResult,
-)
 from puripuly_heart.app.ports.settings_view import (
     ImmediateSettingsIntent,
     LoopbackCaptureSettingsIntent,
@@ -41,24 +36,17 @@ from puripuly_heart.core.diagnostics import (
     emit_failure,
     safe_exception_fields,
 )
-from puripuly_heart.core.discord.discord_oauth_loopback import (
-    render_discord_oauth_callback_completion_page,
-)
 from puripuly_heart.core.language import get_stt_compatibility_warning
 from puripuly_heart.core.lifecycle import (
     SHUTDOWN_PHASE_FREEZE_INGRESS,
     SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
 )
 from puripuly_heart.core.messages import ErrorDiagnostics
-from puripuly_heart.core.qq_auth_diagnostics import exception_fields, log_qq_auth
 from puripuly_heart.ui.components.audio_test_dialog import AudioTestDialog
 from puripuly_heart.ui.components.bottom_nav import BottomNavBar
-from puripuly_heart.ui.components.chatgpt_auth_dialog import ChatGptAuthDialog
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
-from puripuly_heart.ui.components.discord_managed_auth_dialog import DiscordManagedAuthDialog
 from puripuly_heart.ui.components.model_assets_dialog import ModelAssetsDialog
 from puripuly_heart.ui.components.peer_translation_eula_dialog import PeerTranslationEulaDialog
-from puripuly_heart.ui.components.qq_managed_auth_dialog import QqManagedAuthDialog
 from puripuly_heart.ui.components.title_bar import TitleBar
 from puripuly_heart.ui.dashboard.contract import (
     DashboardCaptureIntents,
@@ -111,20 +99,6 @@ DEFAULT_WINDOW_WIDTH = FOUNDATION_DESIGN_TOKENS.window.width
 DEFAULT_WINDOW_HEIGHT = FOUNDATION_DESIGN_TOKENS.window.height
 APP_CONTENT_PADDING = FOUNDATION_DESIGN_TOKENS.spacing.page
 APP_LOGS_CONTENT_PADDING = ft.Padding.symmetric(vertical=APP_CONTENT_PADDING)
-FOUNDER_README_BASE_URL = "https://github.com/kapitalismho/PuriPuly-heart/blob/dev"
-FOUNDER_README_PATH_BY_LOCALE = {
-    "ko": "docs/readme/README.ko.md",
-    "zh-CN": "docs/readme/README.zh-CN.md",
-    "ja": "docs/readme/README.ja.md",
-    "ru": "docs/readme/README.ru.md",
-}
-FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE = {
-    "ko": "자신의-api-키-사용하기",
-    "zh-CN": "使用您自己的-api-密钥",
-    "ja": "自分のapiキーを使う",
-    "ru": "свои-api-ключи",
-}
-FOUNDER_README_DEFAULT_API_KEYS_ANCHOR = "using-your-own-api-keys"
 GITHUB_STAR_REPOSITORY_URL = "https://github.com/kapitalismho/PuriPuly-heart"
 GITHUB_STAR_PROMPT_DELAY_S = 2.5
 GITHUB_STAR_PROMPT_DURATION_MS = 8000
@@ -144,27 +118,6 @@ async def _prepare_and_show_main_window(page: ft.Page) -> None:
     finally:
         page.window.visible = True
         page.update()
-
-
-def founder_readme_url_for_locale(locale: str | None) -> str:
-    readme_path = FOUNDER_README_PATH_BY_LOCALE.get(locale or "", "README.md")
-    anchor = FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE.get(
-        locale or "", FOUNDER_README_DEFAULT_API_KEYS_ANCHOR
-    )
-    return f"{FOUNDER_README_BASE_URL}/{readme_path}#{anchor}"
-
-
-def _write_discord_callback_preview_page(locale: str | None) -> str:
-    html = render_discord_oauth_callback_completion_page(locale)
-    with tempfile.NamedTemporaryFile(
-        "wb",
-        prefix="puripuly-discord-callback-",
-        suffix=".html",
-        delete=False,
-    ) as handle:
-        handle.write(html)
-        path = Path(handle.name)
-    return path.as_uri()
 
 
 class TranslatorApp:
@@ -398,7 +351,7 @@ class TranslatorApp:
                 phase=SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
                 owner_name="TranslatorApp",
                 callback_name="close_managed_auth_tasks",
-                callback=self._close_managed_auth_ui_tasks,
+                callback=self.close_oauth_runtime,
             ),
         )
 
@@ -516,12 +469,6 @@ class TranslatorApp:
         return DebugPreviewPanel(
             on_display_turn_cycle=self._cycle_debug_preview_display_turn,
             on_peer_translation_eula=self._preview_peer_translation_eula,
-            on_discord_auth=self._preview_discord_auth,
-            on_qq_auth=self._preview_qq_auth,
-            on_qq_auth_recoverable_error=self._preview_qq_auth_recoverable_error,
-            on_qq_auth_translation_gated=self._preview_qq_auth_translation_gated,
-            on_discord_callback_page=self._preview_discord_callback_page,
-            on_founder_letter=self._debug_preview_noop,
             on_github_star_snackbar=self._debug_preview_noop,
             on_foundation_primitives=self._preview_foundation_primitives,
             on_http_extension_form=self._preview_http_extension_form,
@@ -684,33 +631,6 @@ class TranslatorApp:
     def _debug_preview_noop(self) -> None:
         return None
 
-    def _preview_discord_auth(self) -> None:
-        self.show_discord_managed_auth_dialog(preview=True)
-
-    def _open_qq_auth_preview_dialog(self) -> QqManagedAuthDialog:
-        dialog = QqManagedAuthDialog(
-            self.page,
-            on_continue=self._close_qq_managed_auth_dialog,
-            on_close=self._close_qq_managed_auth_dialog,
-            on_cancel=self._close_qq_managed_auth_dialog,
-        )
-        self._qq_managed_auth_dialog = dialog
-        dialog.open()
-        return dialog
-
-    def _preview_qq_auth(self) -> None:
-        self._open_qq_auth_preview_dialog()
-
-    def _preview_qq_auth_recoverable_error(self) -> None:
-        dialog = self._open_qq_auth_preview_dialog()
-        dialog.set_error("qq_auth.error.credential_mismatch")
-
-    def _preview_qq_auth_translation_gated(self) -> None:
-        dialog = self._open_qq_auth_preview_dialog()
-        dialog.set_error("qq_auth.error.key_unavailable")
-
-    def _preview_discord_callback_page(self) -> None:
-        webbrowser.open(_write_discord_callback_preview_page(get_locale()))
 
     def _preview_peer_translation_eula(self) -> None:
         self._show_peer_translation_eula(self._debug_preview_noop)
@@ -1176,44 +1096,7 @@ class TranslatorApp:
             except Exception:
                 logger.exception("Failed to update dashboard translation toggle")
 
-    def _dashboard_managed_auth_action(self) -> str:
-        try:
-            return self.application.dashboard_managed_auth_action()
-        except Exception:
-            logger.exception("Failed to evaluate managed auth dashboard gate")
-            return "prompt"
-
-    def _dashboard_managed_auth_prompt_kind(self) -> str:
-        try:
-            resolved = self.application.dashboard_managed_auth_prompt_kind()
-        except Exception:
-            logger.warning("Failed to evaluate managed auth prompt kind")
-            return "discord"
-        return "qq" if resolved == "qq" else "discord"
-
-    def _chatgpt_sign_in_required(self) -> bool:
-        try:
-            return bool(self.application.chatgpt_sign_in_required())
-        except Exception:
-            logger.exception("Failed to evaluate ChatGPT sign-in gate")
-            return False
-
     def _on_translation_toggle(self, enabled: bool) -> bool:
-        if enabled and self._chatgpt_sign_in_required():
-            self._revert_dashboard_translation_toggle()
-            self.show_chatgpt_auth_dialog()
-            return False
-        if enabled:
-            managed_auth_action = self._dashboard_managed_auth_action()
-            if managed_auth_action in {"prompt", "in_progress"}:
-                self._revert_dashboard_translation_toggle()
-                if managed_auth_action == "prompt":
-                    if self._dashboard_managed_auth_prompt_kind() == "qq":
-                        self.show_qq_managed_auth_dialog()
-                    else:
-                        self.show_discord_managed_auth_dialog(preview=False)
-                return False
-
         async def _task():
             await self.application.set_translation_enabled(enabled)
 
@@ -1461,513 +1344,8 @@ class TranslatorApp:
 
         self._queue_settings_mutation_task(_task)
 
-    def show_chatgpt_auth_dialog(self) -> None:
-        dialog = getattr(self, "_chatgpt_auth_dialog", None)
-        if dialog is not None and dialog.is_open:
-            return
-        self._mark_launch_high_priority_feedback_shown("auth_required")
-        dialog = ChatGptAuthDialog(
-            self.page,
-            on_continue=self._start_chatgpt_auth_from_dialog,
-            on_close=lambda: None,
-            on_cancel=self.application.cancel_chatgpt_sign_in,
-        )
-        self._chatgpt_auth_dialog = dialog
-        dialog.open()
-
-    def _start_chatgpt_auth_from_dialog(self) -> None:
-        dialog = getattr(self, "_chatgpt_auth_dialog", None)
-        if dialog is not None:
-            dialog.set_waiting()
-        self._run_chatgpt_connect(enable_translation=True)
-
-    def _on_chatgpt_connect_from_settings(self) -> None:
-        if self.application.chatgpt_account_snapshot().in_progress:
-            self.application.reopen_chatgpt_authorization_url()
-            return
-        self._run_chatgpt_connect(enable_translation=False)
-
-    def _run_chatgpt_connect(
-        self,
-        *,
-        enable_translation: bool,
-        select_translation: bool = False,
-    ) -> None:
-        async def _task() -> None:
-            self._refresh_chatgpt_account_card()
-            try:
-                result = await self.application.connect_chatgpt()
-            except Exception as exc:
-                emit_failure(
-                    logger,
-                    ErrorDiagnostics(
-                        component="chatgpt_account",
-                        operation="sign_in",
-                        code="chatgpt_sign_in_failed",
-                        category="auth",
-                        visibility="basic",
-                        content_policy="metadata_only",
-                        status_code=None,
-                        retry_after_ms=None,
-                        fields={"phase": "sign_in", **safe_exception_fields(exc)},
-                    ),
-                )
-                result = ChatGptConnectResult(succeeded=False, failure_code="failed")
-            dialog = getattr(self, "_chatgpt_auth_dialog", None)
-            if dialog is not None:
-                dialog.close()
-            self._refresh_chatgpt_account_card()
-            if not result.succeeded:
-                if result.failure_code not in {"cancelled", "in_progress"}:
-                    self._show_snackbar(
-                        t(_chatgpt_failure_message_key(result.failure_code)),
-                        COLOR_WARNING,
-                    )
-                return
-            self._show_snackbar(t("chatgpt_auth.success"), COLOR_SUCCESS)
-            await self._continue_with_chatgpt_translation(
-                select_translation=select_translation,
-                enable_translation=enable_translation,
-            )
-
-        self._run_page_task(_task)
-
-    async def _continue_with_chatgpt_translation(
-        self,
-        *,
-        select_translation: bool,
-        enable_translation: bool,
-    ) -> None:
-        if select_translation:
-            if not await self.application.select_chatgpt_translation():
-                return
-            self.application.refresh_settings_after_openrouter_pkce_success()
-        if enable_translation:
-            enable_result = await self.application.set_translation_enabled(True)
-            if self.application.translation_enable_succeeded(enable_result):
-                self._set_dashboard_translation_visual_state(True)
-
-    def _on_chatgpt_sign_out(self) -> None:
-        async def _task() -> None:
-            result = await self.application.sign_out_chatgpt()
-            self._refresh_chatgpt_account_card()
-            self._show_snackbar(
-                t(
-                    "chatgpt_auth.signed_out"
-                    if result.remote_revoked
-                    else "chatgpt_auth.signed_out_local_only"
-                ),
-                COLOR_SUCCESS if result.remote_revoked else COLOR_WARNING,
-            )
-
-        self._queue_settings_mutation_task(_task)
-
-    def _refresh_chatgpt_account_card(self) -> None:
-        refresh = getattr(getattr(self, "view_settings", None), "refresh_chatgpt_account", None)
-        if callable(refresh):
-            try:
-                refresh()
-            except Exception:
-                logger.exception("Failed to refresh ChatGPT account card")
-
-    def _close_discord_managed_auth_dialog(self) -> None:
-        dialog = getattr(self, "_discord_managed_auth_dialog", None)
-        close = getattr(dialog, "close", None)
-        if callable(close):
-            close()
-
-    def show_discord_managed_auth_dialog(self, preview: bool = False) -> None:
-        existing = getattr(self, "_discord_managed_auth_dialog", None)
-        if getattr(existing, "is_open", False):
-            return
-        if not preview:
-            self._mark_launch_high_priority_feedback_shown("auth_required")
-        if preview:
-            on_continue = self._close_discord_managed_auth_dialog
-            on_byok = self._close_discord_managed_auth_dialog
-            on_close = self._close_discord_managed_auth_dialog
-            on_cancel = self._close_discord_managed_auth_dialog
-            on_chatgpt = None
-        else:
-            on_continue = self._start_discord_managed_auth
-            on_byok = self._on_discord_managed_auth_byok
-            on_close = self._close_discord_managed_auth_dialog
-            on_cancel = self._cancel_discord_managed_auth
-            on_chatgpt = self._start_chatgpt_translation_handoff
-
-        dialog = DiscordManagedAuthDialog(
-            self.page,
-            on_continue=on_continue,
-            on_byok=on_byok,
-            on_close=on_close,
-            on_cancel=on_cancel,
-            on_chatgpt=on_chatgpt,
-        )
-        self._discord_managed_auth_dialog = dialog
-        dialog.open()
-
-    def show_qq_managed_auth_dialog(self) -> None:
-        existing = getattr(self, "_qq_managed_auth_dialog", None)
-        if getattr(existing, "is_open", False):
-            return
-        self._mark_launch_high_priority_feedback_shown("auth_required")
-        dialog = QqManagedAuthDialog(
-            self.page,
-            on_continue=self._start_qq_managed_auth,
-            on_close=self._close_qq_managed_auth_dialog,
-            on_cancel=self._cancel_qq_managed_auth,
-            on_chatgpt=self._start_chatgpt_translation_handoff,
-        )
-        self._qq_managed_auth_dialog = dialog
-        dialog.open()
-
-    def _close_qq_managed_auth_dialog(self) -> None:
-        dialog = getattr(self, "_qq_managed_auth_dialog", None)
-        if dialog is not None:
-            close = getattr(dialog, "close", None)
-            if callable(close):
-                close()
-
-    def _admit_managed_auth_ui_task(
-        self,
-        source: str,
-        dialog: object,
-        generation: int,
-        task_factory: Callable[[], Awaitable[None]],
-    ) -> None:
-        if self.application.managed_auth_task_names() or (
-            self.application.dashboard_managed_auth_action() == "in_progress"
-        ):
-            if not getattr(dialog, "is_waiting", False):
-                set_error = getattr(dialog, "set_error", None)
-                if callable(set_error):
-                    set_error(f"{source}_auth.error.other_source_pending")
-            return
-        previous_generation = getattr(self, f"_{source}_managed_auth_generation", 0)
-        previous_cancelled = getattr(self, f"_{source}_managed_auth_cancelled", False)
-
-        def run_admitted(factory: Callable[[], Awaitable[None]]) -> object:
-            setattr(self, f"_{source}_managed_auth_generation", generation)
-            setattr(self, f"_{source}_managed_auth_cancelled", False)
-            set_waiting = getattr(dialog, "set_waiting", None)
-            if callable(set_waiting):
-                set_waiting()
-            return self._run_page_task(factory)
-
-        try:
-            handle = self.application.start_managed_auth_task(
-                task_runner=run_admitted,
-                task_factory=task_factory,
-                task_name=f"{source}-managed-auth-dialog",
-                generation=generation,
-            )
-        except Exception:
-            setattr(self, f"_{source}_managed_auth_generation", previous_generation)
-            setattr(self, f"_{source}_managed_auth_cancelled", previous_cancelled)
-            set_error = getattr(dialog, "set_error", None)
-            if callable(set_error):
-                set_error(f"{source}_auth.error.retry")
-            return
-        setattr(self, f"_{source}_managed_auth_task_handle", handle)
-
-    def _is_current_qq_managed_auth_generation(self, generation: int) -> bool:
-        return bool(
-            generation == getattr(self, "_qq_managed_auth_generation", None)
-            and not getattr(self, "_qq_managed_auth_cancelled", False)
-            and self.application.managed_auth_tasks_open()
-        )
-
-    def _start_qq_managed_auth(self) -> None:
-        dialog = getattr(self, "_qq_managed_auth_dialog", None)
-        qq_identity = getattr(dialog, "qq_identity", "")
-        credential = getattr(dialog, "credential", "")
-        generation = int(getattr(self, "_qq_managed_auth_generation", 0)) + 1
-        prompt_kind = self.application.dashboard_managed_auth_prompt_kind()
-
-        async def _task() -> None:
-            application = self.application
-            try:
-                if not self._is_current_qq_managed_auth_generation(generation):
-                    return
-                try:
-                    result = await application.start_qq_managed_auth_from_dialog(
-                        qq_identity=qq_identity,
-                        credential=credential,
-                    )
-                except Exception as exc:
-                    log_qq_auth("authentication", "unknown_error", fields=exception_fields(exc))
-                    result = None
-                if (
-                    not self._is_current_qq_managed_auth_generation(generation)
-                    or dialog is not getattr(self, "_qq_managed_auth_dialog", None)
-                    or prompt_kind != application.dashboard_managed_auth_prompt_kind()
-                ):
-                    return
-                if result is True:
-                    log_qq_auth("authentication", "authentication_succeeded", level=logging.INFO)
-                    try:
-                        enable_result = await application.set_translation_enabled(True)
-                        translation_ready = application.translation_enable_succeeded(enable_result)
-                    except Exception as exc:
-                        log_qq_auth(
-                            "translation_start",
-                            "translation_init_failed",
-                            fields=exception_fields(exc),
-                        )
-                        translation_ready = False
-                    if not self._is_current_qq_managed_auth_generation(generation):
-                        return
-                    self._close_qq_managed_auth_dialog()
-                    self._set_dashboard_translation_visual_state(translation_ready)
-                    if not translation_ready:
-                        log_qq_auth("translation_start", "translation_init_failed")
-                    self._show_snackbar(
-                        t(
-                            "qq_auth.success"
-                            if translation_ready
-                            else "qq_auth.error.translation_start_failed"
-                        ),
-                        COLOR_SUCCESS if translation_ready else COLOR_WARNING,
-                    )
-                    return
-                message_key = "qq_auth.error.retry"
-                message_kwargs: dict[str, object] = {}
-                if isinstance(result, tuple) and result:
-                    message_key = str(result[0])
-                    if len(result) > 1 and isinstance(result[1], dict):
-                        message_kwargs = dict(result[1])
-                set_error = getattr(dialog, "set_error", None)
-                if callable(set_error):
-                    log_qq_auth(
-                        "authentication",
-                        (
-                            "unknown_error"
-                            if message_key == "qq_auth.error.retry"
-                            else message_key.rsplit(".", 1)[-1]
-                        ),
-                    )
-                    set_error(message_key, **message_kwargs)
-            except asyncio.CancelledError:
-                if self._is_current_qq_managed_auth_generation(generation):
-                    set_error = getattr(dialog, "set_error", None)
-                    if callable(set_error):
-                        set_error("qq_auth.error.retry")
-            finally:
-                if generation == getattr(self, "_qq_managed_auth_generation", None):
-                    self._qq_managed_auth_task_handle = None
-                    if self._is_current_qq_managed_auth_generation(generation) and getattr(
-                        dialog, "is_waiting", False
-                    ):
-                        dialog.set_error("qq_auth.error.retry")
-
-        self._admit_managed_auth_ui_task("qq", dialog, generation, _task)
-
-    def _cancel_qq_managed_auth(self) -> None:
-        self._qq_managed_auth_cancelled = True
-        task_handle = getattr(self, "_qq_managed_auth_task_handle", None)
-        self.application.cancel_managed_auth_task(
-            task_handle,
-            task_name="qq-managed-auth-dialog",
-        )
-        self._qq_managed_auth_task_handle = None
-        self._close_qq_managed_auth_dialog()
-
-    def _is_current_discord_managed_auth_generation(self, generation: int) -> bool:
-        return bool(
-            generation == getattr(self, "_discord_managed_auth_generation", None)
-            and not getattr(self, "_discord_managed_auth_cancelled", False)
-            and self.application.managed_auth_tasks_open()
-        )
-
-    def _start_discord_managed_auth(self) -> None:
-        dialog = getattr(self, "_discord_managed_auth_dialog", None)
-        generation = int(getattr(self, "_discord_managed_auth_generation", 0)) + 1
-        prompt_kind = self.application.dashboard_managed_auth_prompt_kind()
-
-        async def _task() -> None:
-            application = self.application
-            if not self._is_current_discord_managed_auth_generation(generation):
-                return
-
-            def _mark_callback_received() -> None:
-                self.mark_discord_managed_auth_callback_received(generation)
-
-            def _mark_recovery_started() -> None:
-                self.mark_discord_managed_auth_recovery_started(generation)
-
-            try:
-                ok = await application.start_discord_managed_auth_from_dialog(
-                    on_callback_received=_mark_callback_received,
-                    on_recovery_started=_mark_recovery_started,
-                )
-                if not ok:
-                    self.mark_discord_managed_auth_failed(generation)
-                    return
-                if (
-                    not self._is_current_discord_managed_auth_generation(generation)
-                    or dialog is not getattr(self, "_discord_managed_auth_dialog", None)
-                    or prompt_kind != application.dashboard_managed_auth_prompt_kind()
-                ):
-                    return
-                try:
-                    enable_result = await application.set_translation_enabled(True)
-                    translation_ready = application.translation_enable_succeeded(enable_result)
-                except Exception:
-                    translation_ready = False
-                if not self._is_current_discord_managed_auth_generation(generation):
-                    return
-                self._close_discord_managed_auth_dialog()
-                self._show_snackbar(
-                    t(
-                        "discord_auth.success"
-                        if translation_ready
-                        else "discord_auth.error.translation_start_failed"
-                    ),
-                    COLOR_SUCCESS if translation_ready else COLOR_WARNING,
-                )
-                self._set_dashboard_translation_visual_state(translation_ready)
-            except asyncio.CancelledError:
-                if self._is_current_discord_managed_auth_generation(generation):
-                    self.mark_discord_managed_auth_failed(generation)
-            except Exception:
-                self.mark_discord_managed_auth_failed(generation)
-            finally:
-                if generation == getattr(self, "_discord_managed_auth_generation", None):
-                    self._discord_managed_auth_task_handle = None
-                    if self._is_current_discord_managed_auth_generation(generation) and getattr(
-                        dialog, "is_waiting", False
-                    ):
-                        self.mark_discord_managed_auth_failed(generation)
-
-        self._admit_managed_auth_ui_task("discord", dialog, generation, _task)
-
-    async def _close_managed_auth_ui_tasks(self) -> None:
-        self._discord_managed_auth_cancelled = True
-        self._qq_managed_auth_cancelled = True
-        self._discord_managed_auth_generation = (
-            int(getattr(self, "_discord_managed_auth_generation", 0)) + 1
-        )
-        self._qq_managed_auth_generation = int(getattr(self, "_qq_managed_auth_generation", 0)) + 1
-        task_handle = getattr(self, "_discord_managed_auth_task_handle", None)
-        qq_task_handle = getattr(self, "_qq_managed_auth_task_handle", None)
-        self._discord_managed_auth_task_handle = None
-        self._qq_managed_auth_task_handle = None
-        self.application.cancel_managed_auth_task(
-            qq_task_handle,
-            task_name="qq-managed-auth-dialog",
-        )
-        self.application.cancel_managed_auth_task(
-            task_handle,
-            task_name="discord-managed-auth-dialog",
-        )
-
     async def close_oauth_runtime(self) -> None:
-        await self._close_managed_auth_ui_tasks()
         await self.application.close_managed_auth_tasks()
-
-    def mark_discord_managed_auth_callback_received(self, generation: int | None = None) -> None:
-        if generation is not None and not self._is_current_discord_managed_auth_generation(
-            generation
-        ):
-            return
-        dialog = getattr(self, "_discord_managed_auth_dialog", None)
-        if getattr(dialog, "is_open", True) is False:
-            return
-        if getattr(dialog, "is_waiting", True) is False:
-            return
-        set_callback_received = getattr(dialog, "set_callback_received", None)
-        if callable(set_callback_received):
-            set_callback_received()
-
-    def mark_discord_managed_auth_recovery_started(self, generation: int | None = None) -> None:
-        if generation is not None and not self._is_current_discord_managed_auth_generation(
-            generation
-        ):
-            return
-        dialog = getattr(self, "_discord_managed_auth_dialog", None)
-        if getattr(dialog, "is_open", True) is False:
-            return
-        if getattr(dialog, "is_waiting", True) is False:
-            return
-        set_recovering = getattr(dialog, "set_recovering", None)
-        if callable(set_recovering):
-            set_recovering()
-
-    def mark_discord_managed_auth_failed(self, generation: int | None = None) -> None:
-        if generation is not None and not self._is_current_discord_managed_auth_generation(
-            generation
-        ):
-            return
-        dialog = getattr(self, "_discord_managed_auth_dialog", None)
-        if getattr(dialog, "is_open", True) is False:
-            return
-        if getattr(dialog, "is_waiting", True) is False:
-            return
-        failure_kind = "failed"
-        try:
-            observed = self.application.managed_auth_last_failure_kind()
-        except Exception:
-            observed = None
-        if isinstance(observed, str) and observed:
-            failure_kind = observed
-        set_error = getattr(dialog, "set_error", None)
-        if callable(set_error):
-            resumable = failure_kind == "idle_resumable"
-            message_key = self.application.managed_auth_last_message_key()
-            set_error(
-                message_key
-                or (
-                    "discord_auth.error.recovery_pending"
-                    if resumable
-                    else "discord_auth.error.retry"
-                ),
-                resume=resumable,
-            )
-        else:
-            set_action_required = getattr(dialog, "set_action_required", None)
-            if callable(set_action_required):
-                set_action_required()
-
-    def _cancel_discord_managed_auth(self) -> None:
-        self._discord_managed_auth_cancelled = True
-        task_handle = getattr(self, "_discord_managed_auth_task_handle", None)
-        self.application.cancel_managed_auth_task(
-            task_handle,
-            task_name="discord-managed-auth-dialog",
-        )
-        self._discord_managed_auth_task_handle = None
-        self._close_discord_managed_auth_dialog()
-
-    def _build_managed_openrouter_byok_target(self) -> OpenRouterPkceTarget | None:
-        return self.application.build_managed_openrouter_byok_target()
-
-    def _on_discord_managed_auth_byok(self) -> None:
-        target = self._build_managed_openrouter_byok_target()
-        if target is None:
-            self._show_snackbar(t("openrouter.pkce.failed"), COLOR_WARNING)
-            return
-        self._on_request_openrouter_pkce(target, launch_source="discord_auth")
-
-    def _start_chatgpt_translation_handoff(self) -> None:
-        snapshot = self.application.chatgpt_account_snapshot()
-        if snapshot.in_progress:
-            self.application.reopen_chatgpt_authorization_url()
-            return
-        if snapshot.signed_in:
-
-            async def _task() -> None:
-                await self._continue_with_chatgpt_translation(
-                    select_translation=True,
-                    enable_translation=True,
-                )
-
-            self._run_page_task(_task)
-            return
-        self.show_chatgpt_auth_dialog()
-        dialog = getattr(self, "_chatgpt_auth_dialog", None)
-        if dialog is not None:
-            dialog.set_waiting()
-        self._run_chatgpt_connect(enable_translation=True, select_translation=True)
 
     def _api_key_verification_matches_current_field(self, provider: str, key: str) -> bool:
         field_by_provider = {
@@ -2390,15 +1768,3 @@ async def _check_and_notify_update(
             log_diagnostic(message)
             return
         logger.debug(message)
-
-
-def _chatgpt_failure_message_key(failure_code: str | None) -> str:
-    if failure_code == "access_denied":
-        return "chatgpt_auth.error.access_denied"
-    if failure_code == "plan_scope_missing":
-        return "chatgpt_auth.error.plan_not_enabled"
-    if failure_code == "timeout":
-        return "chatgpt_auth.error.timeout"
-    if failure_code == "loopback_unavailable":
-        return "chatgpt_auth.error.loopback_unavailable"
-    return "chatgpt_auth.error.retry"

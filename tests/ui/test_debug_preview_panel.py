@@ -20,12 +20,6 @@ import puripuly_heart.ui.components.debug_preview_panel as panel_module  # noqa:
 PRIMARY_ACTION_KEYS = [
     "display_turn_cycle",
     "peer_translation_eula",
-    "discord_auth",
-    "qq_auth",
-    "qq_auth_recoverable_error",
-    "qq_auth_translation_gated",
-    "discord_callback_page",
-    "founder_letter",
     "github_star_snackbar",
     "foundation_primitives",
     "http_extension_form",
