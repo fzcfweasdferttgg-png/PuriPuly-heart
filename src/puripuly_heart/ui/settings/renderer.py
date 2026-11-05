@@ -31,8 +31,6 @@ def compose_settings_api_surface(
 
     translation_connection_controls = ft.Row(
         [
-            slots.cloud_free_tier,
-            slots.soniox_speaker_diarization,
             slots.translation_connection,
         ],
         spacing=SETTINGS_ROW_SPACING,
@@ -42,7 +40,6 @@ def compose_settings_api_surface(
         content=translation_connection_controls,
         visible=True,
     )
-
     gpu_device_controls = ft.Row(
         [slots.gpu_device, slots.stt_model, slots.gpu_llm, slots.model_assets],
         spacing=SETTINGS_ROW_SPACING,

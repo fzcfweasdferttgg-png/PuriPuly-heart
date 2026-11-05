@@ -35,8 +35,6 @@ class _SlotProvider:
                 "peer_stt",
                 "translation_provider",
                 "translation_connection",
-                "cloud_free_tier",
-                "soniox_speaker_diarization",
                 "gpu_device",
                 "stt_model",
                 "gpu_llm",
@@ -56,12 +54,6 @@ class _SlotProvider:
 
     def translation_connection_control(self) -> ft.Control:
         return self.controls["translation_connection"]
-
-    def cloud_free_tier_control(self) -> ft.Control:
-        return self.controls["cloud_free_tier"]
-
-    def soniox_speaker_diarization_control(self) -> ft.Control:
-        return self.controls["soniox_speaker_diarization"]
 
     def gpu_device_control(self) -> ft.Control:
         return self.controls["gpu_device"]
@@ -120,8 +112,6 @@ def test_settings_api_surface_places_every_slot_in_the_accepted_position() -> No
         provider.controls["translation_provider"],
     ]
     assert surface.translation_connection_controls.controls == [
-        provider.controls["cloud_free_tier"],
-        provider.controls["soniox_speaker_diarization"],
         provider.controls["translation_connection"],
     ]
     assert surface.gpu_device_controls.controls == [

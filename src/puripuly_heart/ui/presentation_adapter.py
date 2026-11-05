@@ -420,12 +420,6 @@ class FletUiPresentationAdapter:
         if callable(setter):
             setter(visible=visible, remaining_percent=remaining_percent)
             return
-        usage_setter = getattr(settings_view, "set_managed_trial_usage_state", None)
-        if callable(usage_setter):
-            usage_setter(
-                visible=visible,
-                remaining_percent=remaining_percent,
-            )
 
     def add_history_entry(self, *args: Any, **kwargs: Any) -> None:
         callback = getattr(self._app, "add_history_entry", None)

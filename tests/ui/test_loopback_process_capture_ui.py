@@ -308,7 +308,7 @@ def test_settings_modal_multi_select_toggles_without_closing() -> None:
             pop_dialog=lambda: closed.append(True),
             show_dialog=lambda *_a, **_k: None,
         ),
-        title="Cloud Free Tier",
+        title="Multi Select",
         options=[
             OptionItem(value="gemini_transcribe", label="Gemini 3.5 Transcribe"),
             OptionItem(value="elevenlabs_scribe", label="ElevenLabs Scribe v2"),
