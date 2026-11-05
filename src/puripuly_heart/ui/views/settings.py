@@ -85,9 +85,6 @@ from puripuly_heart.config.desktop_overlay_values import (
     DESKTOP_FLET_SIZE_PRESET_DISPLAY_ORDER,
     DESKTOP_FLET_SIZE_PRESET_ORDER,
 )
-from puripuly_heart.config.llm_profiles import (
-    profile_for_alias,
-)
 from puripuly_heart.config.overlay_calibration import (
     OVERLAY_CALIBRATION_ANCHORS,
     OverlayCalibration,
@@ -99,7 +96,6 @@ from puripuly_heart.config.provider_values import (
     MAX_CUSTOM_VOCAB_TERMS,
     LLMProviderName,
     OpenRouterCredentialSource,
-    OpenRouterLLMModel,
     OpenRouterSelectionAlias,
     QwenRegion,
     STTProviderName,
@@ -305,25 +301,6 @@ def _custom_stt_extra_to_text(extra: Mapping[str, object]) -> str:
 
 def _update_control_if_mounted(control: ft.Control) -> None:
     update_control_if_mounted(control)
-
-
-def _derive_openrouter_selection_alias(
-    llm_model: OpenRouterLLMModel,
-    selected_source: OpenRouterCredentialSource,
-) -> OpenRouterSelectionAlias:
-    if llm_model == OpenRouterLLMModel.GPT_6_LUNA:
-        return OpenRouterSelectionAlias.GPT_6_LUNA_BYOK
-    if llm_model == OpenRouterLLMModel.QWEN_35_FLASH_02_23:
-        if selected_source == OpenRouterCredentialSource.MANAGED:
-            return OpenRouterSelectionAlias.QWEN35_FLASH_MANAGED
-        return OpenRouterSelectionAlias.QWEN35_FLASH_BYOK
-    if llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH:
-        if selected_source == OpenRouterCredentialSource.MANAGED:
-            return OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
-        return OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
-    if selected_source == OpenRouterCredentialSource.MANAGED:
-        return OpenRouterSelectionAlias.GEMMA4_26B_31B_MANAGED
-    return OpenRouterSelectionAlias.GEMMA4_26B_31B_BYOK
 
 
 class SettingsView(ft.Column):
@@ -1890,7 +1867,6 @@ class SettingsView(ft.Column):
             SettingsApiSurfaceSlots.from_slot_provider(self),
         )
         self._translation_connection_row = self._api_surface.translation_connection_row
-        self._openrouter_routing_row = self._translation_connection_row
         self._gpu_device_row = self._api_surface.gpu_device_row
 
         self._prompt_surface = compose_settings_prompt_surface(
@@ -2380,49 +2356,6 @@ class SettingsView(ft.Column):
             return
         title.value = t("settings.translation_connection")
 
-    def _stored_openrouter_selection_alias(
-        self, settings: ProviderSettingsSnapshot
-    ) -> OpenRouterSelectionAlias | None:
-        if settings.openrouter_selection_alias is None:
-            if settings.openrouter_selected_source == OpenRouterCredentialSource.NONE:
-                return None
-            return _derive_openrouter_selection_alias(
-                settings.openrouter_llm_model,
-                settings.openrouter_selected_source,
-            )
-        try:
-            profile_for_alias(settings.openrouter_selection_alias.value)
-            return settings.openrouter_selection_alias
-        except KeyError:
-            if settings.openrouter_selected_source == OpenRouterCredentialSource.NONE:
-                return None
-            return _derive_openrouter_selection_alias(
-                settings.openrouter_llm_model,
-                settings.openrouter_selected_source,
-            )
-
-    def _display_openrouter_selection_alias(
-        self, settings: ProviderSettingsSnapshot
-    ) -> OpenRouterSelectionAlias:
-        stored_alias = self._stored_openrouter_selection_alias(settings)
-        if stored_alias is not None:
-            return stored_alias
-        if settings.openrouter_llm_model == OpenRouterLLMModel.GPT_6_LUNA:
-            return OpenRouterSelectionAlias.GPT_6_LUNA_BYOK
-        if settings.openrouter_llm_model == OpenRouterLLMModel.QWEN_35_FLASH_02_23:
-            return OpenRouterSelectionAlias.QWEN35_FLASH_MANAGED
-        if settings.openrouter_llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH:
-            return OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
-        return OpenRouterSelectionAlias.GEMMA4_26B_31B_MANAGED
-
-    def _openrouter_selection_profile(self, settings: ProviderSettingsSnapshot | None):
-        if settings is None:
-            return None
-        try:
-            return profile_for_alias(self._display_openrouter_selection_alias(settings).value)
-        except KeyError:
-            return None
-
     def _get_llm_display_label(self, settings: ProviderSettingsSnapshot) -> str:
         return self._translation_model_display_label(settings.translation.model)
 
@@ -2448,22 +2381,11 @@ class SettingsView(ft.Column):
         self,
         settings: ProviderSettingsSnapshot | None,
     ) -> str:
-        if settings is None:
-            return "gemini"
-        if settings.llm_provider == LLMProviderName.INDEX_TRANSLATE:
-            return "index_translate"
-        if settings.llm_provider == LLMProviderName.GEMINI:
-            return "gemini"
-        if settings.llm_provider == LLMProviderName.OPENROUTER:
-            return "openrouter"
-        if settings.llm_provider in (LLMProviderName.OPENAI, LLMProviderName.CHATGPT):
-            return "openai"
-        if settings.llm_provider == LLMProviderName.DEEPSEEK:
-            return "deepseek"
-        if settings.llm_provider == LLMProviderName.LOCAL_LLM:
-            return "local_llm"
-        if settings.llm_provider == LLMProviderName.MANAGED_GEMMA:
-            return "managed_gemma"
+        if settings is not None:
+            if settings.llm_provider == LLMProviderName.LOCAL_LLM:
+                return "local_llm"
+            if settings.llm_provider == LLMProviderName.MANAGED_GEMMA:
+                return "managed_gemma"
         return "qwen"
 
     def _active_prompt_key(self) -> str:
@@ -3579,99 +3501,15 @@ class SettingsView(ft.Column):
         settings: ProviderSettingsSnapshot,
         selection: TranslationSelectionSnapshot,
     ) -> ProviderSettingsSnapshot:
-        model = selection.model
-        connection = selection.connection
         llm_provider = settings.llm_provider
-        openrouter_model = settings.openrouter_llm_model
-        openrouter_source = settings.openrouter_selected_source
-        openrouter_alias = settings.openrouter_selection_alias
-        if model == TranslationModel.INDEX_TRANSLATE_35B:
-            llm_provider = LLMProviderName.INDEX_TRANSLATE
-            openrouter_source = OpenRouterCredentialSource.NONE
-            openrouter_alias = None
-        elif model == TranslationModel.GPT_6_LUNA:
-            if connection == TranslationConnection.OFFICIAL_BYOK:
-                llm_provider = LLMProviderName.OPENAI
-                openrouter_source = OpenRouterCredentialSource.NONE
-                openrouter_alias = None
-            elif connection == TranslationConnection.CHATGPT:
-                llm_provider = LLMProviderName.CHATGPT
-                openrouter_source = OpenRouterCredentialSource.NONE
-                openrouter_alias = None
-            else:
-                llm_provider = LLMProviderName.OPENROUTER
-                openrouter_model = OpenRouterLLMModel.GPT_6_LUNA
-                openrouter_source = OpenRouterCredentialSource.BYOK
-                openrouter_alias = OpenRouterSelectionAlias.GPT_6_LUNA_BYOK
-        elif model == TranslationModel.GEMMA4_26B_31B:
-            llm_provider = LLMProviderName.OPENROUTER
-            openrouter_model = OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
-            openrouter_source = (
-                OpenRouterCredentialSource.MANAGED
-                if connection == TranslationConnection.MANAGED
-                else OpenRouterCredentialSource.BYOK
-            )
-            openrouter_alias = (
-                OpenRouterSelectionAlias.GEMMA4_26B_31B_MANAGED
-                if openrouter_source == OpenRouterCredentialSource.MANAGED
-                else OpenRouterSelectionAlias.GEMMA4_26B_31B_BYOK
-            )
-        elif model == TranslationModel.DEEPSEEK_V4_FLASH:
-            llm_provider = LLMProviderName.OPENROUTER
-            openrouter_model = OpenRouterLLMModel.DEEPSEEK_V4_FLASH
-            openrouter_source = (
-                OpenRouterCredentialSource.MANAGED
-                if connection
-                in {TranslationConnection.MANAGED, TranslationConnection.MANAGED_CHINA}
-                else OpenRouterCredentialSource.BYOK
-            )
-            openrouter_alias = (
-                OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
-                if openrouter_source == OpenRouterCredentialSource.MANAGED
-                else OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
-            )
-        elif model == TranslationModel.DEEPSEEK_V4_FLASH_41:
-            llm_provider = (
-                LLMProviderName.DEEPSEEK
-                if connection == TranslationConnection.OFFICIAL_BYOK
-                else LLMProviderName.OPENROUTER
-            )
-            if llm_provider == LLMProviderName.OPENROUTER:
-                openrouter_model = OpenRouterLLMModel.DEEPSEEK_V4_FLASH_41
-                openrouter_source = (
-                    OpenRouterCredentialSource.MANAGED
-                    if connection
-                    in {TranslationConnection.MANAGED, TranslationConnection.MANAGED_CHINA}
-                    else OpenRouterCredentialSource.BYOK
-                )
-                openrouter_alias = (
-                    OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_41_MANAGED
-                    if openrouter_source == OpenRouterCredentialSource.MANAGED
-                    else OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_41_BYOK
-                )
-        elif model == TranslationModel.GEMINI_FLASH:
-            llm_provider = (
-                LLMProviderName.GEMINI
-                if connection == TranslationConnection.OFFICIAL_BYOK
-                else LLMProviderName.OPENROUTER
-            )
-            if llm_provider == LLMProviderName.OPENROUTER:
-                openrouter_source = OpenRouterCredentialSource.BYOK
-                openrouter_model = OpenRouterLLMModel.GEMINI_FLASH
-                openrouter_alias = OpenRouterSelectionAlias.GEMINI_FLASH_BYOK
-        elif model == TranslationModel.QWEN_38_FLASH:
-            llm_provider = LLMProviderName.QWEN
-        elif model in MANAGED_GEMMA_MODELS:
-            llm_provider = LLMProviderName.MANAGED_GEMMA
-        elif model == TranslationModel.LOCAL_LLM:
+        if selection.model == TranslationModel.LOCAL_LLM:
             llm_provider = LLMProviderName.LOCAL_LLM
+        elif selection.model in MANAGED_GEMMA_MODELS:
+            llm_provider = LLMProviderName.MANAGED_GEMMA
         return replace(
             settings,
             llm_provider=llm_provider,
             translation=selection,
-            openrouter_llm_model=openrouter_model,
-            openrouter_selected_source=openrouter_source,
-            openrouter_selection_alias=openrouter_alias,
         )
 
     def _apply_translation_selection(
