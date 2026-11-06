@@ -22,8 +22,13 @@ SETTINGS_ROW_SPACING = FOUNDATION_DESIGN_TOKENS.spacing.page
 def compose_settings_api_surface(
     slots: SettingsApiSurfaceSlots,
 ) -> SettingsApiSurfaceRegions:
+    provider_items: list[ft.Control] = [slots.self_stt]
+    if slots.shared_engine is not None:
+        provider_items.append(slots.shared_engine)
+    provider_items.append(slots.peer_stt)
+    provider_items.append(slots.translation_provider)
     provider_controls = ft.Row(
-        [slots.self_stt, slots.peer_stt, slots.translation_provider],
+        provider_items,
         spacing=SETTINGS_ROW_SPACING,
         expand=True,
     )
@@ -40,8 +45,12 @@ def compose_settings_api_surface(
         content=translation_connection_controls,
         visible=True,
     )
+    gpu_items: list[ft.Control] = [slots.gpu_device]
+    if slots.peer_gpu_device is not None:
+        gpu_items.append(slots.peer_gpu_device)
+    gpu_items.extend([slots.stt_model, slots.gpu_llm, slots.model_assets])
     gpu_device_controls = ft.Row(
-        [slots.gpu_device, slots.stt_model, slots.gpu_llm, slots.model_assets],
+        gpu_items,
         spacing=SETTINGS_ROW_SPACING,
         expand=True,
     )

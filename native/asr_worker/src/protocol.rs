@@ -136,11 +136,9 @@ impl Request {
             return Err("request_id_invalid".to_string());
         }
         if let Self::Activate { backend, channel, n_threads, .. } = self {
-            let valid = match backend.as_str() {
-                "cpu" => *n_threads == 2 && matches!(channel.as_deref(), Some("self" | "peer")),
-                "vulkan" => channel.is_none() && *n_threads > 0,
-                _ => false,
-            };
+            let valid = matches!(backend.as_str(), "cpu" | "vulkan" | "cuda")
+                && matches!(channel.as_deref(), None | Some("self") | Some("peer"))
+                && *n_threads > 0;
             if !valid {
                 return Err("activation_options_rejected".to_string());
             }
@@ -268,15 +266,18 @@ mod tests {
     }
 
     #[test]
-    fn cpu_activation_requires_one_owned_channel_and_two_threads() {
+    fn activation_validates_backend_channel_and_threads() {
         for (backend, channel, threads, valid) in [
             ("cpu", Some("self"), 2, true),
             ("cpu", Some("peer"), 2, true),
-            ("cpu", None, 2, false),
+            ("cpu", None, 2, true),
             ("cpu", Some("other"), 2, false),
-            ("cpu", Some("self"), 4, false),
+            ("cpu", Some("self"), 0, false),
             ("vulkan", None, 2, true),
-            ("vulkan", Some("self"), 2, false),
+            ("vulkan", Some("self"), 2, true),
+            ("cuda", Some("peer"), 1, true),
+            ("cuda", None, 4, true),
+            ("hip", None, 2, false),
         ] {
             let request = Request::Activate {
                 contract_version: CONTRACT_VERSION,

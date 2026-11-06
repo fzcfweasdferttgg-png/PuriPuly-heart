@@ -30,3 +30,26 @@ function(puripuly_patch_funasr_language)
 endfunction()
 
 cmake_language(DEFER CALL puripuly_patch_funasr_language)
+
+# --- CUDA BLAS delay-load (PuriPuly) -----------------------------------------
+# ggml-cuda links CUDA::cublas (cublas64_N.dll, pulling cublasLt64_N.dll). The
+# build script passes -DPURIPULY_CUBLAS_DELAYLOAD="<dll>;<dll>"; each is marked
+# DELAYLOAD so loading ggml-cuda.dll -- and CUDA device discovery -- never maps
+# the BLAS runtime. It binds on the first actual CUDA call: CPU/Vulkan startup
+# pays nothing, and a missing cublas DLL degrades to "CUDA inference
+# unavailable" instead of "backend module failed to load".
+function(puripuly_cuda_delayload_cublas)
+    if(NOT MSVC OR NOT TARGET ggml-cuda)
+        return()
+    endif()
+    if(NOT DEFINED PURIPULY_CUBLAS_DELAYLOAD)
+        message(FATAL_ERROR "PURIPULY_CUBLAS_DELAYLOAD must name the cublas DLLs to delay-load")
+    endif()
+    foreach(_cublas_dll IN LISTS PURIPULY_CUBLAS_DELAYLOAD)
+        target_link_options(ggml-cuda PRIVATE "/DELAYLOAD:${_cublas_dll}")
+    endforeach()
+    target_link_libraries(ggml-cuda PRIVATE delayimp)
+    message(STATUS "ggml-cuda delay-loads: ${PURIPULY_CUBLAS_DELAYLOAD}")
+endfunction()
+
+cmake_language(DEFER CALL puripuly_cuda_delayload_cublas)

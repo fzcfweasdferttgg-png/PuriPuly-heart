@@ -76,6 +76,7 @@ class FakeASRWorkerClient:
         self.transcribe_error = transcribe_error
         self.send_error = send_error
         self.activate_calls: list[tuple[Path, str]] = []
+        self.activate_worker_channels: list[str | None] = []
         self.transcribe_calls: list[tuple[str, str, str | None]] = []
         self.cancel_calls: list[str] = []
         self.close_calls = 0
@@ -101,10 +102,17 @@ class FakeASRWorkerClient:
         return (DEVICE,)
 
     async def activate(
-        self, *, model_path: Path, device_id: str, backend: str = "vulkan"
+        self,
+        *,
+        model_path: Path,
+        device_id: str,
+        backend: str = "vulkan",
+        channel: str | None = None,
+        n_threads: int = 2,
     ) -> ASRWorkerActivation:
-        _ = backend
+        _ = backend, n_threads
         self.activate_calls.append((model_path, device_id))
+        self.activate_worker_channels.append(channel)
         self.activation_started.set()
         if self.activation_gate is not None:
             await self.activation_gate.wait()

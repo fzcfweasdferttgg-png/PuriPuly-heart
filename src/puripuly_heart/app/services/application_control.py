@@ -52,7 +52,11 @@ from puripuly_heart.app.ports.settings_view import (
     SelfSttProviderEdit,
     SelfVadSettingsIntent,
     SonioxSpeakerDiarizationEdit,
+    SttGpuBackendEdit,
     SttGpuDeviceEdit,
+    SttSharedEngineEdit,
+    PeerSttGpuBackendEdit,
+    PeerSttGpuDeviceEdit,
     SttLocalModelEdit,
     SystemPromptEdit,
     TranslationHttpExtensionEdit,
@@ -247,6 +251,10 @@ IMMEDIATE = {
 }
 PROVIDER_EDITS = {
     "stt.gpu_device_id": SttGpuDeviceEdit,
+    "stt.gpu_backend": SttGpuBackendEdit,
+    "stt.shared_engine": SttSharedEngineEdit,
+    "peer_stt.gpu_device_id": PeerSttGpuDeviceEdit,
+    "peer_stt.gpu_backend": PeerSttGpuBackendEdit,
     "stt.model": SttLocalModelEdit,
     "translation.gpu_device_id": LlmGpuDeviceEdit,
     "translation.qwen.region": QwenRegionEdit,

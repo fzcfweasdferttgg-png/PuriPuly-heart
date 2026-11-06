@@ -140,6 +140,8 @@ class PeerCaptureSessionConfig:
     warmup: bool = True
     endpoint_language: PeerCaptureLanguageFacts | None = None
     gpu_device_id: str = "auto"
+    gpu_backend: str = "vulkan"
+    shared_engine: bool = False
 
     @property
     def backend(self) -> object | None:

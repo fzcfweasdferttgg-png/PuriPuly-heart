@@ -79,6 +79,8 @@ class SelfCaptureSessionConfig:
     provider_context: object | None = None
     model_id: str | None = None
     gpu_device_id: str = "auto"
+    gpu_backend: str = "vulkan"
+    shared_engine: bool = False
 
 
 @dataclass(frozen=True, slots=True)

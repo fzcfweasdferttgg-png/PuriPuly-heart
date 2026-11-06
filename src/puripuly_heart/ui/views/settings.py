@@ -54,6 +54,8 @@ from puripuly_heart.app.ports.settings_view import (
     OverlayTargetSettingsIntent,
     OverlayTranslationSettingsIntent,
     PeerExpectedLanguagesIntent,
+    PeerSttGpuBackendEdit,
+    PeerSttGpuDeviceEdit,
     PeerSttProviderEdit,
     PeerVadSpeechThresholdIntent,
     PromptApplyIntent,
@@ -66,8 +68,10 @@ from puripuly_heart.app.ports.settings_view import (
     QwenSingaporeApiHostEdit,
     SelfSttProviderEdit,
     SelfVadSettingsIntent,
+    SttGpuBackendEdit,
     SttGpuDeviceEdit,
     SttLocalModelEdit,
+    SttSharedEngineEdit,
     SystemPromptEdit,
     TranslationHttpExtensionEdit,
     TranslationSelectionEdit,
@@ -138,6 +142,10 @@ from puripuly_heart.ui.components.settings import (
     SettingsModal,
     SettingsUnitCard,
 )
+from puripuly_heart.ui.components.settings.stt_engine_modal import (
+    ENGINE_BACKENDS,
+    SttEngineModal,
+)
 from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
 from puripuly_heart.ui.components.subtab_shell import TextSubtab, TextSubtabShell
 from puripuly_heart.ui.flet_runtime import (
@@ -191,6 +199,10 @@ _DRAFT_PROVIDER_FIELDS: dict[type, str] = {
     SelfSttProviderEdit: "stt_provider",
     PeerSttProviderEdit: "peer_stt_provider",
     SttGpuDeviceEdit: "stt_gpu_device_id",
+    SttGpuBackendEdit: "stt_gpu_backend",
+    SttSharedEngineEdit: "stt_shared_engine",
+    PeerSttGpuDeviceEdit: "peer_stt_gpu_device_id",
+    PeerSttGpuBackendEdit: "peer_stt_gpu_backend",
     SttLocalModelEdit: "stt_local_model",
     QwenRegionEdit: "qwen_region",
     QwenBeijingApiHostEdit: "qwen_api_host_beijing",
@@ -415,6 +427,12 @@ class SettingsView(ft.Column):
     def gpu_device_control(self) -> ft.Control:
         return self._gpu_device_card
 
+    def peer_gpu_device_control(self) -> ft.Control:
+        return self._peer_gpu_device_card
+
+    def shared_engine_control(self) -> ft.Control:
+        return self._shared_engine_card
+
     def stt_model_control(self) -> ft.Control:
         return self._stt_model_card
 
@@ -560,6 +578,8 @@ class SettingsView(ft.Column):
             self._stt_text,
             self._peer_stt_text,
             self._gpu_device_text,
+            self._peer_gpu_device_text,
+            self._shared_engine_text,
             self._gpu_llm_text,
             self._llm_text,
             self._ui_text,
@@ -1160,6 +1180,37 @@ class SettingsView(ft.Column):
             title=self._gpu_device_title,
             value=self._gpu_device_text,
         )
+        self._peer_gpu_device_title = ft.Text(
+            t("settings.gpu_device.peer_asr"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._peer_gpu_device_text = self._build_clickable_text(
+            t("settings.gpu_device.auto"),
+            self._on_peer_gpu_device_click,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._peer_gpu_device_card = self._wrap_unit_card(
+            title=self._peer_gpu_device_title,
+            value=self._peer_gpu_device_text,
+        )
+        self._shared_engine_title = ft.Text(
+            t("settings.shared_engine.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._shared_engine_text = self._build_clickable_text(
+            t("settings.option.off"),
+            self._on_shared_engine_click,
+        )
+        self._shared_engine_card = self._wrap_unit_card(
+            title=self._shared_engine_title,
+            value=self._shared_engine_text,
+        )
         self._stt_model_title = ft.Text(
             t("settings.stt_model.title"),
             size=24,
@@ -1208,7 +1259,13 @@ class SettingsView(ft.Column):
             title=self._model_assets_title,
             value=self._model_assets_text,
         )
-        for card in (self._gpu_device_card, self._stt_model_card, self._gpu_llm_card):
+        for card in (
+            self._gpu_device_card,
+            self._peer_gpu_device_card,
+            self._shared_engine_card,
+            self._stt_model_card,
+            self._gpu_llm_card,
+        ):
             card.visible = False
 
         self._overlay_translation_title = ft.Text(
@@ -1927,17 +1984,37 @@ class SettingsView(ft.Column):
             return
         settings = self._build_settings_with_provider_draft()
         asr_selected = settings.stt_gpu_device_id if settings is not None else "auto"
+        peer_selected = settings.peer_stt_gpu_device_id if settings is not None else "auto"
         llm_selected = settings.translation.gpu_device_id if settings is not None else "auto"
         asr_label = self._gpu_column_label(asr_selected, getattr(self, "_gpu_devices", ()))
+        peer_label = self._gpu_column_label(peer_selected, getattr(self, "_gpu_devices", ()))
         llm_label = self._gpu_column_label(llm_selected, getattr(self, "_llm_gpu_devices", ()))
         self._set_unit_card_value_text(self._gpu_device_text, asr_label)
+        self._set_unit_card_value_text(self._peer_gpu_device_text, peer_label)
         self._set_unit_card_value_text(self._gpu_llm_text, llm_label)
         self._sync_stt_model_card()
         visible = self._local_model_selected(settings)
-        self._gpu_device_card.visible = visible
+        self_local = settings is not None and settings.stt_provider in _LOCAL_STT_PROVIDERS
+        peer_local = settings is not None and settings.peer_stt_provider in _LOCAL_STT_PROVIDERS
+        shared_engine = settings is not None and settings.stt_shared_engine
+        self._gpu_device_card.visible = self_local and settings.stt_gpu_backend != "cpu"
+        self._peer_gpu_device_card.visible = (
+            peer_local and not shared_engine and settings.peer_stt_gpu_backend != "cpu"
+        )
+        self._shared_engine_card.visible = self_local or peer_local
         self._stt_model_card.visible = visible
         self._gpu_llm_card.visible = visible
+        self._apply_shared_engine_grey(shared_engine)
         _update_control_if_mounted(self._gpu_device_row)
+
+    def _apply_shared_engine_grey(self, shared_engine: bool) -> None:
+        for card in (self._peer_stt_card, self._peer_gpu_device_card):
+            card.opacity = 0.5 if shared_engine else 1.0
+            card.ignore_interactions = shared_engine
+        self._set_unit_card_value_text(
+            self._shared_engine_text,
+            t("settings.option.on") if shared_engine else t("settings.option.off"),
+        )
 
     def set_gpu_devices(
         self,
@@ -2011,16 +2088,83 @@ class SettingsView(ft.Column):
             show_description=True,
         ).open(selected)
 
+    def _stt_device_options(
+        self,
+        selected: str,
+        devices: tuple[GpuDeviceOption, ...],
+        backend: str,
+    ) -> list[OptionItem]:
+        options = [
+            OptionItem(
+                value="auto",
+                label=t("settings.gpu_device.auto"),
+            )
+        ]
+        options.extend(
+            OptionItem(
+                value=device.device_id,
+                label=device.display_name,
+                description=self._gpu_backend_label(device.backend_name),
+            )
+            for device in devices
+            if device.kind in ("", backend)
+        )
+        if (
+            selected not in {"auto", "cpu"}
+            and all(device.device_id != selected for device in devices)
+        ):
+            options.append(
+                OptionItem(
+                    value=selected,
+                    label=t("settings.gpu_device.unavailable", device=selected),
+                )
+            )
+        return options
+
+    def _open_stt_device_modal(
+        self,
+        *,
+        title: str,
+        selected: str,
+        backend: str,
+        on_select,
+    ) -> None:
+        if self.on_gpu_discovery_requested is not None:
+            self.on_gpu_discovery_requested()
+        SettingsModal(
+            self.page,
+            title,
+            self._stt_device_options(selected, self._gpu_devices, backend),
+            on_select,
+            show_description=True,
+        ).open(selected)
+
     def _on_gpu_device_click(self, _event) -> None:
         if not is_control_mounted(self):
             return
         settings = self._build_settings_with_provider_draft()
         selected = settings.stt_gpu_device_id if settings is not None else "auto"
-        self._open_gpu_column_modal(
+        backend = settings.stt_gpu_backend if settings is not None else "vulkan"
+        self._open_stt_device_modal(
             title=t("settings.gpu_device.asr"),
             selected=selected,
-            devices=self._gpu_devices,
+            backend=backend,
             on_select=self._on_gpu_device_selected,
+        )
+
+    def _on_peer_gpu_device_click(self, _event) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
+        if settings is not None and settings.stt_shared_engine:
+            return
+        selected = settings.peer_stt_gpu_device_id if settings is not None else "auto"
+        backend = settings.peer_stt_gpu_backend if settings is not None else "vulkan"
+        self._open_stt_device_modal(
+            title=t("settings.gpu_device.peer_asr"),
+            selected=selected,
+            backend=backend,
+            on_select=self._on_peer_gpu_device_selected,
         )
 
     def _on_llm_gpu_device_click(self, _event) -> None:
@@ -2045,6 +2189,17 @@ class SettingsView(ft.Column):
         draft = self._ensure_provider_settings_draft()
         self._provider_draft = replace(draft, stt_gpu_device_id=value or "auto")
         self._record_provider_edit(SttGpuDeviceEdit(self._provider_draft.stt_gpu_device_id))
+        self.has_provider_changes = True
+        self._sync_gpu_device_card()
+
+    def _on_peer_gpu_device_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(draft, peer_stt_gpu_device_id=value or "auto")
+        self._record_provider_edit(
+            PeerSttGpuDeviceEdit(self._provider_draft.peer_stt_gpu_device_id)
+        )
         self.has_provider_changes = True
         self._sync_gpu_device_card()
 
@@ -3263,33 +3418,80 @@ class SettingsView(ft.Column):
         self._sync_http_extension_card(settings)
 
     # --- Event Handlers ---
+    @staticmethod
+    def _engine_backend_label(backend: str) -> str:
+        return dict(ENGINE_BACKENDS).get(backend, backend)
+
+    def _engine_backend_availability(self) -> dict[str, bool]:
+        devices = getattr(self, "_gpu_devices", ())
+        known = {device.kind for device in devices if device.kind}
+        if not known:
+            return {"cpu": True, "vulkan": True, "cuda": True}
+        return {
+            "cpu": True,
+            "vulkan": "vulkan" in known,
+            "cuda": "cuda" in known,
+        }
+
+    def _open_stt_engine_modal(
+        self,
+        *,
+        title: str,
+        current_engine: str,
+        current_backend: str,
+        on_select_none,
+        on_select_engine,
+    ) -> None:
+        if self.on_gpu_discovery_requested is not None:
+            self.on_gpu_discovery_requested()
+        SttEngineModal(
+            self.page,
+            title,
+            none_label=t("settings.not_selected"),
+            engine_label=provider_label(STTProviderName.LOCAL_QWEN_GPU.value),
+            engine_description=t("provider.local_qwen_gpu.description", default=""),
+            current_engine=current_engine,
+            current_backend=current_backend,
+            backend_available=self._engine_backend_availability(),
+            on_select_none=on_select_none,
+            on_select_engine=on_select_engine,
+        ).open()
+
     def _on_stt_click(self, e) -> None:
-        """Open STT provider selection modal."""
+        """Open the recognition engine selection modal."""
         if not is_control_mounted(self):
             return
-        options = [
-            OptionItem(
-                value=STTProviderName.NONE.value,
-                label=t("settings.not_selected"),
-            )
-        ]
-        options.extend(
-            self._classified_stt_option_item(provider) for provider in _STT_UI_PROVIDERS
-        )
         display_settings = self._build_settings_with_provider_draft()
-        current = (
-            self._display_stt_choice(display_settings).value
-            if display_settings is not None
-            else STTProviderName.NONE.value
+        if display_settings is None:
+            return
+        self._open_stt_engine_modal(
+            title=t("settings.section.stt"),
+            current_engine=display_settings.stt_provider.value,
+            current_backend=display_settings.stt_gpu_backend,
+            on_select_none=lambda: self._on_stt_selected(STTProviderName.NONE.value),
+            on_select_engine=self._on_stt_engine_selected,
         )
-        modal = SettingsModal(
-            self.page,
-            t("settings.section.stt"),
-            options,
-            self._on_stt_selected,
-            show_description=True,
-        )
-        modal.open(current)
+
+    def _on_stt_engine_selected(self, backend: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        current_settings = self._build_settings_with_provider_draft()
+        if current_settings is None:
+            return
+        if current_settings.stt_gpu_backend != backend:
+            draft = self._ensure_provider_settings_draft()
+            if draft.stt_gpu_device_id != "auto":
+                self._provider_draft = replace(draft, stt_gpu_device_id="auto")
+                self._record_provider_edit(SttGpuDeviceEdit("auto"))
+                draft = self._provider_draft
+            self._provider_draft = replace(draft, stt_gpu_backend=backend)
+            self._record_provider_edit(SttGpuBackendEdit(backend))
+            self.has_provider_changes = True
+        if current_settings.stt_provider != STTProviderName.LOCAL_QWEN_GPU:
+            self._on_stt_selected(STTProviderName.LOCAL_QWEN_GPU.value)
+            return
+        self._sync_stt_provider_labels(self._build_settings_with_provider_draft())
+        self._sync_gpu_device_card()
 
     def _on_stt_selected(self, value: str) -> None:
         """Handle STT provider selection from modal."""
@@ -3345,28 +3547,71 @@ class SettingsView(ft.Column):
     def _on_peer_stt_click(self, e) -> None:
         if not is_control_mounted(self):
             return
-        options = [
-            OptionItem(
-                value=STTProviderName.NONE.value,
-                label=t("settings.not_selected"),
-            )
-        ]
-        options.extend(
-            self._classified_peer_stt_option_item(provider) for provider in _STT_UI_PROVIDERS
-        )
         display_settings = self._build_settings_with_provider_draft()
+        if display_settings is None:
+            return
+        if display_settings.stt_shared_engine:
+            return
+        self._open_stt_engine_modal(
+            title=t("settings.section.peer_stt"),
+            current_engine=display_settings.peer_stt_provider.value,
+            current_backend=display_settings.peer_stt_gpu_backend,
+            on_select_none=lambda: self._on_peer_stt_selected(STTProviderName.NONE.value),
+            on_select_engine=self._on_peer_stt_engine_selected,
+        )
+
+    def _on_peer_stt_engine_selected(self, backend: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        current_settings = self._build_settings_with_provider_draft()
+        if current_settings is None:
+            return
+        if current_settings.peer_stt_gpu_backend != backend:
+            draft = self._ensure_provider_settings_draft()
+            if draft.peer_stt_gpu_device_id != "auto":
+                self._provider_draft = replace(draft, peer_stt_gpu_device_id="auto")
+                self._record_provider_edit(PeerSttGpuDeviceEdit("auto"))
+                draft = self._provider_draft
+            self._provider_draft = replace(draft, peer_stt_gpu_backend=backend)
+            self._record_provider_edit(PeerSttGpuBackendEdit(backend))
+            self.has_provider_changes = True
+        if current_settings.peer_stt_provider != STTProviderName.LOCAL_QWEN_GPU:
+            self._on_peer_stt_selected(STTProviderName.LOCAL_QWEN_GPU.value)
+            return
+        self._sync_stt_provider_labels(self._build_settings_with_provider_draft())
+        self._sync_gpu_device_card()
+
+    def _on_shared_engine_click(self, _event) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
         current = (
-            self._display_stt_choice(display_settings, peer=True).value
-            if display_settings is not None
-            else STTProviderName.NONE.value
+            "on" if settings is not None and settings.stt_shared_engine else "off"
         )
         SettingsModal(
             self.page,
-            t("settings.section.peer_stt"),
-            options,
-            self._on_peer_stt_selected,
-            show_description=True,
+            t("settings.shared_engine.title"),
+            [
+                OptionItem(value="on", label=t("settings.option.on")),
+                OptionItem(value="off", label=t("settings.option.off")),
+            ],
+            self._on_shared_engine_selected,
         ).open(current)
+
+    def _on_shared_engine_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        enabled = value == "on"
+        settings = self._build_settings_with_provider_draft()
+        if settings is not None and settings.stt_shared_engine == enabled:
+            return
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(draft, stt_shared_engine=enabled)
+        self._record_provider_edit(SttSharedEngineEdit(enabled))
+        self.has_provider_changes = True
+        self._sync_stt_provider_labels(self._build_settings_with_provider_draft())
+        self._update_api_visibility()
+        self._sync_gpu_device_card()
 
     def _on_peer_stt_selected(self, value: str) -> None:
         if self._provider_snapshot is None:
@@ -3406,20 +3651,37 @@ class SettingsView(ft.Column):
             self._stt_text.update()
         self.has_provider_changes = True
 
+    def _stt_engine_value_label(
+        self,
+        settings: ProviderSettingsSnapshot,
+        *,
+        peer: bool,
+    ) -> str:
+        if peer and settings.stt_shared_engine:
+            provider = settings.stt_provider
+            backend = settings.stt_gpu_backend
+        elif peer:
+            provider = settings.peer_stt_provider
+            backend = settings.peer_stt_gpu_backend
+        else:
+            provider = settings.stt_provider
+            backend = settings.stt_gpu_backend
+        label = self._stt_provider_display_label(
+            provider,
+            custom_mode=settings.custom_stt_mode,
+        )
+        if provider == STTProviderName.LOCAL_QWEN_GPU:
+            return f"{label} · {self._engine_backend_label(backend)}"
+        return label
+
     def _sync_stt_provider_labels(self, settings: ProviderSettingsSnapshot) -> None:
         self._set_unit_card_value_text(
             self._stt_text,
-            self._stt_provider_display_label(
-                settings.stt_provider,
-                custom_mode=settings.custom_stt_mode,
-            ),
+            self._stt_engine_value_label(settings, peer=False),
         )
         self._set_unit_card_value_text(
             self._peer_stt_text,
-            self._stt_provider_display_label(
-                self._effective_peer_stt_provider(settings),
-                custom_mode=settings.custom_stt_mode,
-            ),
+            self._stt_engine_value_label(settings, peer=True),
         )
 
     def _show_stt_selection_notice(self, message: str) -> None:

@@ -500,6 +500,8 @@ def build_self_stt_provider_request_from_config(
     return ProviderRuntimeBuildRequest(
         config=backend,
         gpu_device_id=config.gpu_device_id,
+        gpu_backend=config.gpu_backend,
+        shared_engine=config.shared_engine,
         warmup=warmup,
         model_id=config.model_id or backend.model,
         session_options=(
@@ -553,6 +555,8 @@ def build_self_capture_session_config_from_vnext(
         provider_context=resolved,
         model_id=transition.model_id if transition is not None else resolved.model,
         gpu_device_id=stt.gpu_device_id,
+        gpu_backend=stt.gpu_backend,
+        shared_engine=stt.shared_engine,
     )
 
 
@@ -590,6 +594,8 @@ def build_self_stt_runtime_signature_from_vnext(settings: AppSettingsVNext) -> t
         STT_INTERNAL_SAMPLE_RATE_HZ,
         1,
         intent.stt.gpu_device_id if provider == STTProviderName.LOCAL_QWEN_GPU.value else None,
+        intent.stt.gpu_backend if provider == STTProviderName.LOCAL_QWEN_GPU.value else None,
+        intent.stt.shared_engine if provider == STTProviderName.LOCAL_QWEN_GPU.value else None,
         intent.stt.deepgram.model if provider == STTProviderName.DEEPGRAM.value else None,
         (
             intent.stt.gemini_transcribe.model
@@ -717,6 +723,8 @@ def build_self_stt_provider_signature_from_vnext(settings: AppSettingsVNext) -> 
         custom_extra_signature,
         custom_stt_secret_generation() if is_custom_stt_provider(provider) else None,
         intent.stt.gpu_device_id if provider == STTProviderName.LOCAL_QWEN_GPU.value else None,
+        intent.stt.gpu_backend if provider == STTProviderName.LOCAL_QWEN_GPU.value else None,
+        intent.stt.shared_engine if provider == STTProviderName.LOCAL_QWEN_GPU.value else None,
         custom_vocab_enabled,
         custom_terms,
     )
@@ -897,6 +905,8 @@ def create_stt_backend_from_resolved_config(
     gpu_runtime: SharedGpuASRRuntime | None = None,
     gpu_model_path: Path | None = None,
     gpu_device_id: str = "auto",
+    gpu_backend: str = "vulkan",
+    owns_gpu_runtime: bool = False,
     basic_log_sink: Callable[[str, int], None] | None = None,
     asr_process_factory: ASRWorkerProcessFactoryPort | None = None,
 ) -> STTBackend:
@@ -917,6 +927,8 @@ def create_stt_backend_from_resolved_config(
             model_path=gpu_model_path or local_gpu_model_path(model_id=config.model),
             model_id=config.model or LOCAL_QWEN_GPU_MODEL_ID,
             device_id=gpu_device_id,
+            backend=gpu_backend,
+            owns_runtime=owns_gpu_runtime,
             sample_rate_hz=config.sample_rate_hz,
             source_mode=config.source_mode,
             language_hint=(
@@ -1084,7 +1096,17 @@ def build_peer_stt_provider_signature_from_vnext(settings: AppSettingsVNext) -> 
         resolved.provider_options.get("language_code"),
         resolved.provider_options.get("auto_language", False),
         (
-            settings.intent.stt.gpu_device_id
+            _effective_peer_gpu_device_id(settings)
+            if resolved.provider == STT_PROVIDER_LOCAL_QWEN_GPU
+            else None
+        ),
+        (
+            _effective_peer_gpu_backend(settings)
+            if resolved.provider == STT_PROVIDER_LOCAL_QWEN_GPU
+            else None
+        ),
+        (
+            settings.intent.stt.shared_engine
             if resolved.provider == STT_PROVIDER_LOCAL_QWEN_GPU
             else None
         ),
@@ -1191,7 +1213,9 @@ def build_peer_capture_session_config_from_vnext(
         provider_context=backend,
         local_provider=local_provider,
         warmup=True,
-        gpu_device_id=settings.intent.stt.gpu_device_id,
+        gpu_device_id=_effective_peer_gpu_device_id(settings),
+        gpu_backend=_effective_peer_gpu_backend(settings),
+        shared_engine=settings.intent.stt.shared_engine,
     )
 
 
@@ -1207,10 +1231,24 @@ def build_peer_stt_runtime_signature_from_vnext(settings: AppSettingsVNext) -> t
     return build_peer_capture_session_config_from_vnext(settings).runtime_signature
 
 
+def _effective_peer_gpu_device_id(settings: AppSettingsVNext) -> str:
+    stt = settings.intent.stt
+    if stt.shared_engine:
+        return stt.gpu_device_id
+    return settings.intent.peer_stt.gpu_device_id
+
+
+def _effective_peer_gpu_backend(settings: AppSettingsVNext) -> str:
+    stt = settings.intent.stt
+    if stt.shared_engine:
+        return stt.gpu_backend
+    return settings.intent.peer_stt.gpu_backend
+
+
 def build_peer_stt_provider_request(
     config: PeerCaptureSessionConfig,
     *,
-    gpu_device_id: str,
+    gpu_device_id: str | None = None,
     warmup: bool = False,
 ) -> ProviderRuntimeBuildRequest:
     backend = config.provider_context
@@ -1228,7 +1266,9 @@ def build_peer_stt_provider_request(
         )
     return ProviderRuntimeBuildRequest(
         config=backend,
-        gpu_device_id=gpu_device_id,
+        gpu_device_id=gpu_device_id if gpu_device_id is not None else config.gpu_device_id,
+        gpu_backend=config.gpu_backend,
+        shared_engine=config.shared_engine,
         warmup=warmup,
         model_id=config.model_id or backend.model,
         session_options=config.session_options,
@@ -1245,6 +1285,8 @@ def create_peer_stt_backend_from_resolved_config(
     gpu_runtime: SharedGpuASRRuntime | None = None,
     gpu_model_path: Path | None = None,
     gpu_device_id: str = "auto",
+    gpu_backend: str = "vulkan",
+    owns_gpu_runtime: bool = False,
 ) -> STTBackend:
     return create_stt_backend_from_resolved_config(
         config,
@@ -1252,4 +1294,6 @@ def create_peer_stt_backend_from_resolved_config(
         gpu_runtime=gpu_runtime,
         gpu_model_path=gpu_model_path,
         gpu_device_id=gpu_device_id,
+        gpu_backend=gpu_backend,
+        owns_gpu_runtime=owns_gpu_runtime,
     )

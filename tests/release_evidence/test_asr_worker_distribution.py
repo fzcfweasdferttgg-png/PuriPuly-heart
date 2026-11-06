@@ -20,6 +20,9 @@ def gpu_payload(tmp_path: Path) -> Path:
         "ggml.dll",
         "ggml-base.dll",
         "ggml-vulkan.dll",
+        "ggml-cuda.dll",
+        "cublas64_13.dll",
+        "cublasLt64_13.dll",
         "ggml-cpu-x64.dll",
         "ggml-cpu-haswell.dll",
         "ggml-cpu-icelake.dll",
@@ -60,6 +63,8 @@ def test_complete_payload_preserves_current_cpu_family(gpu_payload: Path) -> Non
         "ggml.dll",
         "ggml-base.dll",
         "ggml-vulkan.dll",
+        "ggml-cuda.dll",
+        "cublas64_13.dll",
         "ggml-cpu-x64.dll",
         "ggml-cpu-icelake.dll",
     ],
@@ -70,7 +75,10 @@ def test_omitted_current_build_runtime_is_rejected(gpu_payload: Path, name: str)
         validate_asr_worker_runtime(gpu_payload)
 
 
-@pytest.mark.parametrize("name", ["transcribe.dll", "ggml-vulkan.dll", "ggml-cpu-x64.dll"])
+@pytest.mark.parametrize(
+    "name",
+    ["transcribe.dll", "ggml-vulkan.dll", "ggml-cuda.dll", "ggml-cpu-x64.dll"],
+)
 def test_required_family_cannot_be_removed_from_inventory(gpu_payload: Path, name: str) -> None:
     path = gpu_payload / ASR_WORKER_INVENTORY
     record = json.loads(path.read_text())

@@ -57,7 +57,11 @@ from puripuly_heart.app.ports.settings_view import (
     SelfSttProviderEdit,
     SelfVadSettingsIntent,
     SonioxSpeakerDiarizationEdit,
+    SttGpuBackendEdit,
     SttGpuDeviceEdit,
+    SttSharedEngineEdit,
+    PeerSttGpuBackendEdit,
+    PeerSttGpuDeviceEdit,
     SttLocalModelEdit,
     SystemPromptEdit,
     TranslationHttpExtensionEdit,
@@ -259,6 +263,14 @@ def settings_view_surface_snapshots(
             gpu_device_id=translation.gpu_device_id,
         ),
         stt_gpu_device_id=intent.stt.gpu_device_id,
+        stt_gpu_backend=intent.stt.gpu_backend,
+        stt_shared_engine=intent.stt.shared_engine,
+        peer_stt_gpu_device_id=(
+            intent.stt.gpu_device_id if intent.stt.shared_engine else intent.peer_stt.gpu_device_id
+        ),
+        peer_stt_gpu_backend=(
+            intent.stt.gpu_backend if intent.stt.shared_engine else intent.peer_stt.gpu_backend
+        ),
         stt_local_model=intent.stt.model,
         qwen_region=QwenRegion(intent.translation.qwen.region),
         local_llm_base_url=intent.local_llm.base_url,
@@ -726,6 +738,26 @@ def materialize_provider_apply_intent(
             updated = _with_intent(
                 updated,
                 stt=replace(updated.intent.stt, gpu_device_id=edit.device_id),
+            )
+        elif isinstance(edit, SttGpuBackendEdit):
+            updated = _with_intent(
+                updated,
+                stt=replace(updated.intent.stt, gpu_backend=edit.backend),
+            )
+        elif isinstance(edit, SttSharedEngineEdit):
+            updated = _with_intent(
+                updated,
+                stt=replace(updated.intent.stt, shared_engine=edit.enabled),
+            )
+        elif isinstance(edit, PeerSttGpuDeviceEdit):
+            updated = _with_intent(
+                updated,
+                peer_stt=replace(updated.intent.peer_stt, gpu_device_id=edit.device_id),
+            )
+        elif isinstance(edit, PeerSttGpuBackendEdit):
+            updated = _with_intent(
+                updated,
+                peer_stt=replace(updated.intent.peer_stt, gpu_backend=edit.backend),
             )
         elif isinstance(edit, SttLocalModelEdit):
             updated = _with_intent(

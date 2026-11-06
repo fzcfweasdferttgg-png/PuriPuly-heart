@@ -396,6 +396,8 @@ class STTIntent:
     custom_vocabulary_enabled: bool = True
     custom_terms: dict[str, list[str]] = field(default_factory=_default_custom_terms)
     gpu_device_id: str = "auto"
+    gpu_backend: str = "vulkan"
+    shared_engine: bool = False
     cloud_free_tier_providers: list[str] = field(default_factory=lambda: ["gemini_transcribe"])
     deepgram: DeepgramSTTIntent = field(default_factory=DeepgramSTTIntent)
     gemini_transcribe: GeminiTranscribeSTTIntent = field(default_factory=GeminiTranscribeSTTIntent)
@@ -407,6 +409,14 @@ class STTIntent:
         object.__setattr__(self, "provider", normalize_stt_provider(self.provider))
         device_id = self.gpu_device_id if isinstance(self.gpu_device_id, str) else "auto"
         object.__setattr__(self, "gpu_device_id", device_id.strip() or "auto")
+        gpu_backend = self.gpu_backend if isinstance(self.gpu_backend, str) else "vulkan"
+        gpu_backend = gpu_backend.strip().lower()
+        object.__setattr__(
+            self,
+            "gpu_backend",
+            gpu_backend if gpu_backend in {"cpu", "vulkan", "cuda"} else "vulkan",
+        )
+        object.__setattr__(self, "shared_engine", bool(self.shared_engine))
         model = self.model if isinstance(self.model, str) else ""
         object.__setattr__(self, "model", model.strip())
         object.__setattr__(
@@ -428,11 +438,22 @@ class STTIntent:
 class PeerSTTIntent:
     provider: str = ""
     model: str = ""
+    gpu_backend: str = "vulkan"
+    gpu_device_id: str = "auto"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "provider", normalize_stt_provider(self.provider))
         model = self.model if isinstance(self.model, str) else ""
         object.__setattr__(self, "model", model.strip())
+        gpu_backend = self.gpu_backend if isinstance(self.gpu_backend, str) else "vulkan"
+        gpu_backend = gpu_backend.strip().lower()
+        object.__setattr__(
+            self,
+            "gpu_backend",
+            gpu_backend if gpu_backend in {"cpu", "vulkan", "cuda"} else "vulkan",
+        )
+        device_id = self.gpu_device_id if isinstance(self.gpu_device_id, str) else "auto"
+        object.__setattr__(self, "gpu_device_id", device_id.strip() or "auto")
 
 
 @dataclass(frozen=True, slots=True)

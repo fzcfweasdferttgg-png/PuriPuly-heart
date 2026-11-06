@@ -100,8 +100,10 @@ def from_dict(data: Mapping[str, Any]) -> AppSettingsVNext:
     _validate_persisted_types(data)
     default = AppSettingsVNext(settings_version=VNEXT_SETTINGS_SCHEMA_VERSION)
     compatible_data = _with_current_settings_version(
-        _normalize_legacy_openrouter_model_fields(
-            _downgrade_unbound_provider_verification_entries(data)
+        _normalize_local_engine_fields(
+            _normalize_legacy_openrouter_model_fields(
+                _downgrade_unbound_provider_verification_entries(data)
+            )
         )
     )
     merged = _merge_dataclass(default, compatible_data, path="settings")
@@ -287,6 +289,56 @@ def _normalize_legacy_openrouter_model_fields(data: Mapping[str, Any]) -> Mappin
         compatible["intent"] = compatible_intent
         return compatible
     return data
+
+
+def _normalize_local_engine_fields(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Migrate pre-engine-split configs: gpu_device_id=="cpu" meant a CPU engine,
+    and two local channels shared one model; keep both behaviors."""
+    intent = data.get("intent")
+    if not isinstance(intent, Mapping):
+        return data
+    stt_raw = intent.get("stt")
+    peer_raw = intent.get("peer_stt")
+    stt_map = stt_raw if isinstance(stt_raw, Mapping) else {}
+    peer_map = peer_raw if isinstance(peer_raw, Mapping) else {}
+    stt_missing = [key for key in ("gpu_backend", "shared_engine") if key not in stt_map]
+    peer_missing = [key for key in ("gpu_backend", "gpu_device_id") if key not in peer_map]
+    if not stt_missing and not peer_missing:
+        return data
+
+    def legacy_engine(raw: Mapping[str, Any], fallback_device: str) -> tuple[str, str]:
+        raw_device = raw.get("gpu_device_id")
+        device = (
+            str(raw_device).strip()
+            if raw_device is not None
+            else fallback_device
+        ) or "auto"
+        if device == "cpu":
+            return "cpu", "auto"
+        return "vulkan", device
+
+    compatible = copy.deepcopy(dict(data))
+    compatible_intent = dict(compatible.get("intent", {}))
+    stt_new = dict(compatible_intent.get("stt", {}))
+    peer_new = dict(compatible_intent.get("peer_stt", {}))
+    if stt_missing:
+        backend, device = legacy_engine(stt_new, "auto")
+        stt_new.setdefault("gpu_backend", backend)
+        stt_new["gpu_device_id"] = device
+        stt_new.setdefault(
+            "shared_engine",
+            str(stt_new.get("provider") or "") == "local_qwen_gpu"
+            and str(peer_new.get("provider") or "") == "local_qwen_gpu",
+        )
+    if peer_missing:
+        self_backend = str(stt_new.get("gpu_backend") or "vulkan")
+        self_device = str(stt_new.get("gpu_device_id") or "auto").strip() or "auto"
+        peer_new.setdefault("gpu_backend", self_backend)
+        peer_new["gpu_device_id"] = "auto" if self_backend == "cpu" else self_device
+    compatible_intent["stt"] = stt_new
+    compatible_intent["peer_stt"] = peer_new
+    compatible["intent"] = compatible_intent
+    return compatible
 
 
 def _downgrade_unbound_provider_verification_entries(

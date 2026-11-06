@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 from uuid import uuid4
 
 import numpy as np
@@ -101,6 +101,8 @@ class _ActivationConfig:
     model_path: Path
     model_id: str
     device_id: str
+    backend: str = "vulkan"
+    worker_channel: GpuASRChannel | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +292,8 @@ class SharedGpuASRRuntime:
         device_id: str,
         operation_id: str | None = None,
         request_id: str | None = None,
+        backend: str | None = None,
+        worker_channel: GpuASRChannel | None = None,
     ) -> ASRWorkerActivation:
         if self._shutdown_task is not None and not self._shutdown_task.done():
             raise GpuASRRuntimeError("GPU runtime is stopping")
@@ -297,6 +301,8 @@ class SharedGpuASRRuntime:
             model_path=model_path.resolve(),
             model_id=model_id,
             device_id=device_id,
+            backend=("cpu" if device_id == "cpu" else "vulkan") if backend is None else backend,
+            worker_channel=worker_channel,
         )
         async with self._lock:
             self._ensure_open()
@@ -620,7 +626,8 @@ class SharedGpuASRRuntime:
             activation = await client.activate(
                 model_path=config.model_path,
                 device_id=config.device_id,
-                backend=("cpu" if config.device_id == "cpu" else "vulkan"),
+                backend=cast(Literal["cpu", "vulkan", "cuda"], config.backend),
+                channel=config.worker_channel,
             )
         except BaseException as exc:
             primary = getattr(exc, "failure_diagnostics", None)

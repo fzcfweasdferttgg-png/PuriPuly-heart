@@ -285,6 +285,7 @@ class GpuRuntimeInteractionOwner:
                 device_id=device.device_id,
                 display_name=device.description.strip() or device.name,
                 backend_name=device.name,
+                kind=device.kind,
             )
             for device in self._devices
         )

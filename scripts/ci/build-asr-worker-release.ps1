@@ -10,6 +10,26 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 if ([string]::IsNullOrWhiteSpace($env:VULKAN_SDK)) { throw "VULKAN_SDK is required" }
+$cudaRoot = $env:CUDA_PATH
+if ([string]::IsNullOrWhiteSpace($cudaRoot) -or -not (Test-Path -LiteralPath $cudaRoot -PathType Container)) {
+    $cudaRoot = @(Get-ChildItem -LiteralPath "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName)
+}
+if ([string]::IsNullOrWhiteSpace($cudaRoot) -or -not (Test-Path -LiteralPath $cudaRoot -PathType Container)) {
+    throw "CUDA toolkit not found (CUDA_PATH unset and no default install)"
+}
+# The CUDA MSBuild build customizations resolve the toolkit via the registry
+# InstallDir first; winget installs can miss it, so pin the toolkit explicitly.
+$env:CudaToolkitDir = $cudaRoot
+$cublasFiles = @()
+foreach ($binDir in @((Join-Path $cudaRoot "bin"), (Join-Path $cudaRoot "bin\x64"))) {
+    if (Test-Path -LiteralPath $binDir -PathType Container) {
+        $cublasFiles += @(Get-ChildItem -LiteralPath $binDir -Filter "cublas*.dll" -File)
+    }
+}
+if ($cublasFiles.Count -eq 0) {
+    throw "cublas DLLs not found under $cudaRoot"
+}
+$cublasNames = @($cublasFiles | ForEach-Object { $_.Name } | Sort-Object -Unique)
 foreach ($relative in @("Include\vulkan\vulkan.h", "Lib\vulkan-1.lib", "Bin\glslc.exe")) {
     if (-not (Test-Path -LiteralPath (Join-Path $env:VULKAN_SDK $relative) -PathType Leaf)) {
         throw "Vulkan SDK input is missing: $relative"
@@ -32,7 +52,8 @@ foreach ($name in ($names | Sort-Object -Unique)) {
 Push-Location $repoRoot
 try {
     $languagePatch = (Join-Path $repoRoot "native/asr_worker/cmake/funasr-language.cmake").Replace("\", "/")
-    $env:TRANSCRIBE_CMAKE_ARGS = "-DTRANSCRIBE_USE_SYSTEM_BLAS=OFF -DTRANSCRIBE_USE_OPENMP=OFF -DCMAKE_SUPPRESS_REGENERATION=ON -DCMAKE_PROJECT_transcribe_INCLUDE=`"$languagePatch`""
+    $delayLoadList = [string]::Join(";", $cublasNames)
+    $env:TRANSCRIBE_CMAKE_ARGS = "-DTRANSCRIBE_USE_SYSTEM_BLAS=OFF -DTRANSCRIBE_USE_OPENMP=OFF -DCMAKE_SUPPRESS_REGENERATION=ON -DPURIPULY_CUBLAS_DELAYLOAD=`"$delayLoadList`" -DCMAKE_PROJECT_transcribe_INCLUDE=`"$languagePatch`""
     $env:CMAKE_GENERATOR = "Visual Studio 17 2022"
     $env:CMAKE_PREFIX_PATH = $env:VULKAN_SDK
     $env:RUSTFLAGS = "-C target-cpu=x86-64"
@@ -49,8 +70,13 @@ try {
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing current-build runtime: $source" }
         $files[$property.Name] = $source
     }
-    foreach ($name in @("transcribe.dll", "ggml.dll", "ggml-base.dll", "ggml-vulkan.dll", "ggml-cpu-x64.dll")) {
+    foreach ($name in @("transcribe.dll", "ggml.dll", "ggml-base.dll", "ggml-vulkan.dll", "ggml-cpu-x64.dll", "ggml-cuda.dll")) {
         if (-not $files.Contains($name)) { throw "Missing required ASR runtime: $name" }
+    }
+    foreach ($file in $cublasFiles) {
+        if (-not $files.Contains($file.Name)) {
+            $files[$file.Name] = $file.FullName
+        }
     }
     $actual = @(Get-ChildItem -LiteralPath $release -Filter "*.dll" -File | ForEach-Object { $_.Name })
     $expected = @($sources.files.PSObject.Properties.Name)

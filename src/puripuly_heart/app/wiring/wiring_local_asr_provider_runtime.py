@@ -142,22 +142,37 @@ class SharedSTTProviderFactory(ProviderRuntimeProviderFactoryPort):
             gpu_model_path = await run_owned_thread_call(
                 partial(local_gpu_model_path, model_id=config.model)
             )
-        backend = create_stt_backend_from_resolved_config(
-            config,
-            secrets=self.secrets,
-            gpu_runtime=cast(SharedGpuASRRuntime, gpu_runtime),
-            gpu_model_path=gpu_model_path,
-            gpu_device_id=request.gpu_device_id,
-            asr_process_factory=self.asr_process_factory,
-            basic_log_sink=(
-                None
-                if self.runtime_logging is None
-                else lambda message, level: self.runtime_logging.emit_basic(
-                    message,
-                    level=level,
-                )
-            ),
-        )
+        effective_gpu_runtime = cast(SharedGpuASRRuntime, gpu_runtime)
+        owns_gpu_runtime = False
+        if provider_name == STTProviderName.LOCAL_QWEN_GPU and not request.shared_engine:
+            effective_gpu_runtime = SharedGpuASRRuntime(
+                process_factory=DefaultASRWorkerProcessFactory(),
+                clock=self.clock,
+            )
+            owns_gpu_runtime = True
+        try:
+            backend = create_stt_backend_from_resolved_config(
+                config,
+                secrets=self.secrets,
+                gpu_runtime=effective_gpu_runtime,
+                gpu_model_path=gpu_model_path,
+                gpu_device_id=request.gpu_device_id,
+                gpu_backend=request.gpu_backend,
+                owns_gpu_runtime=owns_gpu_runtime,
+                asr_process_factory=self.asr_process_factory,
+                basic_log_sink=(
+                    None
+                    if self.runtime_logging is None
+                    else lambda message, level: self.runtime_logging.emit_basic(
+                        message,
+                        level=level,
+                    )
+                ),
+            )
+        except BaseException:
+            if owns_gpu_runtime:
+                await effective_gpu_runtime.close()
+            raise
         if isinstance(backend, LocalGpuSTTBackend):
             backend.operation_id = request.operation_id
             backend.request_id = request.request_id

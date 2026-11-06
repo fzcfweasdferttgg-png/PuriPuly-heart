@@ -12,6 +12,7 @@ _REQUIRED_DLLS = {
     "ggml-base.dll",
     "ggml-vulkan.dll",
     "ggml-cpu-x64.dll",
+    "ggml-cuda.dll",
 }
 
 
@@ -54,6 +55,10 @@ def validate_asr_worker_runtime(root: Path) -> dict[str, Any]:
     )
     if len(cpu_modules) < 2:
         raise ValueError("ASR worker runtime lacks optimized CPU modules")
+    if not any(name.startswith("cublas64_") for name in expected):
+        raise ValueError("ASR worker runtime lacks the CUDA BLAS runtime sidecars")
+    if not any(name.startswith("cublaslt64_") for name in expected):
+        raise ValueError("ASR worker runtime lacks the CUDA BLASLT runtime sidecars")
     actual = {
         path.name.casefold(): path
         for path in root.iterdir()

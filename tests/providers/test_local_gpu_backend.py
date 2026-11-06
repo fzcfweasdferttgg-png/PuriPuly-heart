@@ -47,11 +47,16 @@ class FakeSharedGpuRuntime:
         self.active_channels: set[str] = set()
         self.owners: dict[str, set[object]] = {}
         self.activations: list[tuple[str, Path, str, str]] = []
+        self.backend_activations: list[tuple[str, str | None, str | None]] = []
         self.submissions: list[tuple[str, np.ndarray, float, str | None]] = []
         self.deactivations: list[str] = []
         self.deactivation_failures = 0
         self.detected_language: str | None = "en"
         self.submit_failures: list[BaseException] = []
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
 
     async def activate_channel(
         self,
@@ -63,10 +68,13 @@ class FakeSharedGpuRuntime:
         device_id: str,
         operation_id: str | None = None,
         request_id: str | None = None,
+        backend: str | None = None,
+        worker_channel: str | None = None,
     ) -> ASRWorkerActivation:
         self.active_channels.add(channel)
         self.owners.setdefault(channel, set()).add(owner)
         self.activations.append((channel, model_path, model_id, device_id))
+        self.backend_activations.append((channel, backend, worker_channel))
         return ASRWorkerActivation(
             device=ASRWorkerDevice(
                 device_id="vk:0",
@@ -929,3 +937,54 @@ async def test_failed_same_channel_preparation_cannot_release_live_owner(
         await candidate.close()
         await current.close()
         await runtime.close()
+
+
+async def test_prepare_passes_backend_and_dedicated_worker_channel(tmp_path: Path) -> None:
+    runtime = FakeSharedGpuRuntime()
+    backend = LocalGpuSTTBackend(
+        runtime=runtime,
+        channel="peer",
+        model_path=tmp_path / "model.gguf",
+        model_id="gpu-model",
+        device_id="cuda-index-0",
+        backend="cuda",
+        owns_runtime=True,
+    )
+
+    session = await backend.open_session()
+
+    assert runtime.backend_activations == [("peer", "cuda", "peer")]
+    await session.close()
+    await backend.close()
+
+
+async def test_owned_runtime_is_closed_with_the_backend(tmp_path: Path) -> None:
+    runtime = FakeSharedGpuRuntime()
+    backend = LocalGpuSTTBackend(
+        runtime=runtime,
+        channel="self",
+        model_path=tmp_path / "model.gguf",
+        model_id="gpu-model",
+        device_id="vk:0",
+        backend="vulkan",
+        owns_runtime=True,
+    )
+    session = await backend.open_session()
+    await session.close()
+
+    await backend.close()
+
+    assert runtime.close_calls == 1
+
+    shared_runtime = FakeSharedGpuRuntime()
+    shared_backend = LocalGpuSTTBackend(
+        runtime=shared_runtime,
+        channel="self",
+        model_path=tmp_path / "model.gguf",
+        model_id="gpu-model",
+        device_id="vk:0",
+    )
+    shared_session = await shared_backend.open_session()
+    await shared_session.close()
+    await shared_backend.close()
+    assert shared_runtime.close_calls == 0

@@ -1622,7 +1622,7 @@ def compose_application_runtime(
             ),
             peer_request_factory=lambda config: build_peer_stt_provider_request(
                 config,
-                gpu_device_id=gpu_device_id,
+                gpu_device_id=config.gpu_device_id,
                 warmup=True,
             ),
             ensure_self_switch=lambda: replace_self_stt_for_settings(canonical, True),

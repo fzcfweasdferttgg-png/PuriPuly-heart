@@ -66,9 +66,16 @@ fn record_runtime_sources(output: &std::path::Path) {
         "ggml-vulkan.dll",
         "ggml-cpu-x64.dll",
     ] {
+        // gated below: ggml-cuda.dll is only required for CUDA builds
         assert!(
             files.contains_key(name),
             "required runtime DLL is missing: {name}"
+        );
+    }
+    if env::var_os("CARGO_FEATURE_CUDA").is_some() {
+        assert!(
+            files.contains_key("ggml-cuda.dll"),
+            "required runtime DLL is missing: ggml-cuda.dll"
         );
     }
     assert!(

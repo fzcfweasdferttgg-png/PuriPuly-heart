@@ -117,7 +117,7 @@ class _ApplicationLocalASRProductionEvidence:
         config = build_peer_capture_session_config_from_vnext(settings)
         return build_peer_stt_provider_request(
             config,
-            gpu_device_id=settings.intent.stt.gpu_device_id,
+            gpu_device_id=config.gpu_device_id,
             warmup=warmup,
         )
 

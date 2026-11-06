@@ -211,8 +211,10 @@ class FakeGpuRuntime:
         model_path: Path,
         model_id: str,
         device_id: str,
+        backend: str | None = None,
+        worker_channel: str | None = None,
     ) -> ASRWorkerActivation:
-        _ = model_path, model_id
+        _ = model_path, model_id, backend, worker_channel
         self.activation_calls.append((channel, device_id))
         self.owners.setdefault(channel, set()).add(owner)
         self.active_channels = frozenset({*self.active_channels, channel})

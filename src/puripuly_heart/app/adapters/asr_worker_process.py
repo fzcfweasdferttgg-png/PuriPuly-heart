@@ -489,7 +489,7 @@ class _DefaultASRWorkerClient(ASRWorkerClientPort):
         *,
         model_path: Path,
         device_id: str,
-        backend: Literal["cpu", "vulkan"] = "vulkan",
+        backend: Literal["cpu", "vulkan", "cuda"] = "vulkan",
         channel: Literal["self", "peer"] | None = None,
         n_threads: int = 2,
     ) -> ASRWorkerActivation:
@@ -1087,6 +1087,7 @@ def _device_from_payload(payload: object) -> ASRWorkerDevice:
         device_type=cast(str, payload["device_type"]),
         memory_total_bytes=_required_int(payload, "memory_total_bytes"),
         memory_free_bytes=_required_int(payload, "memory_free_bytes"),
+        kind=str(payload.get("kind") or ""),
     )
 
 

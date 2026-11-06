@@ -124,6 +124,10 @@ class ProviderSettingsSnapshot:
     qwen_api_host_beijing: str = ""
     qwen_api_host_singapore: str = ""
     stt_local_model: str = ""
+    stt_gpu_backend: str = "vulkan"
+    stt_shared_engine: bool = False
+    peer_stt_gpu_device_id: str = "auto"
+    peer_stt_gpu_backend: str = "vulkan"
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +357,26 @@ class SttGpuDeviceEdit:
 
 
 @dataclass(frozen=True, slots=True)
+class SttGpuBackendEdit:
+    backend: str
+
+
+@dataclass(frozen=True, slots=True)
+class SttSharedEngineEdit:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PeerSttGpuDeviceEdit:
+    device_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PeerSttGpuBackendEdit:
+    backend: str
+
+
+@dataclass(frozen=True, slots=True)
 class LlmGpuDeviceEdit:
     device_id: str
 
@@ -429,6 +453,10 @@ ProviderSettingsEdit: TypeAlias = (
     | SonioxSpeakerDiarizationEdit
     | PeerSttProviderEdit
     | SttGpuDeviceEdit
+    | SttGpuBackendEdit
+    | SttSharedEngineEdit
+    | PeerSttGpuDeviceEdit
+    | PeerSttGpuBackendEdit
     | SttLocalModelEdit
     | LlmGpuDeviceEdit
     | TranslationSelectionEdit
@@ -503,6 +531,10 @@ __all__ = [
     "SelfVadSettingsIntent",
     "SettingsApplyOutcome",
     "SttGpuDeviceEdit",
+    "SttGpuBackendEdit",
+    "SttSharedEngineEdit",
+    "PeerSttGpuDeviceEdit",
+    "PeerSttGpuBackendEdit",
     "SttLocalModelEdit",
     "SystemPromptEdit",
     "TelemetrySettingsIntent",

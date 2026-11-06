@@ -72,6 +72,8 @@ class LocalASRProviderRuntimeCallbacks:
 class ProviderRuntimeBuildRequest:
     config: ResolvedSTTConfig
     gpu_device_id: str = "auto"
+    gpu_backend: str = "vulkan"
+    shared_engine: bool = False
     warmup: bool = False
     model_id: str | None = None
     session_options: LocalASRSessionOptions | None = None
@@ -86,6 +88,8 @@ class ProviderRuntimeBuildRequest:
             raise ValueError("provider runtime channel must be self or peer")
         if not self.gpu_device_id.strip():
             raise ValueError("gpu_device_id must be non-empty")
+        if self.gpu_backend not in {"cpu", "vulkan", "cuda"}:
+            raise ValueError("gpu_backend must be cpu, vulkan or cuda")
         if self.recognition_projection == "scoped" and (
             self.provider_signature is None or self.runtime_signature is None
         ):

@@ -131,7 +131,9 @@ def test_shipped_source_constructs_shared_gpu_runtime_only_in_canonical_factory(
         if count:
             constructor_calls[source_file.relative_to(SOURCE_ROOT).as_posix()] = count
 
-    assert constructor_calls == {"app/wiring/wiring_local_asr_provider_runtime.py": 1}
+    # Both call sites stay inside the canonical factory module: the shared
+    # runtime lambda and the per-channel runtime for independent engines.
+    assert constructor_calls == {"app/wiring/wiring_local_asr_provider_runtime.py": 2}
     wiring_source = (SOURCE_ROOT / "app" / "wiring" / "root.py").read_text(encoding="utf-8")
     assert "_create_shared_gpu_asr_runtime" not in wiring_source
 

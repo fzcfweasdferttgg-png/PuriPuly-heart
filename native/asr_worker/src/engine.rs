@@ -2,24 +2,25 @@ use serde::Serialize;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use transcribe_cpp::{
-    backend_available, devices, init_backends_default, init_backends_with, Backend, BackendMask, CancelToken, DeviceType, Error,
+    devices, init_backends_default, init_backends_with, Backend, BackendMask, CancelToken, DeviceType, Error,
     Feature, Itn, Model, ModelOptions, RunOptions, Session, SessionOptions, TimestampKind,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct VulkanDevice {
+pub struct EngineDevice {
     pub device_id: String,
     pub registry_index: usize,
     pub name: String,
     pub description: String,
     pub device_type: String,
+    pub kind: String,
     pub memory_total_bytes: u64,
     pub memory_free_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ActivationResult {
-    pub device: VulkanDevice,
+    pub device: EngineDevice,
     pub model_load_seconds: f64,
     pub warmup_seconds: f64,
 }
@@ -76,6 +77,8 @@ pub enum EngineError {
     ModelInvalid,
     #[error("strict_vulkan_rejected")]
     StrictVulkanRejected,
+    #[error("strict_cuda_rejected")]
+    StrictCudaRejected,
     #[error("warmup_failed")]
     WarmupFailed,
     #[error("audio_invalid")]
@@ -102,6 +105,7 @@ impl EngineError {
             Self::ModelMissing => "model_missing",
             Self::ModelInvalid => "model_invalid",
             Self::StrictVulkanRejected => "strict_vulkan_rejected",
+            Self::StrictCudaRejected => "strict_cuda_rejected",
             Self::WarmupFailed => "warmup_failed",
             Self::AudioInvalid => "audio_invalid",
             Self::Cancelled => "cancelled",
@@ -125,14 +129,13 @@ const DISCOVERY_ATTEMPTS: u32 = 8;
 const DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 impl ASREngine {
-    pub fn discover() -> Result<Vec<VulkanDevice>, EngineError> {
+    pub fn discover() -> Result<Vec<EngineDevice>, EngineError> {
         retry_discovery(
             || {
                 init_backends_default().map_err(map_backend_error)?;
-                if !backend_available(Backend::Vulkan) {
-                    return Ok(Vec::new());
-                }
-                Ok(enumerate_vulkan_devices())
+                let mut devices = enumerate_kind_devices("vulkan");
+                devices.extend(enumerate_kind_devices("cuda"));
+                Ok(devices)
             },
             DISCOVERY_ATTEMPTS,
             DISCOVERY_RETRY_DELAY,
@@ -166,25 +169,37 @@ impl ASREngine {
             return Err(EngineError::ModelInvalid);
         }
         let selected_device = match backend {
-            "cpu" if n_threads == 2 && matches!(channel, Some("self" | "peer")) => {
+            "cpu" => {
                 init_backends_with(None::<&Path>, BackendMask::CPU).map_err(map_backend_error)?;
-                VulkanDevice {
+                EngineDevice {
                     device_id: "cpu".to_string(),
                     registry_index: 0,
                     name: "CPU".to_string(),
                     description: "CPU".to_string(),
                     device_type: "cpu".to_string(),
+                    kind: "cpu".to_string(),
                     memory_total_bytes: 0,
                     memory_free_bytes: 0,
                 }
             }
-            "vulkan" if channel.is_none() => {
-                let available_devices = Self::discover()?;
+            "vulkan" | "cuda" => {
+                let mask = BackendMask::for_backend(match backend {
+                    "vulkan" => Backend::Vulkan,
+                    _ => Backend::Cuda,
+                });
+                init_backends_with(None::<&Path>, mask).map_err(map_backend_error)?;
+                let available_devices: Vec<EngineDevice> = enumerate_kind_devices(backend);
                 if device_id == "auto" {
-                    available_devices.first().cloned().ok_or(EngineError::UnsupportedCapability)?
+                    available_devices
+                        .first()
+                        .cloned()
+                        .ok_or(EngineError::UnsupportedCapability)?
                 } else {
-                    available_devices.iter().find(|device| device.device_id == device_id)
-                        .cloned().ok_or(EngineError::DeviceUnavailable)?
+                    available_devices
+                        .iter()
+                        .find(|device| device.device_id == device_id)
+                        .cloned()
+                        .ok_or(EngineError::DeviceUnavailable)?
                 }
             }
             _ => return Err(EngineError::UnsupportedCapability),
@@ -192,13 +207,27 @@ impl ASREngine {
 
         progress("loading", 0.25);
         let load_started = Instant::now();
+        let model_backend = match backend {
+            "cpu" => Backend::Cpu,
+            "cuda" => Backend::Cuda,
+            _ => Backend::Vulkan,
+        };
         let model = Model::load_with(
             model_path,
             &ModelOptions {
-                backend: if backend == "cpu" { Backend::Cpu } else { Backend::Vulkan },
-                device: if backend == "cpu" { None } else {
-                    Some(devices().into_iter().find(|device| device.index == Some(selected_device.registry_index))
-                        .ok_or(EngineError::DeviceUnavailable)?)
+                backend: model_backend,
+                device: if backend == "cpu" {
+                    None
+                } else {
+                    Some(
+                        devices()
+                            .into_iter()
+                            .find(|device| {
+                                device.index == Some(selected_device.registry_index)
+                                    && device.kind.eq_ignore_ascii_case(backend)
+                            })
+                            .ok_or(EngineError::DeviceUnavailable)?,
+                    )
                 },
                 ..ModelOptions::default()
             },
@@ -208,28 +237,42 @@ impl ASREngine {
             if !model.backend().eq_ignore_ascii_case("cpu") {
                 return Err(EngineError::StrictCpuRejected);
             }
-        } else if !model.backend().to_ascii_lowercase().starts_with("vulkan")
-            || !model.supports(Feature::Cancellation)
-        {
+        } else if !model.backend().to_ascii_lowercase().starts_with(backend) {
+            return Err(if backend == "cuda" {
+                EngineError::StrictCudaRejected
+            } else {
+                EngineError::StrictVulkanRejected
+            });
+        } else if backend == "vulkan" && !model.supports(Feature::Cancellation) {
             return Err(EngineError::StrictVulkanRejected);
         }
         let model_load_seconds = load_started.elapsed().as_secs_f64();
         let session_options = SessionOptions { n_threads, ..SessionOptions::default() };
         let mut sessions: [Option<Session>; 2] = [None, None];
-        let first = if channel == Some("peer") { 1 } else { 0 };
         let mut session = model.session_with(&session_options).map_err(map_backend_error)?;
         session.set_cancel_token(cancel_token);
-        let warmup_seconds = if backend == "vulkan" {
+        let warmup_seconds = if backend == "cpu" {
+            0.0
+        } else {
             progress("warming", 0.75);
             let warmup_started = Instant::now();
             let run_options = RunOptions { timestamps: TimestampKind::None, ..RunOptions::default() };
             session.run(&[0.0_f32; 16_000], &run_options).map_err(map_warmup_error)?;
-            sessions[1] = Some(model.session_with(&session_options).map_err(map_backend_error)?);
             warmup_started.elapsed().as_secs_f64()
-        } else {
-            0.0
         };
-        sessions[first] = Some(session);
+        match channel {
+            None => {
+                sessions[0] = Some(session);
+                sessions[1] =
+                    Some(model.session_with(&session_options).map_err(map_backend_error)?);
+            }
+            Some("peer") => {
+                sessions[1] = Some(session);
+            }
+            Some(_) => {
+                sessions[0] = Some(session);
+            }
+        }
         if cancel_token.is_cancelled() {
             return Err(EngineError::Cancelled);
         }
@@ -316,6 +359,7 @@ impl ASREngine {
         match self.backend.as_deref() {
             Some("cpu") => "cpu",
             Some("vulkan") => "Vulkan",
+            Some("cuda") => "CUDA",
             _ => "unloaded",
         }
     }
@@ -420,16 +464,16 @@ fn report_native_error(stage: &str, error: &Error) {
     );
 }
 
-fn enumerate_vulkan_devices() -> Vec<VulkanDevice> {
+fn enumerate_kind_devices(kind: &str) -> Vec<EngineDevice> {
     devices()
         .into_iter()
-        .filter(|device| device.kind.eq_ignore_ascii_case("vulkan"))
+        .filter(|device| device.kind.eq_ignore_ascii_case(kind))
         .filter_map(|device| {
             let registry_index = device.index?;
-            Some(VulkanDevice {
+            Some(EngineDevice {
                 device_id: device
                     .device_id
-                    .unwrap_or_else(|| format!("vulkan-index-{registry_index}")),
+                    .unwrap_or_else(|| format!("{kind}-index-{registry_index}")),
                 registry_index,
                 name: device.name,
                 description: device.description,
@@ -441,20 +485,20 @@ fn enumerate_vulkan_devices() -> Vec<VulkanDevice> {
                     DeviceType::Unknown => "unknown",
                 }
                 .to_string(),
+                kind: kind.to_string(),
                 memory_total_bytes: device.memory_total,
                 memory_free_bytes: device.memory_free,
             })
         })
         .collect()
 }
-
 fn retry_discovery<F>(
     mut probe: F,
     attempts: u32,
     delay: Duration,
-) -> Result<Vec<VulkanDevice>, EngineError>
+) -> Result<Vec<EngineDevice>, EngineError>
 where
-    F: FnMut() -> Result<Vec<VulkanDevice>, EngineError>,
+    F: FnMut() -> Result<Vec<EngineDevice>, EngineError>,
 {
     let attempts = attempts.max(1);
     let mut last_error = None;
@@ -486,19 +530,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{execute_started_decode, retry_discovery, EngineError, ASREngine, VulkanDevice};
+    use super::{execute_started_decode, retry_discovery, EngineError, ASREngine, EngineDevice};
     use std::cell::Cell;
     use std::path::Path;
     use std::time::Duration;
     use transcribe_cpp::CancelToken;
 
-    fn sample_device(device_id: &str) -> VulkanDevice {
-        VulkanDevice {
+    fn sample_device(device_id: &str) -> EngineDevice {
+        EngineDevice {
             device_id: device_id.to_string(),
             registry_index: 0,
             name: "GPU 0".to_string(),
             description: "Physical Vulkan GPU".to_string(),
             device_type: "gpu".to_string(),
+            kind: "vulkan".to_string(),
             memory_total_bytes: 8_000_000_000,
             memory_free_bytes: 4_000_000_000,
         }

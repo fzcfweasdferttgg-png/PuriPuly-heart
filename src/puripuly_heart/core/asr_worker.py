@@ -19,6 +19,7 @@ class ASRWorkerDevice:
     device_type: str
     memory_total_bytes: int
     memory_free_bytes: int
+    kind: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +98,7 @@ class ASRWorkerClientPort(Protocol):
         *,
         model_path: Path,
         device_id: str,
-        backend: Literal["cpu", "vulkan"] = "vulkan",
+        backend: Literal["cpu", "vulkan", "cuda"] = "vulkan",
         channel: Literal["self", "peer"] | None = None,
         n_threads: int = 2,
     ) -> ASRWorkerActivation: ...

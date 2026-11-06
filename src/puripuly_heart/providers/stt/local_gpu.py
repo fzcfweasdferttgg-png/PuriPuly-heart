@@ -51,6 +51,8 @@ class LocalGpuSTTBackend(STTBackend):
     active_decode_timeout_s: float = 30.0
     operation_id: str | None = None
     request_id: str | None = None
+    backend: str = "vulkan"
+    owns_runtime: bool = False
     _closed: bool = field(init=False, default=False, repr=False)
     _active: bool = field(init=False, default=False, repr=False)
     _lock: asyncio.Lock = field(init=False, repr=False)
@@ -89,6 +91,8 @@ class LocalGpuSTTBackend(STTBackend):
             device_id=self.device_id,
             operation_id=operation_id,
             request_id=request_id,
+            backend=self.backend,
+            worker_channel=self.channel if self.owns_runtime else None,
         )
         async with self._lock:
             if self._closed or self._closing:
@@ -127,6 +131,8 @@ class LocalGpuSTTBackend(STTBackend):
             self._active = False
             self._closed = True
             self._closing = False
+        if self.owns_runtime:
+            await self.runtime.close()
 
     async def _quarantine(self, session: _LocalGpuSTTSession) -> None:
         async with self._lock:

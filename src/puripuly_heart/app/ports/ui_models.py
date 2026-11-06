@@ -21,6 +21,7 @@ class GpuDeviceOption:
     device_id: str
     display_name: str
     backend_name: str
+    kind: str = ""
 
 
 @dataclass(frozen=True, slots=True)

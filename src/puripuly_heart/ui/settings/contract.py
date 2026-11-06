@@ -150,10 +150,14 @@ class SettingsApiSurfaceSlots:
     model_assets: ft.Control
     local_llm_connection: ft.Control
     http_extension: ft.Control | None = None
+    peer_gpu_device: ft.Control | None = None
+    shared_engine: ft.Control | None = None
 
     @classmethod
     def from_slot_provider(cls, provider: SettingsApiSlotProvider) -> SettingsApiSurfaceSlots:
         extension_factory = getattr(provider, "http_extension_control", None)
+        peer_gpu_factory = getattr(provider, "peer_gpu_device_control", None)
+        shared_engine_factory = getattr(provider, "shared_engine_control", None)
         return cls(
             self_stt=provider.self_stt_control(),
             peer_stt=provider.peer_stt_control(),
@@ -165,6 +169,8 @@ class SettingsApiSurfaceSlots:
             model_assets=provider.model_assets_control(),
             local_llm_connection=provider.local_llm_connection_control(),
             http_extension=(extension_factory() if callable(extension_factory) else None),
+            peer_gpu_device=(peer_gpu_factory() if callable(peer_gpu_factory) else None),
+            shared_engine=(shared_engine_factory() if callable(shared_engine_factory) else None),
         )
 
 
