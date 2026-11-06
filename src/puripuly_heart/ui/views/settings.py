@@ -3456,7 +3456,9 @@ class SettingsView(ft.Column):
         if hasattr(self, "_http_extension_credentials"):
             self._http_extension_credentials.visible = is_custom_http
             _update_control_if_mounted(self._http_extension_credentials)
-        self._translation_connection_row.visible = not is_custom_http
+        # Removed from the surface for now: the future model folds the
+        # connection choice into the translation / backup-translation cards.
+        self._translation_connection_row.visible = False
         self._local_llm_connection_card.visible = (
             not is_custom_http and llm == LLMProviderName.LOCAL_LLM
         )
