@@ -347,6 +347,17 @@ def _update_control_if_mounted(control: ft.Control) -> None:
     update_control_if_mounted(control)
 
 
+def _scaled_value_text_size(text: str, base: int = 28) -> int:
+    length = len(text)
+    if length <= 10:
+        return base
+    if length <= 18:
+        return base - 6
+    if length <= 26:
+        return base - 10
+    return base - 12
+
+
 class SettingsView(ft.Column):
     """Settings view with Bento grid layout."""
 
@@ -616,7 +627,7 @@ class SettingsView(ft.Column):
     ) -> None:
         text_control = control.content
         text_control.value = text
-        text_control.size = size
+        text_control.size = _scaled_value_text_size(text, size)
 
     def _iter_locale_sensitive_clickable_text_controls(self) -> tuple[ft.Container, ...]:
         return (
@@ -652,6 +663,9 @@ class SettingsView(ft.Column):
             self._translation_connection_text,
             self._http_extension_text,
             self._http_extension_path_text,
+            self._backup_translation_text,
+            self._openai_provider_text,
+            self._backup_provider_text,
         )
 
     def _sync_clickable_text_control_fonts(self, font_family: str | None) -> None:
@@ -1320,6 +1334,8 @@ class SettingsView(ft.Column):
             title=self._model_assets_title,
             value=self._model_assets_text,
         )
+        self._model_assets_card.expand = False
+        self._model_assets_card.width = 280
         for card in (
             self._gpu_device_card,
             self._peer_gpu_device_card,
@@ -3800,6 +3816,14 @@ class SettingsView(ft.Column):
         )
         self._backup_local_group.visible = backup_variant == TranslationModel.LOCAL_LLM
         self._sync_http_extension_card(settings)
+        for control in (
+            self._openai_compatible_card,
+            self._local_llm_connection_card,
+            self._backup_config_card,
+            self._backup_network_group,
+            self._backup_local_group,
+        ):
+            _update_control_if_mounted(control)
 
     # --- Event Handlers ---
     @staticmethod
@@ -4289,6 +4313,7 @@ class SettingsView(ft.Column):
             current_settings.translation.model == model
             and current_settings.translation.connection == connection
         ):
+            self._update_api_visibility()
             return
         self._apply_translation_selection(model, connection)
 

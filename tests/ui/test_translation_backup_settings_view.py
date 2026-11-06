@@ -240,3 +240,60 @@ def test_variant_forms_follow_the_selected_model(
     view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
     assert view._local_llm_connection_card.visible is True
     assert view._openai_compatible_card.visible is False
+
+
+def test_value_text_scales_down_for_long_labels(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    view._set_unit_card_value_text(view._backup_translation_text, "Выключено")
+    assert view._backup_translation_text.content.size == 28
+
+    view._set_unit_card_value_text(view._backup_translation_text, "Свой сервер")
+    assert view._backup_translation_text.content.size == 22
+
+    view._set_unit_card_value_text(view._backup_translation_text, "OpenAI-совместимые провайдеры")
+    assert view._backup_translation_text.content.size == 16
+
+
+def test_variant_selection_flushes_form_updates(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    flushed: list[object] = []
+    monkeypatch.setattr(
+        settings_view, "_update_control_if_mounted", lambda control: flushed.append(control)
+    )
+
+    view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
+    assert view._openai_compatible_card in flushed
+
+    view._on_backup_variant_selected(TranslationModel.LOCAL_LLM.value)
+    assert view._backup_config_card in flushed
+    assert view._backup_local_group in flushed
+
+
+def test_reselecting_the_current_variant_still_shows_its_form(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
+    view._openai_compatible_card.visible = False
+
+    view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
+
+    assert view._openai_compatible_card.visible is True
+
+
+def test_model_assets_card_does_not_stretch(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    assert view._model_assets_card.expand is False
+    assert view._model_assets_card.width == 280
