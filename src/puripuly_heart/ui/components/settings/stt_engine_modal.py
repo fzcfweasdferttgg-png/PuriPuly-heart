@@ -39,7 +39,7 @@ def build_backend_toggle(
     compact: bool = False,
 ) -> ft.Control:
     """Build the connected three-segment CPU / Vulkan / CUDA control."""
-    segment_width = 66 if compact else 120
+    segment_width = 62 if compact else 120
     segment_height = 30 if compact else 40
     font_size = 12 if compact else 15
     group_radius = 10 if compact else 12
@@ -82,6 +82,7 @@ def build_backend_toggle(
         segments.append(segment)
     return ft.Container(
         content=ft.Row(controls=segments, spacing=0),
+        width=segment_width * len(ENGINE_BACKENDS),
         border=ft.Border.all(1, ft.Colors.with_opacity(0.35, COLOR_NEUTRAL_DARK)),
         border_radius=group_radius,
         clip_behavior=ft.ClipBehavior.HARD_EDGE,

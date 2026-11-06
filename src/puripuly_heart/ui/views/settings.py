@@ -886,7 +886,9 @@ class SettingsView(ft.Column):
             t("settings.section.stt"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_SECONDARY
         )
         self._stt_backend_toggle_host = ft.Container(
-            content=build_backend_toggle("vulkan", {}, self._on_stt_engine_selected),
+            content=build_backend_toggle(
+                "vulkan", {}, self._on_stt_engine_selected, compact=True
+            ),
             alignment=ft.Alignment.CENTER,
             visible=False,
         )
@@ -1166,7 +1168,9 @@ class SettingsView(ft.Column):
             self._on_peer_stt_click,
         )
         self._peer_backend_toggle_host = ft.Container(
-            content=build_backend_toggle("vulkan", {}, self._on_peer_stt_engine_selected),
+            content=build_backend_toggle(
+                "vulkan", {}, self._on_peer_stt_engine_selected, compact=True
+            ),
             alignment=ft.Alignment.CENTER,
             visible=False,
         )
@@ -2044,12 +2048,14 @@ class SettingsView(ft.Column):
             settings.stt_gpu_backend,
             available,
             self._on_stt_engine_selected,
+            compact=True,
         )
         self._stt_backend_toggle_host.visible = self_local
         self._peer_backend_toggle_host.content = build_backend_toggle(
             settings.peer_stt_gpu_backend,
             available,
             self._on_peer_stt_engine_selected,
+            compact=True,
         )
         self._peer_backend_toggle_host.visible = peer_local and not shared_engine
         _update_control_if_mounted(self._stt_backend_toggle_host)
@@ -3698,20 +3704,14 @@ class SettingsView(ft.Column):
     ) -> str:
         if peer and settings.stt_shared_engine:
             provider = settings.stt_provider
-            backend = settings.stt_gpu_backend
         elif peer:
             provider = settings.peer_stt_provider
-            backend = settings.peer_stt_gpu_backend
         else:
             provider = settings.stt_provider
-            backend = settings.stt_gpu_backend
-        label = self._stt_provider_display_label(
+        return self._stt_provider_display_label(
             provider,
             custom_mode=settings.custom_stt_mode,
         )
-        if provider == STTProviderName.LOCAL_QWEN_GPU:
-            return f"{label}\n{self._engine_backend_label(backend)}"
-        return label
 
     def _sync_stt_provider_labels(self, settings: ProviderSettingsSnapshot) -> None:
         self._set_unit_card_value_text(
