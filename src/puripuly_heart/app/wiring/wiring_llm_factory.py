@@ -101,6 +101,45 @@ def prepare_llm_factory_extras(
     return extras or LlmFactoryResolvedExtras()
 
 
+def user_translation_intent_from_vnext(settings: AppSettingsVNext):
+    from puripuly_heart.config.runtime_resolution import (
+        UserBackupTranslationRuntimeIntent,
+        UserLocalLLMRuntimeIntent,
+        UserOpenAICompatibleRuntimeIntent,
+        UserTranslationRuntimeIntent,
+    )
+
+    backup = settings.intent.backup_translation
+    openai_compatible = settings.intent.openai_compatible
+    local_llm = settings.intent.local_llm
+    return UserTranslationRuntimeIntent(
+        openai_compatible=UserOpenAICompatibleRuntimeIntent(
+            provider_key=openai_compatible.provider_key,
+            base_url=openai_compatible.base_url,
+            model=openai_compatible.model,
+        ),
+        local_llm=UserLocalLLMRuntimeIntent(
+            base_url=local_llm.base_url,
+            model=local_llm.model,
+            extra_body=local_llm.extra_body,
+        ),
+        backup=UserBackupTranslationRuntimeIntent(
+            enabled=backup.enabled,
+            model=backup.model,
+            openai_compatible=UserOpenAICompatibleRuntimeIntent(
+                provider_key=backup.openai_compatible.provider_key,
+                base_url=backup.openai_compatible.base_url,
+                model=backup.openai_compatible.model,
+            ),
+            local_llm=UserLocalLLMRuntimeIntent(
+                base_url=backup.local_llm.base_url,
+                model=backup.local_llm.model,
+                extra_body=backup.local_llm.extra_body,
+            ),
+        ),
+    )
+
+
 def runtime_resolution_input_from_vnext(settings: AppSettingsVNext) -> RuntimeResolutionInput:
     translation = settings.intent.translation
     local_llm = settings.intent.local_llm
@@ -137,6 +176,7 @@ def runtime_resolution_input_from_vnext(settings: AppSettingsVNext) -> RuntimeRe
             local_llm_model=local_llm.model,
             local_llm_extra_body=local_llm.extra_body,
         ),
+        user=user_translation_intent_from_vnext(settings),
     )
 
 

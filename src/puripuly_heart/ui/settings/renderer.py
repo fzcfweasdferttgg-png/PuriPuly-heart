@@ -27,6 +27,8 @@ def compose_settings_api_surface(
         provider_items.append(slots.shared_engine)
     provider_items.append(slots.peer_stt)
     provider_items.append(slots.translation_provider)
+    if slots.backup_translation is not None:
+        provider_items.append(slots.backup_translation)
     provider_controls = ft.Row(
         provider_items,
         spacing=SETTINGS_ROW_SPACING,
@@ -57,12 +59,31 @@ def compose_settings_api_surface(
     gpu_device_row = ft.Container(content=gpu_device_controls)
     gpu_device_row.visible = True
 
+    translation_config_items: list[ft.Control] = []
+    if slots.openai_compatible_config is not None:
+        translation_config_items.append(slots.openai_compatible_config)
+    if slots.backup_translation_config is not None:
+        translation_config_items.append(slots.backup_translation_config)
+    translation_config_row = ft.Container(
+        content=ft.Row(
+            translation_config_items,
+            spacing=SETTINGS_ROW_SPACING,
+            expand=True,
+        ),
+        visible=bool(translation_config_items),
+    )
     rows: list[ft.Control] = [
         provider_row,
         translation_connection_row,
-        gpu_device_row,
-        slots.local_llm_connection,
     ]
+    if translation_config_items:
+        rows.append(translation_config_row)
+    rows.extend(
+        [
+            gpu_device_row,
+            slots.local_llm_connection,
+        ]
+    )
     if slots.http_extension is not None:
         rows.insert(2, slots.http_extension)
 

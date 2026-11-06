@@ -128,6 +128,17 @@ class ProviderSettingsSnapshot:
     stt_shared_engine: bool = False
     peer_stt_gpu_device_id: str = "auto"
     peer_stt_gpu_backend: str = "vulkan"
+    openai_compatible_provider_key: str = ""
+    openai_compatible_base_url: str = ""
+    openai_compatible_model: str = ""
+    backup_enabled: bool = False
+    backup_variant: str = ""
+    backup_provider_key: str = ""
+    backup_base_url: str = ""
+    backup_model: str = ""
+    backup_local_base_url: str = ""
+    backup_local_model: str = ""
+    backup_local_extra_body_json: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,6 +458,61 @@ class SttLocalModelEdit:
     model: str
 
 
+@dataclass(frozen=True, slots=True)
+class OpenAICompatibleProviderKeyEdit:
+    provider_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class OpenAICompatibleBaseUrlEdit:
+    base_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class OpenAICompatibleModelEdit:
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupTranslationEnabledEdit:
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BackupVariantEdit:
+    variant: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupOpenAICompatibleProviderKeyEdit:
+    provider_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupOpenAICompatibleBaseUrlEdit:
+    base_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupOpenAICompatibleModelEdit:
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupLocalLlmBaseUrlEdit:
+    base_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupLocalLlmModelEdit:
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupLocalLlmExtraBodyEdit:
+    extra_body_json: str
+
+
 ProviderSettingsEdit: TypeAlias = (
     SelfSttProviderEdit
     | CloudFreeTierProvidersEdit
@@ -470,6 +536,17 @@ ProviderSettingsEdit: TypeAlias = (
     | CustomSttEndpointEdit
     | CustomSttModelEdit
     | CustomSttExtraEdit
+    | OpenAICompatibleProviderKeyEdit
+    | OpenAICompatibleBaseUrlEdit
+    | OpenAICompatibleModelEdit
+    | BackupTranslationEnabledEdit
+    | BackupVariantEdit
+    | BackupOpenAICompatibleProviderKeyEdit
+    | BackupOpenAICompatibleBaseUrlEdit
+    | BackupOpenAICompatibleModelEdit
+    | BackupLocalLlmBaseUrlEdit
+    | BackupLocalLlmModelEdit
+    | BackupLocalLlmExtraBodyEdit
     | SystemPromptEdit
 )
 
@@ -535,6 +612,17 @@ __all__ = [
     "SttSharedEngineEdit",
     "PeerSttGpuDeviceEdit",
     "PeerSttGpuBackendEdit",
+    "OpenAICompatibleProviderKeyEdit",
+    "OpenAICompatibleBaseUrlEdit",
+    "OpenAICompatibleModelEdit",
+    "BackupTranslationEnabledEdit",
+    "BackupVariantEdit",
+    "BackupOpenAICompatibleProviderKeyEdit",
+    "BackupOpenAICompatibleBaseUrlEdit",
+    "BackupOpenAICompatibleModelEdit",
+    "BackupLocalLlmBaseUrlEdit",
+    "BackupLocalLlmModelEdit",
+    "BackupLocalLlmExtraBodyEdit",
     "SttLocalModelEdit",
     "SystemPromptEdit",
     "TelemetrySettingsIntent",

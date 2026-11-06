@@ -160,6 +160,7 @@ class LLMProviderName(str, Enum):
     DEEPSEEK = "deepseek"
     MANAGED_GEMMA = "managed_gemma"
     LOCAL_LLM = "local_llm"
+    OPENAI_COMPATIBLE = "openai_compatible"
 
 
 class QwenRegion(str, Enum):

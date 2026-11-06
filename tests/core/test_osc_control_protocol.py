@@ -218,6 +218,7 @@ def test_osc_public_abi_snapshot_is_append_only_and_exact() -> None:
         14: "gpt_6_luna",
         15: "managed_gemma_26b",
         16: "index_translate_35b",
+        17: "openai_compatible",
     }
     assert dict(TRANSLATION_CONNECTION_BY_MODEL_ID) == {
         10: "cpu",

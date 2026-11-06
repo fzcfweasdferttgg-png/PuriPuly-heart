@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 from puripuly_heart.app.wiring.wiring_llm_factory import (
     LlmFactoryResolvedExtras,
     create_llm_provider,
 )
+from puripuly_heart.app.wiring.wiring_translation_variants import (
+    build_backup_provider,
+    build_variant_provider,
+    is_user_variant,
+    wrap_backup_chain,
+)
+from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
 from puripuly_heart.config.runtime_resolution import RuntimeResolutionInput
 from puripuly_heart.core.chatgpt.session import ChatGptAccessTokenPort
 from puripuly_heart.core.http_extensions import (
@@ -41,8 +49,18 @@ def create_translation_backend(
     if model != "custom_http":
         if runtime_input is None:
             raise ValueError("LLM translation backend requires runtime_input")
-        return LlmTranslationBackend(
-            create_llm_provider(
+        user = runtime_input.user
+        if is_user_variant(model):
+            base = build_variant_provider(
+                model,
+                local_llm=user.local_llm,
+                openai_compatible=user.openai_compatible,
+                secrets=secrets,
+            )
+            if base is None:
+                raise ValueError("translation variant needs an address and a model")
+        else:
+            base = create_llm_provider(
                 runtime_input,
                 secrets=secrets,
                 extras=extras,
@@ -53,7 +71,15 @@ def create_translation_backend(
                 managed_gemma_release=managed_gemma_release,
                 chatgpt_session=chatgpt_session,
             )
-        )
+        backup = build_backup_provider(user.backup, secrets=secrets)
+        provider = wrap_backup_chain(base, backup)
+        if is_user_variant(model):
+            provider = SemaphoreLLMProvider(
+                inner=provider,
+                semaphore=asyncio.Semaphore(concurrency_limit),
+                provider_name=model,
+            )
+        return LlmTranslationBackend(provider)
 
     loaded = http_extensions.snapshot.get(http_extension_id)
     if loaded is None:

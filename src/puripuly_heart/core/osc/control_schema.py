@@ -105,6 +105,7 @@ TRANSLATION_MODEL_IDS: Final[Mapping[int, str]] = MappingProxyType(
         14: "gpt_6_luna",
         15: "managed_gemma_26b",
         16: "index_translate_35b",
+        17: "openai_compatible",
     }
 )
 

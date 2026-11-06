@@ -37,6 +37,8 @@ class SettingsProviderIntents:
     gpu_discovery_requested: Callable[[], object]
     settings_secrets: SettingsSecretsPort
     open_model_assets: Callable[[], None] | None = None
+    fetch_models: Callable[[str, str], object] | None = None
+    test_connection: Callable[[str, str], object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,12 +154,18 @@ class SettingsApiSurfaceSlots:
     http_extension: ft.Control | None = None
     peer_gpu_device: ft.Control | None = None
     shared_engine: ft.Control | None = None
+    backup_translation: ft.Control | None = None
+    openai_compatible_config: ft.Control | None = None
+    backup_translation_config: ft.Control | None = None
 
     @classmethod
     def from_slot_provider(cls, provider: SettingsApiSlotProvider) -> SettingsApiSurfaceSlots:
         extension_factory = getattr(provider, "http_extension_control", None)
         peer_gpu_factory = getattr(provider, "peer_gpu_device_control", None)
         shared_engine_factory = getattr(provider, "shared_engine_control", None)
+        backup_translation_factory = getattr(provider, "backup_translation_control", None)
+        openai_config_factory = getattr(provider, "openai_compatible_config_control", None)
+        backup_config_factory = getattr(provider, "backup_translation_config_control", None)
         return cls(
             self_stt=provider.self_stt_control(),
             peer_stt=provider.peer_stt_control(),
@@ -171,6 +179,15 @@ class SettingsApiSurfaceSlots:
             http_extension=(extension_factory() if callable(extension_factory) else None),
             peer_gpu_device=(peer_gpu_factory() if callable(peer_gpu_factory) else None),
             shared_engine=(shared_engine_factory() if callable(shared_engine_factory) else None),
+            backup_translation=(
+                backup_translation_factory() if callable(backup_translation_factory) else None
+            ),
+            openai_compatible_config=(
+                openai_config_factory() if callable(openai_config_factory) else None
+            ),
+            backup_translation_config=(
+                backup_config_factory() if callable(backup_config_factory) else None
+            ),
         )
 
 

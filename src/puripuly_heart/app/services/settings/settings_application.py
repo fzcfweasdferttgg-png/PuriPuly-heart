@@ -62,6 +62,17 @@ from puripuly_heart.app.ports.settings_view import (
     SttSharedEngineEdit,
     PeerSttGpuBackendEdit,
     PeerSttGpuDeviceEdit,
+    OpenAICompatibleProviderKeyEdit,
+    OpenAICompatibleBaseUrlEdit,
+    OpenAICompatibleModelEdit,
+    BackupTranslationEnabledEdit,
+    BackupVariantEdit,
+    BackupOpenAICompatibleProviderKeyEdit,
+    BackupOpenAICompatibleBaseUrlEdit,
+    BackupOpenAICompatibleModelEdit,
+    BackupLocalLlmBaseUrlEdit,
+    BackupLocalLlmModelEdit,
+    BackupLocalLlmExtraBodyEdit,
     SttLocalModelEdit,
     SystemPromptEdit,
     TranslationHttpExtensionEdit,
@@ -272,6 +283,21 @@ def settings_view_surface_snapshots(
             intent.stt.gpu_backend if intent.stt.shared_engine else intent.peer_stt.gpu_backend
         ),
         stt_local_model=intent.stt.model,
+        openai_compatible_provider_key=intent.openai_compatible.provider_key,
+        openai_compatible_base_url=intent.openai_compatible.base_url,
+        openai_compatible_model=intent.openai_compatible.model,
+        backup_enabled=intent.backup_translation.enabled,
+        backup_variant=intent.backup_translation.model,
+        backup_provider_key=intent.backup_translation.openai_compatible.provider_key,
+        backup_base_url=intent.backup_translation.openai_compatible.base_url,
+        backup_model=intent.backup_translation.openai_compatible.model,
+        backup_local_base_url=intent.backup_translation.local_llm.base_url,
+        backup_local_model=intent.backup_translation.local_llm.model,
+        backup_local_extra_body_json=json.dumps(
+            intent.backup_translation.local_llm.extra_body,
+            ensure_ascii=False,
+            indent=2,
+        ),
         qwen_region=QwenRegion(intent.translation.qwen.region),
         local_llm_base_url=intent.local_llm.base_url,
         local_llm_model=intent.local_llm.model,
@@ -758,6 +784,101 @@ def materialize_provider_apply_intent(
             updated = _with_intent(
                 updated,
                 peer_stt=replace(updated.intent.peer_stt, gpu_backend=edit.backend),
+            )
+        elif isinstance(edit, OpenAICompatibleProviderKeyEdit):
+            updated = _with_intent(
+                updated,
+                openai_compatible=replace(
+                    updated.intent.openai_compatible, provider_key=edit.provider_key
+                ),
+            )
+        elif isinstance(edit, OpenAICompatibleBaseUrlEdit):
+            updated = _with_intent(
+                updated,
+                openai_compatible=replace(
+                    updated.intent.openai_compatible, base_url=edit.base_url
+                ),
+            )
+        elif isinstance(edit, OpenAICompatibleModelEdit):
+            updated = _with_intent(
+                updated,
+                openai_compatible=replace(updated.intent.openai_compatible, model=edit.model),
+            )
+        elif isinstance(edit, BackupTranslationEnabledEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation, enabled=edit.enabled
+                ),
+            )
+        elif isinstance(edit, BackupVariantEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(updated.intent.backup_translation, model=edit.variant),
+            )
+        elif isinstance(edit, BackupOpenAICompatibleProviderKeyEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    openai_compatible=replace(
+                        updated.intent.backup_translation.openai_compatible,
+                        provider_key=edit.provider_key,
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupOpenAICompatibleBaseUrlEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    openai_compatible=replace(
+                        updated.intent.backup_translation.openai_compatible,
+                        base_url=edit.base_url,
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupOpenAICompatibleModelEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    openai_compatible=replace(
+                        updated.intent.backup_translation.openai_compatible,
+                        model=edit.model,
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupLocalLlmBaseUrlEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    local_llm=replace(
+                        updated.intent.backup_translation.local_llm, base_url=edit.base_url
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupLocalLlmModelEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    local_llm=replace(
+                        updated.intent.backup_translation.local_llm, model=edit.model
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupLocalLlmExtraBodyEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    local_llm=replace(
+                        updated.intent.backup_translation.local_llm,
+                        extra_body=json.loads(edit.extra_body_json),
+                    ),
+                ),
             )
         elif isinstance(edit, SttLocalModelEdit):
             updated = _with_intent(

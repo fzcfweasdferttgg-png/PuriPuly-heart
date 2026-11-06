@@ -972,10 +972,46 @@ class OverlayRuntimeIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class UserOpenAICompatibleRuntimeIntent:
+    provider_key: str = ""
+    base_url: str = ""
+    model: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class UserLocalLLMRuntimeIntent:
+    base_url: str = ""
+    model: str = ""
+    extra_body: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class UserBackupTranslationRuntimeIntent:
+    enabled: bool = False
+    model: str = ""
+    openai_compatible: UserOpenAICompatibleRuntimeIntent = field(
+        default_factory=UserOpenAICompatibleRuntimeIntent
+    )
+    local_llm: UserLocalLLMRuntimeIntent = field(default_factory=UserLocalLLMRuntimeIntent)
+
+
+@dataclass(frozen=True, slots=True)
+class UserTranslationRuntimeIntent:
+    openai_compatible: UserOpenAICompatibleRuntimeIntent = field(
+        default_factory=UserOpenAICompatibleRuntimeIntent
+    )
+    local_llm: UserLocalLLMRuntimeIntent = field(default_factory=UserLocalLLMRuntimeIntent)
+    backup: UserBackupTranslationRuntimeIntent = field(
+        default_factory=UserBackupTranslationRuntimeIntent
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeResolutionInput:
     translation: TranslationRuntimeIntent = field(default_factory=TranslationRuntimeIntent)
     openrouter: OpenRouterRuntimeIntent = field(default_factory=OpenRouterRuntimeIntent)
     direct: DirectProviderRuntimeIntent = field(default_factory=DirectProviderRuntimeIntent)
+    user: UserTranslationRuntimeIntent = field(default_factory=UserTranslationRuntimeIntent)
     self_stt: STTRuntimeIntent = field(default_factory=STTRuntimeIntent)
     peer_stt: STTRuntimeIntent = field(default_factory=_default_peer_stt_runtime_intent)
     overlay: OverlayRuntimeIntent = field(default_factory=OverlayRuntimeIntent)

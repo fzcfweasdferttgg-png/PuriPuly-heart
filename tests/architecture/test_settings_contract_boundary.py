@@ -32,6 +32,8 @@ G14_PROVIDER_INTENT_FIELDS = (
     "gpu_discovery_requested",
     "settings_secrets",
     "open_model_assets",
+    "fetch_models",
+    "test_connection",
 )
 G14_OWNED_VIEW_CALLBACKS = (
     "on_settings_changed",

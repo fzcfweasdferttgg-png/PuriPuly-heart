@@ -72,6 +72,17 @@ from puripuly_heart.app.ports.settings_view import (
     SttGpuDeviceEdit,
     SttLocalModelEdit,
     SttSharedEngineEdit,
+    OpenAICompatibleProviderKeyEdit,
+    OpenAICompatibleBaseUrlEdit,
+    OpenAICompatibleModelEdit,
+    BackupTranslationEnabledEdit,
+    BackupVariantEdit,
+    BackupOpenAICompatibleProviderKeyEdit,
+    BackupOpenAICompatibleBaseUrlEdit,
+    BackupOpenAICompatibleModelEdit,
+    BackupLocalLlmBaseUrlEdit,
+    BackupLocalLlmModelEdit,
+    BackupLocalLlmExtraBodyEdit,
     SystemPromptEdit,
     TranslationHttpExtensionEdit,
     TranslationSelectionEdit,
@@ -142,6 +153,10 @@ from puripuly_heart.ui.components.settings import (
     SettingsModal,
     SettingsUnitCard,
 )
+from puripuly_heart.core.llm.model_discovery import (
+    fetch_models as _fetch_models_default,
+    test_connection as _test_connection_default,
+)
 from puripuly_heart.ui.components.settings.stt_engine_modal import (
     ENGINE_BACKENDS,
     SttEngineModal,
@@ -205,6 +220,17 @@ _DRAFT_PROVIDER_FIELDS: dict[type, str] = {
     PeerSttGpuDeviceEdit: "peer_stt_gpu_device_id",
     PeerSttGpuBackendEdit: "peer_stt_gpu_backend",
     SttLocalModelEdit: "stt_local_model",
+    OpenAICompatibleProviderKeyEdit: "openai_compatible_provider_key",
+    OpenAICompatibleBaseUrlEdit: "openai_compatible_base_url",
+    OpenAICompatibleModelEdit: "openai_compatible_model",
+    BackupTranslationEnabledEdit: "backup_enabled",
+    BackupVariantEdit: "backup_variant",
+    BackupOpenAICompatibleProviderKeyEdit: "backup_provider_key",
+    BackupOpenAICompatibleBaseUrlEdit: "backup_base_url",
+    BackupOpenAICompatibleModelEdit: "backup_model",
+    BackupLocalLlmBaseUrlEdit: "backup_local_base_url",
+    BackupLocalLlmModelEdit: "backup_local_model",
+    BackupLocalLlmExtraBodyEdit: "backup_local_extra_body_json",
     QwenRegionEdit: "qwen_region",
     QwenBeijingApiHostEdit: "qwen_api_host_beijing",
     QwenSingaporeApiHostEdit: "qwen_api_host_singapore",
@@ -255,7 +281,10 @@ _STT_SECTION_BY_PROVIDER: dict[STTProviderName, str] = {
 _TRANSLATION_MODEL_LABEL_KEYS = {
     TranslationModel.LOCAL_LLM: "provider.local_llms",
     TranslationModel.CUSTOM_HTTP: "provider.custom_http",
+    TranslationModel.OPENAI_COMPATIBLE: "provider.openai_compatible",
 }
+_NETWORK_TRANSLATION_MODELS = (TranslationModel.OPENAI_COMPATIBLE,)
+_LOCAL_TRANSLATION_MODELS = (TranslationModel.LOCAL_LLM,)
 _LOCAL_STT_PROVIDERS = frozenset(
     {
         STTProviderName.LOCAL_QWEN_GPU,
@@ -331,6 +360,8 @@ class SettingsView(ft.Column):
         self.on_pending_prompt_changed: Callable[[PromptApplyIntent], None] | None = None
         self.on_providers_changed: Callable[[], None] | None = None
         self.on_local_llm_secret_changed: Callable[[], None] | None = None
+        self.on_fetch_models = None
+        self.on_test_connection = None
         self.on_verify_api_key: Callable[[str, str], object] | None = None
         self.on_provider_secret_change: Callable[[str, str], object] | None = None
         self.on_secret_cleared: Callable[[str], None] | None = None  # key name
@@ -446,6 +477,15 @@ class SettingsView(ft.Column):
     def local_llm_connection_control(self) -> ft.Control:
         return self._local_llm_connection_card
 
+    def backup_translation_control(self) -> ft.Control:
+        return self._backup_translation_card
+
+    def openai_compatible_config_control(self) -> ft.Control:
+        return self._openai_compatible_card
+
+    def backup_translation_config_control(self) -> ft.Control:
+        return self._backup_config_card
+
     def bind_settings_intents(
         self,
         *,
@@ -464,6 +504,8 @@ class SettingsView(ft.Column):
         self.on_provider_secret_change = provider.provider_secret_change
         self.on_secret_cleared = provider.secret_cleared
         self.on_local_llm_secret_changed = provider.local_llm_secret_changed
+        self.on_fetch_models = provider.fetch_models or _fetch_models_default
+        self.on_test_connection = provider.test_connection or _test_connection_default
         self.on_gpu_discovery_requested = provider.gpu_discovery_requested
         self.on_open_model_assets = provider.open_model_assets
         self._settings_secrets = provider.settings_secrets
@@ -1726,6 +1768,23 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
+        self._local_llm_actions = ft.Row(
+            [
+                self._build_clickable_text(
+                    t("settings.openai_compatible.fetch_models"),
+                    self._on_fetch_local_llm_models,
+                    size=20,
+                    expand=False,
+                ),
+                self._build_clickable_text(
+                    t("settings.openai_compatible.test_connection"),
+                    self._on_test_local_llm_connection,
+                    size=20,
+                    expand=False,
+                ),
+            ],
+            spacing=24,
+        )
         self._local_llm_extra_body = ft.TextField(
             label=t("settings.local_llm.extra_body"),
             value=json.dumps(
@@ -1769,6 +1828,7 @@ class SettingsView(ft.Column):
                     self._local_llm_base_url,
                     self._local_llm_model,
                     self._local_llm_api_key,
+                    self._local_llm_actions,
                     self._local_llm_extra_body,
                     self._local_llm_extra_body_error,
                 ],
@@ -1777,6 +1837,260 @@ class SettingsView(ft.Column):
             height=None,
         )
         self._local_llm_connection_card.visible = False
+        self._backup_translation_title = ft.Text(
+            t("settings.backup_translation.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._backup_translation_text = self._build_clickable_text(
+            t("settings.backup_translation.disabled"),
+            self._on_backup_translation_click,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._backup_translation_card = self._wrap_unit_card(
+            title=self._backup_translation_title,
+            value=self._backup_translation_text,
+        )
+
+        self._openai_compatible_title = ft.Text(
+            t("settings.openai_compatible.title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._openai_provider_text = self._build_clickable_text(
+            t("settings.openai_compatible.provider_custom"),
+            self._on_openai_provider_click,
+            size=24,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._openai_base_url = ft.TextField(
+            label=t("settings.openai_compatible.base_url"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_openai_base_url_change_end,
+            on_submit=self._on_openai_base_url_change_end,
+        )
+        self._openai_model = ft.TextField(
+            label=t("settings.openai_compatible.model"),
+            hint_text=t("settings.openai_compatible.model_hint"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_openai_model_change_end,
+            on_submit=self._on_openai_model_change_end,
+        )
+        self._openai_api_key = ApiKeyField(
+            "settings.openai_compatible.api_key",
+            "openai_compatible_api_key",
+            "openai_compatible",
+            on_save=self._on_openai_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._openai_actions = ft.Row(
+            [
+                self._build_clickable_text(
+                    t("settings.openai_compatible.fetch_models"),
+                    self._on_fetch_openai_models,
+                    size=20,
+                    expand=False,
+                ),
+                self._build_clickable_text(
+                    t("settings.openai_compatible.test_connection"),
+                    self._on_test_openai_connection,
+                    size=20,
+                    expand=False,
+                ),
+            ],
+            spacing=24,
+        )
+        self._openai_compatible_card = self._wrap_card(
+            ft.Column(
+                [
+                    self._openai_compatible_title,
+                    self._openai_provider_text,
+                    self._openai_base_url,
+                    self._openai_model,
+                    self._openai_api_key,
+                    self._openai_actions,
+                ],
+                spacing=8,
+            ),
+            height=None,
+        )
+        self._openai_compatible_card.visible = False
+
+        self._backup_config_title = ft.Text(
+            t("settings.backup_translation.config_title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._backup_provider_text = self._build_clickable_text(
+            t("settings.openai_compatible.provider_custom"),
+            self._on_backup_provider_click,
+            size=24,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self._backup_base_url = ft.TextField(
+            label=t("settings.openai_compatible.base_url"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_backup_base_url_change_end,
+            on_submit=self._on_backup_base_url_change_end,
+        )
+        self._backup_model = ft.TextField(
+            label=t("settings.openai_compatible.model"),
+            hint_text=t("settings.openai_compatible.model_hint"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_backup_model_change_end,
+            on_submit=self._on_backup_model_change_end,
+        )
+        self._backup_api_key = ApiKeyField(
+            "settings.openai_compatible.api_key",
+            "backup_api_key",
+            "backup",
+            on_save=self._on_backup_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._backup_actions = ft.Row(
+            [
+                self._build_clickable_text(
+                    t("settings.openai_compatible.fetch_models"),
+                    self._on_fetch_backup_models,
+                    size=20,
+                    expand=False,
+                ),
+                self._build_clickable_text(
+                    t("settings.openai_compatible.test_connection"),
+                    self._on_test_backup_connection,
+                    size=20,
+                    expand=False,
+                ),
+            ],
+            spacing=24,
+        )
+        self._backup_network_group = ft.Column(
+            [
+                self._backup_provider_text,
+                self._backup_base_url,
+                self._backup_model,
+                self._backup_api_key,
+                self._backup_actions,
+            ],
+            spacing=8,
+        )
+        self._backup_local_base_url = ft.TextField(
+            label=t("settings.local_llm.base_url"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_backup_local_base_url_change_end,
+            on_submit=self._on_backup_local_base_url_change_end,
+        )
+        self._backup_local_model = ft.TextField(
+            label=t("settings.local_llm.model"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_backup_local_model_change_end,
+            on_submit=self._on_backup_local_model_change_end,
+        )
+        self._backup_local_api_key = ApiKeyField(
+            "settings.local_llm.api_key",
+            "fallback_local_llm_api_key",
+            "backup_local",
+            on_save=self._on_backup_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._backup_local_actions = ft.Row(
+            [
+                self._build_clickable_text(
+                    t("settings.openai_compatible.fetch_models"),
+                    self._on_fetch_backup_local_models,
+                    size=20,
+                    expand=False,
+                ),
+                self._build_clickable_text(
+                    t("settings.openai_compatible.test_connection"),
+                    self._on_test_backup_local_connection,
+                    size=20,
+                    expand=False,
+                ),
+            ],
+            spacing=24,
+        )
+        self._backup_local_group = ft.Column(
+            [
+                self._backup_local_base_url,
+                self._backup_local_model,
+                self._backup_local_api_key,
+                self._backup_local_actions,
+            ],
+            spacing=8,
+        )
+        self._backup_config_card = self._wrap_card(
+            ft.Column(
+                [
+                    self._backup_config_title,
+                    self._backup_network_group,
+                    self._backup_local_group,
+                ],
+                spacing=8,
+            ),
+            height=None,
+        )
+        self._backup_config_card.visible = False
 
         self._http_extension_title = ft.Text(
             t("settings.http_extension.title"),
@@ -2544,6 +2858,14 @@ class SettingsView(ft.Column):
         return t(_TRANSLATION_CONNECTION_LABEL_KEYS[connection])
         key = _TRANSLATION_CONNECTION_DESCRIPTION_KEYS.get(connection)
         return t(key) if key else ""
+
+    def _backup_display_label(self, settings: ProviderSettingsSnapshot | None) -> str:
+        if settings is None or not settings.backup_enabled:
+            return t("settings.backup_translation.disabled")
+        variant = normalize_translation_model(settings.backup_variant)
+        if variant == TranslationModel.NONE:
+            return t("settings.backup_translation.disabled")
+        return self._translation_model_display_label(variant)
 
     def _set_translation_connection_text(self, text: str) -> None:
         text_control = self._translation_connection_text.content
@@ -3462,6 +3784,16 @@ class SettingsView(ft.Column):
         self._local_llm_connection_card.visible = (
             not is_custom_http and llm == LLMProviderName.LOCAL_LLM
         )
+        translation_model = normalize_translation_model(settings.translation.model)
+        self._openai_compatible_card.visible = (
+            translation_model == TranslationModel.OPENAI_COMPATIBLE
+        )
+        self._backup_config_card.visible = settings.backup_enabled
+        backup_variant = normalize_translation_model(settings.backup_variant)
+        self._backup_network_group.visible = (
+            backup_variant == TranslationModel.OPENAI_COMPATIBLE
+        )
+        self._backup_local_group.visible = backup_variant == TranslationModel.LOCAL_LLM
         self._sync_http_extension_card(settings)
 
     # --- Event Handlers ---
@@ -3749,19 +4081,22 @@ class SettingsView(ft.Column):
             OptionItem(
                 value=TranslationModel.NONE.value,
                 label=t("settings.not_selected"),
-                section=t("settings.translation_model.section.user_settings"),
             )
         ]
-        for model in _TRANSLATION_MODELS:
+        for model in _NETWORK_TRANSLATION_MODELS:
             options.append(
                 OptionItem(
                     value=model.value,
                     label=self._translation_model_display_label(model),
-                    description=t(
-                        f"settings.translation_model.{model.value}.description",
-                        default="",
-                    ),
-                    section=t("settings.translation_model.section.user_settings"),
+                    section=t("settings.translation_group.network"),
+                )
+            )
+        for model in _LOCAL_TRANSLATION_MODELS:
+            options.append(
+                OptionItem(
+                    value=model.value,
+                    label=self._translation_model_display_label(model),
+                    section=t("settings.translation_group.local"),
                 )
             )
         display_settings = self._build_settings_with_provider_draft()
@@ -3798,6 +4133,26 @@ class SettingsView(ft.Column):
             self._get_translation_connection_display_label(settings),
         )
         self._sync_translation_connection_title(settings)
+        self._set_unit_card_value_text(
+            self._backup_translation_text,
+            self._backup_display_label(settings),
+        )
+        self._openai_base_url.value = settings.openai_compatible_base_url
+        self._openai_model.value = settings.openai_compatible_model
+        self._set_unit_card_value_text(
+            self._openai_provider_text,
+            self._openai_provider_label(settings.openai_compatible_provider_key),
+            size=24,
+        )
+        self._backup_base_url.value = settings.backup_base_url
+        self._backup_model.value = settings.backup_model
+        self._set_unit_card_value_text(
+            self._backup_provider_text,
+            self._openai_provider_label(settings.backup_provider_key),
+            size=24,
+        )
+        self._backup_local_base_url.value = settings.backup_local_base_url
+        self._backup_local_model.value = settings.backup_local_model
 
     def _provider_snapshot_with_translation(
         self,
@@ -4031,6 +4386,322 @@ class SettingsView(ft.Column):
         self._local_llm_api_key.value = stripped
         if self.on_local_llm_secret_changed:
             self.on_local_llm_secret_changed()
+
+    def _commit_openai_field(self, field: str, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        normalized = value.strip()
+        draft = self._ensure_provider_settings_draft()
+        attr = f"openai_compatible_{field}"
+        if getattr(draft, attr) == normalized:
+            return
+        self._provider_draft = replace(draft, **{attr: normalized})
+        edit_type = {
+            "provider_key": OpenAICompatibleProviderKeyEdit,
+            "base_url": OpenAICompatibleBaseUrlEdit,
+            "model": OpenAICompatibleModelEdit,
+        }[field]
+        self._record_provider_edit(edit_type(normalized))
+        self.has_provider_changes = True
+
+    def _commit_backup_field(self, field: str, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        normalized = value.strip()
+        draft = self._ensure_provider_settings_draft()
+        attr = f"backup_{field}"
+        if getattr(draft, attr) == normalized:
+            return
+        self._provider_draft = replace(draft, **{attr: normalized})
+        edit_type = {
+            "provider_key": BackupOpenAICompatibleProviderKeyEdit,
+            "base_url": BackupOpenAICompatibleBaseUrlEdit,
+            "model": BackupOpenAICompatibleModelEdit,
+            "local_base_url": BackupLocalLlmBaseUrlEdit,
+            "local_model": BackupLocalLlmModelEdit,
+            "local_extra_body_json": BackupLocalLlmExtraBodyEdit,
+        }[field]
+        self._record_provider_edit(edit_type(normalized))
+        self.has_provider_changes = True
+
+    def _on_openai_base_url_change_end(self, e) -> None:
+        self._commit_openai_field("base_url", getattr(e.control, "value", ""))
+
+    def _on_openai_model_change_end(self, e) -> None:
+        self._commit_openai_field("model", getattr(e.control, "value", ""))
+
+    def _on_backup_base_url_change_end(self, e) -> None:
+        self._commit_backup_field("base_url", getattr(e.control, "value", ""))
+
+    def _on_backup_model_change_end(self, e) -> None:
+        self._commit_backup_field("model", getattr(e.control, "value", ""))
+
+    def _on_backup_local_base_url_change_end(self, e) -> None:
+        self._commit_backup_field("local_base_url", getattr(e.control, "value", ""))
+
+    def _on_backup_local_model_change_end(self, e) -> None:
+        self._commit_backup_field("local_model", getattr(e.control, "value", ""))
+
+    def _on_openai_secret_change(self, key: str, value: str) -> None:
+        if key != "openai_compatible_api_key":
+            return
+        stripped = value.strip()
+        if not self._write_secret_value(key, stripped):
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.openai_compatible.save_failed"), COLOR_ERROR)
+            return
+        self._openai_api_key.value = stripped
+        if self.on_local_llm_secret_changed:
+            self.on_local_llm_secret_changed()
+
+    def _on_backup_secret_change(self, key: str, value: str) -> None:
+        if key not in {"backup_api_key", "fallback_local_llm_api_key"}:
+            return
+        stripped = value.strip()
+        if not self._write_secret_value(key, stripped):
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.openai_compatible.save_failed"), COLOR_ERROR)
+            return
+        if key == "backup_api_key":
+            self._backup_api_key.value = stripped
+        else:
+            self._backup_local_api_key.value = stripped
+        if self.on_local_llm_secret_changed:
+            self.on_local_llm_secret_changed()
+
+    def _openai_provider_label(self, provider_key: str) -> str:
+        if not provider_key:
+            return t("settings.openai_compatible.provider_custom")
+        from puripuly_heart.config.providers_registry import load_provider_presets
+
+        preset = load_provider_presets().get(provider_key)
+        return preset.label if preset is not None else provider_key
+
+    def _preset_options(self) -> list:
+        from puripuly_heart.config.providers_registry import load_provider_presets
+
+        options = [
+            OptionItem(
+                value="",
+                label=t("settings.openai_compatible.provider_custom"),
+            )
+        ]
+        for key, preset in load_provider_presets().items():
+            options.append(
+                OptionItem(value=key, label=preset.label, description=preset.base_url)
+            )
+        return options
+
+    def _on_openai_provider_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
+        current = settings.openai_compatible_provider_key if settings else ""
+        SettingsModal(
+            self.page,
+            t("settings.openai_compatible.provider"),
+            self._preset_options(),
+            self._on_openai_provider_selected,
+            show_description=True,
+        ).open(current)
+
+    def _on_openai_provider_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        self._commit_openai_field("provider_key", value)
+        from puripuly_heart.config.providers_registry import load_provider_presets
+
+        preset = load_provider_presets().get(value)
+        if preset is not None:
+            self._openai_base_url.value = preset.base_url
+            self._commit_openai_field("base_url", preset.base_url)
+            _update_control_if_mounted(self._openai_base_url)
+        self._set_unit_card_value_text(
+            self._openai_provider_text, self._openai_provider_label(value), size=24
+        )
+        _update_control_if_mounted(self._openai_provider_text)
+
+    def _on_backup_provider_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
+        current = settings.backup_provider_key if settings else ""
+        SettingsModal(
+            self.page,
+            t("settings.openai_compatible.provider"),
+            self._preset_options(),
+            self._on_backup_provider_selected,
+            show_description=True,
+        ).open(current)
+
+    def _on_backup_provider_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        self._commit_backup_field("provider_key", value)
+        from puripuly_heart.config.providers_registry import load_provider_presets
+
+        preset = load_provider_presets().get(value)
+        if preset is not None:
+            self._backup_base_url.value = preset.base_url
+            self._commit_backup_field("base_url", preset.base_url)
+            _update_control_if_mounted(self._backup_base_url)
+        self._set_unit_card_value_text(
+            self._backup_provider_text, self._openai_provider_label(value), size=24
+        )
+        _update_control_if_mounted(self._backup_provider_text)
+
+    async def _do_fetch_models(self, *, base_url: str, api_key: str, on_model_picked) -> None:
+        if self.on_fetch_models is None or not base_url:
+            return
+        try:
+            model_ids = await self.on_fetch_models(base_url, api_key)
+        except Exception:
+            model_ids = []
+        if not model_ids:
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.openai_compatible.fetch_failed"), COLOR_WARNING)
+            return
+        if len(model_ids) == 1:
+            on_model_picked(model_ids[0])
+            return
+        options = [OptionItem(value=m, label=m) for m in model_ids]
+        SettingsModal(
+            self.page,
+            t("settings.openai_compatible.select_model"),
+            options,
+            on_model_picked,
+            searchable=True,
+            search_hint=t("settings.filter"),
+        ).open("")
+
+    async def _do_test_connection(self, *, base_url: str, api_key: str) -> None:
+        if self.on_test_connection is None or not base_url:
+            return
+        status, _body = await self.on_test_connection(base_url, api_key)
+        if self.show_snackbar:
+            if status == 200:
+                self.show_snackbar(t("settings.openai_compatible.test_ok"), COLOR_SECONDARY)
+            else:
+                self.show_snackbar(t("settings.openai_compatible.test_failed"), COLOR_WARNING)
+
+    async def _on_fetch_openai_models(self, e) -> None:
+        await self._do_fetch_models(
+            base_url=(self._openai_base_url.value or "").strip(),
+            api_key=(self._openai_api_key.value or "").strip(),
+            on_model_picked=self._pick_openai_model,
+        )
+
+    def _pick_openai_model(self, value: str) -> None:
+        self._openai_model.value = value
+        self._commit_openai_field("model", value)
+        _update_control_if_mounted(self._openai_model)
+
+    async def _on_test_openai_connection(self, e) -> None:
+        await self._do_test_connection(
+            base_url=(self._openai_base_url.value or "").strip(),
+            api_key=(self._openai_api_key.value or "").strip(),
+        )
+
+    async def _on_fetch_backup_models(self, e) -> None:
+        await self._do_fetch_models(
+            base_url=(self._backup_base_url.value or "").strip(),
+            api_key=(self._backup_api_key.value or "").strip(),
+            on_model_picked=self._pick_backup_model,
+        )
+
+    def _pick_backup_model(self, value: str) -> None:
+        self._backup_model.value = value
+        self._commit_backup_field("model", value)
+        _update_control_if_mounted(self._backup_model)
+
+    async def _on_test_backup_connection(self, e) -> None:
+        await self._do_test_connection(
+            base_url=(self._backup_base_url.value or "").strip(),
+            api_key=(self._backup_api_key.value or "").strip(),
+        )
+
+    async def _on_fetch_backup_local_models(self, e) -> None:
+        await self._do_fetch_models(
+            base_url=(self._backup_local_base_url.value or "").strip(),
+            api_key=(self._backup_local_api_key.value or "").strip(),
+            on_model_picked=self._pick_backup_local_model,
+        )
+
+    def _pick_backup_local_model(self, value: str) -> None:
+        self._backup_local_model.value = value
+        self._commit_backup_field("local_model", value)
+        _update_control_if_mounted(self._backup_local_model)
+
+    async def _on_test_backup_local_connection(self, e) -> None:
+        await self._do_test_connection(
+            base_url=(self._backup_local_base_url.value or "").strip(),
+            api_key=(self._backup_local_api_key.value or "").strip(),
+        )
+
+    async def _on_fetch_local_llm_models(self, e) -> None:
+        await self._do_fetch_models(
+            base_url=(self._local_llm_base_url.value or "").strip(),
+            api_key=(self._local_llm_api_key.value or "").strip(),
+            on_model_picked=self._pick_local_llm_model,
+        )
+
+    def _pick_local_llm_model(self, value: str) -> None:
+        self._local_llm_model.value = value
+        draft = self._ensure_provider_settings_draft()
+        self._provider_draft = replace(draft, local_llm_model=value)
+        self._record_provider_edit(LocalLlmModelEdit(value))
+        self.has_provider_changes = True
+        _update_control_if_mounted(self._local_llm_model)
+
+    async def _on_test_local_llm_connection(self, e) -> None:
+        await self._do_test_connection(
+            base_url=(self._local_llm_base_url.value or "").strip(),
+            api_key=(self._local_llm_api_key.value or "").strip(),
+        )
+
+    def _on_backup_translation_click(self, e) -> None:
+        if not is_control_mounted(self):
+            return
+        settings = self._build_settings_with_provider_draft()
+        current = "off"
+        if settings is not None and settings.backup_enabled and settings.backup_variant:
+            current = settings.backup_variant
+        options = [
+            OptionItem(value="off", label=t("settings.backup_translation.disabled")),
+            OptionItem(
+                value=TranslationModel.OPENAI_COMPATIBLE.value,
+                label=self._translation_model_display_label(TranslationModel.OPENAI_COMPATIBLE),
+                section=t("settings.translation_group.network"),
+            ),
+            OptionItem(
+                value=TranslationModel.LOCAL_LLM.value,
+                label=self._translation_model_display_label(TranslationModel.LOCAL_LLM),
+                section=t("settings.translation_group.local"),
+            ),
+        ]
+        SettingsModal(
+            self.page,
+            t("settings.backup_translation.title"),
+            options,
+            self._on_backup_variant_selected,
+        ).open(current)
+
+    def _on_backup_variant_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        enabled = value != "off"
+        variant = value if enabled else ""
+        draft = self._ensure_provider_settings_draft()
+        if draft.backup_enabled != enabled:
+            self._provider_draft = replace(draft, backup_enabled=enabled)
+            self._record_provider_edit(BackupTranslationEnabledEdit(enabled))
+            draft = self._provider_draft
+        if draft.backup_variant != variant:
+            self._provider_draft = replace(draft, backup_variant=variant)
+            self._record_provider_edit(BackupVariantEdit(variant))
+        self.has_provider_changes = True
+        self._sync_translation_selection_controls(self._build_settings_with_provider_draft())
+        self._update_api_visibility()
 
     def _on_secret_change(self, key: str, value: str) -> object:
         if self._provider_snapshot is None or not self._config_path:

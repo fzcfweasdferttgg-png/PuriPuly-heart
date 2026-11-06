@@ -43,6 +43,8 @@ class SettingsModal:
         left_column_sections: int = 1,
         multi_select: bool = False,
         on_selection_change: Callable[[tuple[str, ...]], None] | None = None,
+        searchable: bool = False,
+        search_hint: str = "",
     ):
         """Initialize settings modal.
 
@@ -74,6 +76,9 @@ class SettingsModal:
         self._selected: set[str] = set()
         self._loading_section: str = ""
         self._partition_left_sections = left_column_sections
+        self._searchable = searchable
+        self._search_hint = search_hint
+        self._search_query: str = ""
 
     def open(self, current: str | Sequence[str] = "", *, loading_section: str = "") -> None:
         """Open the settings selection dialog.
@@ -102,8 +107,11 @@ class SettingsModal:
                 color=COLOR_SECONDARY,
             ),
             ft.Container(height=16),
-            option_list,
         ]
+        if self._searchable:
+            content_controls.append(self._build_search_field())
+            content_controls.append(ft.Container(height=8))
+        content_controls.append(option_list)
 
         modal_content = ft.Container(
             content=ft.Column(
@@ -150,10 +158,37 @@ class SettingsModal:
             except Exception:
                 pass
 
+    def _build_search_field(self) -> ft.Control:
+        return ft.TextField(
+            hint_text=self._search_hint,
+            value=self._search_query,
+            expand=True,
+            border_radius=12,
+            border_color=COLOR_NEUTRAL_DARK,
+            focused_border_color=COLOR_PRIMARY,
+            text_size=20,
+            color=COLOR_ON_BACKGROUND,
+            on_change=self._on_search_change,
+        )
+
+    def _on_search_change(self, e) -> None:
+        self._search_query = str(getattr(e.control, "value", "") or "")
+        self._refresh_option_cards()
+
+    def _filtered_options(self) -> list:
+        query = self._search_query.strip().lower()
+        if not query:
+            return list(self._options)
+        return [
+            option
+            for option in self._options
+            if query in option.label.lower() or query in option.value.lower()
+        ]
+
     def _collect_sections(self) -> list[str]:
         """Collect distinct section labels in order of appearance."""
         seen: list[str] = []
-        for option in self._options:
+        for option in self._filtered_options():
             if option.section and option.section not in seen:
                 seen.append(option.section)
         return seen
@@ -244,7 +279,7 @@ class SettingsModal:
             if self._loading_section and section == self._loading_section:
                 items.append(self._build_loading_placeholder())
             else:
-                for option in self._options:
+                for option in self._filtered_options():
                     if option.section != section:
                         continue
                     items.append(self._build_option_card(option, current))
@@ -256,7 +291,7 @@ class SettingsModal:
         items: list[ft.Control] = []
         previous_section: str | None = None
         is_first_section = True
-        for option in self._options:
+        for option in self._filtered_options():
             if option.section and option.section != previous_section:
                 items.append(self._build_section_header(option.section, is_first_section))
                 previous_section = option.section

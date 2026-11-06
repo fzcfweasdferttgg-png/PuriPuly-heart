@@ -351,6 +351,36 @@ class LocalLLMIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenAICompatibleIntent:
+    provider_key: str = ""
+    base_url: str = ""
+    model: str = ""
+
+    def __post_init__(self) -> None:
+        provider_key = self.provider_key if isinstance(self.provider_key, str) else ""
+        object.__setattr__(self, "provider_key", provider_key.strip())
+        base_url = self.base_url if isinstance(self.base_url, str) else ""
+        object.__setattr__(self, "base_url", base_url.strip())
+        model = self.model if isinstance(self.model, str) else ""
+        object.__setattr__(self, "model", model.strip())
+
+
+@dataclass(frozen=True, slots=True)
+class BackupTranslationIntent:
+    enabled: bool = False
+    model: str = ""
+    openai_compatible: OpenAICompatibleIntent = field(default_factory=OpenAICompatibleIntent)
+    local_llm: LocalLLMIntent = field(
+        default_factory=lambda: LocalLLMIntent(base_url="", model="")
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "enabled", bool(self.enabled))
+        model = self.model if isinstance(self.model, str) else ""
+        object.__setattr__(self, "model", model.strip())
+
+
+@dataclass(frozen=True, slots=True)
 class DeepgramSTTIntent:
     model: str = "nova-3"
 
@@ -801,6 +831,8 @@ class PromptIntent:
 class UserIntentSettings:
     translation: TranslationIntent = field(default_factory=TranslationIntent)
     local_llm: LocalLLMIntent = field(default_factory=LocalLLMIntent)
+    openai_compatible: OpenAICompatibleIntent = field(default_factory=OpenAICompatibleIntent)
+    backup_translation: BackupTranslationIntent = field(default_factory=BackupTranslationIntent)
     stt: STTIntent = field(default_factory=STTIntent)
     peer_stt: PeerSTTIntent = field(default_factory=PeerSTTIntent)
     languages: LanguageIntent = field(default_factory=LanguageIntent)
