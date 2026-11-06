@@ -279,12 +279,14 @@ _STT_SECTION_BY_PROVIDER: dict[STTProviderName, str] = {
     STTProviderName.LOCAL_QWEN_GPU: "settings.stt.section.gpu_inference",
 }
 _TRANSLATION_MODEL_LABEL_KEYS = {
-    TranslationModel.LOCAL_LLM: "provider.local_llms",
+    TranslationModel.LOCAL_LLM: "settings.translation_variant.local_llm",
     TranslationModel.CUSTOM_HTTP: "provider.custom_http",
-    TranslationModel.OPENAI_COMPATIBLE: "provider.openai_compatible",
+    TranslationModel.OPENAI_COMPATIBLE: "settings.translation_variant.openai_compatible",
 }
-_NETWORK_TRANSLATION_MODELS = (TranslationModel.OPENAI_COMPATIBLE,)
-_LOCAL_TRANSLATION_MODELS = (TranslationModel.LOCAL_LLM,)
+_TRANSLATION_MODEL_DESCRIPTION_KEYS = {
+    TranslationModel.LOCAL_LLM: "settings.translation_variant.local_llm.description",
+    TranslationModel.OPENAI_COMPATIBLE: "settings.translation_variant.openai_compatible.description",
+}
 _LOCAL_STT_PROVIDERS = frozenset(
     {
         STTProviderName.LOCAL_QWEN_GPU,
@@ -2852,6 +2854,10 @@ class SettingsView(ft.Column):
             return t("settings.not_selected")
         return t(_TRANSLATION_MODEL_LABEL_KEYS[model])
 
+    def _translation_model_display_description(self, model: TranslationModel) -> str:
+        key = _TRANSLATION_MODEL_DESCRIPTION_KEYS.get(model)
+        return t(key) if key else ""
+
     def _translation_connection_display_label(self, connection: TranslationConnection) -> str:
         if connection == TranslationConnection.NONE:
             return t("settings.not_selected")
@@ -3773,7 +3779,6 @@ class SettingsView(ft.Column):
         if settings is None:
             return
 
-        llm = settings.llm_provider
         is_custom_http = settings.translation.model == TranslationModel.CUSTOM_HTTP
         if hasattr(self, "_http_extension_credentials"):
             self._http_extension_credentials.visible = is_custom_http
@@ -3781,10 +3786,10 @@ class SettingsView(ft.Column):
         # Removed from the surface for now: the future model folds the
         # connection choice into the translation / backup-translation cards.
         self._translation_connection_row.visible = False
-        self._local_llm_connection_card.visible = (
-            not is_custom_http and llm == LLMProviderName.LOCAL_LLM
-        )
         translation_model = normalize_translation_model(settings.translation.model)
+        self._local_llm_connection_card.visible = (
+            translation_model == TranslationModel.LOCAL_LLM
+        )
         self._openai_compatible_card.visible = (
             translation_model == TranslationModel.OPENAI_COMPATIBLE
         )
@@ -4073,32 +4078,42 @@ class SettingsView(ft.Column):
                 )
             )
 
-    def _on_llm_click(self, e) -> None:
-        """Open translation model selection modal."""
-        if not is_control_mounted(self):
-            return
+    def _translation_picker_options(self) -> list[OptionItem]:
         options: list[OptionItem] = [
             OptionItem(
                 value=TranslationModel.NONE.value,
                 label=t("settings.not_selected"),
             )
         ]
-        for model in _NETWORK_TRANSLATION_MODELS:
+        for model in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM):
             options.append(
                 OptionItem(
                     value=model.value,
                     label=self._translation_model_display_label(model),
-                    section=t("settings.translation_group.network"),
+                    description=self._translation_model_display_description(model),
                 )
             )
-        for model in _LOCAL_TRANSLATION_MODELS:
+        return options
+
+    def _backup_picker_options(self) -> list[OptionItem]:
+        options: list[OptionItem] = [
+            OptionItem(value="off", label=t("settings.backup_translation.disabled")),
+        ]
+        for model in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM):
             options.append(
                 OptionItem(
                     value=model.value,
                     label=self._translation_model_display_label(model),
-                    section=t("settings.translation_group.local"),
+                    description=self._translation_model_display_description(model),
                 )
             )
+        return options
+
+    def _on_llm_click(self, e) -> None:
+        """Open translation model selection modal."""
+        if not is_control_mounted(self):
+            return
+        options = self._translation_picker_options()
         display_settings = self._build_settings_with_provider_draft()
         current = (
             self._get_llm_modal_value(display_settings)
@@ -4666,24 +4681,13 @@ class SettingsView(ft.Column):
         current = "off"
         if settings is not None and settings.backup_enabled and settings.backup_variant:
             current = settings.backup_variant
-        options = [
-            OptionItem(value="off", label=t("settings.backup_translation.disabled")),
-            OptionItem(
-                value=TranslationModel.OPENAI_COMPATIBLE.value,
-                label=self._translation_model_display_label(TranslationModel.OPENAI_COMPATIBLE),
-                section=t("settings.translation_group.network"),
-            ),
-            OptionItem(
-                value=TranslationModel.LOCAL_LLM.value,
-                label=self._translation_model_display_label(TranslationModel.LOCAL_LLM),
-                section=t("settings.translation_group.local"),
-            ),
-        ]
+        options = self._backup_picker_options()
         SettingsModal(
             self.page,
             t("settings.backup_translation.title"),
             options,
             self._on_backup_variant_selected,
+            show_description=True,
         ).open(current)
 
     def _on_backup_variant_selected(self, value: str) -> None:

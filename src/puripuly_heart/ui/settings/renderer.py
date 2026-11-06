@@ -80,8 +80,8 @@ def compose_settings_api_surface(
         rows.append(translation_config_row)
     rows.extend(
         [
-            gpu_device_row,
             slots.local_llm_connection,
+            gpu_device_row,
         ]
     )
     if slots.http_extension is not None:

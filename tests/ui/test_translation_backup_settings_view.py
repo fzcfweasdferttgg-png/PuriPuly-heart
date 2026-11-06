@@ -19,6 +19,7 @@ from puripuly_heart.app.ports.settings_view import (
     OpenAICompatibleProviderKeyEdit,
 )
 from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+from puripuly_heart.config.translation_values import TranslationModel
 from puripuly_heart.ui.views import settings as settings_view
 from tests.helpers.settings_view import apply_provider_intent
 
@@ -47,7 +48,7 @@ def test_backup_variant_selection_enables_network_backup(
     assert view._backup_local_group.visible is False
     assert (
         view._backup_translation_text.content.value
-        == settings_view.t("provider.openai_compatible")
+        == settings_view.t("settings.translation_variant.openai_compatible")
     )
     pending = view.build_provider_apply_settings()
     assert pending is not None
@@ -183,3 +184,59 @@ def test_searchable_modal_filters_options() -> None:
         "deepseek-chat",
         "gpt-test",
     ]
+
+
+def test_translation_picker_options_are_flat_and_distinct(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    options = view._translation_picker_options()
+
+    assert [option.value for option in options] == [
+        TranslationModel.NONE.value,
+        TranslationModel.OPENAI_COMPATIBLE.value,
+        TranslationModel.LOCAL_LLM.value,
+    ]
+    assert all(not option.section for option in options)
+    labels = [option.label for option in options]
+    assert len(set(labels)) == len(labels)
+    assert all(option.description for option in options[1:])
+
+
+def test_backup_picker_options_are_flat_and_distinct(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    options = view._backup_picker_options()
+
+    assert [option.value for option in options] == [
+        "off",
+        TranslationModel.OPENAI_COMPATIBLE.value,
+        TranslationModel.LOCAL_LLM.value,
+    ]
+    assert all(not option.section for option in options)
+    labels = [option.label for option in options]
+    assert len(set(labels)) == len(labels)
+
+
+def test_variant_forms_follow_the_selected_model(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
+    assert view._local_llm_connection_card.visible is True
+    assert view._openai_compatible_card.visible is False
+
+    view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
+    assert view._openai_compatible_card.visible is True
+    assert view._local_llm_connection_card.visible is False
+
+    view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
+    assert view._local_llm_connection_card.visible is True
+    assert view._openai_compatible_card.visible is False

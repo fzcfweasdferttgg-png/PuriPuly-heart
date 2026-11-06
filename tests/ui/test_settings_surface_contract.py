@@ -98,8 +98,8 @@ def test_settings_api_surface_preserves_the_accepted_row_order() -> None:
     assert surface.rows == (
         surface.provider_row,
         surface.translation_connection_row,
-        surface.gpu_device_row,
         provider.controls["local_llm_connection"],
+        surface.gpu_device_row,
     )
 
 
