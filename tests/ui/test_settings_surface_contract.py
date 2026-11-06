@@ -350,7 +350,7 @@ def test_settings_api_surface_exposes_config_cards_as_rows_items() -> None:
         surface.provider_row,
         surface.translation_connection_row,
         slots.openai_compatible_config,
-        slots.backup_translation_config,
         slots.local_llm_connection,
+        slots.backup_translation_config,
         surface.gpu_device_row,
     )

@@ -8,6 +8,7 @@ pytest.importorskip("flet")
 
 from puripuly_heart.app.ports.settings_view import (
     BackupLocalLlmBaseUrlEdit,
+    BackupLocalLlmExtraBodyEdit,
     BackupLocalLlmModelEdit,
     BackupOpenAICompatibleBaseUrlEdit,
     BackupOpenAICompatibleModelEdit,
@@ -108,11 +109,15 @@ def test_provider_preset_fills_base_url(
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
 
+    view._openai_model.value = "stale-model"
+
     view._on_openai_provider_selected("deepseek")
 
     assert view._provider_draft.openai_compatible_provider_key == "deepseek"
     assert view._provider_draft.openai_compatible_base_url == "https://api.deepseek.com/v1"
     assert view._openai_base_url.value == "https://api.deepseek.com/v1"
+    assert view._openai_model.value == ""
+    assert view._openai_provider.value == "deepseek"
 
 
 def test_backup_forms_commit_fields(
@@ -324,8 +329,90 @@ def test_apply_locale_localizes_backup_and_openai_surfaces(
         i18n_module.set_locale("ru")
         view.apply_locale()
         assert view._backup_translation_title.value == "Резервный перевод"
-        assert view._openai_compatible_title.value == "Сетевой перевод"
+        assert view._openai_compatible_title.value == "Настройки перевода"
+        assert view._local_llm_connection_title.value == "Настройки перевода"
         assert view._backup_config_title.value == "Настройки резервного перевода"
-        assert view._openai_fetch_text.content.value == "Получить список моделей"
+        assert view._openai_provider.label == "Провайдер"
+        assert view._openai_fetch_btn.tooltip == "Получить список моделей"
+        assert view._openai_test_btn.content.value == "Проверить соединение"
+        assert view._backup_local_extra_body.label == "JSON extra body"
     finally:
         i18n_module.set_locale(previous)
+
+
+def test_openai_form_layout_is_identical_for_translation_and_backup(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    primary = view._openai_compatible_card.content.content.controls
+    backup = view._backup_network_group.controls
+    assert [type(control) for control in primary[1:]] == [type(control) for control in backup]
+    assert [type(child) for child in primary[3].controls] == [
+        type(child) for child in backup[2].controls
+    ]
+
+
+def test_local_form_layout_is_identical_for_translation_and_backup(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    primary = view._local_llm_connection_card.content.content.controls
+    backup = view._backup_local_group.controls
+    assert [type(control) for control in primary[1:]] == [type(control) for control in backup]
+
+
+def test_provider_dropdowns_share_the_same_presets(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    from puripuly_heart.config.providers_registry import load_provider_presets
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    expected = list(load_provider_presets().keys())
+    assert expected
+    assert [option.key for option in view._openai_provider.options] == expected
+    assert [option.key for option in view._backup_provider.options] == expected
+
+
+def test_backup_local_form_commits_extra_body(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    import json as _json
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    view._on_backup_variant_selected("local_llm")
+
+    view._backup_local_extra_body.value = '{"temperature": 0.2}'
+    view._on_backup_local_extra_body_change_end(None)
+
+    assert _json.loads(view._provider_draft.backup_local_extra_body_json) == {
+        "temperature": 0.2
+    }
+    pending = view.build_provider_apply_settings()
+    assert pending is not None
+    assert BackupLocalLlmExtraBodyEdit in _edit_types(pending)
+
+
+def test_backup_provider_selection_commits_backup_edits(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    view._on_backup_provider_selected("deepseek")
+
+    assert view._provider_draft.backup_provider_key == "deepseek"
+    assert view._provider_draft.backup_base_url == "https://api.deepseek.com/v1"
+    assert view._backup_provider.value == "deepseek"
+    pending = view.build_provider_apply_settings()
+    assert pending is not None
+    assert _edit_types(pending) >= {
+        BackupOpenAICompatibleProviderKeyEdit,
+        BackupOpenAICompatibleBaseUrlEdit,
+    }

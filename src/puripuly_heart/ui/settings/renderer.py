@@ -59,22 +59,16 @@ def compose_settings_api_surface(
     gpu_device_row = ft.Container(content=gpu_device_controls)
     gpu_device_row.visible = True
 
-    translation_config_items: list[ft.Control] = []
-    if slots.openai_compatible_config is not None:
-        translation_config_items.append(slots.openai_compatible_config)
-    if slots.backup_translation_config is not None:
-        translation_config_items.append(slots.backup_translation_config)
     rows: list[ft.Control] = [
         provider_row,
         translation_connection_row,
     ]
-    rows.extend(translation_config_items)
-    rows.extend(
-        [
-            slots.local_llm_connection,
-            gpu_device_row,
-        ]
-    )
+    if slots.openai_compatible_config is not None:
+        rows.append(slots.openai_compatible_config)
+    rows.append(slots.local_llm_connection)
+    if slots.backup_translation_config is not None:
+        rows.append(slots.backup_translation_config)
+    rows.append(gpu_device_row)
     if slots.http_extension is not None:
         rows.insert(2, slots.http_extension)
 

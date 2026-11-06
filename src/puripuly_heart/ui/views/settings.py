@@ -622,6 +622,82 @@ class SettingsView(ft.Column):
             on_hover=self._on_text_hover,
         )
 
+    def _build_provider_dropdown(self, on_select) -> ft.Dropdown:
+        from puripuly_heart.config.providers_registry import load_provider_presets
+
+        options = [
+            ft.dropdown.Option(key=key, text=preset.label)
+            for key, preset in load_provider_presets().items()
+        ]
+        return ft.Dropdown(
+            label=t("settings.openai_compatible.provider"),
+            options=options,
+            value=options[0].key if options else None,
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_select=on_select,
+        )
+
+    def _compose_openai_form(
+        self,
+        *,
+        title,
+        provider,
+        model,
+        fetch_btn,
+        api_key,
+        test_btn,
+    ) -> ft.Column:
+        items: list[ft.Control] = []
+        if title is not None:
+            items.append(title)
+        items.extend(
+            [
+                ft.Container(height=4),
+                provider,
+                ft.Row([model, fetch_btn], spacing=4),
+                api_key,
+                test_btn,
+            ]
+        )
+        return ft.Column(items, spacing=8)
+
+    def _compose_local_form(
+        self,
+        *,
+        title,
+        base_url,
+        test_btn,
+        model,
+        fetch_btn,
+        api_key,
+        api_key_helper,
+        extra_body,
+        extra_body_helper,
+        extra_body_error,
+    ) -> ft.Column:
+        items: list[ft.Control] = []
+        if title is not None:
+            items.append(title)
+        items.extend(
+            [
+                ft.Container(height=4),
+                ft.Row([base_url, test_btn], spacing=4),
+                ft.Row([model, fetch_btn], spacing=4),
+                api_key,
+                api_key_helper,
+                extra_body,
+                extra_body_helper,
+                extra_body_error,
+            ]
+        )
+        return ft.Column(items, spacing=8)
+
     def _set_unit_card_value_text(
         self, control: ft.Container, text: str, *, size: int = 28
     ) -> None:
@@ -664,16 +740,6 @@ class SettingsView(ft.Column):
             self._http_extension_text,
             self._http_extension_path_text,
             self._backup_translation_text,
-            self._openai_provider_text,
-            self._backup_provider_text,
-            self._openai_fetch_text,
-            self._openai_test_text,
-            self._backup_fetch_text,
-            self._backup_test_text,
-            self._backup_local_fetch_text,
-            self._backup_local_test_text,
-            self._local_llm_fetch_text,
-            self._local_llm_test_text,
         )
 
     def _sync_clickable_text_control_fonts(self, font_family: str | None) -> None:
@@ -1753,7 +1819,7 @@ class SettingsView(ft.Column):
         )
 
         self._local_llm_connection_title = ft.Text(
-            t("settings.local_llm.connection"),
+            t("settings.translation.config_title"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_SECONDARY,
@@ -1797,24 +1863,19 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
-        self._local_llm_fetch_text = self._build_clickable_text(
-            t("settings.openai_compatible.fetch_models"),
-            self._on_fetch_local_llm_models,
-            size=20,
-            expand=False,
+        self._local_llm_api_key_helper = ft.Text(
+            t("settings.local_llm.api_key.description"),
+            size=15,
+            color=COLOR_SECONDARY,
         )
-        self._local_llm_test_text = self._build_clickable_text(
-            t("settings.openai_compatible.test_connection"),
-            self._on_test_local_llm_connection,
-            size=20,
-            expand=False,
+        self._local_llm_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_local_llm_models,
         )
-        self._local_llm_actions = ft.Row(
-            [
-                self._local_llm_fetch_text,
-                self._local_llm_test_text,
-            ],
-            spacing=24,
+        self._local_llm_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_local_llm_connection,
         )
         self._local_llm_extra_body = ft.TextField(
             label=t("settings.local_llm.extra_body"),
@@ -1851,19 +1912,17 @@ class SettingsView(ft.Column):
         self._local_llm_extra_body_error_key = ""
         self._local_llm_extra_body_error_kwargs: dict[str, object] = {}
         self._local_llm_connection_card = self._wrap_card(
-            ft.Column(
-                [
-                    self._local_llm_connection_title,
-                    ft.Container(height=4),
-                    self._local_llm_extra_body_helper,
-                    self._local_llm_base_url,
-                    self._local_llm_model,
-                    self._local_llm_api_key,
-                    self._local_llm_actions,
-                    self._local_llm_extra_body,
-                    self._local_llm_extra_body_error,
-                ],
-                spacing=8,
+            self._compose_local_form(
+                title=self._local_llm_connection_title,
+                base_url=self._local_llm_base_url,
+                test_btn=self._local_llm_test_btn,
+                model=self._local_llm_model,
+                fetch_btn=self._local_llm_fetch_btn,
+                api_key=self._local_llm_api_key,
+                api_key_helper=self._local_llm_api_key_helper,
+                extra_body=self._local_llm_extra_body,
+                extra_body_helper=self._local_llm_extra_body_helper,
+                extra_body_error=self._local_llm_extra_body_error,
             ),
             height=None,
         )
@@ -1887,19 +1946,12 @@ class SettingsView(ft.Column):
         )
 
         self._openai_compatible_title = ft.Text(
-            t("settings.openai_compatible.title"),
+            t("settings.translation.config_title"),
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_SECONDARY,
         )
-        self._openai_provider_text = self._build_clickable_text(
-            t("settings.openai_compatible.provider_custom"),
-            self._on_openai_provider_click,
-            size=24,
-            no_wrap=True,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
+        self._openai_provider = self._build_provider_dropdown(self._on_openai_provider_change)
         self._openai_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url"),
             value="",
@@ -1910,6 +1962,7 @@ class SettingsView(ft.Column):
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            visible=False,
             on_blur=self._on_openai_base_url_change_end,
             on_submit=self._on_openai_base_url_change_end,
         )
@@ -1937,36 +1990,23 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
-        self._openai_fetch_text = self._build_clickable_text(
-            t("settings.openai_compatible.fetch_models"),
-            self._on_fetch_openai_models,
-            size=20,
-            expand=False,
+        self._openai_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_openai_models,
         )
-        self._openai_test_text = self._build_clickable_text(
-            t("settings.openai_compatible.test_connection"),
-            self._on_test_openai_connection,
-            size=20,
-            expand=False,
-        )
-        self._openai_actions = ft.Row(
-            [
-                self._openai_fetch_text,
-                self._openai_test_text,
-            ],
-            spacing=24,
+        self._openai_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_openai_connection,
         )
         self._openai_compatible_card = self._wrap_card(
-            ft.Column(
-                [
-                    self._openai_compatible_title,
-                    self._openai_provider_text,
-                    self._openai_base_url,
-                    self._openai_model,
-                    self._openai_api_key,
-                    self._openai_actions,
-                ],
-                spacing=8,
+            self._compose_openai_form(
+                title=self._openai_compatible_title,
+                provider=self._openai_provider,
+                model=self._openai_model,
+                fetch_btn=self._openai_fetch_btn,
+                api_key=self._openai_api_key,
+                test_btn=self._openai_test_btn,
             ),
             height=None,
         )
@@ -1978,14 +2018,7 @@ class SettingsView(ft.Column):
             weight=ft.FontWeight.BOLD,
             color=COLOR_SECONDARY,
         )
-        self._backup_provider_text = self._build_clickable_text(
-            t("settings.openai_compatible.provider_custom"),
-            self._on_backup_provider_click,
-            size=24,
-            no_wrap=True,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
+        self._backup_provider = self._build_provider_dropdown(self._on_backup_provider_change)
         self._backup_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url"),
             value="",
@@ -1996,6 +2029,7 @@ class SettingsView(ft.Column):
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            visible=False,
             on_blur=self._on_backup_base_url_change_end,
             on_submit=self._on_backup_base_url_change_end,
         )
@@ -2023,34 +2057,22 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
-        self._backup_fetch_text = self._build_clickable_text(
-            t("settings.openai_compatible.fetch_models"),
-            self._on_fetch_backup_models,
-            size=20,
-            expand=False,
+        self._backup_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_backup_models,
         )
-        self._backup_test_text = self._build_clickable_text(
-            t("settings.openai_compatible.test_connection"),
-            self._on_test_backup_connection,
-            size=20,
-            expand=False,
+        self._backup_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_backup_connection,
         )
-        self._backup_actions = ft.Row(
-            [
-                self._backup_fetch_text,
-                self._backup_test_text,
-            ],
-            spacing=24,
-        )
-        self._backup_network_group = ft.Column(
-            [
-                self._backup_provider_text,
-                self._backup_base_url,
-                self._backup_model,
-                self._backup_api_key,
-                self._backup_actions,
-            ],
-            spacing=8,
+        self._backup_network_group = self._compose_openai_form(
+            title=None,
+            provider=self._backup_provider,
+            model=self._backup_model,
+            fetch_btn=self._backup_fetch_btn,
+            api_key=self._backup_api_key,
+            test_btn=self._backup_test_btn,
         )
         self._backup_local_base_url = ft.TextField(
             label=t("settings.local_llm.base_url"),
@@ -2062,6 +2084,7 @@ class SettingsView(ft.Column):
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_backup_local_field_change,
             on_blur=self._on_backup_local_base_url_change_end,
             on_submit=self._on_backup_local_base_url_change_end,
         )
@@ -2075,6 +2098,7 @@ class SettingsView(ft.Column):
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_backup_local_field_change,
             on_blur=self._on_backup_local_model_change_end,
             on_submit=self._on_backup_local_model_change_end,
         )
@@ -2088,33 +2112,61 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
-        self._backup_local_fetch_text = self._build_clickable_text(
-            t("settings.openai_compatible.fetch_models"),
-            self._on_fetch_backup_local_models,
-            size=20,
-            expand=False,
+        self._backup_local_api_key_helper = ft.Text(
+            t("settings.local_llm.api_key.description"),
+            size=15,
+            color=COLOR_SECONDARY,
         )
-        self._backup_local_test_text = self._build_clickable_text(
-            t("settings.openai_compatible.test_connection"),
-            self._on_test_backup_local_connection,
-            size=20,
-            expand=False,
+        self._backup_local_extra_body = ft.TextField(
+            label=t("settings.local_llm.extra_body"),
+            value="",
+            multiline=True,
+            min_lines=3,
+            max_lines=6,
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_backup_local_field_change,
+            on_blur=self._on_backup_local_extra_body_change_end,
+            on_submit=self._on_backup_local_extra_body_change_end,
         )
-        self._backup_local_actions = ft.Row(
-            [
-                self._backup_local_fetch_text,
-                self._backup_local_test_text,
-            ],
-            spacing=24,
+        self._backup_local_extra_body_helper = ft.Text(
+            t("settings.local_llm.extra_body.description"),
+            size=15,
+            color=COLOR_SECONDARY,
         )
-        self._backup_local_group = ft.Column(
-            [
-                self._backup_local_base_url,
-                self._backup_local_model,
-                self._backup_local_api_key,
-                self._backup_local_actions,
-            ],
-            spacing=8,
+        self._backup_local_extra_body_error = ft.Text(
+            "",
+            size=13,
+            color=COLOR_ERROR,
+            visible=False,
+        )
+        self._backup_local_extra_body_error_key = ""
+        self._backup_local_extra_body_error_kwargs: dict[str, object] = {}
+        self._backup_local_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_backup_local_models,
+        )
+        self._backup_local_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_backup_local_connection,
+        )
+        self._backup_local_group = self._compose_local_form(
+            title=None,
+            base_url=self._backup_local_base_url,
+            test_btn=self._backup_local_test_btn,
+            model=self._backup_local_model,
+            fetch_btn=self._backup_local_fetch_btn,
+            api_key=self._backup_local_api_key,
+            api_key_helper=self._backup_local_api_key_helper,
+            extra_body=self._backup_local_extra_body,
+            extra_body_helper=self._backup_local_extra_body_helper,
+            extra_body_error=self._backup_local_extra_body_error,
         )
         self._backup_config_card = self._wrap_card(
             ft.Column(
@@ -3347,6 +3399,7 @@ class SettingsView(ft.Column):
 
     def _build_provider_apply_intent(self) -> ProviderApplyIntent | None:
         self._commit_local_llm_fields_from_controls()
+        self._commit_backup_local_fields_from_controls()
         if self._provider_snapshot is None:
             return None
         return ProviderApplyIntent(tuple(self._provider_edits.values()))
@@ -3462,6 +3515,9 @@ class SettingsView(ft.Column):
                 (self._local_llm_base_url, "local_llm_base_url"),
                 (self._local_llm_model, "local_llm_model"),
                 (self._local_llm_extra_body, "local_llm_extra_body_json"),
+                (self._backup_local_base_url, "backup_local_base_url"),
+                (self._backup_local_model, "backup_local_model"),
+                (self._backup_local_extra_body, "backup_local_extra_body_json"),
                 (self._custom_stt_endpoint, "custom_stt_endpoint"),
                 (self._custom_stt_model, "custom_stt_model"),
                 (self._custom_stt_extra, "custom_stt_extra_json"),
@@ -4197,20 +4253,20 @@ class SettingsView(ft.Column):
         )
         self._openai_base_url.value = settings.openai_compatible_base_url
         self._openai_model.value = settings.openai_compatible_model
-        self._set_unit_card_value_text(
-            self._openai_provider_text,
-            self._openai_provider_label(settings.openai_compatible_provider_key),
-            size=24,
+        self._openai_provider.value = self._provider_dropdown_value(
+            settings.openai_compatible_provider_key,
+            settings.openai_compatible_base_url,
         )
         self._backup_base_url.value = settings.backup_base_url
         self._backup_model.value = settings.backup_model
-        self._set_unit_card_value_text(
-            self._backup_provider_text,
-            self._openai_provider_label(settings.backup_provider_key),
-            size=24,
+        self._backup_provider.value = self._provider_dropdown_value(
+            settings.backup_provider_key,
+            settings.backup_base_url,
         )
         self._backup_local_base_url.value = settings.backup_local_base_url
         self._backup_local_model.value = settings.backup_local_model
+        self._backup_local_extra_body.value = settings.backup_local_extra_body_json
+        self._clear_backup_local_extra_body_error()
 
     def _provider_snapshot_with_translation(
         self,
@@ -4496,10 +4552,128 @@ class SettingsView(ft.Column):
         self._commit_backup_field("model", getattr(e.control, "value", ""))
 
     def _on_backup_local_base_url_change_end(self, e) -> None:
-        self._commit_backup_field("local_base_url", getattr(e.control, "value", ""))
+        _ = e
+        if self._provider_snapshot is None:
+            return
+        raw_value = self._backup_local_base_url.value or ""
+        try:
+            normalized = normalize_local_llm_base_url(raw_value)
+        except ValueError:
+            self._backup_local_base_url.error = t("settings.local_llm.base_url.invalid")
+            _update_control_if_mounted(self._backup_local_base_url)
+            return
+        self._backup_local_base_url.error = None
+        self._backup_local_base_url.value = normalized
+        self._commit_backup_field("local_base_url", normalized)
+        _update_control_if_mounted(self._backup_local_base_url)
 
     def _on_backup_local_model_change_end(self, e) -> None:
-        self._commit_backup_field("local_model", getattr(e.control, "value", ""))
+        _ = e
+        if self._provider_snapshot is None:
+            return
+        model = (self._backup_local_model.value or "").strip()
+        if not model:
+            self._backup_local_model.error = t("settings.local_llm.model.required")
+            _update_control_if_mounted(self._backup_local_model)
+            return
+        self._backup_local_model.error = None
+        self._backup_local_model.value = model
+        self._commit_backup_field("local_model", model)
+        _update_control_if_mounted(self._backup_local_model)
+
+    def _on_backup_local_field_change(self, e) -> None:
+        _ = e
+        if self._provider_snapshot is None:
+            return
+        current = self._provider_draft or self._provider_snapshot
+        if not current.backup_enabled:
+            return
+        if normalize_translation_model(current.backup_variant) != TranslationModel.LOCAL_LLM:
+            return
+        self._ensure_provider_settings_draft()
+        self.has_provider_changes = True
+
+    def _show_backup_local_extra_body_error(self, message_key: str, **kwargs: object) -> None:
+        message = self._local_llm_extra_body_error_message(message_key, **kwargs)
+        self._backup_local_extra_body_error_key = message_key
+        self._backup_local_extra_body_error_kwargs = dict(kwargs)
+        self._backup_local_extra_body_error.value = message
+        self._backup_local_extra_body_error.visible = True
+        self._backup_local_extra_body.error = message
+        _update_control_if_mounted(self._backup_local_extra_body)
+        _update_control_if_mounted(self._backup_local_extra_body_error)
+
+    def _clear_backup_local_extra_body_error(self) -> None:
+        self._backup_local_extra_body_error_key = ""
+        self._backup_local_extra_body_error_kwargs = {}
+        self._backup_local_extra_body_error.value = ""
+        self._backup_local_extra_body_error.visible = False
+        self._backup_local_extra_body.error = None
+        _update_control_if_mounted(self._backup_local_extra_body)
+        _update_control_if_mounted(self._backup_local_extra_body_error)
+
+    def _on_backup_local_extra_body_change_end(self, e) -> None:
+        _ = e
+        if self._provider_snapshot is None:
+            return
+        raw = (self._backup_local_extra_body.value or "").strip()
+        try:
+            parsed = (
+                {"reasoning_effort": "none", "temperature": 0.6}
+                if not raw
+                else json.loads(raw, parse_constant=_reject_json_constant)
+            )
+        except json.JSONDecodeError:
+            self._show_backup_local_extra_body_error("settings.local_llm.extra_body.invalid_json")
+            return
+        if not isinstance(parsed, dict):
+            self._show_backup_local_extra_body_error("settings.local_llm.extra_body.must_be_object")
+            return
+        lowered = {str(key).lower() for key in parsed}
+        reserved = LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS.intersection(lowered)
+        if reserved:
+            self._show_backup_local_extra_body_error(
+                "settings.local_llm.extra_body.reserved_key",
+                key=sorted(reserved)[0],
+            )
+            return
+        sensitive = LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS.intersection(lowered)
+        if sensitive:
+            self._show_backup_local_extra_body_error(
+                "settings.local_llm.extra_body.sensitive_key",
+                key=sorted(sensitive)[0],
+            )
+            return
+        try:
+            json.dumps(parsed, allow_nan=False)
+        except (TypeError, ValueError):
+            self._show_backup_local_extra_body_error("settings.local_llm.extra_body.not_serializable")
+            return
+        normalized = copy.deepcopy(parsed)
+        normalized_text = json.dumps(normalized, ensure_ascii=False, indent=2, allow_nan=False)
+        current = self._provider_draft or self._provider_snapshot
+        if current.backup_local_extra_body_json != normalized_text:
+            draft = self._ensure_provider_settings_draft()
+            self._provider_draft = replace(draft, backup_local_extra_body_json=normalized_text)
+            self._record_provider_edit(
+                BackupLocalLlmExtraBodyEdit(self._provider_draft.backup_local_extra_body_json)
+            )
+            self.has_provider_changes = True
+        self._backup_local_extra_body.value = normalized_text
+        self._clear_backup_local_extra_body_error()
+        _update_control_if_mounted(self._backup_local_extra_body)
+
+    def _commit_backup_local_fields_from_controls(self) -> None:
+        if self._provider_snapshot is None:
+            return
+        current = self._provider_draft or self._provider_snapshot
+        if not current.backup_enabled:
+            return
+        if normalize_translation_model(current.backup_variant) != TranslationModel.LOCAL_LLM:
+            return
+        self._on_backup_local_base_url_change_end(None)
+        self._on_backup_local_model_change_end(None)
+        self._on_backup_local_extra_body_change_end(None)
 
     def _on_openai_secret_change(self, key: str, value: str) -> None:
         if key != "openai_compatible_api_key":
@@ -4528,41 +4702,22 @@ class SettingsView(ft.Column):
         if self.on_local_llm_secret_changed:
             self.on_local_llm_secret_changed()
 
-    def _openai_provider_label(self, provider_key: str) -> str:
-        if not provider_key:
-            return t("settings.openai_compatible.provider_custom")
+    def _provider_dropdown_value(self, provider_key: str, base_url: str) -> str | None:
         from puripuly_heart.config.providers_registry import load_provider_presets
 
-        preset = load_provider_presets().get(provider_key)
-        return preset.label if preset is not None else provider_key
+        presets = load_provider_presets()
+        if provider_key in presets:
+            return provider_key
+        for key, preset in presets.items():
+            if preset.base_url == base_url:
+                return key
+        return next(iter(presets), None)
 
-    def _preset_options(self) -> list:
-        from puripuly_heart.config.providers_registry import load_provider_presets
-
-        options = [
-            OptionItem(
-                value="",
-                label=t("settings.openai_compatible.provider_custom"),
-            )
-        ]
-        for key, preset in load_provider_presets().items():
-            options.append(
-                OptionItem(value=key, label=preset.label, description=preset.base_url)
-            )
-        return options
-
-    def _on_openai_provider_click(self, e) -> None:
-        if not is_control_mounted(self):
+    def _on_openai_provider_change(self, e) -> None:
+        value = getattr(e, "data", None) or getattr(getattr(e, "control", None), "value", None)
+        if value is None:
             return
-        settings = self._build_settings_with_provider_draft()
-        current = settings.openai_compatible_provider_key if settings else ""
-        SettingsModal(
-            self.page,
-            t("settings.openai_compatible.provider"),
-            self._preset_options(),
-            self._on_openai_provider_selected,
-            show_description=True,
-        ).open(current)
+        self._on_openai_provider_selected(value)
 
     def _on_openai_provider_selected(self, value: str) -> None:
         if self._provider_snapshot is None:
@@ -4573,25 +4728,21 @@ class SettingsView(ft.Column):
         preset = load_provider_presets().get(value)
         if preset is not None:
             self._openai_base_url.value = preset.base_url
-            self._commit_openai_field("base_url", preset.base_url)
             _update_control_if_mounted(self._openai_base_url)
-        self._set_unit_card_value_text(
-            self._openai_provider_text, self._openai_provider_label(value), size=24
-        )
-        _update_control_if_mounted(self._openai_provider_text)
+            current = self._provider_draft or self._provider_snapshot
+            if current.openai_compatible_base_url != preset.base_url:
+                self._commit_openai_field("base_url", preset.base_url)
+                self._commit_openai_field("model", "")
+            self._openai_model.value = ""
+            _update_control_if_mounted(self._openai_model)
+        self._openai_provider.value = value
+        _update_control_if_mounted(self._openai_provider)
 
-    def _on_backup_provider_click(self, e) -> None:
-        if not is_control_mounted(self):
+    def _on_backup_provider_change(self, e) -> None:
+        value = getattr(e, "data", None) or getattr(getattr(e, "control", None), "value", None)
+        if value is None:
             return
-        settings = self._build_settings_with_provider_draft()
-        current = settings.backup_provider_key if settings else ""
-        SettingsModal(
-            self.page,
-            t("settings.openai_compatible.provider"),
-            self._preset_options(),
-            self._on_backup_provider_selected,
-            show_description=True,
-        ).open(current)
+        self._on_backup_provider_selected(value)
 
     def _on_backup_provider_selected(self, value: str) -> None:
         if self._provider_snapshot is None:
@@ -4602,12 +4753,15 @@ class SettingsView(ft.Column):
         preset = load_provider_presets().get(value)
         if preset is not None:
             self._backup_base_url.value = preset.base_url
-            self._commit_backup_field("base_url", preset.base_url)
             _update_control_if_mounted(self._backup_base_url)
-        self._set_unit_card_value_text(
-            self._backup_provider_text, self._openai_provider_label(value), size=24
-        )
-        _update_control_if_mounted(self._backup_provider_text)
+            current = self._provider_draft or self._provider_snapshot
+            if current.backup_base_url != preset.base_url:
+                self._commit_backup_field("base_url", preset.base_url)
+                self._commit_backup_field("model", "")
+            self._backup_model.value = ""
+            _update_control_if_mounted(self._backup_model)
+        self._backup_provider.value = value
+        _update_control_if_mounted(self._backup_provider)
 
     async def _do_fetch_models(self, *, base_url: str, api_key: str, on_model_picked) -> None:
         if self.on_fetch_models is None or not base_url:
@@ -5960,31 +6114,35 @@ class SettingsView(ft.Column):
         self._peer_vad_title.value = t("settings.section.peer_vad_sensitivity")
         self._audio_test_title.value = t("settings.audio_test")
         self._translation_connection_title.value = t("settings.translation_connection")
-        self._local_llm_connection_title.value = t("settings.local_llm.connection")
+        self._local_llm_connection_title.value = t("settings.translation.config_title")
         self._backup_translation_title.value = t("settings.backup_translation.title")
-        self._openai_compatible_title.value = t("settings.openai_compatible.title")
+        self._openai_compatible_title.value = t("settings.translation.config_title")
         self._backup_config_title.value = t("settings.backup_translation.config_title")
-        self._openai_provider_text.content.value = t("settings.openai_compatible.provider_custom")
+        self._openai_provider.label = t("settings.openai_compatible.provider")
         self._openai_base_url.label = t("settings.openai_compatible.base_url")
         self._openai_model.label = t("settings.openai_compatible.model")
         self._openai_model.hint_text = t("settings.openai_compatible.model_hint")
         self._openai_api_key.apply_locale()
-        self._openai_fetch_text.content.value = t("settings.openai_compatible.fetch_models")
-        self._openai_test_text.content.value = t("settings.openai_compatible.test_connection")
-        self._backup_provider_text.content.value = t("settings.openai_compatible.provider_custom")
+        self._openai_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
+        self._openai_test_btn.content.value = t("settings.openai_compatible.test_connection")
+        self._backup_provider.label = t("settings.openai_compatible.provider")
         self._backup_base_url.label = t("settings.openai_compatible.base_url")
         self._backup_model.label = t("settings.openai_compatible.model")
         self._backup_model.hint_text = t("settings.openai_compatible.model_hint")
         self._backup_api_key.apply_locale()
-        self._backup_fetch_text.content.value = t("settings.openai_compatible.fetch_models")
-        self._backup_test_text.content.value = t("settings.openai_compatible.test_connection")
+        self._backup_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
+        self._backup_test_btn.content.value = t("settings.openai_compatible.test_connection")
         self._backup_local_base_url.label = t("settings.local_llm.base_url")
         self._backup_local_model.label = t("settings.local_llm.model")
         self._backup_local_api_key.apply_locale()
-        self._backup_local_fetch_text.content.value = t("settings.openai_compatible.fetch_models")
-        self._backup_local_test_text.content.value = t("settings.openai_compatible.test_connection")
-        self._local_llm_fetch_text.content.value = t("settings.openai_compatible.fetch_models")
-        self._local_llm_test_text.content.value = t("settings.openai_compatible.test_connection")
+        self._backup_local_api_key_helper.value = t("settings.local_llm.api_key.description")
+        self._backup_local_extra_body.label = t("settings.local_llm.extra_body")
+        self._backup_local_extra_body_helper.value = t("settings.local_llm.extra_body.description")
+        self._backup_local_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
+        self._backup_local_test_btn.content.value = t("settings.openai_compatible.test_connection")
+        self._local_llm_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
+        self._local_llm_test_btn.content.value = t("settings.openai_compatible.test_connection")
+        self._local_llm_api_key_helper.value = t("settings.local_llm.api_key.description")
         self._http_extension_title.value = t("settings.http_extension.title")
         self._http_extension_path_title.value = t("settings.http_extension.path")
         self._http_extension_refresh_title.value = t("settings.http_extension.refresh")
@@ -6009,6 +6167,19 @@ class SettingsView(ft.Column):
                 message = self._local_llm_extra_body_error_message(error_key, **error_kwargs)
                 self._local_llm_extra_body_error.value = message
                 self._local_llm_extra_body.error = message
+        if self._backup_local_base_url.error:
+            self._backup_local_base_url.error = t("settings.local_llm.base_url.invalid")
+        if self._backup_local_model.error:
+            self._backup_local_model.error = t("settings.local_llm.model.required")
+        if self._backup_local_extra_body_error.visible:
+            backup_error_key = self._backup_local_extra_body_error_key
+            backup_error_kwargs = self._backup_local_extra_body_error_kwargs
+            if backup_error_key:
+                backup_message = self._local_llm_extra_body_error_message(
+                    backup_error_key, **backup_error_kwargs
+                )
+                self._backup_local_extra_body_error.value = backup_message
+                self._backup_local_extra_body.error = backup_message
         self._persona_title.value = t("settings.section.persona")
         self._custom_vocab_title.value = t("settings.section.custom_vocabulary")
         self._vrc_mic_title.value = t("settings.vrc_mic_intercept")
