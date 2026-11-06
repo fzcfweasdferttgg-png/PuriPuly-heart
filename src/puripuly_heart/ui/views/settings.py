@@ -666,6 +666,14 @@ class SettingsView(ft.Column):
             self._backup_translation_text,
             self._openai_provider_text,
             self._backup_provider_text,
+            self._openai_fetch_text,
+            self._openai_test_text,
+            self._backup_fetch_text,
+            self._backup_test_text,
+            self._backup_local_fetch_text,
+            self._backup_local_test_text,
+            self._local_llm_fetch_text,
+            self._local_llm_test_text,
         )
 
     def _sync_clickable_text_control_fonts(self, font_family: str | None) -> None:
@@ -959,6 +967,9 @@ class SettingsView(ft.Column):
         self._llm_text = self._build_clickable_text(
             t("provider.gemini_flash"),
             self._on_llm_click,
+            no_wrap=True,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
         )
         self._trans_title = ft.Text(
             t("settings.section.translation"),
@@ -1786,20 +1797,22 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
+        self._local_llm_fetch_text = self._build_clickable_text(
+            t("settings.openai_compatible.fetch_models"),
+            self._on_fetch_local_llm_models,
+            size=20,
+            expand=False,
+        )
+        self._local_llm_test_text = self._build_clickable_text(
+            t("settings.openai_compatible.test_connection"),
+            self._on_test_local_llm_connection,
+            size=20,
+            expand=False,
+        )
         self._local_llm_actions = ft.Row(
             [
-                self._build_clickable_text(
-                    t("settings.openai_compatible.fetch_models"),
-                    self._on_fetch_local_llm_models,
-                    size=20,
-                    expand=False,
-                ),
-                self._build_clickable_text(
-                    t("settings.openai_compatible.test_connection"),
-                    self._on_test_local_llm_connection,
-                    size=20,
-                    expand=False,
-                ),
+                self._local_llm_fetch_text,
+                self._local_llm_test_text,
             ],
             spacing=24,
         )
@@ -1924,20 +1937,22 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
+        self._openai_fetch_text = self._build_clickable_text(
+            t("settings.openai_compatible.fetch_models"),
+            self._on_fetch_openai_models,
+            size=20,
+            expand=False,
+        )
+        self._openai_test_text = self._build_clickable_text(
+            t("settings.openai_compatible.test_connection"),
+            self._on_test_openai_connection,
+            size=20,
+            expand=False,
+        )
         self._openai_actions = ft.Row(
             [
-                self._build_clickable_text(
-                    t("settings.openai_compatible.fetch_models"),
-                    self._on_fetch_openai_models,
-                    size=20,
-                    expand=False,
-                ),
-                self._build_clickable_text(
-                    t("settings.openai_compatible.test_connection"),
-                    self._on_test_openai_connection,
-                    size=20,
-                    expand=False,
-                ),
+                self._openai_fetch_text,
+                self._openai_test_text,
             ],
             spacing=24,
         )
@@ -2008,20 +2023,22 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
+        self._backup_fetch_text = self._build_clickable_text(
+            t("settings.openai_compatible.fetch_models"),
+            self._on_fetch_backup_models,
+            size=20,
+            expand=False,
+        )
+        self._backup_test_text = self._build_clickable_text(
+            t("settings.openai_compatible.test_connection"),
+            self._on_test_backup_connection,
+            size=20,
+            expand=False,
+        )
         self._backup_actions = ft.Row(
             [
-                self._build_clickable_text(
-                    t("settings.openai_compatible.fetch_models"),
-                    self._on_fetch_backup_models,
-                    size=20,
-                    expand=False,
-                ),
-                self._build_clickable_text(
-                    t("settings.openai_compatible.test_connection"),
-                    self._on_test_backup_connection,
-                    size=20,
-                    expand=False,
-                ),
+                self._backup_fetch_text,
+                self._backup_test_text,
             ],
             spacing=24,
         )
@@ -2071,20 +2088,22 @@ class SettingsView(ft.Column):
             ),
             show_status=False,
         )
+        self._backup_local_fetch_text = self._build_clickable_text(
+            t("settings.openai_compatible.fetch_models"),
+            self._on_fetch_backup_local_models,
+            size=20,
+            expand=False,
+        )
+        self._backup_local_test_text = self._build_clickable_text(
+            t("settings.openai_compatible.test_connection"),
+            self._on_test_backup_local_connection,
+            size=20,
+            expand=False,
+        )
         self._backup_local_actions = ft.Row(
             [
-                self._build_clickable_text(
-                    t("settings.openai_compatible.fetch_models"),
-                    self._on_fetch_backup_local_models,
-                    size=20,
-                    expand=False,
-                ),
-                self._build_clickable_text(
-                    t("settings.openai_compatible.test_connection"),
-                    self._on_test_backup_local_connection,
-                    size=20,
-                    expand=False,
-                ),
+                self._backup_local_fetch_text,
+                self._backup_local_test_text,
             ],
             spacing=24,
         )
@@ -5942,6 +5961,30 @@ class SettingsView(ft.Column):
         self._audio_test_title.value = t("settings.audio_test")
         self._translation_connection_title.value = t("settings.translation_connection")
         self._local_llm_connection_title.value = t("settings.local_llm.connection")
+        self._backup_translation_title.value = t("settings.backup_translation.title")
+        self._openai_compatible_title.value = t("settings.openai_compatible.title")
+        self._backup_config_title.value = t("settings.backup_translation.config_title")
+        self._openai_provider_text.content.value = t("settings.openai_compatible.provider_custom")
+        self._openai_base_url.label = t("settings.openai_compatible.base_url")
+        self._openai_model.label = t("settings.openai_compatible.model")
+        self._openai_model.hint_text = t("settings.openai_compatible.model_hint")
+        self._openai_api_key.apply_locale()
+        self._openai_fetch_text.content.value = t("settings.openai_compatible.fetch_models")
+        self._openai_test_text.content.value = t("settings.openai_compatible.test_connection")
+        self._backup_provider_text.content.value = t("settings.openai_compatible.provider_custom")
+        self._backup_base_url.label = t("settings.openai_compatible.base_url")
+        self._backup_model.label = t("settings.openai_compatible.model")
+        self._backup_model.hint_text = t("settings.openai_compatible.model_hint")
+        self._backup_api_key.apply_locale()
+        self._backup_fetch_text.content.value = t("settings.openai_compatible.fetch_models")
+        self._backup_test_text.content.value = t("settings.openai_compatible.test_connection")
+        self._backup_local_base_url.label = t("settings.local_llm.base_url")
+        self._backup_local_model.label = t("settings.local_llm.model")
+        self._backup_local_api_key.apply_locale()
+        self._backup_local_fetch_text.content.value = t("settings.openai_compatible.fetch_models")
+        self._backup_local_test_text.content.value = t("settings.openai_compatible.test_connection")
+        self._local_llm_fetch_text.content.value = t("settings.openai_compatible.fetch_models")
+        self._local_llm_test_text.content.value = t("settings.openai_compatible.test_connection")
         self._http_extension_title.value = t("settings.http_extension.title")
         self._http_extension_path_title.value = t("settings.http_extension.path")
         self._http_extension_refresh_title.value = t("settings.http_extension.refresh")

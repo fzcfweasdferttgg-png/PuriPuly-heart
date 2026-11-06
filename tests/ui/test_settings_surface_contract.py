@@ -333,3 +333,24 @@ def _track(bucket: list[ft.Control]) -> ft.Control:
     control = ft.Container()
     bucket.append(control)
     return control
+
+
+def test_settings_api_surface_exposes_config_cards_as_rows_items() -> None:
+    import dataclasses
+
+    provider = _SlotProvider()
+    slots = dataclasses.replace(
+        SettingsApiSurfaceSlots.from_slot_provider(provider),
+        openai_compatible_config=ft.Text("openai_cfg"),
+        backup_translation_config=ft.Text("backup_cfg"),
+    )
+    surface = compose_settings_api_surface(slots)
+
+    assert surface.rows == (
+        surface.provider_row,
+        surface.translation_connection_row,
+        slots.openai_compatible_config,
+        slots.backup_translation_config,
+        slots.local_llm_connection,
+        surface.gpu_device_row,
+    )

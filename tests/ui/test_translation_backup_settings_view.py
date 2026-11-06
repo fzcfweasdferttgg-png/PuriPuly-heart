@@ -297,3 +297,35 @@ def test_model_assets_card_does_not_stretch(
 
     assert view._model_assets_card.expand is False
     assert view._model_assets_card.width == 280
+
+
+def test_translation_cards_share_the_same_value_text_shape(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    llm_text = view._llm_text.content
+    backup_text = view._backup_translation_text.content
+    assert llm_text.no_wrap == backup_text.no_wrap is True
+    assert llm_text.max_lines == backup_text.max_lines == 1
+    assert llm_text.overflow == backup_text.overflow
+
+
+def test_apply_locale_localizes_backup_and_openai_surfaces(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    from puripuly_heart.ui import i18n as i18n_module
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    previous = i18n_module.get_locale()
+    try:
+        i18n_module.set_locale("ru")
+        view.apply_locale()
+        assert view._backup_translation_title.value == "Резервный перевод"
+        assert view._openai_compatible_title.value == "Сетевой перевод"
+        assert view._backup_config_title.value == "Настройки резервного перевода"
+        assert view._openai_fetch_text.content.value == "Получить список моделей"
+    finally:
+        i18n_module.set_locale(previous)

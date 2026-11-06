@@ -64,20 +64,11 @@ def compose_settings_api_surface(
         translation_config_items.append(slots.openai_compatible_config)
     if slots.backup_translation_config is not None:
         translation_config_items.append(slots.backup_translation_config)
-    translation_config_row = ft.Container(
-        content=ft.Row(
-            translation_config_items,
-            spacing=SETTINGS_ROW_SPACING,
-            expand=True,
-        ),
-        visible=bool(translation_config_items),
-    )
     rows: list[ft.Control] = [
         provider_row,
         translation_connection_row,
     ]
-    if translation_config_items:
-        rows.append(translation_config_row)
+    rows.extend(translation_config_items)
     rows.extend(
         [
             slots.local_llm_connection,
