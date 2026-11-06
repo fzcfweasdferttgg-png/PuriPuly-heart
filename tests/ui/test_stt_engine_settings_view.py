@@ -59,7 +59,7 @@ def test_stt_engine_value_label_appends_backend(
 
     view._on_stt_engine_selected("vulkan")
 
-    assert view._stt_text.content.value == f"{_ENGINE_LABEL} · Vulkan API"
+    assert view._stt_text.content.value == f"{_ENGINE_LABEL}\nVulkan API"
 
 
 def test_backend_change_resets_saved_device(

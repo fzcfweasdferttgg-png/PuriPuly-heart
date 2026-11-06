@@ -3671,7 +3671,7 @@ class SettingsView(ft.Column):
             custom_mode=settings.custom_stt_mode,
         )
         if provider == STTProviderName.LOCAL_QWEN_GPU:
-            return f"{label} · {self._engine_backend_label(backend)}"
+            return f"{label}\n{self._engine_backend_label(backend)}"
         return label
 
     def _sync_stt_provider_labels(self, settings: ProviderSettingsSnapshot) -> None:

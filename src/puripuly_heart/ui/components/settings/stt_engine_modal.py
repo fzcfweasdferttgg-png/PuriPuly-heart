@@ -1,10 +1,10 @@
 """Speech recognition engine selection modal.
 
 The engine list contains an off switch and one honest engine card
-("transcribe.cpp") carrying a three-state backend toggle (CPU / Vulkan API /
+("transcribe.cpp") carrying a three-state backend control (CPU / Vulkan API /
 CUDA). Clicking the card selects the engine with the shown backend; clicking a
-toggle segment selects the engine with that backend. Unavailable backends are
-greyed out.
+segment selects the engine with that backend. Unavailable backends are greyed
+out and inert.
 """
 
 from __future__ import annotations
@@ -28,6 +28,10 @@ ENGINE_BACKENDS: tuple[tuple[str, str], ...] = (
     ("vulkan", "Vulkan API"),
     ("cuda", "CUDA"),
 )
+
+_SEGMENT_WIDTH = 120
+_SEGMENT_HEIGHT = 40
+_GROUP_RADIUS = 12
 
 
 class SttEngineModal:
@@ -94,12 +98,30 @@ class SttEngineModal:
             self._page.pop_dialog()
 
     def _build_none_card(self) -> ft.Control:
-        selected = self._current_engine == ""
         return self._build_option_card(
             self._none_label,
-            None,
-            selected=selected,
+            selected=self._current_engine == "",
             on_click=self._select_none,
+        )
+
+    def _build_option_card(self, label: str, *, selected: bool, on_click) -> ft.Control:
+        text_color = ft.Colors.WHITE if selected else COLOR_ON_BACKGROUND
+        return ft.Container(
+            content=ft.Text(
+                label,
+                size=20,
+                color=text_color,
+                weight=ft.FontWeight.BOLD,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            bgcolor=COLOR_PRIMARY if selected else COLOR_BACKGROUND,
+            border_radius=16,
+            padding=ft.Padding.all(24),
+            alignment=ft.Alignment.CENTER,
+            on_click=on_click,
+            on_hover=self._on_item_hover,
+            animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+            height=110,
         )
 
     def _build_engine_card(self) -> ft.Control:
@@ -122,28 +144,30 @@ class SttEngineModal:
                     ),
                     ft.Text(
                         self._engine_description,
-                        size=16,
+                        size=15,
                         color=desc_color,
                         text_align=ft.TextAlign.CENTER,
                     ),
                 ],
-                spacing=8,
+                spacing=6,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            expand=True,
+            padding=ft.Padding.symmetric(vertical=4),
             on_click=lambda _e: self._select_engine(self._current_backend),
             on_hover=self._on_item_hover,
             animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
         )
-        toggle = ft.Row(
-            [self._build_backend_segment(value, label) for value, label in ENGINE_BACKENDS],
-            spacing=8,
-            alignment=ft.MainAxisAlignment.CENTER,
-        )
         return ft.Container(
             content=ft.Column(
-                [label_area, ft.Container(content=toggle, alignment=ft.Alignment.CENTER)],
+                [
+                    label_area,
+                    ft.Container(
+                        content=self._build_backend_toggle(card_selected=selected),
+                        alignment=ft.Alignment.CENTER,
+                    ),
+                ],
                 spacing=12,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=COLOR_PRIMARY if selected else COLOR_BACKGROUND,
             border_radius=16,
@@ -151,94 +175,75 @@ class SttEngineModal:
             animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
         )
 
-    def _build_backend_segment(self, value: str, label: str) -> ft.Control:
+    def _build_backend_toggle(self, *, card_selected: bool) -> ft.Control:
+        segments = [
+            self._build_backend_segment(value, label, card_selected=card_selected)
+            for value, label in ENGINE_BACKENDS
+        ]
+        group_border = (
+            ft.Border.all(1, ft.Colors.with_opacity(0.5, ft.Colors.WHITE))
+            if card_selected
+            else ft.Border.all(1, ft.Colors.with_opacity(0.35, COLOR_NEUTRAL_DARK))
+        )
+        return ft.Container(
+            content=ft.Row(controls=segments, spacing=0),
+            border=group_border,
+            border_radius=_GROUP_RADIUS,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        )
+
+    def _build_backend_segment(
+        self,
+        value: str,
+        label: str,
+        *,
+        card_selected: bool,
+    ) -> ft.Control:
         available = self._backend_available.get(value, True)
         is_selected = available and self._current_backend == value
-        if not available:
-            text_color = ft.Colors.with_opacity(0.4, COLOR_ON_BACKGROUND)
-            bg_color = COLOR_BACKGROUND
-            border = ft.Border.all(1, COLOR_NEUTRAL_DARK)
-        elif is_selected:
-            text_color = ft.Colors.WHITE
-            bg_color = COLOR_PRIMARY
-            border = None
+        if card_selected:
+            hover_bg = ft.Colors.with_opacity(0.14, ft.Colors.WHITE)
+            selected_bg = ft.Colors.WHITE
+            text_color = (
+                COLOR_PRIMARY
+                if is_selected
+                else ft.Colors.with_opacity(0.9, ft.Colors.WHITE)
+            )
         else:
-            text_color = COLOR_ON_BACKGROUND
-            bg_color = COLOR_BACKGROUND
-            border = ft.Border.all(1, COLOR_NEUTRAL_DARK)
+            hover_bg = ft.Colors.with_opacity(0.12, COLOR_PRIMARY)
+            selected_bg = COLOR_PRIMARY
+            text_color = ft.Colors.WHITE if is_selected else COLOR_ON_BACKGROUND
+        if not available:
+            text_color = ft.Colors.with_opacity(0.4, text_color)
+        base_bg = selected_bg if is_selected else None
+
+        def on_hover(
+            e: ft.ControlEvent,
+            base: object = base_bg,
+            hover: object = hover_bg,
+        ) -> None:
+            container = e.control
+            container.bgcolor = hover if is_hover_active(e) else base
+            container.update()
+
         segment = ft.Container(
             content=ft.Text(
                 label,
-                size=16,
+                size=15,
                 weight=ft.FontWeight.BOLD,
                 color=text_color,
                 text_align=ft.TextAlign.CENTER,
             ),
-            bgcolor=bg_color,
-            border_radius=12,
-            border=border,
-            padding=ft.Padding.symmetric(horizontal=16, vertical=10),
-            on_click=(None if not available else lambda _e, val=value: self._select_engine(val)),
-            on_hover=None if not available else self._on_segment_hover,
-            animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
-        )
-        if not available:
-            segment.tooltip = label
-        return segment
-
-    def _build_option_card(
-        self,
-        label: str,
-        description: str | None,
-        *,
-        selected: bool,
-        on_click,
-    ) -> ft.Control:
-        text_color = ft.Colors.WHITE if selected else COLOR_ON_BACKGROUND
-        desc_color = (
-            ft.Colors.with_opacity(0.8, ft.Colors.WHITE)
-            if selected
-            else COLOR_NEUTRAL_DARK
-        )
-        if description:
-            content: ft.Control = ft.Column(
-                [
-                    ft.Text(
-                        label,
-                        size=20,
-                        color=text_color,
-                        weight=ft.FontWeight.BOLD,
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                    ft.Text(
-                        description,
-                        size=16,
-                        color=desc_color,
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                ],
-                spacing=8,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            )
-        else:
-            content = ft.Text(
-                label,
-                size=20,
-                color=text_color,
-                weight=ft.FontWeight.BOLD,
-                text_align=ft.TextAlign.CENTER,
-            )
-        return ft.Container(
-            content=content,
-            bgcolor=COLOR_PRIMARY if selected else COLOR_BACKGROUND,
-            border_radius=16,
-            padding=ft.Padding.all(24),
+            width=_SEGMENT_WIDTH,
+            height=_SEGMENT_HEIGHT,
             alignment=ft.Alignment.CENTER,
-            on_click=on_click,
-            on_hover=self._on_item_hover,
+            bgcolor=base_bg,
             animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
-            height=110,
         )
+        if available:
+            segment.on_click = lambda _e, val=value: self._select_engine(val)
+            segment.on_hover = on_hover
+        return segment
 
     def _select_none(self, _e) -> None:
         self._close()
@@ -269,14 +274,4 @@ class SttEngineModal:
             text_control.color = COLOR_ON_BACKGROUND
             if desc_control is not None:
                 desc_control.color = COLOR_NEUTRAL_DARK
-        container.update()
-
-    def _on_segment_hover(self, e: ft.ControlEvent) -> None:
-        container = e.control
-        content = container.content
-        if not isinstance(content, ft.Text):
-            return
-        if content.color == ft.Colors.WHITE:
-            return
-        content.color = COLOR_PRIMARY if is_hover_active(e) else COLOR_ON_BACKGROUND
         container.update()
