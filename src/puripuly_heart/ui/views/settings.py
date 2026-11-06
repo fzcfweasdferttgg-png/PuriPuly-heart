@@ -347,28 +347,51 @@ def _update_control_if_mounted(control: ft.Control) -> None:
     update_control_if_mounted(control)
 
 
-_VALUE_TEXT_MAX_WIDTH = 240
+_VALUE_TEXT_MAX_WIDTH = 232
 
 
-def _scaled_value_text_size(text: str, base: int = 28) -> int:
-    """Largest size up to base at which the value still fits one card line."""
-    # Approximate glyph advance widths in em units.
-    width_units = 0.0
-    for char in text:
-        if char == " ":
-            width_units += 0.3
-        elif char in "ijlt.,:;'!|()[]{}-/\\\"`":
-            width_units += 0.32
-        elif char in "mwMW@%&":
-            width_units += 0.85
-        elif ord(char) >= 0x2E80:
-            width_units += 1.0
+def _value_char_width(char: str) -> float:
+    # Approximate glyph advance widths in em units for the UI font.
+    if char == " ":
+        return 0.30
+    if char in "ijlt.,:;'!|()[]{}-/\\\"`":
+        return 0.32
+    if char in "mwMW@%&":
+        return 0.80
+    if ord(char) >= 0x2E80:
+        return 1.05
+    return 0.62
+
+
+def _value_word_width(word: str) -> float:
+    return sum(_value_char_width(char) for char in word)
+
+
+def _value_line_count(words: list[str], size: int) -> int:
+    lines = 1
+    current = 0.0
+    for word in words:
+        width = _value_word_width(word) * size
+        if current and current + 0.30 * size + width > _VALUE_TEXT_MAX_WIDTH:
+            lines += 1
+            current = width
         else:
-            width_units += 0.55
-    if width_units <= 0:
+            current += (0.30 * size if current else 0.0) + width
+    return lines
+
+
+def _scaled_value_text_size(text: str, base: int = 28, max_lines: int = 1) -> int:
+    """Largest size up to base at which the value fits within max_lines lines."""
+    words = text.split()
+    if not words:
         return base
-    fit = int(_VALUE_TEXT_MAX_WIDTH / width_units)
-    return max(14, min(base, fit))
+    widest = max(_value_word_width(word) for word in words)
+    for size in range(base, 13, -1):
+        if widest * size > _VALUE_TEXT_MAX_WIDTH:
+            continue
+        if _value_line_count(words, size) <= max_lines:
+            return size
+    return 14
 
 
 class SettingsView(ft.Column):
@@ -716,7 +739,9 @@ class SettingsView(ft.Column):
     ) -> None:
         text_control = control.content
         text_control.value = text
-        text_control.size = _scaled_value_text_size(text, size)
+        text_control.size = _scaled_value_text_size(
+            text, size, max_lines=getattr(text_control, "max_lines", None) or 1
+        )
 
     def _iter_locale_sensitive_clickable_text_controls(self) -> tuple[ft.Container, ...]:
         return (
@@ -1046,8 +1071,8 @@ class SettingsView(ft.Column):
         self._llm_text = self._build_clickable_text(
             t("provider.gemini_flash"),
             self._on_llm_click,
-            no_wrap=True,
-            max_lines=1,
+            no_wrap=False,
+            max_lines=2,
             overflow=ft.TextOverflow.ELLIPSIS,
         )
         self._trans_title = ft.Text(
@@ -1949,8 +1974,8 @@ class SettingsView(ft.Column):
         self._backup_translation_text = self._build_clickable_text(
             t("settings.not_selected"),
             self._on_backup_translation_click,
-            no_wrap=True,
-            max_lines=1,
+            no_wrap=False,
+            max_lines=2,
             overflow=ft.TextOverflow.ELLIPSIS,
         )
         self._backup_translation_card = self._wrap_unit_card(
@@ -3590,6 +3615,10 @@ class SettingsView(ft.Column):
             self._get_translation_connection_display_label(display_provider),
         )
         self._sync_translation_connection_title(display_provider)
+        self._set_unit_card_value_text(
+            self._backup_translation_text,
+            self._backup_display_label(display_provider),
+        )
         self._local_llm_base_url.value = display_provider.local_llm_base_url
         self._local_llm_base_url.error = None
         self._local_llm_model.value = display_provider.local_llm_model
@@ -6243,6 +6272,10 @@ class SettingsView(ft.Column):
         # Update dynamic buttons by replacing the entire style object
         ui_font = font_for_language(get_locale())
         display_settings = self._build_settings_with_provider_draft()
+        self._set_unit_card_value_text(
+            self._backup_translation_text,
+            self._backup_display_label(display_settings),
+        )
 
         if self._reset_prompt_btn:
             self._reset_prompt_btn.style = self._get_button_style(ui_font)

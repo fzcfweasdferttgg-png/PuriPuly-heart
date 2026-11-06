@@ -260,7 +260,7 @@ def test_value_text_scales_down_for_long_labels(
     assert view._backup_translation_text.content.size == 28
 
     view._set_unit_card_value_text(view._backup_translation_text, "OpenAI-совместимые провайдеры")
-    assert view._backup_translation_text.content.size == 15
+    assert view._backup_translation_text.content.size == 21
 
 
 def test_variant_selection_flushes_form_updates(
@@ -312,8 +312,8 @@ def test_translation_cards_share_the_same_value_text_shape(
 
     llm_text = view._llm_text.content
     backup_text = view._backup_translation_text.content
-    assert llm_text.no_wrap == backup_text.no_wrap is True
-    assert llm_text.max_lines == backup_text.max_lines == 1
+    assert llm_text.no_wrap == backup_text.no_wrap is False
+    assert llm_text.max_lines == backup_text.max_lines == 2
     assert llm_text.overflow == backup_text.overflow
 
 
@@ -397,6 +397,24 @@ def test_backup_local_form_commits_extra_body(
     pending = view.build_provider_apply_settings()
     assert pending is not None
     assert BackupLocalLlmExtraBodyEdit in _edit_types(pending)
+
+
+def test_backup_value_label_localizes_on_load_and_locale_apply(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    from puripuly_heart.ui import i18n as i18n_module
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    previous = i18n_module.get_locale()
+    try:
+        i18n_module.set_locale("ru")
+        view.apply_locale()
+        assert view._backup_translation_text.content.value == "Не выбрано"
+        settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+        assert view._backup_translation_text.content.value == "Не выбрано"
+    finally:
+        i18n_module.set_locale(previous)
 
 
 def test_backup_provider_selection_commits_backup_edits(
