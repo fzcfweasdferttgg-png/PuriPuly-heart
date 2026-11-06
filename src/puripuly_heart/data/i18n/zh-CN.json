@@ -395,7 +395,6 @@
   "settings.translation_variant.local_llm": "自己的服务器",
   "settings.translation_variant.local_llm.description": "任意 OpenAI 兼容地址：输入密钥、获取模型列表",
   "settings.backup_translation.title": "备用翻译",
-  "settings.backup_translation.disabled": "已停用",
   "settings.backup_translation.config_title": "备用翻译设置",
   "settings.translation.config_title": "翻译设置",
   "settings.openai_compatible.provider": "提供商",

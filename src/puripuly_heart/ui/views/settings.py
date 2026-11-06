@@ -347,15 +347,28 @@ def _update_control_if_mounted(control: ft.Control) -> None:
     update_control_if_mounted(control)
 
 
+_VALUE_TEXT_MAX_WIDTH = 240
+
+
 def _scaled_value_text_size(text: str, base: int = 28) -> int:
-    length = len(text)
-    if length <= 10:
+    """Largest size up to base at which the value still fits one card line."""
+    # Approximate glyph advance widths in em units.
+    width_units = 0.0
+    for char in text:
+        if char == " ":
+            width_units += 0.3
+        elif char in "ijlt.,:;'!|()[]{}-/\\\"`":
+            width_units += 0.32
+        elif char in "mwMW@%&":
+            width_units += 0.85
+        elif ord(char) >= 0x2E80:
+            width_units += 1.0
+        else:
+            width_units += 0.55
+    if width_units <= 0:
         return base
-    if length <= 18:
-        return base - 6
-    if length <= 26:
-        return base - 10
-    return base - 12
+    fit = int(_VALUE_TEXT_MAX_WIDTH / width_units)
+    return max(14, min(base, fit))
 
 
 class SettingsView(ft.Column):
@@ -1934,7 +1947,7 @@ class SettingsView(ft.Column):
             color=COLOR_SECONDARY,
         )
         self._backup_translation_text = self._build_clickable_text(
-            t("settings.backup_translation.disabled"),
+            t("settings.not_selected"),
             self._on_backup_translation_click,
             no_wrap=True,
             max_lines=1,
@@ -2954,10 +2967,10 @@ class SettingsView(ft.Column):
 
     def _backup_display_label(self, settings: ProviderSettingsSnapshot | None) -> str:
         if settings is None or not settings.backup_enabled:
-            return t("settings.backup_translation.disabled")
+            return t("settings.not_selected")
         variant = normalize_translation_model(settings.backup_variant)
         if variant == TranslationModel.NONE:
-            return t("settings.backup_translation.disabled")
+            return t("settings.not_selected")
         return self._translation_model_display_label(variant)
 
     def _set_translation_connection_text(self, text: str) -> None:
@@ -4196,7 +4209,7 @@ class SettingsView(ft.Column):
 
     def _backup_picker_options(self) -> list[OptionItem]:
         options: list[OptionItem] = [
-            OptionItem(value="off", label=t("settings.backup_translation.disabled")),
+            OptionItem(value="off", label=t("settings.not_selected")),
         ]
         for model in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM):
             options.append(

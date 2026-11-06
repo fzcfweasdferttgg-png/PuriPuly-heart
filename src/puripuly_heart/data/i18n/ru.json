@@ -395,7 +395,6 @@
   "settings.translation_variant.local_llm": "Свой сервер",
   "settings.translation_variant.local_llm.description": "Любой OpenAI-совместимый адрес: ключ, список моделей",
   "settings.backup_translation.title": "Резервный перевод",
-  "settings.backup_translation.disabled": "Выключено",
   "settings.backup_translation.config_title": "Настройки резервного перевода",
   "settings.translation.config_title": "Настройки перевода",
   "settings.openai_compatible.provider": "Провайдер",

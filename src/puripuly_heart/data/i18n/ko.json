@@ -395,7 +395,6 @@
   "settings.translation_variant.local_llm": "자체 서버",
   "settings.translation_variant.local_llm.description": "임의의 OpenAI 호환 주소: 키를 입력해 모델 목록 가져오기",
   "settings.backup_translation.title": "백업 번역",
-  "settings.backup_translation.disabled": "사용 안 함",
   "settings.backup_translation.config_title": "백업 번역 설정",
   "settings.translation.config_title": "번역 설정",
   "settings.openai_compatible.provider": "공급자",

@@ -75,7 +75,7 @@ def test_backup_variant_off_disables_backup(
     assert view._backup_config_card.visible is False
     assert (
         view._backup_translation_text.content.value
-        == settings_view.t("settings.backup_translation.disabled")
+        == settings_view.t("settings.not_selected")
     )
 
 
@@ -253,14 +253,14 @@ def test_value_text_scales_down_for_long_labels(
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
 
-    view._set_unit_card_value_text(view._backup_translation_text, "Выключено")
+    view._set_unit_card_value_text(view._backup_translation_text, "Не выбрано")
     assert view._backup_translation_text.content.size == 28
 
     view._set_unit_card_value_text(view._backup_translation_text, "Свой сервер")
-    assert view._backup_translation_text.content.size == 22
+    assert view._backup_translation_text.content.size == 28
 
     view._set_unit_card_value_text(view._backup_translation_text, "OpenAI-совместимые провайдеры")
-    assert view._backup_translation_text.content.size == 16
+    assert view._backup_translation_text.content.size == 15
 
 
 def test_variant_selection_flushes_form_updates(

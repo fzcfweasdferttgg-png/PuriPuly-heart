@@ -395,7 +395,6 @@
   "settings.translation_variant.local_llm": "自分のサーバー",
   "settings.translation_variant.local_llm.description": "任意の OpenAI 互換アドレス：キーを入力してモデル一覧を取得",
   "settings.backup_translation.title": "予備翻訳",
-  "settings.backup_translation.disabled": "無効",
   "settings.backup_translation.config_title": "予備翻訳の設定",
   "settings.translation.config_title": "翻訳設定",
   "settings.openai_compatible.provider": "プロバイダー",
