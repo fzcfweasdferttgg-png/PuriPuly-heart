@@ -145,6 +145,7 @@ from puripuly_heart.ui.components.settings import (
 from puripuly_heart.ui.components.settings.stt_engine_modal import (
     ENGINE_BACKENDS,
     SttEngineModal,
+    build_backend_toggle,
 )
 from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
 from puripuly_heart.ui.components.subtab_shell import TextSubtab, TextSubtabShell
@@ -884,9 +885,15 @@ class SettingsView(ft.Column):
         self._stt_title = ft.Text(
             t("settings.section.stt"), size=24, weight=ft.FontWeight.BOLD, color=COLOR_SECONDARY
         )
+        self._stt_backend_toggle_host = ft.Container(
+            content=build_backend_toggle("vulkan", {}, self._on_stt_engine_selected),
+            alignment=ft.Alignment.CENTER,
+            visible=False,
+        )
         self._self_stt_card = self._wrap_unit_card(
             title=self._stt_title,
             value=self._stt_text,
+            extra_controls=(self._stt_backend_toggle_host,),
         )
 
         self._llm_text = self._build_clickable_text(
@@ -1158,9 +1165,15 @@ class SettingsView(ft.Column):
             t("settings.not_selected"),
             self._on_peer_stt_click,
         )
+        self._peer_backend_toggle_host = ft.Container(
+            content=build_backend_toggle("vulkan", {}, self._on_peer_stt_engine_selected),
+            alignment=ft.Alignment.CENTER,
+            visible=False,
+        )
         self._peer_stt_card = self._wrap_unit_card(
             title=self._peer_provider_title,
             value=self._peer_stt_text,
+            extra_controls=(self._peer_backend_toggle_host,),
         )
 
         self._gpu_device_title = ft.Text(
@@ -2005,6 +2018,7 @@ class SettingsView(ft.Column):
         self._stt_model_card.visible = visible
         self._gpu_llm_card.visible = visible
         self._apply_shared_engine_grey(shared_engine)
+        self._sync_stt_backend_toggles()
         _update_control_if_mounted(self._gpu_device_row)
 
     def _apply_shared_engine_grey(self, shared_engine: bool) -> None:
@@ -2015,6 +2029,31 @@ class SettingsView(ft.Column):
             self._shared_engine_text,
             t("settings.option.on") if shared_engine else t("settings.option.off"),
         )
+
+    def _sync_stt_backend_toggles(self) -> None:
+        if not hasattr(self, "_stt_backend_toggle_host"):
+            return
+        settings = self._build_settings_with_provider_draft()
+        if settings is None:
+            return
+        available = self._engine_backend_availability()
+        self_local = settings.stt_provider in _LOCAL_STT_PROVIDERS
+        peer_local = settings.peer_stt_provider in _LOCAL_STT_PROVIDERS
+        shared_engine = settings.stt_shared_engine
+        self._stt_backend_toggle_host.content = build_backend_toggle(
+            settings.stt_gpu_backend,
+            available,
+            self._on_stt_engine_selected,
+        )
+        self._stt_backend_toggle_host.visible = self_local
+        self._peer_backend_toggle_host.content = build_backend_toggle(
+            settings.peer_stt_gpu_backend,
+            available,
+            self._on_peer_stt_engine_selected,
+        )
+        self._peer_backend_toggle_host.visible = peer_local and not shared_engine
+        _update_control_if_mounted(self._stt_backend_toggle_host)
+        _update_control_if_mounted(self._peer_backend_toggle_host)
 
     def set_gpu_devices(
         self,
