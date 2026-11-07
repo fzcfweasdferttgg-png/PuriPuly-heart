@@ -76,7 +76,7 @@ async def test_about_window_open_is_single_instance() -> None:
     scheduled = []
 
     def schedule(coro):
-        task = asyncio.get_running_loop().create_task(coro)
+        task = asyncio.get_running_loop().create_task(coro())
         scheduled.append(task)
         return task
 
@@ -98,7 +98,7 @@ async def test_about_window_close_releases_state() -> None:
         await asyncio.Event().wait()
 
     window = AboutWindow(app_runner=fake_runner)
-    window.open(lambda coro: asyncio.get_running_loop().create_task(coro))
+    window.open(lambda coro: asyncio.get_running_loop().create_task(coro()))
     await asyncio.sleep(0)
     assert window.is_open is True
 

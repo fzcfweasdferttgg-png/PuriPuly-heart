@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 from typing import Any, Callable
 
 import flet as ft
@@ -16,7 +17,7 @@ from puripuly_heart.ui.fonts import (
 )
 from puripuly_heart.ui.foundation.resources import DEFAULT_FOUNDATION_RESOURCES
 from puripuly_heart.ui.foundation.tokens import FOUNDATION_DESIGN_TOKENS
-from puripuly_heart.ui.flet_runtime import invoke_control_method
+from puripuly_heart.ui.flet_runtime import invoke_control_method, run_control_method
 from puripuly_heart.ui.i18n import get_locale, t
 from puripuly_heart.ui.theme import COLOR_BACKGROUND, get_app_theme
 from puripuly_heart.ui.views.about import AboutView
@@ -61,7 +62,7 @@ class AboutWindow:
         if self.is_open:
             self._raise_existing()
             return
-        self._task = schedule(self._run())
+        self._task = schedule(self._run)
 
     def apply_locale(self) -> None:
         """Refresh About window text for the active locale."""
@@ -87,7 +88,9 @@ class AboutWindow:
         if task is not None:
             with contextlib.suppress(BaseException):
                 task.cancel()
-                await task
+            if inspect.isawaitable(task):
+                with contextlib.suppress(BaseException):
+                    await task
 
     def configure_page(self, page: Any) -> None:
         """Apply About window defaults: 960x540, resizable, main-window style."""
@@ -110,15 +113,13 @@ class AboutWindow:
         if self._page is None:
             return
         with contextlib.suppress(Exception):
-            self._page.window.to_front()
+            run_control_method(self._page.window, "to_front")
 
     def _on_close_requested(self) -> None:
         if self._page is None:
             return
         with contextlib.suppress(Exception):
-            result = self._page.window.close()
-            if hasattr(result, "__await__"):
-                self._page.run_task(result)
+            run_control_method(self._page.window, "close")
 
     async def _run(self) -> None:
         runner = self._app_runner or _default_about_app_runner
