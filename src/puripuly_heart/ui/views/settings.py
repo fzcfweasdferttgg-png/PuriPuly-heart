@@ -4372,16 +4372,8 @@ class SettingsView(ft.Column):
             in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM)
         )
         self._sync_http_extension_card(settings)
-        for control in (
-            self._openai_compatible_card,
-            self._local_llm_connection_card,
-            self._backup_config_card,
-            self._backup_network_group,
-            self._backup_local_group,
-            self._translation_card_row,
-            self._backup_card_row,
-        ):
-            _update_control_if_mounted(control)
+        if is_control_mounted(self):
+            self.update()
 
     # --- Event Handlers ---
     @staticmethod
@@ -4695,6 +4687,10 @@ class SettingsView(ft.Column):
         """Open translation model selection modal."""
         if not is_control_mounted(self):
             return
+        import time
+
+        picker_started = time.monotonic()
+        self._emit_runtime_basic("[Timing] picker-open-start translation")
         options = self._translation_picker_options()
         display_settings = self._build_settings_with_provider_draft()
         current = (
@@ -4710,6 +4706,10 @@ class SettingsView(ft.Column):
             show_description=True,
         )
         modal.open(current)
+        self._emit_runtime_basic(
+            "[Timing] picker-open-done translation: %.0fms"
+            % ((time.monotonic() - picker_started) * 1000)
+        )
 
     def _restore_translation_connection_for_model(
         self,
@@ -4852,12 +4852,7 @@ class SettingsView(ft.Column):
         self._sync_prompt_tab_copy()
 
         if is_control_mounted(self):
-            self._llm_text.update()
-            self._translation_connection_row.update()
-            self._local_llm_connection_card.update()
-            http_extension_host = getattr(self, "_http_extension_host", None)
-            if http_extension_host is not None:
-                http_extension_host.update()
+            self.update()
 
     def _on_llm_selected(self, value: str) -> None:
         """Handle translation model selection from modal."""
@@ -5358,11 +5353,15 @@ class SettingsView(ft.Column):
     def _on_backup_translation_click(self, e) -> None:
         if not is_control_mounted(self):
             return
+        import time
+
         settings = self._build_settings_with_provider_draft()
         current = "off"
         if settings is not None and settings.backup_enabled and settings.backup_variant:
             current = settings.backup_variant
         options = self._backup_picker_options()
+        self._emit_runtime_basic("[Timing] picker-open-start backup")
+        picker_started = time.monotonic()
         SettingsModal(
             self.page,
             t("settings.backup_translation.title"),
@@ -5370,6 +5369,10 @@ class SettingsView(ft.Column):
             self._on_backup_variant_selected,
             show_description=True,
         ).open(current)
+        self._emit_runtime_basic(
+            "[Timing] picker-open-done backup: %.0fms"
+            % ((time.monotonic() - picker_started) * 1000)
+        )
 
     def _on_backup_variant_selected(self, value: str) -> None:
         if self._provider_snapshot is None:
