@@ -404,6 +404,7 @@
   "settings.openai_compatible.api_key": "API 키",
   "settings.openai_compatible.fetch_models": "모델 목록 가져오기",
   "settings.openai_compatible.test_connection": "연결 테스트",
+  "settings.provider_form.accept": "수락",
   "settings.openai_compatible.select_model": "모델 선택",
   "settings.openai_compatible.save_failed": "키 저장 실패",
   "settings.openai_compatible.fetch_failed": "모델 목록 가져오기 실패",

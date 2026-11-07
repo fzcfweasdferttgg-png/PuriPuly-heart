@@ -404,6 +404,7 @@
   "settings.openai_compatible.api_key": "APIキー",
   "settings.openai_compatible.fetch_models": "モデル一覧を取得",
   "settings.openai_compatible.test_connection": "接続テスト",
+  "settings.provider_form.accept": "承認",
   "settings.openai_compatible.select_model": "モデルを選択",
   "settings.openai_compatible.save_failed": "キーの保存に失敗しました",
   "settings.openai_compatible.fetch_failed": "モデル一覧の取得に失敗しました",

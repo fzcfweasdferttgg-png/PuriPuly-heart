@@ -42,6 +42,7 @@ from puripuly_heart.core.lifecycle import (
 )
 from puripuly_heart.core.messages import ErrorDiagnostics
 from puripuly_heart.ui.components.about_window import AboutWindow
+from puripuly_heart.ui.components.provider_settings_window import ProviderSettingsWindow
 from puripuly_heart.ui.components.audio_test_dialog import AudioTestDialog
 from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
@@ -292,6 +293,7 @@ class TranslatorApp:
 
     async def shutdown(self) -> None:
         await self._close_about_window()
+        await self._close_provider_settings_window()
         lifecycle = self._get_application_lifecycle()
         try:
             await lifecycle.shutdown()
@@ -302,6 +304,11 @@ class TranslatorApp:
         about_window = getattr(self, "about_window", None)
         if about_window is not None:
             await about_window.close()
+
+    async def _close_provider_settings_window(self) -> None:
+        provider_settings_window = getattr(self, "provider_settings_window", None)
+        if provider_settings_window is not None:
+            await provider_settings_window.close()
 
     def _compose_application_lifecycle(self) -> ApplicationShutdownCoordinator:
         foundation_runtime = self._ensure_foundation_runtime()
@@ -425,6 +432,10 @@ class TranslatorApp:
         self.view_settings.bind_recent_language_queue(self.view_dashboard)
         self.view_logs = LogsView()
         self.about_window = AboutWindow()
+        self.provider_settings_window = ProviderSettingsWindow()
+        self.view_settings.attach_provider_settings_window(
+            self.provider_settings_window, self._run_page_task
+        )
         self.view_settings.set_overlay_runtime_state(self.overlay_state)
 
         # Custom title bar

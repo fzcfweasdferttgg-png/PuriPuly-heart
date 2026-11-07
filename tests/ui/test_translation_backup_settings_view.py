@@ -346,10 +346,10 @@ def test_openai_form_layout_is_identical_for_translation_and_backup(
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
 
-    primary = view._openai_compatible_card.content.content.controls
+    primary = view._openai_form.controls
     backup = view._backup_network_group.controls
-    assert [type(control) for control in primary[1:]] == [type(control) for control in backup]
-    assert [type(child) for child in primary[3].controls] == [
+    assert [type(control) for control in primary] == [type(control) for control in backup]
+    assert [type(child) for child in primary[2].controls] == [
         type(child) for child in backup[2].controls
     ]
 
@@ -360,9 +360,9 @@ def test_local_form_layout_is_identical_for_translation_and_backup(
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
 
-    primary = view._local_llm_connection_card.content.content.controls
+    primary = view._local_llm_form.controls
     backup = view._backup_local_group.controls
-    assert [type(control) for control in primary[1:]] == [type(control) for control in backup]
+    assert [type(control) for control in primary] == [type(control) for control in backup]
 
 
 def test_provider_dropdowns_share_the_same_presets(

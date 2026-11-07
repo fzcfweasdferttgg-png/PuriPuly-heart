@@ -28,13 +28,19 @@ class TitleBar(ft.Container):
         on_about: Callable[[], None] | None = None,
         show_title: bool = False,
         show_minimize: bool = True,
+        title_text: str | None = None,
     ):
         self._page = page
         self._on_close = on_close
         self._on_about = on_about
+        self._title_text = title_text
 
         self._about_icon = ft.Icon(ABOUT_MENU_ICON, size=16, color=COLOR_PRIMARY)
-        self._about_label = ft.Text(t("about.title"), size=14, color=COLOR_NEUTRAL_DARK)
+        self._about_label = ft.Text(
+            title_text if title_text is not None else t("about.title"),
+            size=14,
+            color=COLOR_NEUTRAL_DARK,
+        )
         self._about_item = None
         if on_about is not None or show_title:
             self._about_item = ft.Container(
@@ -103,7 +109,9 @@ class TitleBar(ft.Container):
 
     def apply_locale(self) -> None:
         """Refresh the About label when the locale changes."""
-        self._about_label.value = t("about.title")
+        self._about_label.value = (
+            self._title_text if self._title_text is not None else t("about.title")
+        )
         update_control_if_mounted(self._about_label)
 
     def _on_about_click(self, _):

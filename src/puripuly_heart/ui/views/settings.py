@@ -734,6 +734,467 @@ class SettingsView(ft.Column):
         )
         return ft.Column(items, spacing=8)
 
+    def _build_openai_form_controls(self) -> None:
+        """Create the translation OpenAI-compatible form controls."""
+        self._openai_compatible_title = ft.Text(
+            t("settings.translation.config_title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._openai_provider = self._build_provider_dropdown(self._on_openai_provider_change)
+        self._openai_base_url = ft.TextField(
+            label=t("settings.openai_compatible.base_url"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            visible=False,
+            on_blur=self._on_openai_base_url_change_end,
+            on_submit=self._on_openai_base_url_change_end,
+        )
+        self._openai_model = ft.TextField(
+            label=t("settings.openai_compatible.model"),
+            hint_text=t("settings.openai_compatible.model_hint"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_openai_model_change_end,
+            on_submit=self._on_openai_model_change_end,
+        )
+        self._openai_api_key = ApiKeyField(
+            "settings.openai_compatible.api_key",
+            "openai_compatible_api_key",
+            "openai_compatible",
+            on_save=self._on_openai_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._openai_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_openai_models,
+        )
+        self._openai_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_openai_connection,
+        )
+
+    def _build_local_form_controls(self) -> None:
+        """Create the translation custom-server form controls."""
+        self._local_llm_connection_title = ft.Text(
+            t("settings.translation.config_title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._local_llm_base_url = ft.TextField(
+            label=t("settings.local_llm.base_url"),
+            value="http://127.0.0.1:11434/v1",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_local_llm_field_change,
+            on_blur=self._on_local_llm_base_url_change_end,
+            on_submit=self._on_local_llm_base_url_change_end,
+        )
+        self._local_llm_model = ft.TextField(
+            label=t("settings.local_llm.model"),
+            value="llama3.1:8b",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_local_llm_field_change,
+            on_blur=self._on_local_llm_model_change_end,
+            on_submit=self._on_local_llm_model_change_end,
+        )
+        self._local_llm_api_key = ApiKeyField(
+            "settings.local_llm.api_key",
+            "local_llm_api_key",
+            "local_llm",
+            on_verify=None,
+            on_save=self._on_local_llm_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._local_llm_api_key_helper = ft.Text(
+            t("settings.local_llm.api_key.description"),
+            size=15,
+            color=COLOR_SECONDARY,
+        )
+        self._local_llm_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_local_llm_models,
+        )
+        self._local_llm_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_local_llm_connection,
+        )
+        self._local_llm_extra_body = ft.TextField(
+            label=t("settings.local_llm.extra_body"),
+            value=json.dumps(
+                {"reasoning_effort": "none", "temperature": 0.6},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            multiline=True,
+            min_lines=3,
+            max_lines=6,
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_local_llm_field_change,
+            on_blur=self._on_local_llm_extra_body_change_end,
+            on_submit=self._on_local_llm_extra_body_change_end,
+        )
+        self._local_llm_extra_body_helper = ft.Text(
+            t("settings.local_llm.extra_body.description"),
+            size=15,
+            color=COLOR_SECONDARY,
+        )
+        self._local_llm_extra_body_error = ft.Text(
+            "",
+            size=13,
+            color=COLOR_ERROR,
+            visible=False,
+        )
+        self._local_llm_extra_body_error_key = ""
+        self._local_llm_extra_body_error_kwargs: dict[str, object] = {}
+
+    def _build_backup_form_controls(self) -> None:
+        """Create the backup translation form controls (both variants)."""
+        self._backup_config_title = ft.Text(
+            t("settings.backup_translation.config_title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._backup_provider = self._build_provider_dropdown(self._on_backup_provider_change)
+        self._backup_base_url = ft.TextField(
+            label=t("settings.openai_compatible.base_url"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            visible=False,
+            on_blur=self._on_backup_base_url_change_end,
+            on_submit=self._on_backup_base_url_change_end,
+        )
+        self._backup_model = ft.TextField(
+            label=t("settings.openai_compatible.model"),
+            hint_text=t("settings.openai_compatible.model_hint"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_backup_model_change_end,
+            on_submit=self._on_backup_model_change_end,
+        )
+        self._backup_api_key = ApiKeyField(
+            "settings.openai_compatible.api_key",
+            "backup_api_key",
+            "backup",
+            on_save=self._on_backup_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._backup_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_backup_models,
+        )
+        self._backup_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_backup_connection,
+        )
+        self._backup_network_group = self._compose_openai_form(
+            title=None,
+            provider=self._backup_provider,
+            model=self._backup_model,
+            fetch_btn=self._backup_fetch_btn,
+            api_key=self._backup_api_key,
+            test_btn=self._backup_test_btn,
+        )
+        self._backup_local_base_url = ft.TextField(
+            label=t("settings.local_llm.base_url"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_backup_local_field_change,
+            on_blur=self._on_backup_local_base_url_change_end,
+            on_submit=self._on_backup_local_base_url_change_end,
+        )
+        self._backup_local_model = ft.TextField(
+            label=t("settings.local_llm.model"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_backup_local_field_change,
+            on_blur=self._on_backup_local_model_change_end,
+            on_submit=self._on_backup_local_model_change_end,
+        )
+        self._backup_local_api_key = ApiKeyField(
+            "settings.local_llm.api_key",
+            "fallback_local_llm_api_key",
+            "backup_local",
+            on_save=self._on_backup_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._backup_local_api_key_helper = ft.Text(
+            t("settings.local_llm.api_key.description"),
+            size=15,
+            color=COLOR_SECONDARY,
+        )
+        self._backup_local_extra_body = ft.TextField(
+            label=t("settings.local_llm.extra_body"),
+            value="",
+            multiline=True,
+            min_lines=3,
+            max_lines=6,
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_change=self._on_backup_local_field_change,
+            on_blur=self._on_backup_local_extra_body_change_end,
+            on_submit=self._on_backup_local_extra_body_change_end,
+        )
+        self._backup_local_extra_body_helper = ft.Text(
+            t("settings.local_llm.extra_body.description"),
+            size=15,
+            color=COLOR_SECONDARY,
+        )
+        self._backup_local_extra_body_error = ft.Text(
+            "",
+            size=13,
+            color=COLOR_ERROR,
+            visible=False,
+        )
+        self._backup_local_extra_body_error_key = ""
+        self._backup_local_extra_body_error_kwargs: dict[str, object] = {}
+        self._backup_local_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_backup_local_models,
+        )
+        self._backup_local_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_backup_local_connection,
+        )
+        self._backup_local_group = self._compose_local_form(
+            title=None,
+            base_url=self._backup_local_base_url,
+            test_btn=self._backup_local_test_btn,
+            model=self._backup_local_model,
+            fetch_btn=self._backup_local_fetch_btn,
+            api_key=self._backup_local_api_key,
+            api_key_helper=self._backup_local_api_key_helper,
+            extra_body=self._backup_local_extra_body,
+            extra_body_helper=self._backup_local_extra_body_helper,
+            extra_body_error=self._backup_local_extra_body_error,
+        )
+
+    def _build_provider_settings_gear(self, on_click) -> ft.Container:
+        """Framed gear button shown where the inline form used to clutter the card."""
+        from puripuly_heart.ui.theme import COLOR_SURFACE
+
+        return ft.Container(
+            content=ft.Icon(ft.Icons.SETTINGS_ROUNDED, size=20, color=COLOR_NEUTRAL_DARK),
+            width=40,
+            height=40,
+            alignment=ft.Alignment.CENTER,
+            border_radius=10,
+            border=ft.Border.all(1, COLOR_DIVIDER),
+            bgcolor=COLOR_SURFACE,
+            on_click=on_click,
+            on_hover=self._on_provider_gear_hover,
+        )
+
+    def _build_provider_gear_host(self, gear: ft.Control) -> ft.Control:
+        return ft.Column(
+            controls=[
+                ft.Container(expand=True),
+                ft.Row([gear], alignment=ft.MainAxisAlignment.START),
+            ],
+            expand=True,
+        )
+
+    def _on_provider_gear_hover(self, e) -> None:
+        from puripuly_heart.ui.theme import COLOR_SURFACE
+
+        container = e.control
+        if getattr(e, "data", "") == "true":
+            container.bgcolor = COLOR_DIVIDER
+        else:
+            container.bgcolor = COLOR_SURFACE
+        _update_control_if_mounted(container)
+
+    def attach_provider_settings_window(self, window, schedule) -> None:
+        """Attach the floating provider settings window and its session scheduler."""
+        self._provider_settings_window = window
+        self._provider_settings_schedule = schedule
+
+    def _on_openai_gear_click(self, _e) -> None:
+        self._open_provider_settings_dialog("translation_openai")
+
+    def _on_local_llm_gear_click(self, _e) -> None:
+        self._open_provider_settings_dialog("translation_local")
+
+    def _on_backup_gear_click(self, _e) -> None:
+        self._open_provider_settings_dialog("backup")
+
+    def _open_provider_settings_dialog(self, kind: str) -> None:
+        window = getattr(self, "_provider_settings_window", None)
+        schedule = getattr(self, "_provider_settings_schedule", None)
+        if window is None or schedule is None or self._provider_snapshot is None:
+            return
+        if window.is_open:
+            window.open(
+                schedule,
+                title="",
+                content=None,
+                on_accept=self._accept_provider_settings_dialog,
+                on_close_request=self._revert_provider_settings_dialog,
+            )
+            return
+        self._provider_dialog_edits_before = dict(self._provider_edits)
+        self._provider_dialog_draft_before = self._provider_draft
+        if kind == "translation_openai":
+            self._build_openai_form_controls()
+            self._openai_form = self._compose_openai_form(
+                title=None,
+                provider=self._openai_provider,
+                model=self._openai_model,
+                fetch_btn=self._openai_fetch_btn,
+                api_key=self._openai_api_key,
+                test_btn=self._openai_test_btn,
+            )
+            content = self._openai_form
+            title = t("settings.translation.config_title")
+        elif kind == "translation_local":
+            self._build_local_form_controls()
+            self._local_llm_form = self._compose_local_form(
+                title=None,
+                base_url=self._local_llm_base_url,
+                test_btn=self._local_llm_test_btn,
+                model=self._local_llm_model,
+                fetch_btn=self._local_llm_fetch_btn,
+                api_key=self._local_llm_api_key,
+                api_key_helper=self._local_llm_api_key_helper,
+                extra_body=self._local_llm_extra_body,
+                extra_body_helper=self._local_llm_extra_body_helper,
+                extra_body_error=self._local_llm_extra_body_error,
+            )
+            content = self._local_llm_form
+            title = t("settings.translation.config_title")
+        else:
+            self._build_backup_form_controls()
+            content = ft.Column(
+                [self._backup_network_group, self._backup_local_group],
+                spacing=8,
+            )
+            title = t("settings.backup_translation.config_title")
+        display = self._provider_draft or self._provider_snapshot
+        self._sync_translation_selection_controls(display)
+        self._local_llm_base_url.value = display.local_llm_base_url
+        self._local_llm_model.value = display.local_llm_model
+        self._local_llm_extra_body.value = display.local_llm_extra_body_json
+        self._clear_local_llm_extra_body_error()
+        self._clear_backup_local_extra_body_error()
+        window.open(
+            schedule,
+            title=title,
+            content=content,
+            on_accept=self._accept_provider_settings_dialog,
+            on_close_request=self._revert_provider_settings_dialog,
+        )
+
+    def _commit_openai_fields_from_controls(self) -> None:
+        if self._provider_snapshot is None:
+            return
+        self._commit_openai_field("base_url", self._openai_base_url.value or "")
+        self._commit_openai_field("model", self._openai_model.value or "")
+
+    def _commit_backup_fields_from_controls(self) -> None:
+        if self._provider_snapshot is None:
+            return
+        self._commit_backup_field("base_url", self._backup_base_url.value or "")
+        self._commit_backup_field("model", self._backup_model.value or "")
+
+    def _accept_provider_settings_dialog(self) -> None:
+        """Accept button: commit staged form values and apply them."""
+        self._commit_openai_fields_from_controls()
+        self._commit_backup_fields_from_controls()
+        self._commit_local_llm_fields_from_controls()
+        self._commit_backup_local_fields_from_controls()
+        on_providers_changed = getattr(self, "on_providers_changed", None)
+        if on_providers_changed is not None:
+            on_providers_changed()
+
+    def _revert_provider_settings_dialog(self) -> None:
+        """Window closed without Accept: discard edits staged inside the dialog."""
+        self._provider_edits = getattr(
+            self, "_provider_dialog_edits_before", self._provider_edits
+        )
+        self._provider_draft = getattr(
+            self, "_provider_dialog_draft_before", self._provider_draft
+        )
+        self.has_provider_changes = any(
+            edit_type is not SystemPromptEdit for edit_type in self._provider_edits
+        )
+
     def _set_unit_card_value_text(
         self, control: ft.Container, text: str, *, size: int = 28
     ) -> None:
@@ -1856,113 +2317,25 @@ class SettingsView(ft.Column):
             value=self._translation_connection_text,
         )
 
-        self._local_llm_connection_title = ft.Text(
-            t("settings.translation.config_title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_SECONDARY,
+        self._build_local_form_controls()
+        self._local_llm_form = self._compose_local_form(
+            title=None,
+            base_url=self._local_llm_base_url,
+            test_btn=self._local_llm_test_btn,
+            model=self._local_llm_model,
+            fetch_btn=self._local_llm_fetch_btn,
+            api_key=self._local_llm_api_key,
+            api_key_helper=self._local_llm_api_key_helper,
+            extra_body=self._local_llm_extra_body,
+            extra_body_helper=self._local_llm_extra_body_helper,
+            extra_body_error=self._local_llm_extra_body_error,
         )
-        self._local_llm_base_url = ft.TextField(
-            label=t("settings.local_llm.base_url"),
-            value="http://127.0.0.1:11434/v1",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_local_llm_field_change,
-            on_blur=self._on_local_llm_base_url_change_end,
-            on_submit=self._on_local_llm_base_url_change_end,
+        self._local_llm_gear = self._build_provider_settings_gear(
+            self._on_local_llm_gear_click
         )
-        self._local_llm_model = ft.TextField(
-            label=t("settings.local_llm.model"),
-            value="llama3.1:8b",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_local_llm_field_change,
-            on_blur=self._on_local_llm_model_change_end,
-            on_submit=self._on_local_llm_model_change_end,
-        )
-        self._local_llm_api_key = ApiKeyField(
-            "settings.local_llm.api_key",
-            "local_llm_api_key",
-            "local_llm",
-            on_verify=None,
-            on_save=self._on_local_llm_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-            show_status=False,
-        )
-        self._local_llm_api_key_helper = ft.Text(
-            t("settings.local_llm.api_key.description"),
-            size=15,
-            color=COLOR_SECONDARY,
-        )
-        self._local_llm_fetch_btn = ft.IconButton(
-            icon=ft.Icons.REFRESH_ROUNDED,
-            tooltip=t("settings.openai_compatible.fetch_models"),
-            on_click=self._on_fetch_local_llm_models,
-        )
-        self._local_llm_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.openai_compatible.test_connection")),
-            on_click=self._on_test_local_llm_connection,
-        )
-        self._local_llm_extra_body = ft.TextField(
-            label=t("settings.local_llm.extra_body"),
-            value=json.dumps(
-                {"reasoning_effort": "none", "temperature": 0.6},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            multiline=True,
-            min_lines=3,
-            max_lines=6,
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_local_llm_field_change,
-            on_blur=self._on_local_llm_extra_body_change_end,
-            on_submit=self._on_local_llm_extra_body_change_end,
-        )
-        self._local_llm_extra_body_helper = ft.Text(
-            t("settings.local_llm.extra_body.description"),
-            size=15,
-            color=COLOR_SECONDARY,
-        )
-        self._local_llm_extra_body_error = ft.Text(
-            "",
-            size=13,
-            color=COLOR_ERROR,
-            visible=False,
-        )
-        self._local_llm_extra_body_error_key = ""
-        self._local_llm_extra_body_error_kwargs: dict[str, object] = {}
         self._local_llm_connection_card = self._wrap_card(
-            self._compose_local_form(
-                title=self._local_llm_connection_title,
-                base_url=self._local_llm_base_url,
-                test_btn=self._local_llm_test_btn,
-                model=self._local_llm_model,
-                fetch_btn=self._local_llm_fetch_btn,
-                api_key=self._local_llm_api_key,
-                api_key_helper=self._local_llm_api_key_helper,
-                extra_body=self._local_llm_extra_body,
-                extra_body_helper=self._local_llm_extra_body_helper,
-                extra_body_error=self._local_llm_extra_body_error,
-            ),
-            height=None,
+            self._build_provider_gear_host(self._local_llm_gear),
+            height=96,
         )
         self._local_llm_connection_card.visible = False
         self._backup_translation_title = ft.Text(
@@ -1983,239 +2356,31 @@ class SettingsView(ft.Column):
             value=self._backup_translation_text,
         )
 
-        self._openai_compatible_title = ft.Text(
-            t("settings.translation.config_title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_SECONDARY,
+        self._build_openai_form_controls()
+        self._openai_form = self._compose_openai_form(
+            title=None,
+            provider=self._openai_provider,
+            model=self._openai_model,
+            fetch_btn=self._openai_fetch_btn,
+            api_key=self._openai_api_key,
+            test_btn=self._openai_test_btn,
         )
-        self._openai_provider = self._build_provider_dropdown(self._on_openai_provider_change)
-        self._openai_base_url = ft.TextField(
-            label=t("settings.openai_compatible.base_url"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            visible=False,
-            on_blur=self._on_openai_base_url_change_end,
-            on_submit=self._on_openai_base_url_change_end,
-        )
-        self._openai_model = ft.TextField(
-            label=t("settings.openai_compatible.model"),
-            hint_text=t("settings.openai_compatible.model_hint"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_blur=self._on_openai_model_change_end,
-            on_submit=self._on_openai_model_change_end,
-        )
-        self._openai_api_key = ApiKeyField(
-            "settings.openai_compatible.api_key",
-            "openai_compatible_api_key",
-            "openai_compatible",
-            on_save=self._on_openai_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-            show_status=False,
-        )
-        self._openai_fetch_btn = ft.IconButton(
-            icon=ft.Icons.REFRESH_ROUNDED,
-            tooltip=t("settings.openai_compatible.fetch_models"),
-            on_click=self._on_fetch_openai_models,
-        )
-        self._openai_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.openai_compatible.test_connection")),
-            on_click=self._on_test_openai_connection,
+        self._openai_gear = self._build_provider_settings_gear(
+            self._on_openai_gear_click
         )
         self._openai_compatible_card = self._wrap_card(
-            self._compose_openai_form(
-                title=self._openai_compatible_title,
-                provider=self._openai_provider,
-                model=self._openai_model,
-                fetch_btn=self._openai_fetch_btn,
-                api_key=self._openai_api_key,
-                test_btn=self._openai_test_btn,
-            ),
-            height=None,
+            self._build_provider_gear_host(self._openai_gear),
+            height=96,
         )
         self._openai_compatible_card.visible = False
 
-        self._backup_config_title = ft.Text(
-            t("settings.backup_translation.config_title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_SECONDARY,
-        )
-        self._backup_provider = self._build_provider_dropdown(self._on_backup_provider_change)
-        self._backup_base_url = ft.TextField(
-            label=t("settings.openai_compatible.base_url"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            visible=False,
-            on_blur=self._on_backup_base_url_change_end,
-            on_submit=self._on_backup_base_url_change_end,
-        )
-        self._backup_model = ft.TextField(
-            label=t("settings.openai_compatible.model"),
-            hint_text=t("settings.openai_compatible.model_hint"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_blur=self._on_backup_model_change_end,
-            on_submit=self._on_backup_model_change_end,
-        )
-        self._backup_api_key = ApiKeyField(
-            "settings.openai_compatible.api_key",
-            "backup_api_key",
-            "backup",
-            on_save=self._on_backup_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-            show_status=False,
-        )
-        self._backup_fetch_btn = ft.IconButton(
-            icon=ft.Icons.REFRESH_ROUNDED,
-            tooltip=t("settings.openai_compatible.fetch_models"),
-            on_click=self._on_fetch_backup_models,
-        )
-        self._backup_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.openai_compatible.test_connection")),
-            on_click=self._on_test_backup_connection,
-        )
-        self._backup_network_group = self._compose_openai_form(
-            title=None,
-            provider=self._backup_provider,
-            model=self._backup_model,
-            fetch_btn=self._backup_fetch_btn,
-            api_key=self._backup_api_key,
-            test_btn=self._backup_test_btn,
-        )
-        self._backup_local_base_url = ft.TextField(
-            label=t("settings.local_llm.base_url"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_backup_local_field_change,
-            on_blur=self._on_backup_local_base_url_change_end,
-            on_submit=self._on_backup_local_base_url_change_end,
-        )
-        self._backup_local_model = ft.TextField(
-            label=t("settings.local_llm.model"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_backup_local_field_change,
-            on_blur=self._on_backup_local_model_change_end,
-            on_submit=self._on_backup_local_model_change_end,
-        )
-        self._backup_local_api_key = ApiKeyField(
-            "settings.local_llm.api_key",
-            "fallback_local_llm_api_key",
-            "backup_local",
-            on_save=self._on_backup_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-            show_status=False,
-        )
-        self._backup_local_api_key_helper = ft.Text(
-            t("settings.local_llm.api_key.description"),
-            size=15,
-            color=COLOR_SECONDARY,
-        )
-        self._backup_local_extra_body = ft.TextField(
-            label=t("settings.local_llm.extra_body"),
-            value="",
-            multiline=True,
-            min_lines=3,
-            max_lines=6,
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_change=self._on_backup_local_field_change,
-            on_blur=self._on_backup_local_extra_body_change_end,
-            on_submit=self._on_backup_local_extra_body_change_end,
-        )
-        self._backup_local_extra_body_helper = ft.Text(
-            t("settings.local_llm.extra_body.description"),
-            size=15,
-            color=COLOR_SECONDARY,
-        )
-        self._backup_local_extra_body_error = ft.Text(
-            "",
-            size=13,
-            color=COLOR_ERROR,
-            visible=False,
-        )
-        self._backup_local_extra_body_error_key = ""
-        self._backup_local_extra_body_error_kwargs: dict[str, object] = {}
-        self._backup_local_fetch_btn = ft.IconButton(
-            icon=ft.Icons.REFRESH_ROUNDED,
-            tooltip=t("settings.openai_compatible.fetch_models"),
-            on_click=self._on_fetch_backup_local_models,
-        )
-        self._backup_local_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.openai_compatible.test_connection")),
-            on_click=self._on_test_backup_local_connection,
-        )
-        self._backup_local_group = self._compose_local_form(
-            title=None,
-            base_url=self._backup_local_base_url,
-            test_btn=self._backup_local_test_btn,
-            model=self._backup_local_model,
-            fetch_btn=self._backup_local_fetch_btn,
-            api_key=self._backup_local_api_key,
-            api_key_helper=self._backup_local_api_key_helper,
-            extra_body=self._backup_local_extra_body,
-            extra_body_helper=self._backup_local_extra_body_helper,
-            extra_body_error=self._backup_local_extra_body_error,
+        self._build_backup_form_controls()
+        self._backup_gear = self._build_provider_settings_gear(
+            self._on_backup_gear_click
         )
         self._backup_config_card = self._wrap_card(
-            ft.Column(
-                [
-                    self._backup_config_title,
-                    self._backup_network_group,
-                    self._backup_local_group,
-                ],
-                spacing=8,
-            ),
-            height=None,
+            self._build_provider_gear_host(self._backup_gear),
+            height=96,
         )
         self._backup_config_card.visible = False
 
