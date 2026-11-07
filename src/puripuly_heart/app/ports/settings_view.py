@@ -34,11 +34,6 @@ class LoopbackCaptureSettingsIntent:
 
 
 @dataclass(frozen=True, slots=True)
-class TelemetrySettingsIntent:
-    enabled: bool
-
-
-@dataclass(frozen=True, slots=True)
 class AlibabaCapabilityEvidence:
     capability: Literal["asr", "translation"]
     model: str
@@ -160,7 +155,6 @@ class GeneralSettingsSnapshot:
     chatbox_include_source: bool
     activation_notice_enabled: bool
     clipboard_auto_translate_enabled: bool
-    telemetry_enabled: bool
     peer_expected_languages: tuple[str, ...]
 
 
@@ -625,7 +619,6 @@ __all__ = [
     "BackupLocalLlmExtraBodyEdit",
     "SttLocalModelEdit",
     "SystemPromptEdit",
-    "TelemetrySettingsIntent",
     "TranslationSelectionSnapshot",
     "TranslationSelectionEdit",
     "TranslationHttpExtensionEdit",

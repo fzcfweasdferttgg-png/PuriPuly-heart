@@ -118,7 +118,6 @@ def persistent_application(tmp_path, effects, initial=None):
         projection=projection,
         application=owner,
         merge_provider_settings=lambda value: value,
-        telemetry_enabled_settings=lambda value, _: value,
     )
     return app, settings
 

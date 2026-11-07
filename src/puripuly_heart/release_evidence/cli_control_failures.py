@@ -34,7 +34,6 @@ from puripuly_heart.config.settings_vnext.defaults import new_settings_for_first
 from puripuly_heart.config.settings_vnext.schema import (
     AppSettingsVNext,
     SecretsIntent,
-    with_telemetry_enabled,
 )
 from puripuly_heart.core.control_instance import discover
 
@@ -624,7 +623,6 @@ async def run(report: Path) -> dict:
                 osc=replace(settings.intent.osc, connection_mode="off"),
             ),
         )
-        settings = with_telemetry_enabled(settings, False)
         if not persist_isolated_settings(config, settings):
             raise RuntimeError("isolated_settings_save_failed")
         passphrase_name = "PURIPULY_HEART_SECRETS_PASSPHRASE"

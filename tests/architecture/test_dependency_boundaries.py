@@ -1000,7 +1000,6 @@ def test_canonical_settings_persistence_composition_uses_only_public_settings_ty
         "CaptureTargetIntent",
         "ProviderVerificationEntry",
         "with_capture_target",
-        "with_telemetry_enabled",
         "with_translation_runtime_policy",
     }
     assert imports["puripuly_heart.config.settings_vnext.migration"] == {

@@ -32,7 +32,6 @@ from puripuly_heart.app.ports.settings_view import (
     PromptApplyIntent,
     ProviderApplyIntent,
     SettingsApplyOutcome,
-    TelemetrySettingsIntent,
 )
 from puripuly_heart.app.ports.ui_application import (
     TranslationEnablePreparation,
@@ -80,8 +79,6 @@ from puripuly_heart.core.lifecycle import (
 from puripuly_heart.core.messages import ErrorDiagnostics
 from puripuly_heart.core.orchestrator.self_translation_channel import TextSubmissionAdmission
 from puripuly_heart.core.runtime.github_star_prompt import GithubStarPromptRuntime
-from puripuly_heart.core.updater import check_for_update
-
 
 UI_APPLICATION_USER_INTENT_METHODS = frozenset(
     {
@@ -95,13 +92,11 @@ UI_APPLICATION_USER_INTENT_METHODS = frozenset(
         "apply_settings_change",
         "apply_prompt_intent",
         "apply_provider_intent",
-        "apply_telemetry_enabled",
         "begin_overlay_calibration",
         "begin_alibaba_connection_draft",
         "cancel_alibaba_connection_draft",
         "cancel_overlay_calibration",
         "capture_settings_view_change",
-        "check_for_update",
         "clear_debug_audio_fault_profiles",
         "clear_provider_verification",
         "cycle_debug_capture_fault_profile",
@@ -123,7 +118,6 @@ UI_APPLICATION_USER_INTENT_METHODS = frozenset(
         "persist_github_star_prompt_opened",
         "persist_provider_secret_change",
         "prepare_runtime_after_launch",
-        "record_app_active_day",
         "reset_desktop_overlay_position",
         "retry_peer_process_capture",
         "schedule_github_star_prompt_translation_success_observed",
@@ -157,7 +151,6 @@ _ORDERED_INTENTS = frozenset(
         "apply_prompt_intent",
         "edit_alibaba_connection_draft",
         "apply_provider_intent",
-        "apply_telemetry_enabled",
         "on_dashboard_language_change",
         "set_stt_enabled",
         "set_peer_translation_enabled",
@@ -880,9 +873,6 @@ class UiApplicationBoundary:
     def overlay_peer_presentation_state(self) -> OverlayPeerPresentationState | None:
         return self._peer_capture.overlay_peer_presentation_state()
 
-    async def apply_telemetry_enabled(self, enabled: bool) -> Any | None:
-        return await self._settings.apply_telemetry_enabled(enabled)
-
     async def apply_settings_intent(self, intent: ImmediateSettingsIntent) -> object:
         result = await self._settings.apply_settings_intent(intent)
         await self._publish_osc_state()
@@ -907,8 +897,6 @@ class UiApplicationBoundary:
                     raw = await self._settings.apply_prompt_intent(intent)
                 elif isinstance(intent, LoopbackCaptureSettingsIntent):
                     raw = await self._peer_capture.apply_loopback_capture_option(intent.value)
-                elif isinstance(intent, TelemetrySettingsIntent):
-                    raw = await self._settings.apply_telemetry_enabled(intent.enabled)
                 elif isinstance(intent, LanguageSelectionChange):
                     raw = await self._settings.on_dashboard_language_change(intent)
                 else:
@@ -1067,9 +1055,6 @@ class UiApplicationBoundary:
     def schedule_github_star_prompt_translation_success_observed(self) -> None:
         self._engagement.schedule_github_star_prompt_translation_success_observed()
 
-    async def record_app_active_day(self, active_date_utc: str) -> object:
-        return await self._engagement.record_app_active_day(active_date_utc)
-
     def should_show_github_star_prompt(self) -> bool:
         return bool(self._engagement.should_show_github_star_prompt())
 
@@ -1078,9 +1063,6 @@ class UiApplicationBoundary:
 
     async def prepare_runtime_after_launch(self) -> None:
         await self._engagement.prepare_runtime_after_launch()
-
-    async def check_for_update(self) -> object | None:
-        return await check_for_update()
 
     def start_github_star_prompt(
         self,

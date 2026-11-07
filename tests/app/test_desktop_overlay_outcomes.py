@@ -84,7 +84,6 @@ def _application(path: Path, *, desktop: bool = False, positioned: bool = False)
         intent=replace(
             settings.intent,
             secrets=SecretsIntent(backend="encrypted_file", encrypted_file_path="secrets.json"),
-            telemetry=replace(settings.intent.telemetry, enabled=False),
             osc=replace(settings.intent.osc, connection_mode="off"),
             overlay=replace(
                 settings.intent.overlay,

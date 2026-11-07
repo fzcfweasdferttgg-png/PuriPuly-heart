@@ -22,7 +22,7 @@ from puripuly_heart.app.adapters.settings_vnext_canonical_persistence import (
     SettingsVNextCanonicalPersistenceAdapter,
 )
 from puripuly_heart.config.settings_vnext.defaults import new_settings_for_first_run
-from puripuly_heart.config.settings_vnext.schema import SecretsIntent, with_telemetry_enabled
+from puripuly_heart.config.settings_vnext.schema import SecretsIntent
 from puripuly_heart.release_evidence.cli_control_failures import SettingsReplacementLock
 
 
@@ -73,7 +73,7 @@ def run(report: Path) -> dict:
             ),
         )
         SettingsVNextCanonicalPersistenceAdapter().persist(
-            config, with_telemetry_enabled(settings, False)
+            config, settings
         )
         evidence["isolation"] = {
             "temporary_config": True,
@@ -81,7 +81,6 @@ def run(report: Path) -> dict:
             "encrypted_secrets": "empty_isolated_file_backend",
             "credential_fallbacks_removed": True,
             "native_overrides_removed": True,
-            "telemetry": False,
             "osc": "off",
             "capture_requested": False,
             "terms_accepted": False,

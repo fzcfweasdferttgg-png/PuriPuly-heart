@@ -360,7 +360,6 @@ def settings_view_surface_snapshots(
         chatbox_include_source=intent.osc.chatbox_include_source,
         activation_notice_enabled=intent.osc.activation_notice_enabled,
         clipboard_auto_translate_enabled=intent.clipboard.auto_translate_enabled,
-        telemetry_enabled=intent.telemetry.enabled,
         peer_expected_languages=tuple(intent.languages.peer_expected_languages),
     )
     source_language = intent.languages.source_language

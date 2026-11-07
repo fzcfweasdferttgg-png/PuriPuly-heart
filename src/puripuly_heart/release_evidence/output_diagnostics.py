@@ -26,7 +26,7 @@ from puripuly_heart.app.adapters.settings_vnext_canonical_persistence import (
     SettingsVNextCanonicalPersistenceAdapter,
 )
 from puripuly_heart.config.settings_vnext.defaults import new_settings_for_first_run
-from puripuly_heart.config.settings_vnext.schema import SecretsIntent, with_telemetry_enabled
+from puripuly_heart.config.settings_vnext.schema import SecretsIntent
 
 _HOST_PROGRAM = r"""
 import sys
@@ -115,7 +115,6 @@ def run(report: Path) -> dict[str, object]:
         "cases": {},
         "isolation": {
             "temporary_settings_secrets_discovery": True,
-            "telemetry": False,
             "osc": "explicit_loopback_fixture_only",
             "ambient_capture": False,
             "terms_acceptance": False,
@@ -229,7 +228,7 @@ def run(report: Path) -> dict[str, object]:
                 ),
             )
             SettingsVNextCanonicalPersistenceAdapter().persist(
-                config, with_telemetry_enabled(settings, False)
+                config, settings
             )
 
             def command(*arguments: str, text: str | None = None) -> dict[str, object]:

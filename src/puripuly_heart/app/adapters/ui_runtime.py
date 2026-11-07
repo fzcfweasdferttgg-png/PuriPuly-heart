@@ -228,7 +228,6 @@ class UiSettingsRuntimeAdapter:
     projection: SettingsProjectionOwner
     application: SettingsApplicationOwner
     merge_provider_settings: Callable[[AppSettingsVNext], AppSettingsVNext]
-    telemetry_enabled_settings: Callable[[AppSettingsVNext, bool], AppSettingsVNext]
 
     async def on_dashboard_language_change(
         self,
@@ -289,12 +288,6 @@ class UiSettingsRuntimeAdapter:
     ) -> object:
         return await self.application.apply(settings, provider_requested=provider_requested)
 
-    async def apply_telemetry_enabled(self, enabled: bool) -> object | None:
-        settings = self.settings.canonical
-        if settings is None:
-            return None
-        await self.application.apply(self.telemetry_enabled_settings(settings, enabled))
-        return self.settings.canonical
 
     async def apply_settings_intent(self, intent: ImmediateSettingsIntent) -> object:
         settings = self.settings.canonical
@@ -545,15 +538,6 @@ class UiProviderRuntimeAdapter:
         return self.model_assets
 
 
-@dataclass(frozen=True, slots=True)
-class _RemovedTelemetryResult:
-    status: str = "removed"
-    attempted_send: bool = False
-    persisted: bool = False
-    active_date_utc: str | None = None
-    diagnostics: None = None
-
-
 @dataclass(slots=True)
 class UiEngagementRuntimeAdapter:
     settings: SettingsOwner
@@ -573,12 +557,6 @@ class UiEngagementRuntimeAdapter:
     def schedule_github_star_prompt_translation_success_observed(self) -> None:
         self.github_prompt.schedule_translation_success_observed()
 
-    async def record_app_active_day(
-        self,
-        active_date_utc: str,
-    ) -> _RemovedTelemetryResult:
-        _ = active_date_utc
-        return _RemovedTelemetryResult()
 
     def should_show_github_star_prompt(self) -> bool:
         return self.github_prompt.should_show()

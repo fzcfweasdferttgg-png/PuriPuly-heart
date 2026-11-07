@@ -120,10 +120,6 @@ class RecordingBackend:
     async def ensure_gpu_device_discovery(self) -> None:
         self.events.append(("gpu-discovery",))
 
-    async def apply_telemetry_enabled(self, enabled: bool) -> object:
-        self.events.append(("telemetry", enabled))
-        return self.settings
-
     def persist_settings(self) -> None:
         self.events.append(("persist",))
 

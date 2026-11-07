@@ -15,7 +15,6 @@ from puripuly_heart.config.settings_vnext.schema import (
     VNEXT_SETTINGS_SCHEMA_VERSION,
     AppSettingsVNext,
     CaptureTargetIntent,
-    new_anonymous_telemetry_identifier,
     with_translation_runtime_policy,
 )
 
@@ -34,7 +33,6 @@ _LOCAL_QWEN_CPU_AUTO_MIGRATION_VERSION = 30
 _PEER_SOURCE_AUTO_MIGRATION_VERSION = 31
 _MULTI_MODEL_GEMMA_MIGRATION_VERSION = 32
 _CEREBRAS_RETIREMENT_MIGRATION_VERSION = 42
-_TELEMETRY_BOOLEAN_MIGRATION_VERSION = 37
 _DEEPGRAM_ROLLING_MIGRATION_VERSION = 39
 _PROMPT_OVERRIDE_MIGRATION_VERSION = 45
 _DEEPSEEK_41_SAVED_CONNECTION_MIGRATION_VERSION = 41
@@ -62,7 +60,6 @@ def _requires_version_migration(settings_version: object, migration_version: int
 
 
 def _prepare_vnext_migration_dict(data: Mapping[str, Any]) -> dict[str, Any]:
-    migrate_telemetry = _requires_telemetry_boolean_migration(data)
     settings_version = data.get("settings_version")
     migrate_local_qwen = _requires_version_migration(
         settings_version, _LOCAL_QWEN_CPU_AUTO_MIGRATION_VERSION
@@ -168,8 +165,6 @@ def _prepare_vnext_migration_dict(data: Mapping[str, Any]) -> dict[str, Any]:
                 prompts["system_prompt_override"] = None
             intent["prompts"] = prompts
         prepared["intent"] = intent
-    if migrate_telemetry:
-        _migrate_telemetry_boolean_model(prepared)
     if migrate_deepgram_rolling:
         _migrate_deepgram_stt_to_rolling(prepared)
     _migrate_cloud_free_tier_providers(prepared)
@@ -210,56 +205,6 @@ def _migrate_deepgram_stt_to_rolling(data: dict[str, Any]) -> None:
     intent["stt"]["cloud_free_tier_providers"] = ["gemini_transcribe", "deepgram"]
 
 
-def _requires_telemetry_boolean_migration(data: Mapping[str, Any]) -> bool:
-    settings_version = data.get("settings_version")
-    if isinstance(settings_version, bool):
-        return True
-    if isinstance(settings_version, int):
-        version_requires_migration = settings_version < _TELEMETRY_BOOLEAN_MIGRATION_VERSION
-    elif isinstance(settings_version, str) and settings_version.strip().isdigit():
-        version_requires_migration = (
-            int(settings_version.strip()) < _TELEMETRY_BOOLEAN_MIGRATION_VERSION
-        )
-    else:
-        return True
-    intent = data.get("intent")
-    telemetry_intent = intent.get("telemetry") if isinstance(intent, Mapping) else None
-    return (
-        version_requires_migration
-        or isinstance(telemetry_intent, Mapping)
-        and "consent" in telemetry_intent
-    )
-
-
-def _legacy_telemetry_enabled(value: object, *, missing: bool = False) -> bool:
-    if missing or value in {"allow", "unknown"}:
-        return True
-    return False
-
-
-def _migrate_telemetry_boolean_model(data: dict[str, Any]) -> None:
-    intent = data.setdefault("intent", {})
-    telemetry_present = "telemetry" in intent
-    raw_intent_value = intent.get("telemetry")
-    raw_intent = raw_intent_value if isinstance(raw_intent_value, Mapping) else {}
-    if telemetry_present and not isinstance(raw_intent_value, Mapping):
-        enabled = False
-    elif isinstance(raw_intent.get("enabled"), bool):
-        enabled = bool(raw_intent["enabled"])
-        if raw_intent.get("consent") == "decline":
-            enabled = False
-    elif "enabled" in raw_intent:
-        enabled = False
-    else:
-        missing = "consent" not in raw_intent
-        enabled = _legacy_telemetry_enabled(raw_intent.get("consent"), missing=missing)
-    intent["telemetry"] = {"enabled": enabled}
-
-    state = data.setdefault("state", {})
-    state["telemetry"] = {
-        "anonymous_id": None,
-        "last_sent_date_utc": None,
-    }
 
 
 LEGACY_TIMESTAMP_PROMPT = (

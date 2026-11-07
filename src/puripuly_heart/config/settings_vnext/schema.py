@@ -255,31 +255,12 @@ def _optional_provider_verification_string(value: object, *, field_name: str) ->
     return normalized or None
 
 
-def _normalize_telemetry_sent_date(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        return date.fromisoformat(value.strip()).isoformat()
-    except ValueError:
-        return None
-
-
-def _normalize_telemetry_identifier(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    return normalized or None
-
-
 def _normalize_optional_state_text(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.strip()
     return normalized or None
 
-
-def new_anonymous_telemetry_identifier() -> str:
-    return uuid.uuid4().hex
 
 
 @dataclass(frozen=True, slots=True)
@@ -803,15 +784,6 @@ class IntegratedContextIntent:
 
 
 @dataclass(frozen=True, slots=True)
-class TelemetryIntent:
-    enabled: bool = True
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.enabled, bool):
-            raise ValueError("telemetry enabled must be a boolean")
-
-
-@dataclass(frozen=True, slots=True)
 class PromptIntent:
     system_prompt_override: str | None = None
 
@@ -844,7 +816,6 @@ class UserIntentSettings:
     ui: UiIntent = field(default_factory=UiIntent)
     clipboard: ClipboardIntent = field(default_factory=ClipboardIntent)
     integrated_context: IntegratedContextIntent = field(default_factory=IntegratedContextIntent)
-    telemetry: TelemetryIntent = field(default_factory=TelemetryIntent)
     prompts: PromptIntent = field(default_factory=PromptIntent)
 
 
@@ -1038,20 +1009,6 @@ class MainInputHintState:
 
 
 @dataclass(frozen=True, slots=True)
-class TelemetryOperationalState:
-    anonymous_id: str | None = field(default_factory=new_anonymous_telemetry_identifier)
-    last_sent_date_utc: str | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "anonymous_id", _normalize_telemetry_identifier(self.anonymous_id))
-        object.__setattr__(
-            self,
-            "last_sent_date_utc",
-            _normalize_telemetry_sent_date(self.last_sent_date_utc),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class PersistedOperationalState:
     provider_verification: ProviderVerificationState = field(
         default_factory=ProviderVerificationState
@@ -1061,7 +1018,6 @@ class PersistedOperationalState:
     peer_translation: PeerTranslationState = field(default_factory=PeerTranslationState)
     integrated_context: IntegratedContextState = field(default_factory=IntegratedContextState)
     main_input_hint: MainInputHintState = field(default_factory=MainInputHintState)
-    telemetry: TelemetryOperationalState = field(default_factory=TelemetryOperationalState)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1124,34 +1080,6 @@ def with_capture_target(
     )
 
 
-def with_telemetry_enabled(
-    settings: AppSettingsVNext,
-    enabled: bool,
-    *,
-    identifier_factory: object = new_anonymous_telemetry_identifier,
-) -> AppSettingsVNext:
-    if not isinstance(enabled, bool):
-        raise TypeError("telemetry enabled must be a boolean")
-    current_state = settings.state.telemetry
-    if not enabled:
-        next_state = TelemetryOperationalState(anonymous_id=None)
-    else:
-        factory = (
-            identifier_factory
-            if callable(identifier_factory)
-            else new_anonymous_telemetry_identifier
-        )
-        next_state = TelemetryOperationalState(
-            anonymous_id=current_state.anonymous_id or str(factory()),
-            last_sent_date_utc=current_state.last_sent_date_utc,
-        )
-    return replace(
-        settings,
-        intent=replace(settings.intent, telemetry=TelemetryIntent(enabled)),
-        state=replace(settings.state, telemetry=next_state),
-    )
-
-
 __all__ = [
     "AppSettingsVNext",
     "AudioIntent",
@@ -1193,8 +1121,6 @@ __all__ = [
     "SecretsIntent",
     "SonioxSTTIntent",
     "TranslationIntent",
-    "TelemetryIntent",
-    "TelemetryOperationalState",
     "UiIntent",
     "UserIntentSettings",
     "VNEXT_SETTINGS_SCHEMA_VERSION",
@@ -1203,6 +1129,5 @@ __all__ = [
     "OSC_DEFAULT_RECEIVE_PORT",
     "OSC_DEFAULT_SEND_PORT",
     "with_capture_target",
-    "with_telemetry_enabled",
     "with_translation_runtime_policy",
 ]

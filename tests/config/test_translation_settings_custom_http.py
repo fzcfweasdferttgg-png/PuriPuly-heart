@@ -34,11 +34,9 @@ def _custom_settings() -> AppSettingsVNext:
                     llm_model="qwen3.8-flash",
                 ),
             ),
-            telemetry=replace(current.intent.telemetry, enabled=True),
         ),
         state=replace(
             current.state,
-            telemetry=replace(current.state.telemetry, anonymous_id="custom-translation-test"),
         ),
     )
 

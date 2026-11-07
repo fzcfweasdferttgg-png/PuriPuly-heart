@@ -12,7 +12,6 @@ from puripuly_heart.config.settings_vnext import compat, serialization
 from puripuly_heart.config.settings_vnext.schema import (
     VNEXT_SETTINGS_SCHEMA_VERSION,
     AppSettingsVNext,
-    with_telemetry_enabled,
 )
 
 LIVE_LOCAL_PROVIDER_VALUES = (
@@ -131,11 +130,7 @@ def test_retired_choices_migrate_recoverably_and_remain_canonical_on_restart(
     version: int,
 ) -> None:
     path = tmp_path / "settings.json"
-    default = with_telemetry_enabled(
-        AppSettingsVNext(),
-        True,
-        identifier_factory=lambda: "cpu-migration-test-id",
-    )
+    default = AppSettingsVNext()
     raw = serialization.to_dict(default)
     raw["settings_version"] = version
     raw["intent"]["stt"]["provider"] = "local_parakeet_v3"

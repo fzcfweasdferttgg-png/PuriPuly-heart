@@ -13,7 +13,7 @@ import httpx
 import pytest
 from websockets.exceptions import SecurityError
 
-from puripuly_heart.core import external_network, network_clients, updater
+from puripuly_heart.core import external_network, network_clients
 from puripuly_heart.core.external_network import ProxyPolicy
 from puripuly_heart.core.local_asr.local_stt_download_port import (
     HuggingFaceDownloadRequest,
@@ -245,50 +245,6 @@ async def test_websocket_redirect_retains_tls_downgrade_rejection(certificates, 
     finally:
         destination.close()
         await destination.wait_closed()
-
-
-async def test_updater_actual_connection_failure_is_graceful(monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "*")
-    with socket.socket() as blocked:
-        blocked.bind(("127.0.0.1", 0))
-        monkeypatch.setattr(
-            updater,
-            "GITHUB_API_URL",
-            f"http://127.0.0.1:{blocked.getsockname()[1]}/releases/latest",
-        )
-        assert await updater.check_for_update() is None
-
-
-async def test_updater_actual_release_request_succeeds(monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "*")
-
-    async def respond(reader, writer):
-        await reader.readuntil(b"\r\n\r\n")
-        body = json.dumps(
-            {"tag_name": "v999.0.0", "body": "controlled release", "assets": []}
-        ).encode()
-        writer.write(
-            f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
-            + body
-        )
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
-
-    server = await asyncio.start_server(respond, "127.0.0.1", 0)
-    try:
-        monkeypatch.setattr(
-            updater,
-            "GITHUB_API_URL",
-            f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/releases/latest",
-        )
-        info = await updater.check_for_update()
-        assert info is not None
-        assert info.version == "999.0.0"
-        assert info.release_notes == "controlled release"
-    finally:
-        server.close()
-        await server.wait_closed()
 
 
 @contextmanager

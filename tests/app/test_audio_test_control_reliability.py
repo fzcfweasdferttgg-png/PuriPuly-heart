@@ -47,7 +47,6 @@ async def audio_application(tmp_path, monkeypatch):
             initial.intent,
             secrets=SecretsIntent(backend="encrypted_file", encrypted_file_path="secrets.json"),
             osc=replace(initial.intent.osc, connection_mode="off"),
-            telemetry=replace(initial.intent.telemetry, enabled=False),
             stt=replace(
                 initial.intent.stt,
                 provider="local_qwen_gpu",

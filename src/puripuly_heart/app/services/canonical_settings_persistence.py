@@ -40,7 +40,6 @@ from puripuly_heart.config.settings_vnext.schema import (
     CaptureTargetIntent,
     ProviderVerificationEntry,
     with_capture_target,
-    with_telemetry_enabled,
     with_translation_runtime_policy,
 )
 from puripuly_heart.core.messages import ErrorDiagnostics
@@ -529,34 +528,6 @@ class SettingsOwner:
                     live,
                     rollback_snapshot=baseline if self.mutation_depth == 0 else None,
                 )
-        finally:
-            self._release_publication(publication)
-
-    def with_telemetry_enabled(
-        self,
-        settings: AppSettingsVNext,
-        enabled: bool,
-    ) -> AppSettingsVNext:
-        return with_telemetry_enabled(settings, enabled)
-
-    def persist_telemetry_preference(self, enabled: bool) -> AppSettingsVNext:
-        publication = None
-        try:
-            with self._commit_lock:
-                settings = self.canonical
-                if settings is None:
-                    settings = (
-                        self.persistence.load_active(self.path).canonical_settings
-                        if self.path.exists()
-                        else new_settings_for_first_run()
-                    )
-                publication = self._commit_delta_locked(
-                    settings, self.with_telemetry_enabled(settings, enabled)
-                )
-                verified = self.persistence.load_active(self.path).canonical_settings
-                if verified != publication.settings:
-                    raise RuntimeError("persisted telemetry preference did not verify")
-                return verified
         finally:
             self._release_publication(publication)
 

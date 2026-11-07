@@ -851,7 +851,6 @@ async def test_long_output_wait_orders_cli_overlay_audio_and_gui_settings_captur
         app.set_overlay_calibration_field("offset_x", 37)
         before = await control.query("settings.current", {})
         assert app.current_loopback_capture_option_value() == "device:"
-        assert before["settings"]["intent"]["telemetry"]["enabled"] is True
 
         manual = await control.submit(
             "text.submit", {"text": "gated output"}, request_id="order-manual"
@@ -898,20 +897,13 @@ async def test_long_output_wait_orders_cli_overlay_audio_and_gui_settings_captur
         )
         await asyncio.wait_for(entered.wait(), 3)
         gui_capture = asyncio.create_task(app.apply_loopback_capture_option("device:Simulated B"))
-        gui_telemetry = asyncio.create_task(app.apply_telemetry_enabled(False))
         await asyncio.sleep(0)
-        assert not gui_capture.done() and not gui_telemetry.done()
+        assert not gui_capture.done()
         assert app.current_loopback_capture_option_value() == "device:Simulated A"
-        assert (await control.query("settings.current", {}))["settings"]["intent"]["telemetry"][
-            "enabled"
-        ] is True
         release.set()
         assert (await control.wait(second["operation_id"], timeout=5))["status"] == "applied"
-        await asyncio.wait_for(asyncio.gather(gui_capture, gui_telemetry), 5)
+        await asyncio.wait_for(gui_capture, 5)
         assert app.current_loopback_capture_option_value() == "device:Simulated B"
-        assert (await control.query("settings.current", {}))["settings"]["intent"]["telemetry"][
-            "enabled"
-        ] is False
     finally:
         release.set()
         await app.stop()
@@ -1472,7 +1464,6 @@ async def test_capture_loading_stop_reaches_real_capture_owner(
     settings["intent"]["stt"]["provider"] = "local_qwen_gpu" if channel == "self" else "soniox"
     settings["intent"]["peer_stt"]["provider"] = "local_qwen_gpu" if channel == "peer" else "soniox"
     settings["state"]["peer_translation"]["eula_accepted"] = True
-    settings["intent"]["telemetry"]["enabled"] = False
     offline.write_text(json.dumps(settings), encoding="utf-8")
     entered = asyncio.Event()
     cancelled = asyncio.Event()

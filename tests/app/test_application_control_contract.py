@@ -60,7 +60,6 @@ def isolated_settings(path):
             settings.intent,
             secrets=SecretsIntent(backend="encrypted_file", encrypted_file_path="secrets.json"),
             osc=replace(settings.intent.osc, connection_mode="off"),
-            telemetry=replace(settings.intent.telemetry, enabled=False),
             translation=replace(
                 settings.intent.translation,
                 model="local_llm",

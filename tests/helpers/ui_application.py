@@ -231,10 +231,6 @@ class UiApplicationRuntimeStub:
         accessor = getattr(self._backend, "managed_auth_last_message_key", None)
         return accessor() if callable(accessor) else None
 
-    async def apply_telemetry_enabled(self, enabled: bool) -> object | None:
-        apply = getattr(self._backend, "apply_telemetry_enabled", None)
-        return await apply(enabled) if callable(apply) else None
-
     def reopen_openrouter_pkce_authorization_url(self) -> object:
         reopen = getattr(
             self._backend,
@@ -247,14 +243,6 @@ class UiApplicationRuntimeStub:
         clear = getattr(self._backend, "clear_provider_verification", None)
         if callable(clear):
             clear(provider)
-
-    async def record_app_active_day(self, active_date_utc: str) -> object | None:
-        record = getattr(
-            self._backend,
-            "record_app_active_day",
-            None,
-        )
-        return await record(active_date_utc) if callable(record) else None
 
     def should_show_github_star_prompt(self) -> bool:
         should_show = getattr(self._backend, "should_show_github_star_prompt", None)

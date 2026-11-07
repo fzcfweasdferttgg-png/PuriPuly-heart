@@ -6,7 +6,6 @@ from dataclasses import replace
 from puripuly_heart.config.settings_vnext.schema import (
     AppSettingsVNext,
     UiIntent,
-    with_telemetry_enabled,
 )
 
 
@@ -65,7 +64,7 @@ def new_settings_for_reset(system_locale: str | None = None) -> AppSettingsVNext
         settings,
         intent=replace(settings.intent, ui=UiIntent(locale=locale_value)),
     )
-    return with_telemetry_enabled(settings, False)
+    return settings
 
 
 def new_settings_for_first_run(system_locale: str | None = None) -> AppSettingsVNext:
@@ -77,7 +76,7 @@ def new_settings_for_first_run(system_locale: str | None = None) -> AppSettingsV
         settings,
         intent=replace(settings.intent, ui=UiIntent(locale=locale_value)),
     )
-    return with_telemetry_enabled(settings, False)
+    return settings
 
 
 __all__ = [

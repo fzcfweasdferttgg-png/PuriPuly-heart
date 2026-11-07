@@ -2729,10 +2729,6 @@ class ApplicationControlOwner:
                         recent_target_codes=tuple(languages.recent_target_languages),
                     ),
                 )
-            elif key == "telemetry.enabled":
-                if not isinstance(value, bool):
-                    raise InvalidArgumentsError("telemetry.enabled must be boolean")
-                updated = self.settings.with_telemetry_enabled(updated, value)
             else:
                 if key in {"stt.provider", "peer_stt.provider"}:
                     edit = (SelfSttProviderEdit if key == "stt.provider" else PeerSttProviderEdit)(

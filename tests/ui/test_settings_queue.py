@@ -207,7 +207,7 @@ async def test_unexpected_apply_exception_is_not_replayed_by_a_later_drain():
 
 
 @pytest.mark.parametrize("saved", [False, True])
-async def test_settings_failures_do_not_notify_or_block_audio_and_telemetry(saved, monkeypatch):
+async def test_settings_failures_do_not_notify_or_block_audio(saved, monkeypatch):
     results = SettingsTransactionResultOwner()
     calls = []
     notifications = []
@@ -224,12 +224,6 @@ async def test_settings_failures_do_not_notify_or_block_audio_and_telemetry(save
         )
         return False
 
-    async def apply_telemetry_enabled(enabled):
-        assert enabled is False
-        calls.append("telemetry_off")
-        results.set(TransactionResult("settings_commit_success_runtime_applied", None, None))
-        return True
-
     async def retry_settings_runtime():
         pytest.fail("implicit runtime retry")
 
@@ -244,7 +238,6 @@ async def test_settings_failures_do_not_notify_or_block_audio_and_telemetry(save
         SimpleNamespace(
             settings=AppSettingsVNext(),
             apply_settings=apply_settings,
-            apply_telemetry_enabled=apply_telemetry_enabled,
             retry_settings_runtime=retry_settings_runtime,
         )
     )
@@ -254,12 +247,9 @@ async def test_settings_failures_do_not_notify_or_block_audio_and_telemetry(save
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
     app._on_settings_changed(LocaleSettingsIntent("ja"))
     app._queue_settings_mutation_task(audio)
-    from puripuly_heart.app.ports.settings_view import TelemetrySettingsIntent
-
-    app._on_settings_changed(TelemetrySettingsIntent(False))
     await workers[0]()
     await app._ensure_settings_queue().drain()
-    assert calls == ["save", "telemetry_off", "audio"]
+    assert calls == ["save", "audio"]
     assert app._settings_queue.has_pending is (not saved)
     assert notifications == []
 

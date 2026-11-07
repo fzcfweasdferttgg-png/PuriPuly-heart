@@ -17,7 +17,6 @@ from puripuly_heart.app.ports.settings_view import (
     LoopbackCaptureSettingsIntent,
     PromptApplyIntent,
     ProviderApplyIntent,
-    TelemetrySettingsIntent,
 )
 from puripuly_heart.app.ports.ui_application import (
     UiApplicationFactoryPort,
@@ -28,7 +27,6 @@ from puripuly_heart.app.services.application_shutdown import (
     ApplicationShutdownCoordinator,
     application_shutdown_callback,
 )
-from puripuly_heart.app.services.telemetry_reporting import TelemetryReportingOwner
 from puripuly_heart.config.provider_values import QwenRegion
 from puripuly_heart.core.diagnostics import (
     diagnostic_operation,
@@ -153,7 +151,6 @@ class TranslatorApp:
         self.debug_ui_preview = bool(debug_ui_preview)
         self.debug_preview_panel: DebugPreviewPanel | None = None
         self._after_launch_task_handle = None
-        self._telemetry_reporting: TelemetryReportingOwner | None = None
         self._launch_high_priority_feedback_shown = False
         self._launch_high_priority_feedback_reason: str | None = None
         self._launch_high_priority_snackbar = None
@@ -534,47 +531,11 @@ class TranslatorApp:
         handle = getattr(self, "_after_launch_task_handle", None)
         if handle is not None and not handle.done():
             return
-        self._schedule_app_active_day_report()
         self._after_launch_task_handle = self._run_page_task(self._run_after_launch_tasks)
 
     async def _run_after_launch_tasks(self) -> None:
-        await asyncio.gather(
-            self._run_launch_notification_flow(),
-            self._run_after_launch_runtime_preparation(),
-        )
+        await self._run_after_launch_runtime_preparation()
         self._sync_dashboard_channels()
-
-    async def _run_launch_notification_flow(self) -> None:
-        await asyncio.gather(
-            self._check_for_update_after_launch(),
-        )
-    async def _check_for_update_after_launch(self) -> None:
-        update_kwargs = {"log_diagnostic": self._log_diagnostic}
-        try:
-            update_parameters = inspect.signature(_check_and_notify_update).parameters
-        except TypeError, ValueError:
-            update_parameters = {}
-        if "load_update_info" in update_parameters or any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in update_parameters.values()
-        ):
-            update_kwargs["load_update_info"] = self.application.check_for_update
-        if "on_launch_snackbar_shown" in update_parameters or any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in update_parameters.values()
-        ):
-            update_kwargs["on_launch_snackbar_shown"] = lambda snackbar: (
-                self._mark_launch_high_priority_feedback_shown("update", snackbar)
-            )
-        try:
-            await _check_and_notify_update(self.page, **update_kwargs)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self._log_diagnostic(
-                f"[Startup] Update check failed: {exc!r}",
-                level=logging.WARNING,
-            )
 
     async def _run_after_launch_runtime_preparation(self) -> None:
         try:
@@ -1446,32 +1407,6 @@ class TranslatorApp:
     def get_event_stt_state(self) -> object | None:
         return self.application.state().stt_state
 
-    def _schedule_app_active_day_report(self) -> None:
-        self._telemetry_reporting_owner().schedule_app_active_day_report()
-
-    def _sync_telemetry_settings_view(self, settings) -> None:
-        view_settings = getattr(self, "view_settings", None)
-        sync_telemetry = (
-            getattr(view_settings, "sync_telemetry_settings", None)
-            if view_settings is not None
-            else None
-        )
-        if callable(sync_telemetry):
-            sync_telemetry(settings)
-
-    def _telemetry_reporting_owner(self) -> TelemetryReportingOwner:
-        owner = getattr(self, "_telemetry_reporting", None)
-        if owner is None:
-            owner = TelemetryReportingOwner(
-                self.application,
-                run_background=self._run_page_task,
-                queue_settings_mutation=self._queue_settings_mutation_task,
-                is_shutting_down=lambda: getattr(self, "_shutting_down", False),
-                sync_telemetry=self._sync_telemetry_settings_view,
-            )
-            self._telemetry_reporting = owner
-        return owner
-
     def on_overlay_state_changed(
         self,
         *,
@@ -1512,71 +1447,3 @@ async def main_gui(
         raise
     app.schedule_after_launch_tasks()
 
-
-async def _check_and_notify_update(
-    page: ft.Page,
-    log_diagnostic=None,
-    on_launch_snackbar_shown=None,
-    load_update_info=None,
-) -> None:
-    """Check for updates and show notification as a toast."""
-    try:
-        if not callable(load_update_info):
-            return
-        update_info = await load_update_info()
-        if update_info is None:
-            return
-
-        def _open_download(_e):
-            webbrowser.open(update_info.download_url)
-            snackbar.open = False
-            page.update()
-
-        snackbar = ft.SnackBar(
-            content=ft.Row(
-                controls=[
-                    ft.Icon(
-                        icon=ft.Icons.SYSTEM_UPDATE,
-                        color=ft.Colors.WHITE,
-                        size=28,
-                    ),
-                    ft.Text(
-                        t("update.available", version=update_info.version),
-                        color=ft.Colors.WHITE,
-                        size=18,
-                        font_family=font_for_language(get_locale()),
-                        expand=True,
-                    ),
-                    ft.TextButton(
-                        content=t("update.download"),
-                        on_click=_open_download,
-                        style=ft.ButtonStyle(
-                            color=ft.Colors.WHITE,
-                            text_style=text_style(size=18),
-                            overlay_color=COLOR_PRIMARY,
-                        ),
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
-            ),
-            bgcolor=COLOR_SUCCESS,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            elevation=0,
-            margin=ft.Margin.only(bottom=90),
-            padding=20,
-            duration=30000,  # 30초
-            show_close_icon=True,
-            close_icon_color=ft.Colors.WHITE,
-        )
-        page.show_dialog(snackbar)
-        if callable(on_launch_snackbar_shown):
-            on_launch_snackbar_shown(snackbar)
-
-    except Exception as exc:
-        message = f"[Update] Check notification failed: {exc}"
-        if callable(log_diagnostic):
-            log_diagnostic(message)
-            return
-        logger.debug(message)

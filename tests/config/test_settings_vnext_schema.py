@@ -101,15 +101,6 @@ def test_vnext_schema_excludes_runtime_only_legacy_ui_state() -> None:
     assert "state.ui.peer_translation_enabled" not in leaf_paths
 
 
-def test_telemetry_schema_defaults_keep_intent_and_operational_state_separate() -> None:
-    schema = _load_schema_module()
-
-    settings = schema.AppSettingsVNext()
-
-    assert settings.intent.telemetry.enabled is True
-    assert settings.state.telemetry.anonymous_id
-    assert settings.state.telemetry.last_sent_date_utc is None
-
 
 def test_vnext_schema_default_tree_excludes_raw_provider_api_key_fields() -> None:
     schema = _load_schema_module()

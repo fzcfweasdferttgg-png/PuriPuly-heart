@@ -2170,7 +2170,6 @@ def compose_application_runtime(
             projection=require_projection(),
             application=settings_owner,
             merge_provider_settings=merge_provider_settings,
-            telemetry_enabled_settings=settings.with_telemetry_enabled,
         ),
         provider=UiProviderRuntimeAdapter(
             settings=settings,

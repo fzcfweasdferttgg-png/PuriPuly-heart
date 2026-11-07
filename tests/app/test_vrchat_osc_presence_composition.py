@@ -44,7 +44,6 @@ async def test_presence_notice_tracks_effective_connection_and_discovery_recover
             settings.intent,
             secrets=SecretsIntent(backend="encrypted_file", encrypted_file_path="secrets.json"),
             osc=replace(settings.intent.osc, connection_mode="off", port=9123, send_port=9123),
-            telemetry=replace(settings.intent.telemetry, enabled=False),
         ),
     )
     path = tmp_path / "settings.json"
@@ -217,7 +216,6 @@ async def controlled_presence_runtime(tmp_path, monkeypatch):
                 send_port=9123,
                 receive_port=receive_port,
             ),
-            telemetry=replace(settings.intent.telemetry, enabled=False),
         ),
     )
     path = tmp_path / "settings.json"
