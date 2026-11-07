@@ -455,6 +455,9 @@ class SettingsView(ft.Column):
         self._provider_snapshot: ProviderSettingsSnapshot | None = None
         self._provider_draft: ProviderSettingsSnapshot | None = None
         self._provider_edits: dict[type, ProviderSettingsEdit] = {}
+        self._slot_rows: list = []
+        self._provider_slots_state: dict[str, object] = {}
+        self._provider_slots_loaded_for: object = None
         self._general_snapshot: GeneralSettingsSnapshot | None = None
         self._peer_auto_languages_pending: tuple[str, ...] | None = None
         self._prompt_snapshot: PromptSettingsSnapshot | None = None
@@ -688,10 +691,13 @@ class SettingsView(ft.Column):
         fetch_btn,
         api_key,
         test_btn,
+        slots_row=None,
     ) -> ft.Column:
         items: list[ft.Control] = []
         if title is not None:
             items.append(title)
+        if slots_row is not None:
+            items.append(slots_row)
         items.extend(
             [
                 ft.Container(height=4),
@@ -716,10 +722,13 @@ class SettingsView(ft.Column):
         extra_body,
         extra_body_helper,
         extra_body_error,
+        slots_row=None,
     ) -> ft.Column:
         items: list[ft.Control] = []
         if title is not None:
             items.append(title)
+        if slots_row is not None:
+            items.append(slots_row)
         items.extend(
             [
                 ft.Container(height=4),
@@ -790,6 +799,7 @@ class SettingsView(ft.Column):
             content=ft.Text(t("settings.openai_compatible.test_connection")),
             on_click=self._on_test_openai_connection,
         )
+        self._openai_slots_row = self._build_slot_row("translation")
 
     def _build_local_form_controls(self) -> None:
         """Create the translation custom-server form controls."""
@@ -852,6 +862,7 @@ class SettingsView(ft.Column):
             content=ft.Text(t("settings.openai_compatible.test_connection")),
             on_click=self._on_test_local_llm_connection,
         )
+        self._local_llm_slots_row = self._build_slot_row("translation")
         self._local_llm_extra_body = ft.TextField(
             label=t("settings.local_llm.extra_body"),
             value=json.dumps(
@@ -943,8 +954,11 @@ class SettingsView(ft.Column):
             content=ft.Text(t("settings.openai_compatible.test_connection")),
             on_click=self._on_test_backup_connection,
         )
+        self._backup_slots_row = self._build_slot_row("backup")
+        self._backup_local_slots_row = self._build_slot_row("backup")
         self._backup_network_group = self._compose_openai_form(
             title=None,
+            slots_row=self._backup_slots_row,
             provider=self._backup_provider,
             model=self._backup_model,
             fetch_btn=self._backup_fetch_btn,
@@ -1035,6 +1049,7 @@ class SettingsView(ft.Column):
         )
         self._backup_local_group = self._compose_local_form(
             title=None,
+            slots_row=self._backup_local_slots_row,
             base_url=self._backup_local_base_url,
             test_btn=self._backup_local_test_btn,
             model=self._backup_local_model,
@@ -1091,6 +1106,7 @@ class SettingsView(ft.Column):
         schedule = getattr(self, "_provider_settings_schedule", None)
         if window is None or schedule is None or self._provider_snapshot is None:
             return
+        self._provider_dialog_kind = kind
         if window.is_open:
             window.open(
                 schedule,
@@ -1179,7 +1195,8 @@ class SettingsView(ft.Column):
         self._commit_backup_field("model", self._backup_model.value or "")
 
     def _accept_provider_settings_dialog(self) -> None:
-        """Accept button: commit staged form values and apply them."""
+        """Accept button: save the slot, commit staged form values and apply them."""
+        self._save_dialog_slot()
         self._commit_openai_fields_from_controls()
         self._commit_backup_fields_from_controls()
         self._commit_local_llm_fields_from_controls()
@@ -1207,6 +1224,7 @@ class SettingsView(ft.Column):
         self._build_openai_form_controls()
         self._openai_form = self._compose_openai_form(
             title=None,
+            slots_row=self._openai_slots_row,
             provider=self._openai_provider,
             model=self._openai_model,
             fetch_btn=self._openai_fetch_btn,
@@ -1216,6 +1234,7 @@ class SettingsView(ft.Column):
         self._build_local_form_controls()
         self._local_llm_form = self._compose_local_form(
             title=None,
+            slots_row=self._local_llm_slots_row,
             base_url=self._local_llm_base_url,
             test_btn=self._local_llm_test_btn,
             model=self._local_llm_model,
@@ -1235,6 +1254,201 @@ class SettingsView(ft.Column):
             self._local_llm_extra_body.value = display.local_llm_extra_body_json
             self._clear_local_llm_extra_body_error()
             self._clear_backup_local_extra_body_error()
+
+    def _build_slot_row(self, card: str, *, quick: bool = False) -> ft.Row:
+        """Build the 1-3 slot buttons for a card (form row or quick-switch row)."""
+        from puripuly_heart.ui.theme import COLOR_SURFACE
+
+        buttons = []
+        for index in (1, 2, 3):
+            label = ft.Text(str(index), size=14, weight=ft.FontWeight.BOLD)
+            if quick:
+                on_click = (
+                    lambda _e, card=card, index=index: self._on_quick_slot_selected(
+                        card, index
+                    )
+                )
+            else:
+                on_click = (
+                    lambda _e, card=card, index=index: self._on_form_slot_selected(
+                        card, index
+                    )
+                )
+            buttons.append(
+                ft.Container(
+                    content=label,
+                    width=32,
+                    height=32,
+                    alignment=ft.Alignment.CENTER,
+                    border_radius=8,
+                    border=ft.Border.all(1, COLOR_DIVIDER),
+                    bgcolor=COLOR_SURFACE,
+                    on_click=on_click,
+                )
+            )
+        row = ft.Row(buttons, spacing=6)
+        self._slot_rows.append((card, row))
+        self._sync_slot_row(row, card)
+        return row
+
+    def _sync_slot_row(self, row: ft.Row, card: str) -> None:
+        from puripuly_heart.ui.theme import COLOR_SURFACE
+
+        state = self._provider_slots_state.get(card)
+        active = getattr(state, "active", 1)
+        for button, index in zip(row.controls, (1, 2, 3)):
+            is_active = active == index
+            button.bgcolor = COLOR_DIVIDER if is_active else COLOR_SURFACE
+            button.content.color = COLOR_PRIMARY if is_active else COLOR_NEUTRAL_DARK
+
+    def _sync_slot_rows(self) -> None:
+        for card, row in self._slot_rows:
+            self._sync_slot_row(row, card)
+            _update_control_if_mounted(row)
+
+    def _provider_slots_path(self):
+        if self._config_path is None:
+            return None
+        from puripuly_heart.config.provider_slots import PROVIDER_SLOTS_FILENAME
+
+        return self._config_path.parent / PROVIDER_SLOTS_FILENAME
+
+    def _ensure_provider_slots_loaded(self) -> None:
+        path = self._provider_slots_path()
+        if path is None or self._provider_slots_loaded_for == path:
+            return
+        from puripuly_heart.config.provider_slots import load_provider_slots
+
+        self._provider_slots_state = load_provider_slots(path)
+        self._provider_slots_loaded_for = path
+        self._sync_slot_rows()
+
+    def _persist_provider_slots(self) -> None:
+        path = self._provider_slots_path()
+        if path is None:
+            return
+        from puripuly_heart.config.provider_slots import save_provider_slots
+
+        save_provider_slots(path, self._provider_slots_state)
+
+    def _on_form_slot_selected(self, card: str, index: int) -> None:
+        self._ensure_provider_slots_loaded()
+        self._select_provider_slot(card, index, apply=False)
+
+    def _on_quick_slot_selected(self, card: str, index: int) -> None:
+        self._ensure_provider_slots_loaded()
+        self._select_provider_slot(card, index, apply=True)
+
+    def _select_provider_slot(self, card: str, index: int, *, apply: bool) -> None:
+        from puripuly_heart.config.provider_slots import ProviderCardSlots
+
+        state = self._provider_slots_state.get(card) or ProviderCardSlots()
+        state = replace(state, active=index)
+        self._provider_slots_state[card] = state
+        self._persist_provider_slots()
+        config = state.slot(index)
+        if config is not None and not config.is_empty:
+            self._apply_provider_slot_to_controls(card, config)
+            if apply:
+                self._apply_provider_slot_as_current(card, config)
+        self._sync_slot_rows()
+
+    def _apply_provider_slot_to_controls(self, card: str, config) -> None:
+        is_backup = card == "backup"
+        if config.variant == TranslationModel.LOCAL_LLM.value:
+            base = self._backup_local_base_url if is_backup else self._local_llm_base_url
+            model = self._backup_local_model if is_backup else self._local_llm_model
+            extra = (
+                self._backup_local_extra_body
+                if is_backup
+                else self._local_llm_extra_body
+            )
+            base.value = config.base_url
+            model.value = config.model
+            extra.value = config.extra_body_json
+        else:
+            provider = self._backup_provider if is_backup else self._openai_provider
+            base_url = self._backup_base_url if is_backup else self._openai_base_url
+            model = self._backup_model if is_backup else self._openai_model
+            provider.value = self._provider_dropdown_value(
+                config.provider_key, config.base_url
+            )
+            base_url.value = config.base_url
+            model.value = config.model
+
+    def _apply_provider_slot_as_current(self, card: str, config) -> None:
+        if card == "backup":
+            if config.variant == TranslationModel.LOCAL_LLM.value:
+                self._on_backup_local_base_url_change_end(None)
+                self._on_backup_local_model_change_end(None)
+                self._on_backup_local_extra_body_change_end(None)
+            else:
+                self._commit_backup_field("provider_key", config.provider_key)
+                self._commit_backup_field("base_url", config.base_url)
+                self._commit_backup_field("model", config.model)
+            self._on_backup_variant_selected(config.variant)
+        else:
+            if config.variant == TranslationModel.LOCAL_LLM.value:
+                self._on_local_llm_base_url_change_end(None)
+                self._on_local_llm_model_change_end(None)
+                self._on_local_llm_extra_body_change_end(None)
+            else:
+                self._commit_openai_field("provider_key", config.provider_key)
+                self._commit_openai_field("base_url", config.base_url)
+                self._commit_openai_field("model", config.model)
+            self._on_llm_selected(config.variant)
+        on_providers_changed = getattr(self, "on_providers_changed", None)
+        if on_providers_changed is not None:
+            on_providers_changed()
+
+    def _save_dialog_slot(self) -> None:
+        """Store the dialog form values into the active slot of its card."""
+        from puripuly_heart.config.provider_slots import (
+            ProviderCardSlots,
+            ProviderSlotConfig,
+        )
+
+        kind = getattr(self, "_provider_dialog_kind", "")
+        card = "backup" if kind == "backup" else "translation"
+        if kind == "translation_local":
+            variant = TranslationModel.LOCAL_LLM.value
+        elif kind == "translation_openai":
+            variant = TranslationModel.OPENAI_COMPATIBLE.value
+        else:
+            display = self._provider_draft or self._provider_snapshot
+            if display is None:
+                return
+            variant = normalize_translation_model(display.backup_variant).value
+        is_backup = card == "backup"
+        if variant == TranslationModel.LOCAL_LLM.value:
+            base = self._backup_local_base_url if is_backup else self._local_llm_base_url
+            model = self._backup_local_model if is_backup else self._local_llm_model
+            extra = (
+                self._backup_local_extra_body
+                if is_backup
+                else self._local_llm_extra_body
+            )
+            config = ProviderSlotConfig(
+                variant=variant,
+                base_url=(base.value or "").strip(),
+                model=(model.value or "").strip(),
+                extra_body_json=(extra.value or "").strip(),
+            )
+        else:
+            provider = self._backup_provider if is_backup else self._openai_provider
+            base_url = self._backup_base_url if is_backup else self._openai_base_url
+            model = self._backup_model if is_backup else self._openai_model
+            config = ProviderSlotConfig(
+                variant=variant,
+                provider_key=(provider.value or "").strip(),
+                base_url=(base_url.value or "").strip(),
+                model=(model.value or "").strip(),
+            )
+        self._ensure_provider_slots_loaded()
+        state = self._provider_slots_state.get(card) or ProviderCardSlots()
+        self._provider_slots_state[card] = state.with_slot(state.active, config)
+        self._persist_provider_slots()
+        self._sync_slot_rows()
 
     def _set_unit_card_value_text(
         self, control: ft.Container, text: str, *, size: int = 28
@@ -2361,6 +2575,7 @@ class SettingsView(ft.Column):
         self._build_local_form_controls()
         self._local_llm_form = self._compose_local_form(
             title=None,
+            slots_row=self._local_llm_slots_row,
             base_url=self._local_llm_base_url,
             test_btn=self._local_llm_test_btn,
             model=self._local_llm_model,
@@ -2397,6 +2612,7 @@ class SettingsView(ft.Column):
         self._build_openai_form_controls()
         self._openai_form = self._compose_openai_form(
             title=None,
+            slots_row=self._openai_slots_row,
             provider=self._openai_provider,
             model=self._openai_model,
             fetch_btn=self._openai_fetch_btn,
@@ -2415,13 +2631,25 @@ class SettingsView(ft.Column):
         )
         self._backup_gear = self._backup_config_card
         self._backup_config_card.visible = False
+        self._translation_card_slots_row = self._build_slot_row("translation", quick=True)
+        self._backup_card_slots_row = self._build_slot_row("backup", quick=True)
         translation_unit_controls = self._translation_provider_card.content.content.controls
         translation_unit_controls.append(ft.Container(height=12))
-        translation_unit_controls.append(self._openai_compatible_card)
-        translation_unit_controls.append(self._local_llm_connection_card)
+        translation_unit_controls.append(
+            ft.Row(
+                [self._openai_compatible_card, self._local_llm_connection_card]
+                + list(self._translation_card_slots_row.controls),
+                spacing=8,
+            )
+        )
         backup_unit_controls = self._backup_translation_card.content.content.controls
         backup_unit_controls.append(ft.Container(height=12))
-        backup_unit_controls.append(self._backup_config_card)
+        backup_unit_controls.append(
+            ft.Row(
+                [self._backup_config_card] + list(self._backup_card_slots_row.controls),
+                spacing=8,
+            )
+        )
 
         self._http_extension_title = ft.Text(
             t("settings.http_extension.title"),
@@ -3779,6 +4007,7 @@ class SettingsView(ft.Column):
         self._prompt_snapshot = prompt
         self._overlay_snapshot = overlay
         self._config_path = config_path
+        self._ensure_provider_slots_loaded()
         self._http_extension_runtime_reload_pending = False
         display_provider = draft or provider
         self._desktop_overlay_pending_size_preset = None

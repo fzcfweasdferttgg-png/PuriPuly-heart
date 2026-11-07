@@ -44,7 +44,14 @@ class TitleBar(ft.Container):
         self._about_item = None
         if on_about is not None or show_title:
             self._about_item = ft.Container(
-                content=ft.Row([self._about_icon, self._about_label], spacing=8),
+                content=ft.Row(
+                    (
+                        [self._about_icon, self._about_label]
+                        if on_about is not None
+                        else [self._about_label]
+                    ),
+                    spacing=8,
+                ),
                 height=36,
                 margin=ft.Padding.only(left=12) if on_about is None else None,
                 padding=ft.Padding.only(left=12, right=12),

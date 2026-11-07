@@ -349,8 +349,8 @@ def test_openai_form_layout_is_identical_for_translation_and_backup(
     primary = view._openai_form.controls
     backup = view._backup_network_group.controls
     assert [type(control) for control in primary] == [type(control) for control in backup]
-    assert [type(child) for child in primary[2].controls] == [
-        type(child) for child in backup[2].controls
+    assert [type(child) for child in primary[3].controls] == [
+        type(child) for child in backup[3].controls
     ]
 
 

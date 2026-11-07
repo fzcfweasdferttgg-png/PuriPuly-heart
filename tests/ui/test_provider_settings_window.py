@@ -227,14 +227,10 @@ def test_gear_cards_visible_follow_variant_selection(
     view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
     assert view._openai_compatible_card.visible is True
     assert view._openai_gear is view._openai_compatible_card
-    assert (
-        view._openai_compatible_card
-        in view._translation_provider_card.content.content.controls
-    )
-    assert (
-        view._backup_config_card
-        in view._backup_translation_card.content.content.controls
-    )
+    translation_row = view._translation_provider_card.content.content.controls[-1]
+    backup_row = view._backup_translation_card.content.content.controls[-1]
+    assert view._openai_compatible_card in translation_row.controls
+    assert view._backup_config_card in backup_row.controls
 
     view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
     assert view._local_llm_connection_card.visible is True

@@ -249,24 +249,20 @@ class ProviderSettingsWindow:
                 self._title_bar,
                 ft.Container(
                     content=ft.Column(
-                        [self._content],
+                        [
+                            self._content,
+                            ft.Container(height=16),
+                            ft.Row(
+                                [ft.Container(expand=True), self._build_accept_button()],
+                                alignment=ft.MainAxisAlignment.END,
+                            ),
+                        ],
+                        spacing=0,
                         expand=True,
                         scroll=ft.ScrollMode.AUTO,
                     ),
                     expand=True,
                     padding=PROVIDER_CONTENT_PADDING,
-                ),
-                ft.Container(
-                    content=ft.Row(
-                        [ft.Container(expand=True), self._build_accept_button()],
-                        alignment=ft.MainAxisAlignment.END,
-                    ),
-                    padding=ft.Padding.only(
-                        left=PROVIDER_CONTENT_PADDING,
-                        right=PROVIDER_CONTENT_PADDING,
-                        top=12,
-                        bottom=16,
-                    ),
                 ),
             ],
             expand=True,
