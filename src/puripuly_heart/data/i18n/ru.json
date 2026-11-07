@@ -404,7 +404,7 @@
   "settings.openai_compatible.api_key": "API-ключ",
   "settings.openai_compatible.fetch_models": "Получить список моделей",
   "settings.openai_compatible.test_connection": "Проверить соединение",
-  "settings.provider_form.accept": "Принять",
+  "settings.provider_form.accept": "Сохранить все",
   "settings.openai_compatible.select_model": "Выбрать модель",
   "settings.openai_compatible.save_failed": "Не удалось сохранить ключ",
   "settings.openai_compatible.fetch_failed": "Не удалось получить список моделей",
