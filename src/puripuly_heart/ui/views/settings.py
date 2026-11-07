@@ -1111,7 +1111,6 @@ class SettingsView(ft.Column):
         window = windows.get(card)
         if window is None or schedule is None or self._provider_snapshot is None:
             return
-        self._provider_dialog_kinds[card] = kind
         if window.is_open:
             window.open(
                 schedule,
@@ -1121,6 +1120,7 @@ class SettingsView(ft.Column):
                 on_close_request=lambda card=card: self._revert_provider_settings_dialog(card),
             )
             return
+        self._provider_dialog_kinds[card] = kind
         self._provider_dialog_edits_before[card] = dict(self._provider_edits)
         self._provider_dialog_draft_before[card] = self._provider_draft
         if kind == "translation_openai":
@@ -1167,6 +1167,10 @@ class SettingsView(ft.Column):
         display = self._provider_draft or self._provider_snapshot
         if kind == "backup":
             backup_variant = normalize_translation_model(display.backup_variant)
+            self._backup_network_group.visible = (
+                backup_variant == TranslationModel.OPENAI_COMPATIBLE
+            )
+            self._backup_local_group.visible = backup_variant == TranslationModel.LOCAL_LLM
             variant_label = t(
                 "settings.translation_variant.local_llm"
                 if backup_variant == TranslationModel.LOCAL_LLM

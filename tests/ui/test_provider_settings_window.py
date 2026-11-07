@@ -226,6 +226,23 @@ def test_dialog_close_without_accept_discards_staged_edits(
     assert view._provider_draft is None
 
 
+def test_backup_dialog_shows_only_the_selected_variant_form(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    fake = _fake_settings_window()
+    view.attach_provider_settings_window(
+        {"translation": fake.window, "backup": fake.window}, lambda coro: coro
+    )
+    view._on_backup_variant_selected(TranslationModel.OPENAI_COMPATIBLE.value)
+
+    view._on_backup_gear_click(None)
+
+    assert view._backup_network_group.visible is True
+    assert view._backup_local_group.visible is False
+
+
 def test_both_settings_windows_open_independently(
     monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
 ) -> None:
