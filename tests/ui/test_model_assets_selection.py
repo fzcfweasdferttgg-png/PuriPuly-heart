@@ -6,8 +6,8 @@ from pathlib import Path
 import flet as ft
 import pytest
 
-from puripuly_heart.ui.components.model_assets_dialog import ModelAssetsDialog
 from puripuly_heart.ui.i18n import t
+from puripuly_heart.ui.views.model_assets import ModelAssetsView
 
 
 @dataclass(frozen=True)
@@ -26,14 +26,11 @@ class Entry:
 
 class Page:
     def __init__(self) -> None:
-        self.shown: list[object] = []
-        self.popped = 0
+        self.overlay: list[object] = []
+        self.update_calls = 0
 
-    def show_dialog(self, dialog) -> None:
-        self.shown.append(dialog)
-
-    def pop_dialog(self) -> None:
-        self.popped += 1
+    def update(self) -> None:
+        self.update_calls += 1
 
 
 class Application:
@@ -97,15 +94,15 @@ def _texts(control) -> list[str]:
     return found
 
 
-def _action(dialog: ModelAssetsDialog, label: str) -> ft.Container:
-    for card in dialog._actions.controls:
+def _action(view: ModelAssetsView, label: str) -> ft.Container:
+    for card in view._actions.controls:
         if label in _texts(card):
             return card
-    raise AssertionError(f"missing action {label}: {_texts(dialog._actions)}")
+    raise AssertionError(f"missing action {label}: {_texts(view._actions)}")
 
 
-def _dialog(app: Application, tasks: list, **kwargs) -> ModelAssetsDialog:
-    return ModelAssetsDialog(Page(), app, tasks.append, **kwargs)
+def _view(app: Application, tasks: list, **kwargs) -> ModelAssetsView:
+    return ModelAssetsView(Page(), app, tasks.append, **kwargs)
 
 
 async def _run(tasks: list) -> None:
@@ -117,28 +114,27 @@ async def _run(tasks: list) -> None:
 
 
 @pytest.mark.asyncio
-async def test_modal_lists_models_by_purpose_and_shows_actions_for_the_selection() -> None:
+async def test_manager_lists_models_by_purpose_and_shows_actions_for_the_selection() -> None:
     app = Application()
     tasks: list = []
-    dialog = _dialog(app, tasks)
+    view = _view(app, tasks)
 
-    dialog.open()
+    view.open()
 
-    texts = _texts(dialog.dialog.content)
-    assert t("settings.model_assets") in texts
+    texts = _texts(view._content)
     assert t("model_assets.group.asr") in texts
     assert t("model_assets.group.translation") in texts
     assert f"2.0 GB ({t('model_assets.status.missing')})" in texts
-    assert dialog.selected_model_id == "asr"
-    assert "·" not in " ".join(_texts(dialog._model_list))
+    assert view.selected_model_id == "asr"
+    assert "\u00b7" not in " ".join(_texts(view._model_list))
     assert texts.count("Orukeet") == 1
-    assert [label for card in dialog._actions.controls for label in _texts(card)] == [
-        f"{t('model_assets.action.download')} · HF",
-        f"{t('model_assets.action.download')} · ModelScope",
+    assert [label for card in view._actions.controls for label in _texts(card)] == [
+        f"{t('model_assets.action.download')} \u00b7 HF",
+        f"{t('model_assets.action.download')} \u00b7 ModelScope",
     ]
 
-    dialog.select("gemma")
-    actions = _texts(dialog._actions)
+    view.select("gemma")
+    actions = _texts(view._actions)
     assert t("model_assets.action.import") in actions
     assert "model.gguf" not in " ".join(actions)
 
@@ -148,21 +144,21 @@ async def test_download_and_two_step_delete_call_the_application() -> None:
     app = Application()
     app.set("asr", status="installed")
     tasks: list = []
-    dialog = _dialog(app, tasks)
-    dialog.open()
+    view = _view(app, tasks)
+    view.open()
 
-    _action(dialog, f"{t('model_assets.action.redownload')} · HF").on_click(None)
+    _action(view, f"{t('model_assets.action.redownload')} \u00b7 HF").on_click(None)
     await _run(tasks)
     assert ("download", "asr", "huggingface") in app.calls
 
-    _action(dialog, f"{t('model_assets.action.redownload')} · ModelScope").on_click(None)
+    _action(view, f"{t('model_assets.action.redownload')} \u00b7 ModelScope").on_click(None)
     await _run(tasks)
     assert ("download", "asr", "modelscope") in app.calls
 
-    _action(dialog, t("model_assets.action.delete")).on_click(None)
+    _action(view, t("model_assets.action.delete")).on_click(None)
     await _run(tasks)
     assert not any(call[0] == "delete" for call in app.calls)
-    _action(dialog, t("model_assets.action.delete_confirm")).on_click(None)
+    _action(view, t("model_assets.action.delete_confirm")).on_click(None)
     await _run(tasks)
     assert ("delete", "asr") in app.calls
 
@@ -172,21 +168,21 @@ async def test_progress_replaces_actions_and_other_models_wait_for_the_running_t
     app = Application()
     app.set("asr", status="downloading", progress_percent=42)
     tasks: list = []
-    dialog = _dialog(app, tasks)
-    dialog.open()
+    view = _view(app, tasks)
+    view.open()
 
-    assert t("model_assets.status.downloading", percent=42) in _texts(dialog._actions)
+    assert t("model_assets.status.downloading", percent=42) in _texts(view._actions)
     assert f"2.0 GB ({t('model_assets.status.downloading', percent=42)})" in _texts(
-        dialog.dialog.content
+        view._content
     )
-    _action(dialog, t("model_assets.action.cancel")).on_click(None)
+    _action(view, t("model_assets.action.cancel")).on_click(None)
     await _run(tasks)
     assert ("cancel", "asr") in app.calls
 
-    dialog.select("gemma")
-    download = _action(dialog, t("model_assets.action.download"))
+    view.select("gemma")
+    download = _action(view, t("model_assets.action.download"))
     assert download.disabled is True
-    assert _texts(dialog._actions) == [
+    assert _texts(view._actions) == [
         t("model_assets.action.download"),
         t("model_assets.action.import"),
     ]
@@ -196,14 +192,14 @@ async def test_progress_replaces_actions_and_other_models_wait_for_the_running_t
 async def test_failure_is_shown_with_a_known_reason_or_the_generic_one() -> None:
     app = Application()
     app.set("asr", failure_code="model_in_use")
-    dialog = _dialog(app, [])
-    dialog.open()
-    assert dialog._failure.value == t("model_assets.error.model_in_use")
-    assert dialog._failure.visible is True
+    view = _view(app, [])
+    view.open()
+    assert view._failure.value == t("model_assets.error.model_in_use")
+    assert view._failure.visible is True
 
     app.set("asr", failure_code="mirror_redirect_external")
-    dialog.render()
-    assert dialog._failure.value == t("model_assets.error.download_failed")
+    view.render()
+    assert view._failure.value == t("model_assets.error.download_failed")
 
 
 @pytest.mark.asyncio
@@ -215,14 +211,14 @@ async def test_import_picks_a_folder_and_closing_never_cancels_work() -> None:
         async def get_directory_path(self):
             return "C:/models"
 
-    dialog = _dialog(app, tasks, picker_factory=Picker)
-    dialog.open()
-    dialog.select("gemma")
+    view = _view(app, tasks, picker_factory=Picker)
+    view.open()
+    view.select("gemma")
 
-    _action(dialog, t("model_assets.action.import")).on_click(None)
+    _action(view, t("model_assets.action.import")).on_click(None)
     await _run(tasks)
     assert ("import", "gemma", Path("C:/models")) in app.calls
 
-    dialog.close()
-    assert dialog.is_open is False
+    view.close()
+    assert view.is_open is False
     assert not any(call[0] == "cancel" for call in app.calls)

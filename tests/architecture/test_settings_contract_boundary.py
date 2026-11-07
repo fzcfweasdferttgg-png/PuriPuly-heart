@@ -31,7 +31,6 @@ G14_PROVIDER_INTENT_FIELDS = (
     "local_llm_secret_changed",
     "gpu_discovery_requested",
     "settings_secrets",
-    "open_model_assets",
     "fetch_models",
     "test_connection",
 )
@@ -43,7 +42,6 @@ G14_OWNED_VIEW_CALLBACKS = (
     "on_secret_cleared",
     "on_local_llm_secret_changed",
     "on_gpu_discovery_requested",
-    "on_open_model_assets",
 )
 G14_OWNED_VIEW_SINKS = (
     "show_snackbar",
@@ -136,7 +134,6 @@ def test_settings_view_implements_the_explicit_contract() -> None:
         "gpu_device_control",
         "gpu_llm_control",
         "stt_model_control",
-        "model_assets_control",
         "local_llm_connection_control",
     ):
         assert callable(getattr(SettingsView, method)), method

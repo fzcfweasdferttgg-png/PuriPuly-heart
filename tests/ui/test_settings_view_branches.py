@@ -32,7 +32,6 @@ def test_load_from_settings_defaults_every_choice_to_not_selected(
     assert view._stt_model_text.content.value == not_selected
     assert view._gpu_device_row.visible is True
     assert view._gpu_device_card.visible is False
-    assert view._model_assets_card.visible is True
 
 
 def test_stt_model_picker_offers_not_selected_and_the_full_catalog(
@@ -125,19 +124,16 @@ def test_gpu_device_cards_follow_local_provider_selection(
     assert view._gpu_device_card.visible is False
     assert view._stt_model_card.visible is False
     assert view._gpu_llm_card.visible is False
-    assert view._model_assets_card.visible is True
 
     view._on_stt_selected(STTProviderName.LOCAL_QWEN_GPU.value)
     assert view._gpu_device_card.visible is True
     assert view._stt_model_card.visible is True
     assert view._gpu_llm_card.visible is True
-    assert view._model_assets_card.visible is True
 
     view._on_stt_selected(STTProviderName.NONE.value)
     assert view._gpu_device_card.visible is False
     assert view._stt_model_card.visible is False
     assert view._gpu_llm_card.visible is False
-    assert view._model_assets_card.visible is True
 
 
 def test_on_llm_selected_local_llm_uses_ollama_connection(

@@ -12,11 +12,18 @@ from puripuly_heart.ui.theme import (
 
 
 class BottomNavBar(ft.Container):
-    """Bottom 3-tab navigation bar with icons only."""
+    """Bottom 3-tab navigation bar with a model-assets launcher, icons only."""
 
-    def __init__(self, on_change: Callable[[int], None]):
+    def __init__(
+        self,
+        on_change: Callable[[int], None],
+        *,
+        on_open_models: Callable[[], None] | None = None,
+    ):
         self._on_change = on_change
+        self._on_open_models = on_open_models
         self._selected = 0
+        self._launcher_icon: ft.Icon | None = None
 
         self._tabs = [
             ft.Icons.GRID_VIEW,
@@ -68,7 +75,36 @@ class BottomNavBar(ft.Container):
             result.append(tab)
             if i < len(self._tab_containers) - 1:
                 result.append(ft.VerticalDivider(width=1, color=COLOR_DIVIDER, thickness=1))
+        launcher = self._build_launcher()
+        if launcher is not None:
+            result.append(ft.VerticalDivider(width=1, color=COLOR_DIVIDER, thickness=1))
+            result.append(launcher)
         return result
+
+    def _build_launcher(self) -> ft.Container | None:
+        """Model-assets launcher button: opens the window, never changes the tab."""
+        if self._on_open_models is None:
+            return None
+        self._launcher_icon = ft.Icon(
+            icon=ft.Icons.DOWNLOAD_FOR_OFFLINE, size=30, color=COLOR_SECONDARY
+        )
+        return ft.Container(
+            content=self._launcher_icon,
+            expand=True,
+            alignment=ft.Alignment.CENTER,
+            on_click=self._on_launcher_click,
+            on_hover=self._on_launcher_hover,
+        )
+
+    def _on_launcher_click(self, _event) -> None:
+        if self._on_open_models is not None:
+            self._on_open_models()
+
+    def _on_launcher_hover(self, e) -> None:
+        if self._launcher_icon is None:
+            return
+        self._launcher_icon.color = COLOR_PRIMARY if is_hover_active(e) else COLOR_SECONDARY
+        self._launcher_icon.update()
 
     def _on_tab_click(self, index: int):
         """Handle tab click."""

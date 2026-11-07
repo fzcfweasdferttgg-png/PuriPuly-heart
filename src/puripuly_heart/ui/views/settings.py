@@ -427,7 +427,6 @@ class SettingsView(ft.Column):
         self.on_view_logs: Callable[[], None] | None = None
         self.on_start_audio_test: Callable[[], None] | None = None
         self.on_gpu_discovery_requested: Callable[[], object] | None = None
-        self.on_open_model_assets: Callable[[], None] | None = None
         self.on_list_loopback_capture_options: Callable[[], object] | None = None
         self.on_list_loopback_process_options: Callable[[], object] | None = None
         self.on_list_loopback_device_options: Callable[[], object] | None = None
@@ -526,9 +525,6 @@ class SettingsView(ft.Column):
     def gpu_llm_control(self) -> ft.Control:
         return self._gpu_llm_card
 
-    def model_assets_control(self) -> ft.Control:
-        return self._model_assets_card
-
     def local_llm_connection_control(self) -> ft.Control | None:
         return None
 
@@ -562,7 +558,6 @@ class SettingsView(ft.Column):
         self.on_fetch_models = provider.fetch_models or _fetch_models_default
         self.on_test_connection = provider.test_connection or _test_connection_default
         self.on_gpu_discovery_requested = provider.gpu_discovery_requested
-        self.on_open_model_assets = provider.open_model_assets
         self._settings_secrets = provider.settings_secrets
         self.on_start_audio_test = general.start_audio_test
         self.on_list_loopback_capture_options = general.list_loopback_capture_options
@@ -2236,22 +2231,6 @@ class SettingsView(ft.Column):
             title=self._gpu_llm_title,
             value=self._gpu_llm_text,
         )
-        self._model_assets_title = ft.Text(
-            t("settings.model_assets"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_SECONDARY,
-        )
-        self._model_assets_text = self._build_clickable_text(
-            t("settings.model_assets.action"),
-            self._on_model_assets_click,
-        )
-        self._model_assets_card = self._wrap_unit_card(
-            title=self._model_assets_title,
-            value=self._model_assets_text,
-        )
-        self._model_assets_card.expand = False
-        self._model_assets_card.width = 280
         for card in (
             self._gpu_device_card,
             self._peer_gpu_device_card,
@@ -3179,10 +3158,6 @@ class SettingsView(ft.Column):
             devices=self._llm_gpu_devices,
             on_select=self._on_llm_gpu_device_selected,
         )
-
-    def _on_model_assets_click(self, _event) -> None:
-        if self.on_open_model_assets is not None:
-            self.on_open_model_assets()
 
     def _on_gpu_device_selected(self, value: str) -> None:
         if self._provider_snapshot is None:
@@ -6764,11 +6739,6 @@ class SettingsView(ft.Column):
         self._gpu_device_title.value = t("settings.gpu_device.asr")
         self._stt_model_title.value = t("settings.stt_model.title")
         self._gpu_llm_title.value = t("settings.gpu_device.llm")
-        self._model_assets_title.value = t("settings.model_assets")
-        self._set_unit_card_value_text(
-            self._model_assets_text,
-            t("settings.model_assets.action"),
-        )
         self._overlay_target_title.value = t("settings.overlay.caption_location")
         self._overlay_translation_title.value = t("settings.overlay.show_translation")
         self._overlay_peer_original_title.value = t("settings.overlay.show_peer_original")

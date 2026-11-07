@@ -36,7 +36,6 @@ class SettingsProviderIntents:
     local_llm_secret_changed: Callable[[], None]
     gpu_discovery_requested: Callable[[], object]
     settings_secrets: SettingsSecretsPort
-    open_model_assets: Callable[[], None] | None = None
     fetch_models: Callable[[str, str], object] | None = None
     test_connection: Callable[[str, str], object] | None = None
 
@@ -135,8 +134,6 @@ class SettingsApiSlotProvider(Protocol):
 
     def gpu_llm_control(self) -> ft.Control: ...
 
-    def model_assets_control(self) -> ft.Control: ...
-
     def local_llm_connection_control(self) -> ft.Control: ...
 
 
@@ -149,7 +146,6 @@ class SettingsApiSurfaceSlots:
     gpu_device: ft.Control
     stt_model: ft.Control
     gpu_llm: ft.Control
-    model_assets: ft.Control
     http_extension: ft.Control | None = None
     peer_gpu_device: ft.Control | None = None
     shared_engine: ft.Control | None = None
@@ -174,7 +170,6 @@ class SettingsApiSurfaceSlots:
             gpu_device=provider.gpu_device_control(),
             stt_model=provider.stt_model_control(),
             gpu_llm=provider.gpu_llm_control(),
-            model_assets=provider.model_assets_control(),
             local_llm_connection=provider.local_llm_connection_control(),
             http_extension=(extension_factory() if callable(extension_factory) else None),
             peer_gpu_device=(peer_gpu_factory() if callable(peer_gpu_factory) else None),

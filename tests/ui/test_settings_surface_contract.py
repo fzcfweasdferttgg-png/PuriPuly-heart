@@ -38,7 +38,6 @@ class _SlotProvider:
                 "gpu_device",
                 "stt_model",
                 "gpu_llm",
-                "model_assets",
                 "local_llm_connection",
             )
         }
@@ -63,9 +62,6 @@ class _SlotProvider:
 
     def gpu_llm_control(self) -> ft.Control:
         return self.controls["gpu_llm"]
-
-    def model_assets_control(self) -> ft.Control:
-        return self.controls["model_assets"]
 
     def local_llm_connection_control(self) -> ft.Control:
         return self.controls["local_llm_connection"]
@@ -118,7 +114,6 @@ def test_settings_api_surface_places_every_slot_in_the_accepted_position() -> No
         provider.controls["gpu_device"],
         provider.controls["stt_model"],
         provider.controls["gpu_llm"],
-        provider.controls["model_assets"],
     ]
 
 
@@ -154,7 +149,6 @@ def test_bind_settings_intents_carries_every_previously_ad_hoc_g14_callback(
         secret_cleared=make("secret_cleared"),
         local_llm_secret_changed=make("local_llm_secret_changed"),
         gpu_discovery_requested=make("gpu_discovery_requested"),
-        open_model_assets=make("open_model_assets"),
         settings_secrets=SettingsSecretsOwner(secret_store_factory=lambda: None),
     )
     general = SettingsGeneralIntents(
@@ -199,7 +193,6 @@ def test_bind_settings_intents_carries_every_previously_ad_hoc_g14_callback(
     assert view.on_secret_cleared is provider.secret_cleared
     assert view.on_local_llm_secret_changed is provider.local_llm_secret_changed
     assert view.on_gpu_discovery_requested is provider.gpu_discovery_requested
-    assert view.on_open_model_assets is provider.open_model_assets
     assert view._settings_secrets is provider.settings_secrets
     assert view.on_start_audio_test is general.start_audio_test
     assert view.on_list_loopback_capture_options is general.list_loopback_capture_options

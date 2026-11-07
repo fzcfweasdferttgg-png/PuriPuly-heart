@@ -43,7 +43,7 @@ from puripuly_heart.ui.components.provider_settings_window import ProviderSettin
 from puripuly_heart.ui.components.audio_test_dialog import AudioTestDialog
 from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
-from puripuly_heart.ui.components.model_assets_dialog import ModelAssetsDialog
+from puripuly_heart.ui.components.model_assets_window import ModelAssetsWindow
 from puripuly_heart.ui.components.peer_translation_eula_dialog import PeerTranslationEulaDialog
 from puripuly_heart.ui.components.title_bar import TitleBar
 from puripuly_heart.ui.dashboard.contract import (
@@ -202,7 +202,6 @@ class TranslatorApp:
                 secret_cleared=self._on_secret_cleared,
                 local_llm_secret_changed=self._on_local_llm_secret_changed,
                 gpu_discovery_requested=self._on_gpu_discovery_requested,
-                open_model_assets=self._open_model_assets,
                 settings_secrets=self.application.settings_secrets(),
             ),
             general=SettingsGeneralIntents(
@@ -288,6 +287,7 @@ class TranslatorApp:
 
     async def shutdown(self) -> None:
         await self._close_about_window()
+        await self._close_model_assets_window()
         await self._close_provider_settings_window()
         lifecycle = self._get_application_lifecycle()
         try:
@@ -299,6 +299,11 @@ class TranslatorApp:
         about_window = getattr(self, "about_window", None)
         if about_window is not None:
             await about_window.close()
+
+    async def _close_model_assets_window(self) -> None:
+        window = getattr(self, "model_assets_window", None)
+        if window is not None:
+            await window.close()
 
     async def _close_provider_settings_window(self) -> None:
         windows = getattr(self, "provider_settings_windows", None) or {}
@@ -427,6 +432,7 @@ class TranslatorApp:
         self.view_settings.bind_recent_language_queue(self.view_dashboard)
         self.view_logs = LogsView()
         self.about_window = AboutWindow()
+        self.model_assets_window = ModelAssetsWindow(self.application)
         self.provider_settings_windows = {
             "translation": ProviderSettingsWindow(),
             "backup": ProviderSettingsWindow(),
@@ -443,8 +449,11 @@ class TranslatorApp:
             on_about=self._open_about_window,
         )
 
-        # Bottom navigation (order: Home, Settings, Logs)
-        self.bottom_nav = BottomNavBar(on_change=self._on_nav_change)
+        # Bottom navigation (order: Home, Settings, Logs) plus the model-assets launcher
+        self.bottom_nav = BottomNavBar(
+            on_change=self._on_nav_change,
+            on_open_models=self._open_model_assets,
+        )
 
         self.debug_preview_panel = (
             self._build_debug_preview_panel() if self.debug_ui_preview else None
@@ -467,11 +476,7 @@ class TranslatorApp:
         self.about_window.open(self._run_page_task)
 
     def _open_model_assets(self) -> None:
-        if getattr(self, "_model_assets_dialog", None) is None:
-            self._model_assets_dialog = ModelAssetsDialog(
-                self.page, self.application, self._run_page_task
-            )
-        self._model_assets_dialog.open()
+        self.model_assets_window.open(self._run_page_task)
 
     def _build_debug_preview_panel(self) -> DebugPreviewPanel:
         return DebugPreviewPanel(
@@ -864,6 +869,9 @@ class TranslatorApp:
         about_window = getattr(self, "about_window", None)
         if about_window is not None:
             about_window.apply_locale()
+        model_assets_window = getattr(self, "model_assets_window", None)
+        if model_assets_window is not None:
+            model_assets_window.apply_locale()
         debug_preview_panel = getattr(self, "debug_preview_panel", None)
         apply_debug_locale = getattr(debug_preview_panel, "apply_locale", None)
         if callable(apply_debug_locale):

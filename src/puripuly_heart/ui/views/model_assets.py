@@ -1,6 +1,9 @@
+"""Model manager body: the model list and the actions of the selected model."""
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -15,8 +18,6 @@ from puripuly_heart.ui.components.modal_kit import (
     CARD_SPACING,
     MODAL_COLUMN_SPACING,
     ModalCard,
-    build_modal_dialog,
-    build_modal_surface,
     build_section_header,
 )
 from puripuly_heart.ui.flet_runtime import update_control_if_mounted
@@ -65,7 +66,7 @@ def _failure_label(entry: object) -> str | None:
     return t("model_assets.error." + (code if code in _ERROR_KEYS else "download_failed"))
 
 
-class ModelAssetsDialog:
+class ModelAssetsView(ft.Container):
     """Two-column model manager: models on the left, actions for the selection on the right."""
 
     def __init__(
@@ -76,18 +77,16 @@ class ModelAssetsDialog:
         *,
         picker_factory: Callable[[], object] = ft.FilePicker,
     ) -> None:
-        self.page = page
-        self.application = application
-        self.run_task = run_task
+        self._page = page
+        self._application = application
+        self._run_task = run_task
         self._picker_factory = picker_factory
         self._picker = None
         self._selected: str | None = None
         self._confirm_delete: str | None = None
         self._is_open = False
-        self._dialog: ft.AlertDialog | None = None
-        self._content: ft.Container | None = None
-        self._model_list: ft.Column | None = None
         self._cards: dict[str, ModalCard] = {}
+        self._group_titles: dict[str, ft.Text] = {}
         self._actions = ft.Column(
             spacing=CARD_SPACING,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
@@ -102,10 +101,9 @@ class ModelAssetsDialog:
         )
         self._progress_text: ft.Text | None = None
         self._action_signature: tuple | None = None
-
-    @property
-    def dialog(self) -> ft.AlertDialog | None:
-        return self._dialog
+        self._model_list: ft.Column | None = None
+        self._content: ft.Container | None = None
+        super().__init__(expand=True)
 
     @property
     def is_open(self) -> bool:
@@ -118,22 +116,26 @@ class ModelAssetsDialog:
     def open(self) -> None:
         if self._is_open:
             return
-        entries = self.application.model_asset_entries()
+        entries = self._application.model_asset_entries()
         if self._selected is None and entries:
             self._selected = entries[0].model_id
         self._confirm_delete = None
         self._action_signature = None
-        self._dialog = self._build_dialog(entries)
+        self._build_body(entries)
         self._is_open = True
         self.render()
-        self.page.show_dialog(self._dialog)
-        self.run_task(self._refresh_and_watch)
+        self._run_task(self._refresh_and_watch)
 
     def close(self) -> None:
-        if not self._is_open:
-            return
         self._is_open = False
-        self.page.pop_dialog()
+
+    def apply_locale(self) -> None:
+        """Refresh localized labels while the window stays open."""
+        for purpose, title in self._group_titles.items():
+            title.value = t("model_assets.group." + purpose)
+        self._action_signature = None
+        if self._is_open:
+            self.render()
 
     def select(self, model_id: str) -> None:
         if self._selected != model_id:
@@ -142,7 +144,7 @@ class ModelAssetsDialog:
         self.render()
 
     def render(self) -> None:
-        entries = {entry.model_id: entry for entry in self.application.model_asset_entries()}
+        entries = {entry.model_id: entry for entry in self._application.model_asset_entries()}
         busy = any(entry.status in _BUSY_STATUSES for entry in entries.values())
         for model_id, card in self._cards.items():
             entry = entries.get(model_id)
@@ -242,11 +244,14 @@ class ModelAssetsDialog:
                 )
         self._actions.controls = controls
 
-    def _build_dialog(self, entries) -> ft.AlertDialog:
+    def _build_body(self, entries) -> None:
         self._cards = {}
+        self._group_titles = {}
         items: list[ft.Control] = []
         for purpose in ("asr", "translation"):
-            items.append(build_section_header(t("model_assets.group." + purpose)))
+            title = build_section_header(t("model_assets.group." + purpose))
+            self._group_titles[purpose] = title
+            items.append(title)
             for entry in (item for item in entries if item.purpose == purpose):
                 card = ModalCard(
                     entry.name,
@@ -256,7 +261,7 @@ class ModelAssetsDialog:
                 card.key = ft.ScrollKey(entry.model_id)
                 self._cards[entry.model_id] = card
                 items.append(card)
-        model_list = ft.Column(
+        self._model_list = ft.Column(
             controls=[
                 ft.Container(
                     content=ft.Column(
@@ -271,35 +276,27 @@ class ModelAssetsDialog:
             expand=True,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
-        self._model_list = model_list
         actions = ft.Column(
             controls=[build_section_header(" "), self._actions, self._failure],
             spacing=CARD_SPACING,
             expand=True,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
-        self._content = build_modal_surface(
-            t("settings.model_assets"),
-            ft.Row(
-                controls=[model_list, actions],
+        self._content = ft.Container(
+            content=ft.Row(
+                controls=[self._model_list, actions],
                 spacing=MODAL_COLUMN_SPACING,
                 vertical_alignment=ft.CrossAxisAlignment.START,
                 expand=True,
             ),
+            expand=True,
         )
-        return build_modal_dialog(
-            self._content,
-            semantics_label=t("settings.model_assets"),
-            on_dismiss=self._handle_dismiss,
-        )
-
-    def _handle_dismiss(self, _event) -> None:  # noqa: ANN001
-        self._is_open = False
+        self.content = self._content
 
     async def _refresh_and_watch(self) -> None:
         await self._reveal_selected()
         try:
-            await self.application.refresh_model_assets()
+            await self._application.refresh_model_assets()
         except Exception:
             logger.debug("Model asset refresh failed", exc_info=True)
         while self._is_open:
@@ -320,13 +317,13 @@ class ModelAssetsDialog:
             return
         self._confirm_delete = None
         self._run(
-            lambda: self.application.download_model_asset(model_id, source=source)
+            lambda: self._application.download_model_asset(model_id, source=source)
         )
 
     def _on_cancel(self) -> None:
         model_id = self._selected
         if model_id is not None:
-            self._run(lambda: self.application.cancel_model_asset(model_id))
+            self._run(lambda: self._application.cancel_model_asset(model_id))
 
     def _on_delete(self) -> None:
         model_id = self._selected
@@ -337,7 +334,7 @@ class ModelAssetsDialog:
             self.render()
             return
         self._confirm_delete = None
-        self._run(lambda: self.application.delete_model_asset(model_id))
+        self._run(lambda: self._application.delete_model_asset(model_id))
 
     def _on_import(self) -> None:
         model_id = self._selected
@@ -346,13 +343,22 @@ class ModelAssetsDialog:
         self._confirm_delete = None
 
         async def choose() -> None:
-            if self._picker is None:
-                self._picker = self._picker_factory()
-            directory = await self._picker.get_directory_path()
+            picker = self._ensure_picker()
+            directory = await picker.get_directory_path()
             if directory:
-                await self.application.import_model_asset(model_id, Path(directory))
+                await self._application.import_model_asset(model_id, Path(directory))
 
         self._run(choose)
+
+    def _ensure_picker(self) -> object:
+        if self._picker is None:
+            self._picker = self._picker_factory()
+            overlay = getattr(self._page, "overlay", None)
+            if isinstance(overlay, list):
+                overlay.append(self._picker)
+                with contextlib.suppress(Exception):
+                    self._page.update()
+        return self._picker
 
     def _run(self, operation: Callable[[], Awaitable[object]]) -> None:
         async def task() -> None:
@@ -364,8 +370,8 @@ class ModelAssetsDialog:
                 if self._is_open:
                     self.render()
 
-        self.run_task(task)
+        self._run_task(task)
         self.render()
 
 
-__all__ = ["ModelAssetsDialog"]
+__all__ = ["ModelAssetsRunTask", "ModelAssetsView"]

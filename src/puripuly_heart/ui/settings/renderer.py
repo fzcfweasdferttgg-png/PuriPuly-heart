@@ -50,7 +50,7 @@ def compose_settings_api_surface(
     gpu_items: list[ft.Control] = [slots.gpu_device]
     if slots.peer_gpu_device is not None:
         gpu_items.append(slots.peer_gpu_device)
-    gpu_items.extend([slots.stt_model, slots.gpu_llm, slots.model_assets])
+    gpu_items.extend([slots.stt_model, slots.gpu_llm])
     gpu_device_controls = ft.Row(
         gpu_items,
         spacing=SETTINGS_ROW_SPACING,

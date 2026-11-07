@@ -295,16 +295,6 @@ def test_reselecting_the_current_variant_still_shows_its_form(
     assert view._openai_compatible_card.visible is True
 
 
-def test_model_assets_card_does_not_stretch(
-    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
-) -> None:
-    view = _view(monkeypatch)
-    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
-
-    assert view._model_assets_card.expand is False
-    assert view._model_assets_card.width == 280
-
-
 def test_translation_cards_share_the_same_value_text_shape(
     monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
 ) -> None:
