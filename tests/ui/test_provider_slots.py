@@ -121,12 +121,14 @@ def test_accept_saves_current_form_to_active_slot(
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
     monkeypatch.setattr(view, "on_providers_changed", lambda: None)
     window = type("W", (), {"is_open": False, "open": lambda self, schedule, **kw: None})()
-    view.attach_provider_settings_window(window, lambda coro: coro)
+    view.attach_provider_settings_window(
+        {"translation": window, "backup": window}, lambda coro: coro
+    )
 
     view._on_form_slot_selected("translation", 3)
     view._on_openai_gear_click(None)
     view._openai_model.value = "typed-model"
-    view._accept_provider_settings_dialog()
+    view._accept_provider_settings_dialog("translation")
 
     saved = view._provider_slots_state["translation"].slot(3)
     assert saved is not None
@@ -144,17 +146,19 @@ def test_translation_and_backup_slots_are_independent(
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
     monkeypatch.setattr(view, "on_providers_changed", lambda: None)
     window = type("W", (), {"is_open": False, "open": lambda self, schedule, **kw: None})()
-    view.attach_provider_settings_window(window, lambda coro: coro)
+    view.attach_provider_settings_window(
+        {"translation": window, "backup": window}, lambda coro: coro
+    )
 
     view._on_form_slot_selected("translation", 1)
     view._on_openai_gear_click(None)
     view._openai_model.value = "translation-model"
-    view._accept_provider_settings_dialog()
+    view._accept_provider_settings_dialog("translation")
 
     view._on_form_slot_selected("backup", 1)
     view._on_backup_gear_click(None)
     view._backup_model.value = "backup-model"
-    view._accept_provider_settings_dialog()
+    view._accept_provider_settings_dialog("backup")
 
     assert view._provider_slots_state["translation"].slot(1).model == "translation-model"
     assert view._provider_slots_state["backup"].slot(1).model == "backup-model"

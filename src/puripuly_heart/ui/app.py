@@ -306,9 +306,9 @@ class TranslatorApp:
             await about_window.close()
 
     async def _close_provider_settings_window(self) -> None:
-        provider_settings_window = getattr(self, "provider_settings_window", None)
-        if provider_settings_window is not None:
-            await provider_settings_window.close()
+        windows = getattr(self, "provider_settings_windows", None) or {}
+        for window in windows.values():
+            await window.close()
 
     def _compose_application_lifecycle(self) -> ApplicationShutdownCoordinator:
         foundation_runtime = self._ensure_foundation_runtime()
@@ -432,9 +432,12 @@ class TranslatorApp:
         self.view_settings.bind_recent_language_queue(self.view_dashboard)
         self.view_logs = LogsView()
         self.about_window = AboutWindow()
-        self.provider_settings_window = ProviderSettingsWindow()
+        self.provider_settings_windows = {
+            "translation": ProviderSettingsWindow(),
+            "backup": ProviderSettingsWindow(),
+        }
         self.view_settings.attach_provider_settings_window(
-            self.provider_settings_window, self._run_page_task
+            self.provider_settings_windows, self._run_page_task
         )
         self.view_settings.set_overlay_runtime_state(self.overlay_state)
 

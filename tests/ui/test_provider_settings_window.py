@@ -148,7 +148,9 @@ def test_gear_opens_dialog_with_form_and_titles(
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
     fake = _fake_settings_window()
-    view.attach_provider_settings_window(fake.window, lambda coro: coro)
+    view.attach_provider_settings_window(
+        {"translation": fake.window, "backup": fake.window}, lambda coro: coro
+    )
 
     from puripuly_heart.ui.i18n import t
 
@@ -161,7 +163,9 @@ def test_gear_opens_dialog_with_form_and_titles(
     assert fake.opened["content"] is view._openai_form
 
     fake2 = _fake_settings_window()
-    view.attach_provider_settings_window(fake2.window, lambda coro: coro)
+    view.attach_provider_settings_window(
+        {"translation": fake.window, "backup": fake2.window}, lambda coro: coro
+    )
     view._on_backup_gear_click(None)
 
     assert fake2.opened["title"] == "{}: {}".format(
@@ -182,7 +186,9 @@ def test_dialog_accept_applies_staged_edits(
     applied: list[str] = []
     monkeypatch.setattr(view, "on_providers_changed", lambda: applied.append("apply"))
     fake = _fake_settings_window()
-    view.attach_provider_settings_window(fake.window, lambda coro: coro)
+    view.attach_provider_settings_window(
+        {"translation": fake.window, "backup": fake.window}, lambda coro: coro
+    )
 
     view._on_openai_gear_click(None)
     view._openai_model.value = "gpt-test"
@@ -191,7 +197,7 @@ def test_dialog_accept_applies_staged_edits(
     )
     assert view.has_provider_changes is True
 
-    view._accept_provider_settings_dialog()
+    view._accept_provider_settings_dialog("translation")
 
     assert applied == ["apply"]
     assert view.has_provider_changes is True
@@ -203,7 +209,9 @@ def test_dialog_close_without_accept_discards_staged_edits(
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
     fake = _fake_settings_window()
-    view.attach_provider_settings_window(fake.window, lambda coro: coro)
+    view.attach_provider_settings_window(
+        {"translation": fake.window, "backup": fake.window}, lambda coro: coro
+    )
 
     view._on_openai_gear_click(None)
     view._openai_model.value = "gpt-test"
@@ -212,10 +220,31 @@ def test_dialog_close_without_accept_discards_staged_edits(
     )
     assert view.has_provider_changes is True
 
-    view._revert_provider_settings_dialog()
+    view._revert_provider_settings_dialog("translation")
 
     assert view.has_provider_changes is False
     assert view._provider_draft is None
+
+
+def test_both_settings_windows_open_independently(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    fake_t = _fake_settings_window()
+    fake_b = _fake_settings_window()
+    view.attach_provider_settings_window(
+        {"translation": fake_t.window, "backup": fake_b.window}, lambda coro: coro
+    )
+
+    view._on_openai_gear_click(None)
+    view._on_backup_gear_click(None)
+
+    assert fake_t.window.is_open is True
+    assert fake_b.window.is_open is True
+
+    view._on_openai_gear_click(None)
+    assert fake_b.window.is_open is True
 
 
 def test_gear_cards_visible_follow_variant_selection(

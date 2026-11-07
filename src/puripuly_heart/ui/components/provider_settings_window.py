@@ -244,7 +244,8 @@ class ProviderSettingsWindow:
             show_minimize=False,
             title_text=self._title,
         )
-        content = ft.Column(
+        content = ft.Container(
+            content=ft.Column(
             controls=[
                 self._title_bar,
                 ft.Container(
@@ -267,6 +268,11 @@ class ProviderSettingsWindow:
             ],
             expand=True,
             spacing=0,
+            ),
+            expand=True,
+            border=ft.Border.all(1, COLOR_DIVIDER),
+            border_radius=16,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
         page.add(ft.Stack([content, *self._build_resize_grips()], fit=ft.StackFit.EXPAND, expand=True))
         page.window.visible = True

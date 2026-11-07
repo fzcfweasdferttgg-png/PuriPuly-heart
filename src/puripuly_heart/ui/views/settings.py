@@ -458,6 +458,9 @@ class SettingsView(ft.Column):
         self._slot_rows: list = []
         self._provider_slots_state: dict[str, object] = {}
         self._provider_slots_loaded_for: object = None
+        self._provider_dialog_kinds: dict = {}
+        self._provider_dialog_edits_before: dict = {}
+        self._provider_dialog_draft_before: dict = {}
         self._general_snapshot: GeneralSettingsSnapshot | None = None
         self._peer_auto_languages_pending: tuple[str, ...] | None = None
         self._prompt_snapshot: PromptSettingsSnapshot | None = None
@@ -1087,9 +1090,9 @@ class SettingsView(ft.Column):
             container.bgcolor = COLOR_SURFACE
         _update_control_if_mounted(container)
 
-    def attach_provider_settings_window(self, window, schedule) -> None:
-        """Attach the floating provider settings window and its session scheduler."""
-        self._provider_settings_window = window
+    def attach_provider_settings_window(self, windows, schedule) -> None:
+        """Attach floating provider settings windows (one per card) and their scheduler."""
+        self._provider_settings_windows = dict(windows)
         self._provider_settings_schedule = schedule
 
     def _on_openai_gear_click(self, _e) -> None:
@@ -1102,22 +1105,24 @@ class SettingsView(ft.Column):
         self._open_provider_settings_dialog("backup")
 
     def _open_provider_settings_dialog(self, kind: str) -> None:
-        window = getattr(self, "_provider_settings_window", None)
+        windows = getattr(self, "_provider_settings_windows", None) or {}
         schedule = getattr(self, "_provider_settings_schedule", None)
+        card = "backup" if kind == "backup" else "translation"
+        window = windows.get(card)
         if window is None or schedule is None or self._provider_snapshot is None:
             return
-        self._provider_dialog_kind = kind
+        self._provider_dialog_kinds[card] = kind
         if window.is_open:
             window.open(
                 schedule,
                 title="",
                 content=None,
-                on_accept=self._accept_provider_settings_dialog,
-                on_close_request=self._revert_provider_settings_dialog,
+                on_accept=lambda card=card: self._accept_provider_settings_dialog(card),
+                on_close_request=lambda card=card: self._revert_provider_settings_dialog(card),
             )
             return
-        self._provider_dialog_edits_before = dict(self._provider_edits)
-        self._provider_dialog_draft_before = self._provider_draft
+        self._provider_dialog_edits_before[card] = dict(self._provider_edits)
+        self._provider_dialog_draft_before[card] = self._provider_draft
         if kind == "translation_openai":
             self._build_openai_form_controls()
             self._openai_form = self._compose_openai_form(
@@ -1178,8 +1183,8 @@ class SettingsView(ft.Column):
             schedule,
             title=title,
             content=content,
-            on_accept=self._accept_provider_settings_dialog,
-            on_close_request=self._revert_provider_settings_dialog,
+            on_accept=lambda card=card: self._accept_provider_settings_dialog(card),
+            on_close_request=lambda card=card: self._revert_provider_settings_dialog(card),
         )
 
     def _commit_openai_fields_from_controls(self) -> None:
@@ -1194,66 +1199,90 @@ class SettingsView(ft.Column):
         self._commit_backup_field("base_url", self._backup_base_url.value or "")
         self._commit_backup_field("model", self._backup_model.value or "")
 
-    def _accept_provider_settings_dialog(self) -> None:
+    def _accept_provider_settings_dialog(self, card: str = "translation") -> None:
         """Accept button: save the slot, commit staged form values and apply them."""
-        self._save_dialog_slot()
-        self._commit_openai_fields_from_controls()
-        self._commit_backup_fields_from_controls()
-        self._commit_local_llm_fields_from_controls()
-        self._commit_backup_local_fields_from_controls()
-        self._rebuild_provider_form_controls()
+        self._save_dialog_slot(card)
+        if card == "backup":
+            self._commit_backup_fields_from_controls()
+            self._commit_backup_local_fields_from_controls()
+        else:
+            self._commit_openai_fields_from_controls()
+            self._commit_local_llm_fields_from_controls()
+        self._provider_dialog_edits_before.clear()
+        self._provider_dialog_draft_before.clear()
+        self._rebuild_provider_form_controls(card)
         on_providers_changed = getattr(self, "on_providers_changed", None)
         if on_providers_changed is not None:
             on_providers_changed()
 
-    def _revert_provider_settings_dialog(self) -> None:
+    def _revert_provider_settings_dialog(self, card: str = "translation") -> None:
         """Window closed without Accept: discard edits staged inside the dialog."""
-        self._provider_edits = getattr(
-            self, "_provider_dialog_edits_before", self._provider_edits
-        )
-        self._provider_draft = getattr(
-            self, "_provider_dialog_draft_before", self._provider_draft
-        )
-        self.has_provider_changes = any(
-            edit_type is not SystemPromptEdit for edit_type in self._provider_edits
-        )
-        self._rebuild_provider_form_controls()
+        if card in self._provider_dialog_edits_before:
+            self._provider_edits = self._provider_dialog_edits_before.pop(card)
+            self._provider_draft = self._provider_dialog_draft_before.pop(
+                card, self._provider_draft
+            )
+            self.has_provider_changes = any(
+                edit_type is not SystemPromptEdit for edit_type in self._provider_edits
+            )
+        self._rebuild_provider_form_controls(card)
 
-    def _rebuild_provider_form_controls(self) -> None:
+    def _rebuild_provider_form_controls(self, card: str = "translation") -> None:
         """Recreate unmounted form controls so nothing touches a dead dialog session."""
-        self._build_openai_form_controls()
-        self._openai_form = self._compose_openai_form(
-            title=None,
-            slots_row=self._openai_slots_row,
-            provider=self._openai_provider,
-            model=self._openai_model,
-            fetch_btn=self._openai_fetch_btn,
-            api_key=self._openai_api_key,
-            test_btn=self._openai_test_btn,
-        )
-        self._build_local_form_controls()
-        self._local_llm_form = self._compose_local_form(
-            title=None,
-            slots_row=self._local_llm_slots_row,
-            base_url=self._local_llm_base_url,
-            test_btn=self._local_llm_test_btn,
-            model=self._local_llm_model,
-            fetch_btn=self._local_llm_fetch_btn,
-            api_key=self._local_llm_api_key,
-            api_key_helper=self._local_llm_api_key_helper,
-            extra_body=self._local_llm_extra_body,
-            extra_body_helper=self._local_llm_extra_body_helper,
-            extra_body_error=self._local_llm_extra_body_error,
-        )
-        self._build_backup_form_controls()
+        if card == "backup":
+            self._build_backup_form_controls()
+        else:
+            self._build_openai_form_controls()
+            self._openai_form = self._compose_openai_form(
+                title=None,
+                slots_row=self._openai_slots_row,
+                provider=self._openai_provider,
+                model=self._openai_model,
+                fetch_btn=self._openai_fetch_btn,
+                api_key=self._openai_api_key,
+                test_btn=self._openai_test_btn,
+            )
+            self._build_local_form_controls()
+            self._local_llm_form = self._compose_local_form(
+                title=None,
+                slots_row=self._local_llm_slots_row,
+                base_url=self._local_llm_base_url,
+                test_btn=self._local_llm_test_btn,
+                model=self._local_llm_model,
+                fetch_btn=self._local_llm_fetch_btn,
+                api_key=self._local_llm_api_key,
+                api_key_helper=self._local_llm_api_key_helper,
+                extra_body=self._local_llm_extra_body,
+                extra_body_helper=self._local_llm_extra_body_helper,
+                extra_body_error=self._local_llm_extra_body_error,
+            )
         display = self._provider_draft or self._provider_snapshot
         if display is not None:
-            self._sync_translation_selection_controls(display)
+            self._fill_card_form_fields(card, display)
+
+    def _fill_card_form_fields(self, card: str, display) -> None:
+        """Fill one card's form fields from the current settings display."""
+        if card == "backup":
+            self._backup_base_url.value = display.backup_base_url
+            self._backup_model.value = display.backup_model
+            self._backup_provider.value = self._provider_dropdown_value(
+                display.backup_provider_key, display.backup_base_url
+            )
+            self._backup_local_base_url.value = display.backup_local_base_url
+            self._backup_local_model.value = display.backup_local_model
+            self._backup_local_extra_body.value = display.backup_local_extra_body_json
+            self._clear_backup_local_extra_body_error()
+        else:
+            self._openai_base_url.value = display.openai_compatible_base_url
+            self._openai_model.value = display.openai_compatible_model
+            self._openai_provider.value = self._provider_dropdown_value(
+                display.openai_compatible_provider_key,
+                display.openai_compatible_base_url,
+            )
             self._local_llm_base_url.value = display.local_llm_base_url
             self._local_llm_model.value = display.local_llm_model
             self._local_llm_extra_body.value = display.local_llm_extra_body_json
             self._clear_local_llm_extra_body_error()
-            self._clear_backup_local_extra_body_error()
 
     def _build_slot_row(self, card: str, *, quick: bool = False) -> ft.Row:
         """Build the 1-3 slot buttons for a card (form row or quick-switch row)."""
@@ -1401,15 +1430,14 @@ class SettingsView(ft.Column):
         if on_providers_changed is not None:
             on_providers_changed()
 
-    def _save_dialog_slot(self) -> None:
+    def _save_dialog_slot(self, card: str) -> None:
         """Store the dialog form values into the active slot of its card."""
         from puripuly_heart.config.provider_slots import (
             ProviderCardSlots,
             ProviderSlotConfig,
         )
 
-        kind = getattr(self, "_provider_dialog_kind", "")
-        card = "backup" if kind == "backup" else "translation"
+        kind = self._provider_dialog_kinds.get(card, "")
         if kind == "translation_local":
             variant = TranslationModel.LOCAL_LLM.value
         elif kind == "translation_openai":

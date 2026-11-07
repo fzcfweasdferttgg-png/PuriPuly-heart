@@ -19,7 +19,7 @@ from puripuly_heart.ui.foundation.resources import DEFAULT_FOUNDATION_RESOURCES
 from puripuly_heart.ui.foundation.tokens import FOUNDATION_DESIGN_TOKENS
 from puripuly_heart.ui.flet_runtime import invoke_control_method, run_control_method
 from puripuly_heart.ui.i18n import get_locale, t
-from puripuly_heart.ui.theme import COLOR_BACKGROUND, get_app_theme
+from puripuly_heart.ui.theme import COLOR_BACKGROUND, COLOR_DIVIDER, get_app_theme
 from puripuly_heart.ui.views.about import AboutView
 
 ABOUT_WINDOW_WIDTH = 960
@@ -192,17 +192,23 @@ class AboutWindow:
             show_title=True,
             show_minimize=False,
         )
-        content = ft.Column(
-            controls=[
-                self._title_bar,
-                ft.Container(
-                    content=self._view,
-                    expand=True,
-                    padding=ABOUT_CONTENT_PADDING,
-                ),
-            ],
+        content = ft.Container(
+            content=ft.Column(
+                controls=[
+                    self._title_bar,
+                    ft.Container(
+                        content=self._view,
+                        expand=True,
+                        padding=ABOUT_CONTENT_PADDING,
+                    ),
+                ],
+                expand=True,
+                spacing=0,
+            ),
             expand=True,
-            spacing=0,
+            border=ft.Border.all(1, COLOR_DIVIDER),
+            border_radius=16,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
         page.add(ft.Stack([content, *self._build_resize_grips()], fit=ft.StackFit.EXPAND, expand=True))
         page.window.visible = True
