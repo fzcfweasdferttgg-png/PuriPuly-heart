@@ -12,7 +12,7 @@ class AboutStateSink(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AboutSurfaceSlots:
-    info_card: ft.Control
+    info_content: ft.Control
     licenses_title: ft.Control
     license_components: ft.Control
     license_text: ft.Control
@@ -21,7 +21,7 @@ class AboutSurfaceSlots:
 @dataclass(frozen=True, slots=True)
 class AboutSurfaceRegions:
     controls: tuple[ft.Control, ...]
-    info_card: ft.Control
+    info_card: ft.Container
     licenses_card: ft.Container
     components_scroll: ft.Column
     text_scroll: ft.Column

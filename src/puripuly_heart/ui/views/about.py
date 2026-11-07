@@ -11,7 +11,6 @@ from puripuly_heart.runtime_layout import current_runtime_layout
 from puripuly_heart.ui.about.contract import AboutSurfaceSlots
 from puripuly_heart.ui.about.licenses import parse_license_sections
 from puripuly_heart.ui.about.renderer import compose_about_surface
-from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
 from puripuly_heart.ui.flet_runtime import is_hover_active, update_control_if_mounted
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.theme import (
@@ -83,7 +82,7 @@ class AboutView(ft.Column):
         """Build the compact info card and the license viewer card."""
         regions = compose_about_surface(
             AboutSurfaceSlots(
-                info_card=self._build_info_card(),
+                info_content=self._build_info_content(),
                 licenses_title=ft.Text(
                     t("about.licenses"),
                     size=20,
@@ -97,7 +96,7 @@ class AboutView(ft.Column):
         self._apply_selection()
         self.controls = list(regions.controls)
 
-    def _build_info_card(self) -> ft.Control:
+    def _build_info_content(self) -> ft.Control:
         app_name = ft.Text(
             t("app.title"),
             size=28,
@@ -206,14 +205,13 @@ class AboutView(ft.Column):
             spacing=4,
         )
 
-        info_row = ft.Row(
+        return ft.Row(
             controls=[identity, credits, inspired, thanks],
             spacing=32,
             run_spacing=12,
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
-        return SharedCardWrapper(info_row, height=None)
 
     def _build_license_components(self) -> ft.Control:
         rows = [

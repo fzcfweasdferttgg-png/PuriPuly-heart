@@ -25,6 +25,46 @@ from puripuly_heart.ui.views.about import AboutView
 ABOUT_WINDOW_WIDTH = 960
 ABOUT_WINDOW_HEIGHT = 540
 ABOUT_CONTENT_PADDING = FOUNDATION_DESIGN_TOKENS.spacing.page
+RESIZE_GRIP_SIZE = 6
+RESIZE_CORNER_SIZE = 16
+
+
+def _resize_zones() -> tuple[tuple[ft.WindowResizeEdge, dict[str, int]], ...]:
+    """Edge and corner zones forwarded to native window resizing."""
+    return (
+        (
+            ft.WindowResizeEdge.TOP,
+            dict(top=0, left=RESIZE_CORNER_SIZE, right=RESIZE_CORNER_SIZE, height=RESIZE_GRIP_SIZE),
+        ),
+        (
+            ft.WindowResizeEdge.BOTTOM,
+            dict(bottom=0, left=RESIZE_CORNER_SIZE, right=RESIZE_CORNER_SIZE, height=RESIZE_GRIP_SIZE),
+        ),
+        (
+            ft.WindowResizeEdge.LEFT,
+            dict(left=0, top=RESIZE_CORNER_SIZE, bottom=RESIZE_CORNER_SIZE, width=RESIZE_GRIP_SIZE),
+        ),
+        (
+            ft.WindowResizeEdge.RIGHT,
+            dict(right=0, top=RESIZE_CORNER_SIZE, bottom=RESIZE_CORNER_SIZE, width=RESIZE_GRIP_SIZE),
+        ),
+        (
+            ft.WindowResizeEdge.TOP_LEFT,
+            dict(top=0, left=0, width=RESIZE_CORNER_SIZE, height=RESIZE_CORNER_SIZE),
+        ),
+        (
+            ft.WindowResizeEdge.TOP_RIGHT,
+            dict(top=0, right=0, width=RESIZE_CORNER_SIZE, height=RESIZE_CORNER_SIZE),
+        ),
+        (
+            ft.WindowResizeEdge.BOTTOM_LEFT,
+            dict(bottom=0, left=0, width=RESIZE_CORNER_SIZE, height=RESIZE_CORNER_SIZE),
+        ),
+        (
+            ft.WindowResizeEdge.BOTTOM_RIGHT,
+            dict(bottom=0, right=0, width=RESIZE_CORNER_SIZE, height=RESIZE_CORNER_SIZE),
+        ),
+    )
 
 
 async def _default_about_app_runner(target: Callable[[Any], Any]) -> None:
@@ -109,6 +149,26 @@ class AboutWindow:
             DEFAULT_FOUNDATION_RESOURCES.require_file(FOUNDATION_DESIGN_TOKENS.icon_asset)
         )
 
+    def _build_resize_grips(self) -> list[ft.Control]:
+        grips: list[ft.Control] = []
+        for edge, position in _resize_zones():
+            grips.append(
+                ft.Container(
+                    content=ft.GestureDetector(
+                        content=ft.Container(bgcolor=ft.Colors.TRANSPARENT),
+                        on_tap_down=lambda _e, edge=edge: self._start_resize(edge),
+                    ),
+                    **position,
+                )
+            )
+        return grips
+
+    def _start_resize(self, edge: ft.WindowResizeEdge) -> None:
+        if self._page is None:
+            return
+        with contextlib.suppress(Exception):
+            run_control_method(self._page.window, "start_resizing", edge)
+
     def _raise_existing(self) -> None:
         if self._page is None:
             return
@@ -121,30 +181,38 @@ class AboutWindow:
         with contextlib.suppress(Exception):
             run_control_method(self._page.window, "close")
 
+    def _mount(self, page: Any) -> None:
+        """Build the About window content on the given page."""
+        self._page = page
+        self.configure_page(page)
+        self._view = AboutView()
+        self._title_bar = TitleBar(
+            page,
+            on_close=self._on_close_requested,
+            show_title=True,
+            show_minimize=False,
+        )
+        content = ft.Column(
+            controls=[
+                self._title_bar,
+                ft.Container(
+                    content=self._view,
+                    expand=True,
+                    padding=ABOUT_CONTENT_PADDING,
+                ),
+            ],
+            expand=True,
+            spacing=0,
+        )
+        page.add(ft.Stack([content, *self._build_resize_grips()], fit=ft.StackFit.EXPAND, expand=True))
+        page.window.visible = True
+        page.update()
+
     async def _run(self) -> None:
         runner = self._app_runner or _default_about_app_runner
 
         async def target(page: Any) -> None:
-            self._page = page
-            self.configure_page(page)
-            self._view = AboutView()
-            self._title_bar = TitleBar(page, on_close=self._on_close_requested)
-            page.add(
-                ft.Column(
-                    controls=[
-                        self._title_bar,
-                        ft.Container(
-                            content=self._view,
-                            expand=True,
-                            padding=ABOUT_CONTENT_PADDING,
-                        ),
-                    ],
-                    expand=True,
-                    spacing=0,
-                )
-            )
-            page.window.visible = True
-            page.update()
+            self._mount(page)
 
         try:
             await runner(target)
