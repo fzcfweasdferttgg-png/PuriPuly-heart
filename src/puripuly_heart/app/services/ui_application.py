@@ -889,6 +889,9 @@ class UiApplicationBoundary:
         return result
 
     async def apply_settings_change(self, intent: object | None) -> SettingsApplyOutcome:
+        import time
+
+        started = time.monotonic()
         with self._settings_results.capture() as scope:
             try:
                 if intent is None:
@@ -927,6 +930,13 @@ class UiApplicationBoundary:
                 )
                 raw = False
             result = scope.current
+        self.log_basic(
+            "[Timing] apply_settings_change %s: %.0fms"
+            % (
+                type(intent).__name__ if intent is not None else "None",
+                (time.monotonic() - started) * 1000,
+            )
+        )
         await self._publish_osc_state()
         if scope.reverted:
             return SettingsApplyOutcome(

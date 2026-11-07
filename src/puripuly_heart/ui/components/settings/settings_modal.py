@@ -6,6 +6,7 @@ with optional descriptions for each option.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 
 import flet as ft
@@ -134,7 +135,15 @@ class SettingsModal:
             bgcolor=ft.Colors.TRANSPARENT,
         )
 
+        import time
+
+        started = time.monotonic()
         self._page.show_dialog(self._dialog)
+        logging.getLogger(__name__).info(
+            "[Timing] modal '%s': show_dialog=%.0fms",
+            self._title,
+            (time.monotonic() - started) * 1000,
+        )
 
     def replace_options(self, options: Sequence[OptionItem]) -> None:
         """Replace the option list after the modal is open.
@@ -464,6 +473,16 @@ class SettingsModal:
             if self._on_selection_change is not None:
                 self._on_selection_change(self._selected_values())
             return
+        import time
+
+        started = time.monotonic()
         if self._dialog:
             self._page.pop_dialog()
+        pop_ms = (time.monotonic() - started) * 1000
         self._on_select(value)
+        logging.getLogger(__name__).info(
+            "[Timing] modal '%s': pop_dialog=%.0fms on_select=%.0fms",
+            self._title,
+            pop_ms,
+            (time.monotonic() - started) * 1000 - pop_ms,
+        )
