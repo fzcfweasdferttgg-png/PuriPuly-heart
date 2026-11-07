@@ -610,9 +610,6 @@ class TranslatorApp:
 
     async def _close_after_launch_ui_tasks(self) -> None:
         await self._close_ui_task_handle("_after_launch_task_handle")
-        owner = getattr(self, "_telemetry_reporting", None)
-        if owner is not None:
-            await owner.cancel_retry()
 
     async def close_after_launch_tasks(self) -> None:
         await self._close_after_launch_ui_tasks()
