@@ -2,22 +2,46 @@ from collections.abc import Callable
 
 import flet as ft
 
-from puripuly_heart.ui.flet_runtime import is_hover_active
+from puripuly_heart.ui.flet_runtime import is_hover_active, update_control_if_mounted
+from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.theme import (
     COLOR_BACKGROUND,
     COLOR_DIVIDER,
     COLOR_ERROR,
     COLOR_NEUTRAL_DARK,
+    COLOR_PRIMARY,
     COLOR_SECONDARY,
 )
 
+ABOUT_MENU_ICON = ft.Icons.FAVORITE
+
 
 class TitleBar(ft.Container):
-    """Custom draggable title bar with window controls."""
+    """Custom draggable title bar with an About menu item and window controls."""
 
-    def __init__(self, page: ft.Page, *, on_close: Callable[[], None]):
+    def __init__(
+        self,
+        page: ft.Page,
+        *,
+        on_close: Callable[[], None],
+        on_about: Callable[[], None] | None = None,
+    ):
         self._page = page
         self._on_close = on_close
+        self._on_about = on_about
+
+        self._about_icon = ft.Icon(ABOUT_MENU_ICON, size=16, color=COLOR_PRIMARY)
+        self._about_label = ft.Text(t("about.title"), size=14, color=COLOR_NEUTRAL_DARK)
+        about_item = ft.Container(
+            content=ft.Row(
+                [self._about_icon, self._about_label],
+                spacing=8,
+            ),
+            height=48,
+            padding=ft.Padding.only(left=16, right=12),
+            on_click=self._on_about_click if on_about else None,
+            on_hover=self._on_about_hover if on_about else None,
+        )
 
         minimize_btn = ft.Container(
             content=ft.Icon(ft.Icons.REMOVE, size=18, color=COLOR_SECONDARY),
@@ -50,7 +74,7 @@ class TitleBar(ft.Container):
 
         super().__init__(
             content=ft.Row(
-                [drag_area, window_controls],
+                [about_item, drag_area, window_controls],
                 expand=True,
                 spacing=0,
             ),
@@ -59,6 +83,22 @@ class TitleBar(ft.Container):
             border_radius=ft.BorderRadius.only(top_left=16, top_right=16),
             border=ft.Border.only(bottom=ft.BorderSide(1, COLOR_DIVIDER)),
         )
+
+    def apply_locale(self) -> None:
+        """Refresh the About menu label when the locale changes."""
+        self._about_label.value = t("about.title")
+        update_control_if_mounted(self._about_label)
+
+    def _on_about_click(self, _):
+        if self._on_about is not None:
+            self._on_about()
+
+    def _on_about_hover(self, e):
+        active = is_hover_active(e)
+        self._about_label.color = COLOR_PRIMARY if active else COLOR_NEUTRAL_DARK
+        self._about_icon.color = COLOR_PRIMARY if active else COLOR_SECONDARY
+        update_control_if_mounted(self._about_label)
+        update_control_if_mounted(self._about_icon)
 
     def _minimize(self, _):
         self._page.window.minimized = True

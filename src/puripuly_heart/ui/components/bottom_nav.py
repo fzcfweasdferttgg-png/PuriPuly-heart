@@ -12,7 +12,7 @@ from puripuly_heart.ui.theme import (
 
 
 class BottomNavBar(ft.Container):
-    """Bottom 4-tab navigation bar with icons only."""
+    """Bottom 3-tab navigation bar with icons only."""
 
     def __init__(self, on_change: Callable[[int], None]):
         self._on_change = on_change
@@ -22,7 +22,6 @@ class BottomNavBar(ft.Container):
             ft.Icons.GRID_VIEW,
             ft.Icons.SETTINGS,
             ft.Icons.ARTICLE,
-            ft.Icons.INFO_OUTLINE,
         ]
 
         self._icons: list[ft.Icon] = []

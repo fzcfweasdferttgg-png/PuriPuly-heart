@@ -5,7 +5,11 @@ import pytest
 
 from puripuly_heart.ui import i18n as i18n_module
 from puripuly_heart.ui.about.contract import AboutSurfaceSlots
-from puripuly_heart.ui.about.renderer import ABOUT_ROW_SPACING, compose_about_surface
+from puripuly_heart.ui.about.renderer import (
+    ABOUT_LICENSE_COMPONENTS_EXPAND,
+    ABOUT_LICENSE_TEXT_EXPAND,
+    compose_about_surface,
+)
 from puripuly_heart.ui.logs.contract import LogsSurfaceSlots
 from puripuly_heart.ui.logs.renderer import (
     LOGS_CARD_BORDER_RADIUS,
@@ -84,38 +88,31 @@ def test_logs_and_about_surface_structure_is_locale_stable(locale: str) -> None:
     assert len(logs_view._header_button_row.controls) == 2
 
     about_view = AboutView()
-    assert len(about_view.controls) == 4
-    header_row, top_row = about_view.controls[0], about_view.controls[1]
-    assert isinstance(header_row, ft.Container)
-    assert isinstance(top_row, ft.Container)
-    assert header_row.content.spacing == ABOUT_ROW_SPACING
-    assert top_row.content.spacing == ABOUT_ROW_SPACING
+    assert len(about_view.controls) == 2
+    info_card, licenses_card = about_view.controls
+    assert isinstance(info_card, ft.Control)
+    assert isinstance(licenses_card, ft.Control)
 
 
 def test_compose_about_surface_keeps_the_accepted_card_order() -> None:
     slots = AboutSurfaceSlots(
-        app_name_card=ft.Text("app"),
-        version_card=ft.Text("version"),
-        credits_card=ft.Text("credits"),
-        inspired_by_card=ft.Text("inspired"),
-        special_thanks_card=ft.Text("thanks"),
-        licenses_card=ft.Text("licenses"),
+        info_card=ft.Text("info"),
+        licenses_title=ft.Text("title"),
+        license_components=ft.Text("components"),
+        license_text=ft.Text("text"),
     )
     regions = compose_about_surface(slots)
 
-    assert regions.controls == (
-        regions.header_row,
-        regions.top_row,
-        slots.special_thanks_card,
-        slots.licenses_card,
-    )
-    assert regions.header_row.content.controls[0].content is slots.app_name_card
-    assert regions.header_row.content.controls[1].content is slots.version_card
-    assert regions.top_row.content.controls[0].content is slots.credits_card
-    assert regions.top_row.content.controls[1].content is slots.inspired_by_card
-    for row in (regions.header_row, regions.top_row):
-        assert row.content.expand is True
-        assert all(item.expand is True for item in row.content.controls)
+    assert regions.controls == (regions.info_card, regions.licenses_card)
+    assert regions.info_card is slots.info_card
+    assert regions.components_scroll.controls == [slots.license_components]
+    assert regions.components_scroll.scroll == ft.ScrollMode.AUTO
+    assert regions.components_scroll.expand == ABOUT_LICENSE_COMPONENTS_EXPAND
+    assert regions.text_scroll.controls == [slots.license_text]
+    assert regions.text_scroll.scroll == ft.ScrollMode.AUTO
+    assert regions.text_scroll.expand == ABOUT_LICENSE_TEXT_EXPAND
+    assert regions.licenses_card.expand is True
+    assert regions.licenses_card.clip_behavior == ft.ClipBehavior.HARD_EDGE
 
 
 def test_about_view_reapplies_locale_through_the_renderer() -> None:

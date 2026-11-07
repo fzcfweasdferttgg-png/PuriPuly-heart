@@ -1,4 +1,6 @@
-"""About page view with version, credits, acknowledgments, and license info."""
+"""About window content: compact program info and a selectable license viewer."""
+
+from __future__ import annotations
 
 import webbrowser
 
@@ -7,19 +9,19 @@ import flet as ft
 from puripuly_heart import __version__
 from puripuly_heart.runtime_layout import current_runtime_layout
 from puripuly_heart.ui.about.contract import AboutSurfaceSlots
+from puripuly_heart.ui.about.licenses import parse_license_sections
 from puripuly_heart.ui.about.renderer import compose_about_surface
 from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
-from puripuly_heart.ui.flet_runtime import is_hover_active
+from puripuly_heart.ui.flet_runtime import is_hover_active, update_control_if_mounted
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
     COLOR_ON_BACKGROUND,
     COLOR_PRIMARY,
     COLOR_SECONDARY,
-    COLOR_SURFACE,
 )
 
-_CENTER_ALIGNMENT = ft.Alignment(0, 0)
+GITHUB_REPOSITORY_URL = "https://github.com/kapitalismho/PuriPuly-heart"
 
 
 def _load_third_party_notices() -> str:
@@ -43,162 +45,7 @@ def _get_profile_image_path() -> str:
 
 
 class AboutView(ft.Column):
-    """About page with version, credits, inspired by, special thanks, and licenses."""
-
-    def __init__(self):
-        super().__init__(expand=True, scroll=ft.ScrollMode.AUTO, spacing=16)
-
-        self._build_ui()
-
-    def _build_ui(self):
-        """Build the About page UI."""
-        regions = compose_about_surface(
-            AboutSurfaceSlots(
-                app_name_card=self._build_app_name_card(),
-                version_card=self._build_version_card(),
-                credits_card=self._build_credits_card(),
-                inspired_by_card=self._build_inspired_by_card(),
-                special_thanks_card=self._build_special_thanks_card(),
-                licenses_card=self._build_licenses_card(),
-            )
-        )
-        self.controls = list(regions.controls)
-
-    def _build_app_name_card(self) -> ft.Control:
-        """Build the app name card."""
-        return self._wrap_card(
-            ft.Container(
-                content=ft.Text(
-                    t("app.title"),
-                    size=48,
-                    weight=ft.FontWeight.BOLD,
-                    color=COLOR_PRIMARY,
-                ),
-                alignment=_CENTER_ALIGNMENT,
-            )
-        )
-
-    def _build_version_card(self) -> ft.Control:
-        """Build the clickable version card that opens the git repository."""
-        version_title = ft.Text(
-            t("about.version"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_SECONDARY,
-        )
-        version_text = ft.Container(
-            content=ft.Text(
-                f"v{__version__}",
-                size=28,
-                color=COLOR_ON_BACKGROUND,
-                text_align=ft.TextAlign.CENTER,
-            ),
-            alignment=_CENTER_ALIGNMENT,
-            expand=True,
-            on_click=lambda _: webbrowser.open("https://github.com/kapitalismho/PuriPuly-heart"),
-            on_hover=self._on_version_hover,
-        )
-        return self._wrap_card(ft.Column([version_title, version_text], spacing=0, expand=True))
-
-    def _build_credits_card(self) -> ft.Control:
-        """Build credits section with profile picture."""
-        profile_path = _get_profile_image_path()
-
-        profile_image = ft.Container(
-            content=(
-                ft.Image(
-                    src=profile_path,
-                    width=160,
-                    height=160,
-                    fit=ft.BoxFit.COVER,
-                    border_radius=100,
-                )
-                if profile_path
-                else ft.Icon(ft.Icons.PERSON, size=100, color=COLOR_ON_BACKGROUND)
-            ),
-            width=160,
-            height=160,
-            border_radius=100,
-            bgcolor=COLOR_DIVIDER,
-            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-        )
-
-        name_link = ft.Container(
-            content=ft.Text(
-                "salee",
-                size=32,
-                weight=ft.FontWeight.BOLD,
-                color=COLOR_ON_BACKGROUND,
-            ),
-            on_click=lambda _: webbrowser.open("https://x.com/kapitalismho"),
-            on_hover=self._on_name_hover,
-        )
-
-        card_content = ft.Column(
-            controls=[
-                ft.Text(
-                    t("about.developed_by"),
-                    size=24,
-                    weight=ft.FontWeight.BOLD,
-                    color=COLOR_SECONDARY,
-                ),
-                ft.Container(height=16),
-                ft.Row(
-                    controls=[
-                        profile_image,
-                        ft.Container(width=24),
-                        name_link,
-                    ],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-            ],
-        )
-
-        return self._wrap_card(card_content)
-
-    def _build_inspired_by_card(self) -> ft.Control:
-        """Build Inspired By section with project links."""
-        projects = [
-            ("VRCT", "https://github.com/misyaguziya/VRCT"),
-            ("mimiuchi", "https://github.com/naeruru/mimiuchi"),
-            ("Yakutan", "https://github.com/febilly/Yakutan"),
-        ]
-
-        project_links = []
-        for name, url in projects:
-            link = ft.Container(
-                content=ft.Text(
-                    name,
-                    size=28,
-                    color=COLOR_ON_BACKGROUND,
-                ),
-                on_click=lambda _, u=url: webbrowser.open(u),
-                on_hover=self._on_link_hover,
-            )
-            project_links.append(link)
-
-        card_content = ft.Column(
-            controls=[
-                ft.Text(
-                    t("about.inspired_by"),
-                    size=24,
-                    weight=ft.FontWeight.BOLD,
-                    color=COLOR_SECONDARY,
-                ),
-                ft.Container(height=16),
-                ft.Container(
-                    content=ft.Column(
-                        controls=project_links,
-                        spacing=12,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    width=float("inf"),
-                ),
-            ],
-        )
-
-        return self._wrap_card(card_content)
+    """About window content with compact info and a license section viewer."""
 
     # Special thanks name keys - add new names here and update locale bundles
     _SPECIAL_THANKS_NAME_KEYS = [
@@ -219,84 +66,191 @@ class AboutView(ft.Column):
         "about.special_thanks.name.tsuyu_shiro",
     ]
 
-    def _build_special_thanks_card(self) -> ft.Control:
-        """Build Special Thanks section."""
-        thanks_items = []
-        for name_key in self._SPECIAL_THANKS_NAME_KEYS:
-            name = t(name_key)
-            item = ft.Container(
-                content=ft.Text(name, size=28, color=COLOR_ON_BACKGROUND),
+    def __init__(self):
+        super().__init__(expand=True, spacing=16)
+        self._sections = parse_license_sections(_load_third_party_notices())
+        self._selected_index = 0
+        self._component_rows: list[ft.Container] = []
+        self._license_text = ft.Text(
+            value="",
+            size=14,
+            selectable=True,
+            color=COLOR_ON_BACKGROUND,
+        )
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        """Build the compact info card and the license viewer card."""
+        regions = compose_about_surface(
+            AboutSurfaceSlots(
+                info_card=self._build_info_card(),
+                licenses_title=ft.Text(
+                    t("about.licenses"),
+                    size=20,
+                    weight=ft.FontWeight.BOLD,
+                    color=COLOR_SECONDARY,
+                ),
+                license_components=self._build_license_components(),
+                license_text=self._license_text,
+            )
+        )
+        self._apply_selection()
+        self.controls = list(regions.controls)
+
+    def _build_info_card(self) -> ft.Control:
+        app_name = ft.Text(
+            t("app.title"),
+            size=28,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_PRIMARY,
+        )
+        version_link = ft.Container(
+            content=ft.Text(f"v{__version__}", size=18, color=COLOR_ON_BACKGROUND),
+            on_click=lambda _: webbrowser.open(GITHUB_REPOSITORY_URL),
+            on_hover=self._on_version_hover,
+        )
+        identity = ft.Column(controls=[app_name, version_link], spacing=4)
+
+        profile_path = _get_profile_image_path()
+        photo = ft.Container(
+            content=(
+                ft.Image(
+                    src=profile_path,
+                    width=48,
+                    height=48,
+                    fit=ft.BoxFit.COVER,
+                    border_radius=24,
+                )
+                if profile_path
+                else ft.Icon(ft.Icons.PERSON, size=32, color=COLOR_ON_BACKGROUND)
+            ),
+            width=48,
+            height=48,
+            border_radius=24,
+            bgcolor=COLOR_DIVIDER,
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        )
+        name_link = ft.Container(
+            content=ft.Text(
+                "salee",
+                size=18,
+                weight=ft.FontWeight.BOLD,
+                color=COLOR_ON_BACKGROUND,
+            ),
+            on_click=lambda _: webbrowser.open("https://x.com/kapitalismho"),
+            on_hover=self._on_name_hover,
+        )
+        credits = ft.Column(
+            controls=[
+                ft.Text(
+                    t("about.developed_by"),
+                    size=14,
+                    weight=ft.FontWeight.BOLD,
+                    color=COLOR_SECONDARY,
+                ),
+                ft.Row(
+                    controls=[photo, name_link],
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ],
+            spacing=4,
+        )
+
+        projects = [
+            ("VRCT", "https://github.com/misyaguziya/VRCT"),
+            ("mimiuchi", "https://github.com/naeruru/mimiuchi"),
+            ("Yakutan", "https://github.com/febilly/Yakutan"),
+        ]
+        project_links = [
+            ft.Container(
+                content=ft.Text(name, size=16, color=COLOR_ON_BACKGROUND),
+                on_click=lambda _, u=url: webbrowser.open(u),
+                on_hover=self._on_link_hover,
+            )
+            for name, url in projects
+        ]
+        inspired = ft.Column(
+            controls=[
+                ft.Text(
+                    t("about.inspired_by"),
+                    size=14,
+                    weight=ft.FontWeight.BOLD,
+                    color=COLOR_SECONDARY,
+                ),
+                ft.Row(controls=project_links, spacing=12),
+            ],
+            spacing=4,
+        )
+
+        thanks_names = [
+            ft.Container(
+                content=ft.Text(t(key), size=14, color=COLOR_ON_BACKGROUND),
                 on_hover=self._on_thanks_hover,
             )
-            thanks_items.append(item)
-
-        # Add "and you!" at the end
-        thanks_items.append(ft.Text("\nand you!", size=28, color=COLOR_ON_BACKGROUND, italic=True))
-
-        card_content = ft.Column(
+            for key in self._SPECIAL_THANKS_NAME_KEYS
+        ]
+        thanks_names.append(
+            ft.Text("\nand you!", size=14, color=COLOR_ON_BACKGROUND, italic=True)
+        )
+        thanks = ft.Column(
             controls=[
                 ft.Text(
                     t("about.special_thanks"),
-                    size=24,
+                    size=14,
                     weight=ft.FontWeight.BOLD,
                     color=COLOR_SECONDARY,
                 ),
-                ft.Container(height=16),
-                ft.Container(
-                    content=ft.Column(
-                        controls=thanks_items,
-                        spacing=8,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    width=float("inf"),
-                ),
+                ft.Row(controls=thanks_names, spacing=8, run_spacing=4, wrap=True),
             ],
-            spacing=8,
+            spacing=4,
         )
 
-        return self._wrap_card(card_content, height=None)
+        info_row = ft.Row(
+            controls=[identity, credits, inspired, thanks],
+            spacing=32,
+            run_spacing=12,
+            wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.START,
+        )
+        return SharedCardWrapper(info_row, height=None)
 
-    def _build_licenses_card(self) -> ft.Control:
-        """Build Open Source Licenses section."""
-        licenses_text = _load_third_party_notices()
-
-        card_content = ft.Column(
-            controls=[
-                ft.Text(
-                    t("about.licenses"),
-                    size=24,
-                    weight=ft.FontWeight.BOLD,
-                    color=COLOR_SECONDARY,
+    def _build_license_components(self) -> ft.Control:
+        rows = [
+            ft.Container(
+                content=ft.Text(
+                    section.title,
+                    size=14,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
                 ),
-                ft.Container(height=16),
-                ft.Container(
-                    content=ft.Text(
-                        licenses_text,
-                        size=16,
-                        color=COLOR_ON_BACKGROUND,
-                        selectable=True,
-                    ),
-                    width=float("inf"),
-                    border=ft.Border.all(1, COLOR_DIVIDER),
-                    border_radius=12,
-                    padding=16,
-                    bgcolor=COLOR_SURFACE,
-                ),
-            ],
-        )
+                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                border_radius=8,
+                on_click=lambda _, idx=index: self._select_section(idx),
+            )
+            for index, section in enumerate(self._sections)
+        ]
+        self._component_rows = rows
+        return ft.Column(controls=rows, spacing=2)
 
-        return self._wrap_card(card_content, height=None)
+    def _select_section(self, index: int) -> None:
+        if not self._sections or not (0 <= index < len(self._sections)):
+            return
+        self._selected_index = index
+        self._apply_selection()
+        update_control_if_mounted(self)
 
-    def _wrap_card(
-        self,
-        content: ft.Control,
-        *,
-        height: float | int | None = SharedCardWrapper.DEFAULT_HEIGHT,
-    ) -> SharedCardWrapper:
-        return SharedCardWrapper(
-            content,
-            height=height,
-        )
+    def _apply_selection(self) -> None:
+        for index, row in enumerate(self._component_rows):
+            selected = index == self._selected_index
+            label = row.content
+            label.color = COLOR_PRIMARY if selected else COLOR_ON_BACKGROUND
+            label.weight = ft.FontWeight.BOLD if selected else ft.FontWeight.NORMAL
+            row.bgcolor = COLOR_DIVIDER if selected else None
+        if self._sections:
+            self._license_text.value = self._sections[self._selected_index].body
+        else:
+            self._license_text.value = ""
 
     def _on_name_hover(self, e):
         """Handle hover on name link."""

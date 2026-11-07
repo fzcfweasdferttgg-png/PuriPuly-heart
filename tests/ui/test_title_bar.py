@@ -7,7 +7,12 @@ import pytest
 pytest.importorskip("flet")
 
 from puripuly_heart.ui.components.title_bar import TitleBar
-from puripuly_heart.ui.theme import COLOR_NEUTRAL_DARK, COLOR_SECONDARY
+from puripuly_heart.ui.i18n import t
+from puripuly_heart.ui.theme import (
+    COLOR_NEUTRAL_DARK,
+    COLOR_PRIMARY,
+    COLOR_SECONDARY,
+)
 
 
 class DummyWindow:
@@ -54,3 +59,22 @@ def test_title_bar_window_controls_and_hover() -> None:
     assert close_container.content.color != COLOR_SECONDARY
     bar._on_close_hover(SimpleNamespace(control=close_container, data="false"))
     assert close_container.content.color == COLOR_SECONDARY
+
+
+def test_title_bar_about_item_and_locale() -> None:
+    page = DummyPage()
+    opened: list[str] = []
+    bar = TitleBar(page, on_close=lambda: None, on_about=lambda: opened.append("about"))
+    assert bar._about_label.value == t("about.title")
+
+    bar._on_about_click(None)
+    assert opened == ["about"]
+
+    label = bar._about_label
+    bar._on_about_hover(SimpleNamespace(data="true"))
+    assert label.color == COLOR_PRIMARY
+    bar._on_about_hover(SimpleNamespace(data="false"))
+    assert label.color == COLOR_NEUTRAL_DARK
+
+    bar.apply_locale()
+    assert bar._about_label.value == t("about.title")

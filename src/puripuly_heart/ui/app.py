@@ -41,6 +41,7 @@ from puripuly_heart.core.lifecycle import (
     SHUTDOWN_PHASE_STOP_EXTERNAL_PRODUCERS,
 )
 from puripuly_heart.core.messages import ErrorDiagnostics
+from puripuly_heart.ui.components.about_window import AboutWindow
 from puripuly_heart.ui.components.audio_test_dialog import AudioTestDialog
 from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
@@ -87,7 +88,6 @@ from puripuly_heart.ui.theme import (
     get_app_theme,
     text_style,
 )
-from puripuly_heart.ui.views.about import AboutView
 from puripuly_heart.ui.views.dashboard import DashboardView
 from puripuly_heart.ui.views.logs import LogsView
 from puripuly_heart.ui.views.settings import SettingsView
@@ -291,11 +291,17 @@ class TranslatorApp:
         return runtime
 
     async def shutdown(self) -> None:
+        await self._close_about_window()
         lifecycle = self._get_application_lifecycle()
         try:
             await lifecycle.shutdown()
         finally:
             self._shutdown_complete = lifecycle.is_terminal
+
+    async def _close_about_window(self) -> None:
+        about_window = getattr(self, "about_window", None)
+        if about_window is not None:
+            await about_window.close()
 
     def _compose_application_lifecycle(self) -> ApplicationShutdownCoordinator:
         foundation_runtime = self._ensure_foundation_runtime()
@@ -418,13 +424,17 @@ class TranslatorApp:
         )
         self.view_settings.bind_recent_language_queue(self.view_dashboard)
         self.view_logs = LogsView()
-        self.view_about = AboutView()
+        self.about_window = AboutWindow()
         self.view_settings.set_overlay_runtime_state(self.overlay_state)
 
         # Custom title bar
-        self.title_bar = TitleBar(self.page, on_close=self._request_window_close)
+        self.title_bar = TitleBar(
+            self.page,
+            on_close=self._request_window_close,
+            on_about=self._open_about_window,
+        )
 
-        # Bottom navigation (order: Home, Settings, Logs, About)
+        # Bottom navigation (order: Home, Settings, Logs)
         self.bottom_nav = BottomNavBar(on_change=self._on_nav_change)
 
         self.debug_preview_panel = (
@@ -443,6 +453,9 @@ class TranslatorApp:
         self.layout = shell.layout
         self.page.add(shell.root)
         self._sync_dashboard_channels()
+
+    def _open_about_window(self) -> None:
+        self.about_window.open(self._run_page_task)
 
     def _open_model_assets(self) -> None:
         if getattr(self, "_model_assets_dialog", None) is None:
@@ -838,8 +851,6 @@ class TranslatorApp:
             self.content_area.content = self.view_settings
         elif index == 2:
             self.content_area.content = self.view_logs
-        elif index == 3:
-            self.content_area.content = self.view_about
 
         self.content_area.padding = self._content_padding_for_index(index)
         self.content_area.update()
@@ -879,6 +890,10 @@ class TranslatorApp:
         self.view_settings.apply_locale()
         self.refresh_overlay_peer_contract()
         self.view_logs.apply_locale()
+        self.title_bar.apply_locale()
+        about_window = getattr(self, "about_window", None)
+        if about_window is not None:
+            about_window.apply_locale()
         debug_preview_panel = getattr(self, "debug_preview_panel", None)
         apply_debug_locale = getattr(debug_preview_panel, "apply_locale", None)
         if callable(apply_debug_locale):

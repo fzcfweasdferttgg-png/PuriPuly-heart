@@ -13,9 +13,9 @@ from puripuly_heart.ui.theme import COLOR_PRIMARY, COLOR_SECONDARY
 def test_bottom_nav_builds_tabs_and_dividers() -> None:
     nav = BottomNavBar(on_change=lambda _idx: None)
 
-    assert len(nav._icons) == 4
+    assert len(nav._icons) == 3
     controls = nav._build_tabs_with_dividers()
-    assert len(controls) == 7  # 4 tabs + 3 dividers
+    assert len(controls) == 5  # 3 tabs + 2 dividers
 
 
 def test_bottom_nav_click_and_hover_update_states(monkeypatch: pytest.MonkeyPatch) -> None:

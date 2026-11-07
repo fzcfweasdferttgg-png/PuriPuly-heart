@@ -411,7 +411,7 @@ async def test_leaving_settings_does_not_resubmit_failed_autosave_but_first_stag
     )
     ui.page = SimpleNamespace(pop_dialog=lambda: None)
     ui.content_area = SimpleNamespace(update=lambda: None)
-    ui.view_about = object()
+    ui.view_dashboard = object()
     ui.view_settings = SimpleNamespace(
         has_provider_changes=provider,
         has_pending_prompt_changes=not provider,
@@ -421,11 +421,11 @@ async def test_leaving_settings_does_not_resubmit_failed_autosave_but_first_stag
     ui._settings_queue = SettingsQueue(apply, lambda _: None)
     ui._run_page_task = workers.append
     ui._current_tab = 1
-    ui._on_nav_change(3)
+    ui._on_nav_change(0)
     await workers.pop(0)()
     assert calls == [intent]
     ui._current_tab = 1
-    ui._on_nav_change(3)
+    ui._on_nav_change(0)
     assert workers == []
     assert calls == [intent]
     ui._queue_settings_apply(intent)
