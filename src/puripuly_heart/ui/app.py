@@ -3,7 +3,6 @@ import contextlib
 import inspect
 import json
 import logging
-import webbrowser
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -85,7 +84,6 @@ from puripuly_heart.ui.theme import (
     COLOR_SUCCESS,
     COLOR_WARNING,
     get_app_theme,
-    text_style,
 )
 from puripuly_heart.ui.views.dashboard import DashboardView
 from puripuly_heart.ui.views.logs import LogsView
