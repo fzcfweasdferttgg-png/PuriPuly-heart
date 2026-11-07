@@ -1127,6 +1127,7 @@ class SettingsView(ft.Column):
             self._build_openai_form_controls()
             self._openai_form = self._compose_openai_form(
                 title=None,
+                slots_row=self._openai_slots_row,
                 provider=self._openai_provider,
                 model=self._openai_model,
                 fetch_btn=self._openai_fetch_btn,
@@ -1142,6 +1143,7 @@ class SettingsView(ft.Column):
             self._build_local_form_controls()
             self._local_llm_form = self._compose_local_form(
                 title=None,
+                slots_row=self._local_llm_slots_row,
                 base_url=self._local_llm_base_url,
                 test_btn=self._local_llm_test_btn,
                 model=self._local_llm_model,
@@ -1263,6 +1265,57 @@ class SettingsView(ft.Column):
         display = self._provider_draft or self._provider_snapshot
         if display is not None:
             self._fill_card_form_fields(card, display)
+
+    def _sync_open_translation_dialog(self) -> None:
+        """Follow a live variant switch while the translation dialog is open."""
+        windows = getattr(self, "_provider_settings_windows", None) or {}
+        window = windows.get("translation")
+        if window is None or not window.is_open:
+            return
+        display = self._provider_draft or self._provider_snapshot
+        if display is None:
+            return
+        variant = normalize_translation_model(display.translation.model)
+        if variant not in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM):
+            return
+        kind = (
+            "translation_local"
+            if variant == TranslationModel.LOCAL_LLM
+            else "translation_openai"
+        )
+        if self._provider_dialog_kinds.get("translation") == kind:
+            return
+        self._provider_dialog_kinds["translation"] = kind
+        if kind == "translation_local":
+            self._build_local_form_controls()
+            self._local_llm_form = self._compose_local_form(
+                title=None,
+                slots_row=self._local_llm_slots_row,
+                base_url=self._local_llm_base_url,
+                test_btn=self._local_llm_test_btn,
+                model=self._local_llm_model,
+                fetch_btn=self._local_llm_fetch_btn,
+                api_key=self._local_llm_api_key,
+                api_key_helper=self._local_llm_api_key_helper,
+                extra_body=self._local_llm_extra_body,
+                extra_body_helper=self._local_llm_extra_body_helper,
+                extra_body_error=self._local_llm_extra_body_error,
+            )
+            content = self._local_llm_form
+        else:
+            self._build_openai_form_controls()
+            self._openai_form = self._compose_openai_form(
+                title=None,
+                slots_row=self._openai_slots_row,
+                provider=self._openai_provider,
+                model=self._openai_model,
+                fetch_btn=self._openai_fetch_btn,
+                api_key=self._openai_api_key,
+                test_btn=self._openai_test_btn,
+            )
+            content = self._openai_form
+        self._fill_card_form_fields("translation", display)
+        window.replace_content(content)
 
     def _fill_card_form_fields(self, card: str, display) -> None:
         """Fill one card's form fields from the current settings display."""
@@ -4885,6 +4938,7 @@ class SettingsView(ft.Column):
 
         if is_control_mounted(self):
             self.update()
+        self._sync_open_translation_dialog()
 
     def _on_llm_selected(self, value: str) -> None:
         """Handle translation model selection from modal."""

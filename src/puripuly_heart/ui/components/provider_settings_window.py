@@ -30,7 +30,7 @@ from puripuly_heart.ui.theme import (
 )
 
 PROVIDER_WINDOW_WIDTH = 680
-PROVIDER_WINDOW_HEIGHT = 560
+PROVIDER_WINDOW_HEIGHT = 680
 PROVIDER_CONTENT_PADDING = FOUNDATION_DESIGN_TOKENS.spacing.page
 RESIZE_GRIP_SIZE = 6
 RESIZE_CORNER_SIZE = 16
@@ -133,6 +133,13 @@ class ProviderSettingsWindow:
         self._on_close_request = on_close_request
         self._accepted = False
         self._task = schedule(self._run)
+
+    def replace_content(self, content) -> None:
+        """Swap the window body in place (card variant switched live)."""
+        self._content = content
+        if self._page is not None:
+            with contextlib.suppress(Exception):
+                self._page.update()
 
     async def close(self) -> None:
         """Close the settings window and finish its session."""

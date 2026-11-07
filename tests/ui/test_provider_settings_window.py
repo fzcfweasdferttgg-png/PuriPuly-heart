@@ -137,6 +137,9 @@ def _fake_settings_window() -> types.SimpleNamespace:
             opened.update(kwargs)
             self.is_open = True
 
+        def replace_content(self, content) -> None:
+            opened["content"] = content
+
     return types.SimpleNamespace(
         window=_Window(), opened=opened, accepted=accepted, reverted=reverted
     )
@@ -224,6 +227,39 @@ def test_dialog_close_without_accept_discards_staged_edits(
 
     assert view.has_provider_changes is False
     assert view._provider_draft is None
+
+
+def test_translation_dialog_contains_the_slot_row(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    fake = _fake_settings_window()
+    view.attach_provider_settings_window(
+        {"translation": fake.window, "backup": fake.window}, lambda coro: coro
+    )
+
+    view._on_openai_gear_click(None)
+
+    assert view._openai_form.controls[0] is view._openai_slots_row
+
+
+def test_translation_dialog_follows_live_variant_switch(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    fake = _fake_settings_window()
+    view.attach_provider_settings_window(
+        {"translation": fake.window, "backup": fake.window}, lambda coro: coro
+    )
+    view._on_openai_gear_click(None)
+
+    view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
+
+    assert view._provider_dialog_kinds["translation"] == "translation_local"
+    assert fake.opened["content"] is view._local_llm_form
+    assert view._local_llm_form.controls[0] is view._local_llm_slots_row
 
 
 def test_backup_dialog_shows_only_the_selected_variant_form(
