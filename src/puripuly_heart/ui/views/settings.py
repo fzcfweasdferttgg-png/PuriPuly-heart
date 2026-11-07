@@ -2635,21 +2635,19 @@ class SettingsView(ft.Column):
         self._backup_card_slots_row = self._build_slot_row("backup", quick=True)
         translation_unit_controls = self._translation_provider_card.content.content.controls
         translation_unit_controls.append(ft.Container(height=12))
-        translation_unit_controls.append(
-            ft.Row(
-                [self._openai_compatible_card, self._local_llm_connection_card]
-                + list(self._translation_card_slots_row.controls),
-                spacing=8,
-            )
+        self._translation_card_row = ft.Row(
+            [self._openai_compatible_card, self._local_llm_connection_card]
+            + list(self._translation_card_slots_row.controls),
+            spacing=8,
         )
+        translation_unit_controls.append(self._translation_card_row)
         backup_unit_controls = self._backup_translation_card.content.content.controls
         backup_unit_controls.append(ft.Container(height=12))
-        backup_unit_controls.append(
-            ft.Row(
-                [self._backup_config_card] + list(self._backup_card_slots_row.controls),
-                spacing=8,
-            )
+        self._backup_card_row = ft.Row(
+            [self._backup_config_card] + list(self._backup_card_slots_row.controls),
+            spacing=8,
         )
+        backup_unit_controls.append(self._backup_card_row)
 
         self._http_extension_title = ft.Text(
             t("settings.http_extension.title"),
@@ -4365,11 +4363,11 @@ class SettingsView(ft.Column):
             backup_variant == TranslationModel.OPENAI_COMPATIBLE
         )
         self._backup_local_group.visible = backup_variant == TranslationModel.LOCAL_LLM
-        self._translation_card_slots_row.visible = translation_model in (
+        self._translation_card_row.visible = translation_model in (
             TranslationModel.OPENAI_COMPATIBLE,
             TranslationModel.LOCAL_LLM,
         )
-        self._backup_card_slots_row.visible = settings.backup_enabled and (
+        self._backup_card_row.visible = settings.backup_enabled and (
             backup_variant
             in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM)
         )
@@ -4380,8 +4378,8 @@ class SettingsView(ft.Column):
             self._backup_config_card,
             self._backup_network_group,
             self._backup_local_group,
-            self._translation_card_slots_row,
-            self._backup_card_slots_row,
+            self._translation_card_row,
+            self._backup_card_row,
         ):
             _update_control_if_mounted(control)
 

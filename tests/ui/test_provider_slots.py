@@ -166,20 +166,20 @@ def test_slot_rows_hide_when_variant_not_selected(
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
 
-    assert view._translation_card_slots_row.visible is False
-    assert view._backup_card_slots_row.visible is False
+    assert view._translation_card_row.visible is False
+    assert view._backup_card_row.visible is False
 
     view._on_llm_selected(TranslationModel.NONE.value)
-    assert view._translation_card_slots_row.visible is False
+    assert view._translation_card_row.visible is False
 
     view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
-    assert view._translation_card_slots_row.visible is True
+    assert view._translation_card_row.visible is True
 
     view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
-    assert view._translation_card_slots_row.visible is True
+    assert view._translation_card_row.visible is True
 
     view._on_backup_variant_selected(TranslationModel.OPENAI_COMPATIBLE.value)
-    assert view._backup_card_slots_row.visible is True
+    assert view._backup_card_row.visible is True
 
 
 def test_quick_switch_can_change_variant(
