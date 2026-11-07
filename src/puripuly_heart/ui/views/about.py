@@ -1,4 +1,4 @@
-"""About window content: compact program info and a selectable license viewer."""
+"""About window content: compact program info and the full license canvas."""
 
 from __future__ import annotations
 
@@ -9,9 +9,8 @@ import flet as ft
 from puripuly_heart import __version__
 from puripuly_heart.runtime_layout import current_runtime_layout
 from puripuly_heart.ui.about.contract import AboutSurfaceSlots
-from puripuly_heart.ui.about.licenses import parse_license_sections
 from puripuly_heart.ui.about.renderer import compose_about_surface
-from puripuly_heart.ui.flet_runtime import is_hover_active, update_control_if_mounted
+from puripuly_heart.ui.flet_runtime import is_hover_active
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
@@ -44,7 +43,7 @@ def _get_profile_image_path() -> str:
 
 
 class AboutView(ft.Column):
-    """About window content with compact info and a license section viewer."""
+    """About window content with compact info and the full license canvas."""
 
     # Special thanks name keys - add new names here and update locale bundles
     _SPECIAL_THANKS_NAME_KEYS = [
@@ -67,11 +66,8 @@ class AboutView(ft.Column):
 
     def __init__(self):
         super().__init__(expand=True, spacing=16)
-        self._sections = parse_license_sections(_load_third_party_notices())
-        self._selected_index = 0
-        self._component_rows: list[ft.Container] = []
         self._license_text = ft.Text(
-            value="",
+            value=_load_third_party_notices(),
             size=14,
             selectable=True,
             color=COLOR_ON_BACKGROUND,
@@ -79,7 +75,7 @@ class AboutView(ft.Column):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        """Build the compact info card and the license viewer card."""
+        """Build the compact info card and the full license canvas card."""
         regions = compose_about_surface(
             AboutSurfaceSlots(
                 info_content=self._build_info_content(),
@@ -89,11 +85,9 @@ class AboutView(ft.Column):
                     weight=ft.FontWeight.BOLD,
                     color=COLOR_SECONDARY,
                 ),
-                license_components=self._build_license_components(),
                 license_text=self._license_text,
             )
         )
-        self._apply_selection()
         self.controls = list(regions.controls)
 
     def _build_info_content(self) -> ft.Control:
@@ -212,43 +206,6 @@ class AboutView(ft.Column):
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
-
-    def _build_license_components(self) -> ft.Control:
-        rows = [
-            ft.Container(
-                content=ft.Text(
-                    section.title,
-                    size=14,
-                    max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                ),
-                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-                border_radius=8,
-                on_click=lambda _, idx=index: self._select_section(idx),
-            )
-            for index, section in enumerate(self._sections)
-        ]
-        self._component_rows = rows
-        return ft.Column(controls=rows, spacing=2)
-
-    def _select_section(self, index: int) -> None:
-        if not self._sections or not (0 <= index < len(self._sections)):
-            return
-        self._selected_index = index
-        self._apply_selection()
-        update_control_if_mounted(self)
-
-    def _apply_selection(self) -> None:
-        for index, row in enumerate(self._component_rows):
-            selected = index == self._selected_index
-            label = row.content
-            label.color = COLOR_PRIMARY if selected else COLOR_ON_BACKGROUND
-            label.weight = ft.FontWeight.BOLD if selected else ft.FontWeight.NORMAL
-            row.bgcolor = COLOR_DIVIDER if selected else None
-        if self._sections:
-            self._license_text.value = self._sections[self._selected_index].body
-        else:
-            self._license_text.value = ""
 
     def _on_name_hover(self, e):
         """Handle hover on name link."""

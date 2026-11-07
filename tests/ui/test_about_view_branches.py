@@ -71,6 +71,20 @@ def test_about_view_link_actions_handle_missing_page_gracefully(
     assert "https://github.com/febilly/Yakutan" in opened
 
 
+def test_about_view_shows_full_license_canvas(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_media(monkeypatch)
+    monkeypatch.setattr(
+        about_module,
+        "_load_third_party_notices",
+        lambda: "First\n\nbody one\n\n----\n\nSecond\n\nbody two\n",
+    )
+
+    view = AboutView()
+
+    assert view._license_text.value == "First\n\nbody one\n\n----\n\nSecond\n\nbody two\n"
+    assert not _collect_click_handlers(view._license_text)
+
+
 def test_about_view_special_thanks_names_render_from_i18n(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -79,7 +93,7 @@ def test_about_view_special_thanks_names_render_from_i18n(
         "about.special_thanks.name.sui_32c": "localized:SUI_32C",
         "about.special_thanks.name.nagikokoro": "localized:Nagikokoro",
         "about.special_thanks.name.motoka96": "localized:motoka96",
-        "about.special_thanks.name.ykol": "localized:_Ykol魚",
+        "about.special_thanks.name.ykol": "localized:_Ykol鱼",
         "about.special_thanks.name.kascr": "localized:kascr_",
         "about.special_thanks.name.just_monika_v": "localized:Just Monika V",
         "about.special_thanks.name.fluvia": "localized:FLUVIA",
@@ -130,29 +144,6 @@ def test_about_view_special_thanks_name_keys_exist_in_locale_bundles(locale: str
 def test_about_title_key_exists_in_locale_bundles(locale: str) -> None:
     bundle = i18n_module._load_bundle(locale)
     assert bundle.get("about.title")
-
-
-def test_about_view_license_selection_updates_text(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _stub_media(monkeypatch)
-    monkeypatch.setattr(
-        about_module,
-        "_load_third_party_notices",
-        lambda: "First\n\nbody one\n\n----\n\nSecond\n\nbody two\n",
-    )
-    view = AboutView()
-    assert view._license_text.value == "body one"
-
-    view._select_section(1)
-
-    assert view._selected_index == 1
-    assert view._license_text.value == "body two"
-    assert view._component_rows[1].content.color == about_module.COLOR_PRIMARY
-    assert view._component_rows[0].content.color == about_module.COLOR_ON_BACKGROUND
-
-    view._select_section(99)
-    assert view._selected_index == 1
 
 
 def test_about_view_hover_handlers_and_locale_refresh(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -22,16 +22,11 @@ def _wrap_card(content: ft.Control) -> ft.Container:
 
 
 def compose_about_surface(slots: AboutSurfaceSlots) -> AboutSurfaceRegions:
-    """Stack the info card and the license browser into one scrolling surface."""
+    """Stack the info card and the full license canvas into one scrolling surface."""
     info_card = _wrap_card(slots.info_content)
 
     licenses_content = ft.Column(
-        controls=[
-            slots.licenses_title,
-            slots.license_components,
-            ft.Divider(height=1, thickness=1),
-            slots.license_text,
-        ],
+        controls=[slots.licenses_title, slots.license_text],
         spacing=ABOUT_ROW_SPACING,
     )
     licenses_card = _wrap_card(licenses_content)

@@ -99,7 +99,6 @@ def test_compose_about_surface_keeps_the_accepted_card_order() -> None:
     slots = AboutSurfaceSlots(
         info_content=ft.Text("info"),
         licenses_title=ft.Text("title"),
-        license_components=ft.Text("components"),
         license_text=ft.Text("text"),
     )
     regions = compose_about_surface(slots)
@@ -114,10 +113,7 @@ def test_compose_about_surface_keeps_the_accepted_card_order() -> None:
 
     licenses_content = regions.licenses_card.content
     assert isinstance(licenses_content, ft.Column)
-    assert licenses_content.controls[0] is slots.licenses_title
-    assert licenses_content.controls[1] is slots.license_components
-    assert isinstance(licenses_content.controls[2], ft.Divider)
-    assert licenses_content.controls[3] is slots.license_text
+    assert licenses_content.controls == [slots.licenses_title, slots.license_text]
     assert regions.licenses_card.border_radius == LICENSES_CARD_BORDER_RADIUS
 
 

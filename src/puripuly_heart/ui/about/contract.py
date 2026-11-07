@@ -14,7 +14,6 @@ class AboutStateSink(Protocol):
 class AboutSurfaceSlots:
     info_content: ft.Control
     licenses_title: ft.Control
-    license_components: ft.Control
     license_text: ft.Control
 
 
