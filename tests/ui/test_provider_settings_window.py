@@ -154,14 +154,20 @@ def test_gear_opens_dialog_with_form_and_titles(
 
     view._on_openai_gear_click(None)
 
-    assert fake.opened["title"] == t("settings.translation.config_title")
+    assert fake.opened["title"] == "{}: {}".format(
+        t("settings.translation.config_title"),
+        t("settings.translation_variant.openai_compatible"),
+    )
     assert fake.opened["content"] is view._openai_form
 
     fake2 = _fake_settings_window()
     view.attach_provider_settings_window(fake2.window, lambda coro: coro)
     view._on_backup_gear_click(None)
 
-    assert fake2.opened["title"] == t("settings.backup_translation.config_title")
+    assert fake2.opened["title"] == "{}: {}".format(
+        t("settings.backup_translation.config_title"),
+        t("settings.translation_variant.openai_compatible"),
+    )
     assert fake2.opened["content"].controls == [
         view._backup_network_group,
         view._backup_local_group,
@@ -220,7 +226,15 @@ def test_gear_cards_visible_follow_variant_selection(
 
     view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
     assert view._openai_compatible_card.visible is True
-    assert view._openai_gear is not None
+    assert view._openai_gear is view._openai_compatible_card
+    assert (
+        view._openai_compatible_card
+        in view._translation_provider_card.content.content.controls
+    )
+    assert (
+        view._backup_config_card
+        in view._backup_translation_card.content.content.controls
+    )
 
     view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
     assert view._local_llm_connection_card.visible is True

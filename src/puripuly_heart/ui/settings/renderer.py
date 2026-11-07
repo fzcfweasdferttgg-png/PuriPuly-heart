@@ -65,7 +65,8 @@ def compose_settings_api_surface(
     ]
     if slots.openai_compatible_config is not None:
         rows.append(slots.openai_compatible_config)
-    rows.append(slots.local_llm_connection)
+    if slots.local_llm_connection is not None:
+        rows.append(slots.local_llm_connection)
     if slots.backup_translation_config is not None:
         rows.append(slots.backup_translation_config)
     rows.append(gpu_device_row)

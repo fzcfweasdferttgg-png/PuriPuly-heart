@@ -248,7 +248,11 @@ class ProviderSettingsWindow:
             controls=[
                 self._title_bar,
                 ft.Container(
-                    content=self._content,
+                    content=ft.Column(
+                        [self._content],
+                        expand=True,
+                        scroll=ft.ScrollMode.AUTO,
+                    ),
                     expand=True,
                     padding=PROVIDER_CONTENT_PADDING,
                 ),
@@ -260,7 +264,8 @@ class ProviderSettingsWindow:
                     padding=ft.Padding.only(
                         left=PROVIDER_CONTENT_PADDING,
                         right=PROVIDER_CONTENT_PADDING,
-                        bottom=PROVIDER_CONTENT_PADDING // 2,
+                        top=12,
+                        bottom=16,
                     ),
                 ),
             ],

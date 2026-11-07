@@ -150,13 +150,13 @@ class SettingsApiSurfaceSlots:
     stt_model: ft.Control
     gpu_llm: ft.Control
     model_assets: ft.Control
-    local_llm_connection: ft.Control
     http_extension: ft.Control | None = None
     peer_gpu_device: ft.Control | None = None
     shared_engine: ft.Control | None = None
     backup_translation: ft.Control | None = None
     openai_compatible_config: ft.Control | None = None
     backup_translation_config: ft.Control | None = None
+    local_llm_connection: ft.Control | None = None
 
     @classmethod
     def from_slot_provider(cls, provider: SettingsApiSlotProvider) -> SettingsApiSurfaceSlots:

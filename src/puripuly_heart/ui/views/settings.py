@@ -523,17 +523,17 @@ class SettingsView(ft.Column):
     def model_assets_control(self) -> ft.Control:
         return self._model_assets_card
 
-    def local_llm_connection_control(self) -> ft.Control:
-        return self._local_llm_connection_card
+    def local_llm_connection_control(self) -> ft.Control | None:
+        return None
 
     def backup_translation_control(self) -> ft.Control:
         return self._backup_translation_card
 
-    def openai_compatible_config_control(self) -> ft.Control:
-        return self._openai_compatible_card
+    def openai_compatible_config_control(self) -> ft.Control | None:
+        return None
 
-    def backup_translation_config_control(self) -> ft.Control:
-        return self._backup_config_card
+    def backup_translation_config_control(self) -> ft.Control | None:
+        return None
 
     def bind_settings_intents(
         self,
@@ -1062,15 +1062,6 @@ class SettingsView(ft.Column):
             on_hover=self._on_provider_gear_hover,
         )
 
-    def _build_provider_gear_host(self, gear: ft.Control) -> ft.Control:
-        return ft.Column(
-            controls=[
-                ft.Container(expand=True),
-                ft.Row([gear], alignment=ft.MainAxisAlignment.START),
-            ],
-            expand=True,
-        )
-
     def _on_provider_gear_hover(self, e) -> None:
         from puripuly_heart.ui.theme import COLOR_SURFACE
 
@@ -1122,7 +1113,10 @@ class SettingsView(ft.Column):
                 test_btn=self._openai_test_btn,
             )
             content = self._openai_form
-            title = t("settings.translation.config_title")
+            title = "{}: {}".format(
+                t("settings.translation.config_title"),
+                t("settings.translation_variant.openai_compatible"),
+            )
         elif kind == "translation_local":
             self._build_local_form_controls()
             self._local_llm_form = self._compose_local_form(
@@ -1138,7 +1132,10 @@ class SettingsView(ft.Column):
                 extra_body_error=self._local_llm_extra_body_error,
             )
             content = self._local_llm_form
-            title = t("settings.translation.config_title")
+            title = "{}: {}".format(
+                t("settings.translation.config_title"),
+                t("settings.translation_variant.local_llm"),
+            )
         else:
             self._build_backup_form_controls()
             content = ft.Column(
@@ -1147,6 +1144,14 @@ class SettingsView(ft.Column):
             )
             title = t("settings.backup_translation.config_title")
         display = self._provider_draft or self._provider_snapshot
+        if kind == "backup":
+            backup_variant = normalize_translation_model(display.backup_variant)
+            variant_label = t(
+                "settings.translation_variant.local_llm"
+                if backup_variant == TranslationModel.LOCAL_LLM
+                else "settings.translation_variant.openai_compatible"
+            )
+            title = f"{title}: {variant_label}"
         self._sync_translation_selection_controls(display)
         self._local_llm_base_url.value = display.local_llm_base_url
         self._local_llm_model.value = display.local_llm_model
@@ -1179,6 +1184,7 @@ class SettingsView(ft.Column):
         self._commit_backup_fields_from_controls()
         self._commit_local_llm_fields_from_controls()
         self._commit_backup_local_fields_from_controls()
+        self._rebuild_provider_form_controls()
         on_providers_changed = getattr(self, "on_providers_changed", None)
         if on_providers_changed is not None:
             on_providers_changed()
@@ -1194,6 +1200,41 @@ class SettingsView(ft.Column):
         self.has_provider_changes = any(
             edit_type is not SystemPromptEdit for edit_type in self._provider_edits
         )
+        self._rebuild_provider_form_controls()
+
+    def _rebuild_provider_form_controls(self) -> None:
+        """Recreate unmounted form controls so nothing touches a dead dialog session."""
+        self._build_openai_form_controls()
+        self._openai_form = self._compose_openai_form(
+            title=None,
+            provider=self._openai_provider,
+            model=self._openai_model,
+            fetch_btn=self._openai_fetch_btn,
+            api_key=self._openai_api_key,
+            test_btn=self._openai_test_btn,
+        )
+        self._build_local_form_controls()
+        self._local_llm_form = self._compose_local_form(
+            title=None,
+            base_url=self._local_llm_base_url,
+            test_btn=self._local_llm_test_btn,
+            model=self._local_llm_model,
+            fetch_btn=self._local_llm_fetch_btn,
+            api_key=self._local_llm_api_key,
+            api_key_helper=self._local_llm_api_key_helper,
+            extra_body=self._local_llm_extra_body,
+            extra_body_helper=self._local_llm_extra_body_helper,
+            extra_body_error=self._local_llm_extra_body_error,
+        )
+        self._build_backup_form_controls()
+        display = self._provider_draft or self._provider_snapshot
+        if display is not None:
+            self._sync_translation_selection_controls(display)
+            self._local_llm_base_url.value = display.local_llm_base_url
+            self._local_llm_model.value = display.local_llm_model
+            self._local_llm_extra_body.value = display.local_llm_extra_body_json
+            self._clear_local_llm_extra_body_error()
+            self._clear_backup_local_extra_body_error()
 
     def _set_unit_card_value_text(
         self, control: ft.Container, text: str, *, size: int = 28
@@ -2330,13 +2371,10 @@ class SettingsView(ft.Column):
             extra_body_helper=self._local_llm_extra_body_helper,
             extra_body_error=self._local_llm_extra_body_error,
         )
-        self._local_llm_gear = self._build_provider_settings_gear(
+        self._local_llm_connection_card = self._build_provider_settings_gear(
             self._on_local_llm_gear_click
         )
-        self._local_llm_connection_card = self._wrap_card(
-            self._build_provider_gear_host(self._local_llm_gear),
-            height=96,
-        )
+        self._local_llm_gear = self._local_llm_connection_card
         self._local_llm_connection_card.visible = False
         self._backup_translation_title = ft.Text(
             t("settings.backup_translation.title"),
@@ -2365,24 +2403,25 @@ class SettingsView(ft.Column):
             api_key=self._openai_api_key,
             test_btn=self._openai_test_btn,
         )
-        self._openai_gear = self._build_provider_settings_gear(
+        self._openai_compatible_card = self._build_provider_settings_gear(
             self._on_openai_gear_click
         )
-        self._openai_compatible_card = self._wrap_card(
-            self._build_provider_gear_host(self._openai_gear),
-            height=96,
-        )
+        self._openai_gear = self._openai_compatible_card
         self._openai_compatible_card.visible = False
 
         self._build_backup_form_controls()
-        self._backup_gear = self._build_provider_settings_gear(
+        self._backup_config_card = self._build_provider_settings_gear(
             self._on_backup_gear_click
         )
-        self._backup_config_card = self._wrap_card(
-            self._build_provider_gear_host(self._backup_gear),
-            height=96,
-        )
+        self._backup_gear = self._backup_config_card
         self._backup_config_card.visible = False
+        translation_unit_controls = self._translation_provider_card.content.content.controls
+        translation_unit_controls.append(ft.Container(height=12))
+        translation_unit_controls.append(self._openai_compatible_card)
+        translation_unit_controls.append(self._local_llm_connection_card)
+        backup_unit_controls = self._backup_translation_card.content.content.controls
+        backup_unit_controls.append(ft.Container(height=12))
+        backup_unit_controls.append(self._backup_config_card)
 
         self._http_extension_title = ft.Text(
             t("settings.http_extension.title"),
