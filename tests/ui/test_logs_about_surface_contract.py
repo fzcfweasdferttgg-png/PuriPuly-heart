@@ -6,10 +6,7 @@ import pytest
 from puripuly_heart.ui import i18n as i18n_module
 from puripuly_heart.ui.about.contract import AboutSurfaceSlots
 from puripuly_heart.ui.about.renderer import (
-    ABOUT_INFO_EXPAND,
-    ABOUT_LICENSE_COMPONENTS_EXPAND,
-    ABOUT_LICENSE_TEXT_EXPAND,
-    ABOUT_LICENSES_EXPAND,
+    LICENSES_CARD_BORDER_RADIUS,
     compose_about_surface,
 )
 from puripuly_heart.ui.logs.contract import LogsSurfaceSlots
@@ -90,10 +87,12 @@ def test_logs_and_about_surface_structure_is_locale_stable(locale: str) -> None:
     assert len(logs_view._header_button_row.controls) == 2
 
     about_view = AboutView()
-    assert len(about_view.controls) == 2
-    info_card, licenses_card = about_view.controls
-    assert isinstance(info_card, ft.Container)
-    assert isinstance(licenses_card, ft.Container)
+    assert len(about_view.controls) == 1
+    root_scroll = about_view.controls[0]
+    assert isinstance(root_scroll, ft.Column)
+    assert root_scroll.scroll == ft.ScrollMode.AUTO
+    assert len(root_scroll.controls) == 2
+    assert all(isinstance(card, ft.Container) for card in root_scroll.controls)
 
 
 def test_compose_about_surface_keeps_the_accepted_card_order() -> None:
@@ -105,15 +104,21 @@ def test_compose_about_surface_keeps_the_accepted_card_order() -> None:
     )
     regions = compose_about_surface(slots)
 
-    assert regions.controls == (regions.info_card, regions.licenses_card)
-    assert regions.info_card.expand == ABOUT_INFO_EXPAND
-    assert regions.licenses_card.expand == ABOUT_LICENSES_EXPAND
-    assert regions.components_scroll.controls == [slots.license_components]
-    assert regions.components_scroll.scroll == ft.ScrollMode.AUTO
-    assert regions.components_scroll.expand == ABOUT_LICENSE_COMPONENTS_EXPAND
-    assert regions.text_scroll.controls == [slots.license_text]
-    assert regions.text_scroll.scroll == ft.ScrollMode.AUTO
-    assert regions.text_scroll.expand == ABOUT_LICENSE_TEXT_EXPAND
+    assert regions.controls == (regions.root_scroll,)
+    assert regions.root_scroll.controls == [regions.info_card, regions.licenses_card]
+    assert regions.root_scroll.scroll == ft.ScrollMode.AUTO
+    assert regions.root_scroll.expand is True
+
+    assert regions.info_card.content is slots.info_content
+    assert regions.info_card.border_radius == LICENSES_CARD_BORDER_RADIUS
+
+    licenses_content = regions.licenses_card.content
+    assert isinstance(licenses_content, ft.Column)
+    assert licenses_content.controls[0] is slots.licenses_title
+    assert licenses_content.controls[1] is slots.license_components
+    assert isinstance(licenses_content.controls[2], ft.Divider)
+    assert licenses_content.controls[3] is slots.license_text
+    assert regions.licenses_card.border_radius == LICENSES_CARD_BORDER_RADIUS
 
 
 def test_about_view_reapplies_locale_through_the_renderer() -> None:

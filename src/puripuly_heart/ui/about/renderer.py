@@ -6,69 +6,55 @@ from puripuly_heart.ui.about.contract import AboutSurfaceRegions, AboutSurfaceSl
 from puripuly_heart.ui.theme import COLOR_SURFACE
 
 ABOUT_ROW_SPACING = 12
-ABOUT_INFO_EXPAND = 2
-ABOUT_LICENSES_EXPAND = 3
-ABOUT_LICENSE_COMPONENTS_EXPAND = 2
-ABOUT_LICENSE_TEXT_EXPAND = 3
+ABOUT_CARD_SPACING = 16
 LICENSES_CARD_BORDER_RADIUS = 16
+LICENSES_CARD_PADDING = 24
 
 
-def _wrap_card(content: ft.Control, *, expand: int) -> ft.Container:
+def _wrap_card(content: ft.Control) -> ft.Container:
     return ft.Container(
-        content=ft.Container(content=content, expand=True, padding=24),
+        content=content,
         bgcolor=COLOR_SURFACE,
         border_radius=LICENSES_CARD_BORDER_RADIUS,
-        expand=expand,
+        padding=LICENSES_CARD_PADDING,
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
     )
 
 
 def compose_about_surface(slots: AboutSurfaceSlots) -> AboutSurfaceRegions:
-    """Arrange the adaptive info card and the scrolling license browser card."""
-    info_scroll = ft.Column(
-        controls=[slots.info_content],
-        expand=True,
-        scroll=ft.ScrollMode.AUTO,
-    )
-    info_card = _wrap_card(info_scroll, expand=ABOUT_INFO_EXPAND)
+    """Stack the info card and the license browser into one scrolling surface."""
+    info_card = _wrap_card(slots.info_content)
 
-    components_scroll = ft.Column(
-        controls=[slots.license_components],
-        expand=ABOUT_LICENSE_COMPONENTS_EXPAND,
-        scroll=ft.ScrollMode.AUTO,
-    )
-    text_scroll = ft.Column(
-        controls=[slots.license_text],
-        expand=ABOUT_LICENSE_TEXT_EXPAND,
-        scroll=ft.ScrollMode.AUTO,
-    )
     licenses_content = ft.Column(
         controls=[
             slots.licenses_title,
-            components_scroll,
+            slots.license_components,
             ft.Divider(height=1, thickness=1),
-            text_scroll,
+            slots.license_text,
         ],
-        expand=True,
         spacing=ABOUT_ROW_SPACING,
     )
-    licenses_card = _wrap_card(licenses_content, expand=ABOUT_LICENSES_EXPAND)
+    licenses_card = _wrap_card(licenses_content)
+
+    root_scroll = ft.Column(
+        controls=[info_card, licenses_card],
+        spacing=ABOUT_CARD_SPACING,
+        expand=True,
+        scroll=ft.ScrollMode.AUTO,
+    )
 
     return AboutSurfaceRegions(
-        controls=(info_card, licenses_card),
+        controls=(root_scroll,),
+        root_scroll=root_scroll,
         info_card=info_card,
         licenses_card=licenses_card,
-        components_scroll=components_scroll,
-        text_scroll=text_scroll,
     )
 
 
 __all__ = [
-    "ABOUT_INFO_EXPAND",
-    "ABOUT_LICENSE_COMPONENTS_EXPAND",
-    "ABOUT_LICENSE_TEXT_EXPAND",
-    "ABOUT_LICENSES_EXPAND",
+    "ABOUT_CARD_SPACING",
     "ABOUT_ROW_SPACING",
     "LICENSES_CARD_BORDER_RADIUS",
+    "LICENSES_CARD_PADDING",
     "compose_about_surface",
 ]

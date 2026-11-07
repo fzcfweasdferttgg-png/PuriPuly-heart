@@ -40,6 +40,7 @@ class TitleBar(ft.Container):
             self._about_item = ft.Container(
                 content=ft.Row([self._about_icon, self._about_label], spacing=8),
                 height=36,
+                margin=ft.Padding.only(left=12) if on_about is None else None,
                 padding=ft.Padding.only(left=12, right=12),
                 border_radius=10,
                 border=ft.Border.all(1, COLOR_DIVIDER),

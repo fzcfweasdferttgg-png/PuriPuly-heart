@@ -21,10 +21,9 @@ class AboutSurfaceSlots:
 @dataclass(frozen=True, slots=True)
 class AboutSurfaceRegions:
     controls: tuple[ft.Control, ...]
+    root_scroll: ft.Column
     info_card: ft.Container
     licenses_card: ft.Container
-    components_scroll: ft.Column
-    text_scroll: ft.Column
 
 
 __all__ = [
