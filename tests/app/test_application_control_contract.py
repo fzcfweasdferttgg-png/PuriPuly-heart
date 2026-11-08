@@ -1529,7 +1529,7 @@ async def test_control_model_commands_download_import_delete_cancel_and_report_a
         )
 
         status = await control.query("models.status", {})
-        assert [item["status"] for item in status["assets"]] == ["missing", "missing"]
+        assert [item["status"] for item in status["assets"]] == ["missing"]
 
         download = await control.submit(
             "models.download",

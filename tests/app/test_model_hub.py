@@ -70,12 +70,8 @@ async def test_list_gguf_files_filters_by_extension() -> None:
         hf_files = await list_gguf_files(
             ModelRepo(repo_id="x/y", source="hf", name="y"), client=client
         )
-        ms_files = await list_gguf_files(
-            ModelRepo(repo_id="x/y", source="ms", name="y"), client=client
-        )
 
     assert hf_files == (RepoFile(path="model-Q4.gguf", size_bytes=7),)
-    assert ms_files == (RepoFile(path="a/model.gguf", size_bytes=9),)
 
 
 async def test_download_file_streams_to_the_target_and_reports_progress(tmp_path) -> None:
@@ -136,3 +132,88 @@ async def test_download_file_honours_the_cancel_event(tmp_path) -> None:
 
     assert caught.value.failure_code == "cancelled"
     assert not (tmp_path / "model.gguf").exists()
+
+
+async def test_ms_search_lists_owner_models_and_ranks_by_downloads(monkeypatch) -> None:
+    import puripuly_heart.app.services.model_hub as model_hub
+
+    calls = []
+
+    def fake_list(owner, *, limit):
+        calls.append((owner, limit))
+        return [
+            {"Id": "u/small", "Name": "small", "Downloads": 2},
+            {"Id": "u/big", "Name": "big", "Downloads": 9},
+            {"Id": "broken", "Name": "broken"},
+        ]
+
+    monkeypatch.setattr(model_hub, "_ms_list_models", fake_list)
+    repos = await search_repos("someone", source="ms")
+
+    assert calls == [("someone", model_hub.SEARCH_LIMIT)]
+    assert [repo.repo_id for repo in repos] == ["u/big", "u/small"]
+    assert repos[0].source == "ms"
+    assert repos[0].name == "big"
+
+
+async def test_ms_search_accepts_repo_id_and_link_without_listing(monkeypatch) -> None:
+    import puripuly_heart.app.services.model_hub as model_hub
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("owner listing must not run")
+
+    monkeypatch.setattr(model_hub, "_ms_list_models", fail)
+
+    by_id = await search_repos("user/repo", source="ms")
+    assert [repo.repo_id for repo in by_id] == ["user/repo"]
+    assert by_id[0].source == "ms"
+
+    by_link = await search_repos("https://modelscope.cn/models/user/other", source="ms")
+    assert [repo.repo_id for repo in by_link] == ["user/other"]
+
+
+async def test_ms_files_and_download_go_through_the_sdk(monkeypatch, tmp_path) -> None:
+    import puripuly_heart.app.services.model_hub as model_hub
+
+    monkeypatch.setattr(
+        model_hub,
+        "_ms_get_model_files",
+        lambda repo_id: [
+            {"Path": "sub/model-Q4.gguf", "Size": 8},
+            {"Path": "sub", "Size": 0},
+            {"Path": "sub/notes.txt", "Size": 2},
+        ],
+    )
+    files = await list_gguf_files(ModelRepo(repo_id="u/r", source="ms", name="r"))
+    assert files == (RepoFile(path="sub/model-Q4.gguf", size_bytes=8),)
+
+    def fake_download(repo_id, file_path, *, file_name, file_size, local_dir, on_update, cancel_event):
+        assert (repo_id, file_path) == ("u/r", "sub/model-Q4.gguf")
+        (local_dir / file_name).write_bytes(b"12345678")
+        on_update(8, 8)
+
+    monkeypatch.setattr(model_hub, "_ms_download_file", fake_download)
+    path = await download_file(
+        ModelRepo(repo_id="u/r", source="ms", name="r"),
+        files[0],
+        target_dir=tmp_path,
+    )
+    assert path.read_bytes() == b"12345678"
+
+
+async def test_ms_download_cancel_is_reported(monkeypatch, tmp_path) -> None:
+    import puripuly_heart.app.services.model_hub as model_hub
+
+    def fake_download(repo_id, file_path, *, file_name, file_size, local_dir, on_update, cancel_event):
+        raise model_hub._CancelDownload()
+
+    monkeypatch.setattr(model_hub, "_ms_download_file", fake_download)
+    with pytest.raises(ModelRepoError) as caught:
+        await download_file(
+            ModelRepo(repo_id="u/r", source="ms", name="r"),
+            RepoFile(path="m.gguf", size_bytes=4),
+            target_dir=tmp_path,
+        )
+
+    assert caught.value.failure_code == "cancelled"
+    assert not (tmp_path / "m.gguf").exists()

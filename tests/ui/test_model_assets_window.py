@@ -32,7 +32,7 @@ class Entry:
 class Application:
     def __init__(self) -> None:
         self.entries: tuple[Entry, ...] = ()
-        self.operation_progress = None
+        self.model_operation_progress = None
 
     def model_asset_entries(self):
         return self.entries

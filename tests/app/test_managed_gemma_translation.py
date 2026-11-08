@@ -684,7 +684,7 @@ async def test_asset_import_uses_requested_profile_and_reuses_only_verified_inst
         reused = await owner.install_assets(source="local", model_id=model_id)
 
         assert installed == reused == assets.InstalledGemmaManifest.expected(spec)
-        install_dir = tmp_path / "models" / spec.install_dirname
+        install_dir = assets.default_gemma_install_dir(spec)
         assert assets.validate_gemma_install(install_dir, spec=spec) == installed
         assert {path.name for path in install_dir.iterdir()} == {
             *contents,
@@ -774,7 +774,9 @@ async def test_cancelled_local_import_retains_reader_and_lease_until_settled(
         done, _ = await asyncio.wait(watched, timeout=0.05)
         assert not done
         assert len(readers) == 1 and not readers[0].closed
-        lease = provisioning.LocalSTTProvisioningLease.acquire(model_root=model_root, wait=False)
+        lease = provisioning.LocalSTTProvisioningLease.acquire(
+            model_root=model_root / "llama", wait=False
+        )
         if lease is not None:
             lease.close()
         assert lease is None
@@ -794,10 +796,12 @@ async def test_cancelled_local_import_retains_reader_and_lease_until_settled(
             assert runtime.close_count == 1
         assert all(reader.closed for reader in readers)
         assert not assets.default_gemma_install_dir(spec).exists()
-        assert not tuple(model_root.glob("*.staging-*"))
+        assert not tuple((model_root / "llama").glob("*.staging-*"))
         assert all(status.state != "ready" for status in statuses)
         assert not owner.cancel_assets(spec.model_id)
-        lease = provisioning.LocalSTTProvisioningLease.acquire(model_root=model_root, wait=False)
+        lease = provisioning.LocalSTTProvisioningLease.acquire(
+            model_root=model_root / "llama", wait=False
+        )
         assert lease is not None
         lease.close()
     finally:

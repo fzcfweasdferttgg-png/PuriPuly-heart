@@ -90,6 +90,21 @@ def test_ui_application_contract_covers_every_translator_app_boundary_access() -
     assert "_get_" not in startup_port_source
 
 
+def test_model_manager_view_calls_exist_on_the_ui_application_contract() -> None:
+    view_path = REPO_ROOT / "src" / "puripuly_heart" / "ui" / "views" / "model_assets.py"
+    tree = ast.parse(view_path.read_text(encoding="utf-8"))
+    accessed = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Attribute)
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == "self"
+        and node.value.attr == "_application"
+    }
+    assert accessed <= _contract_members(UiApplicationPort)
+
+
 def test_ui_boundary_implementations_match_every_declared_contract_signature() -> None:
     _assert_contract_signatures(UiApplicationPort, UiApplicationBoundary)
     _assert_contract_signatures(UiPresentationPort, FletUiPresentationAdapter)

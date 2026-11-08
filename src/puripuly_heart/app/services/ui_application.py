@@ -1140,6 +1140,28 @@ class UiApplicationBoundary:
     async def delete_model_asset(self, model_id: str) -> object:
         return await self._provider.delete_model_asset(model_id)
 
+    async def search_model_repos(self, query: str, source: str) -> tuple[object, ...]:
+        return await self._provider.search_model_repos(query, source)
+
+    async def list_model_repos(self, owner: str, source: str) -> tuple[object, ...]:
+        return await self._provider.list_model_repos(owner, source)
+
+    async def install_catalog_model(self, model_id: str, quant: str) -> object:
+        return await self._provider.install_catalog_model(model_id, quant)
+
+    async def model_repo_files(self, repo: object) -> tuple[object, ...]:
+        return await self._provider.model_repo_files(repo)
+
+    async def install_model_file(self, repo: object, file: object) -> object:
+        return await self._provider.install_model_file(repo, file)
+
+    async def add_model_file(self, path: Path) -> object:
+        return await self._provider.add_model_file(path)
+
+    @property
+    def model_operation_progress(self) -> tuple[str, str, int | None] | None:
+        return self._provider.model_operation_progress
+
 
 for _intent_method_name in UI_APPLICATION_USER_INTENT_METHODS:
     setattr(

@@ -83,9 +83,9 @@ def _write_valid_install(root: Path, manifest: LocalSTTAssetManifest) -> None:
 def test_default_local_stt_paths_use_runtime_layout_model_root() -> None:
     layout = current_runtime_layout()
 
-    assert default_local_stt_model_root() == layout.model_cache_root
+    assert default_local_stt_model_root() == layout.model_cache_root / "transcribe"
     model_dir = default_local_stt_model_dir("test-model")
-    assert model_dir == layout.model_cache_root / "test-model"
+    assert model_dir == layout.model_cache_root / "transcribe" / "test-model"
     assert default_local_stt_installed_manifest_path(model_dir) == (
         model_dir / "installed-manifest.json"
     )

@@ -5,6 +5,7 @@ import logging
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from puripuly_heart.app.services.model_assets_catalog import ModelAssetChoice, model_asset_choices
@@ -14,6 +15,7 @@ from puripuly_heart.app.services.model_hub import (
     ModelRepoError,
     download_file as hub_download_file,
     list_gguf_files as hub_list_gguf_files,
+    list_repos as hub_list_repos,
     search_repos as hub_search_repos,
 )
 from puripuly_heart.core.feature_diagnostics import log_feature
@@ -55,6 +57,8 @@ class ModelAssetEntry:
     importable: bool = False
     required_files: tuple[str, ...] = ()
     origin: str = "catalog"
+    files: tuple[str, ...] = ()
+    source: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -68,6 +72,8 @@ class ModelAssetEntry:
             "importable": self.importable,
             "required_files": list(self.required_files),
             "origin": self.origin,
+            "files": list(self.files),
+            "source": self.source,
         }
 
 
@@ -76,6 +82,18 @@ class _Operation:
     model_id: str
     kind: str
     progress_percent: int | None = None
+
+
+@lru_cache(maxsize=None)
+def _choice_files(choice: ModelAssetChoice) -> tuple[str, ...]:
+    """File names behind one catalog choice, for cross-source dedupe."""
+    if choice.purpose == "translation":
+        return tuple(choice.required_files)
+    try:
+        manifest = load_local_stt_asset_manifest(choice.model_id)
+    except Exception:
+        return ()
+    return tuple(Path(item.relative_path).name for item in manifest.files)
 
 
 def _failure_code(error: BaseException) -> str:
@@ -102,6 +120,8 @@ class ModelAssetsApplication:
     def entries(self) -> tuple[ModelAssetEntry, ...]:
         entries: list[ModelAssetEntry] = []
         for choice in self.choices:
+            if choice.purpose == "translation":
+                continue
             status = self._integrity.get(choice.model_id, "missing")
             progress = None
             operation = self._operation
@@ -122,6 +142,7 @@ class ModelAssetsApplication:
                     failure_code=self._failures.get(choice.model_id),
                     importable=choice.importable,
                     required_files=choice.required_files,
+                    files=_choice_files(choice),
                 )
             )
         for record in self._registry().load():
@@ -144,12 +165,38 @@ class ModelAssetsApplication:
                     progress_percent=progress,
                     failure_code=self._failures.get(record.model_id),
                     origin=record.origin,
+                    files=tuple(file.name for file in record.files),
+                    source=record.source,
                 )
             )
         return tuple(entries)
 
     def entry(self, model_id: str) -> ModelAssetEntry:
-        return next(item for item in self.entries() if item.model_id == model_id)
+        for item in self.entries():
+            if item.model_id == model_id:
+                return item
+        choice = self._choice(model_id)
+        status = self._integrity.get(model_id) or self._inspect_one(choice)
+        progress = None
+        operation = self._operation
+        if operation is not None and operation.model_id == model_id:
+            status = {"delete": "deleting", "import": "importing"}.get(
+                operation.kind, "downloading"
+            )
+            progress = operation.progress_percent
+        return ModelAssetEntry(
+            model_id=choice.model_id,
+            name=choice.name,
+            description_key=choice.description_key,
+            purpose=choice.purpose,
+            size_bytes=choice.size_bytes,
+            status=status,
+            progress_percent=progress,
+            failure_code=self._failures.get(model_id),
+            importable=choice.importable,
+            required_files=choice.required_files,
+            files=_choice_files(choice),
+        )
 
     @property
     def busy(self) -> bool:
@@ -188,11 +235,34 @@ class ModelAssetsApplication:
             )
         return await self._run(choice, "import", source="local", files=files)
 
-    async def search_hub(self, query: str) -> tuple[ModelRepo, ...]:
+    async def search_hub(self, query: str, source: str = "hf") -> tuple[ModelRepo, ...]:
         try:
-            return await hub_search_repos(query)
+            return await hub_search_repos(query, source=source)
         except ModelRepoError as error:
             raise ModelAssetsError(str(error), failure_code=error.failure_code) from error
+
+    async def list_model_repos(self, owner: str, source: str) -> tuple[ModelRepo, ...]:
+        try:
+            return await hub_list_repos(owner, source=source)
+        except ModelRepoError as error:
+            raise ModelAssetsError(str(error), failure_code=error.failure_code) from error
+
+    async def install_catalog_model(self, model_id: str, quant: str) -> ModelAssetEntry:
+        from puripuly_heart.core.transcribe_catalog import load_transcribe_catalog
+
+        model = next(
+            (item for item in load_transcribe_catalog() if item.model_id == model_id),
+            None,
+        )
+        if model is None:
+            raise ModelAssetsError("Unknown model", failure_code="unknown_model")
+        download = model.download(quant)
+        if download is None:
+            raise ModelAssetsError("Unknown quant", failure_code="unknown_model")
+        return await self.install_hub_file(
+            ModelRepo(repo_id=model.repo, source="hf", name=model.name),
+            RepoFile(path=download.filename, size_bytes=download.size_bytes),
+        )
 
     async def hub_files(self, repo: ModelRepo) -> tuple[RepoFile, ...]:
         try:
@@ -204,7 +274,7 @@ class ModelAssetsApplication:
         registry = self._registry()
         root = self.model_root or default_local_stt_model_root()
         stem = Path(file.name).stem
-        model_id = registry.allocate_model_id(f"{repo.name}-{stem}")
+        model_id = registry.allocate_model_id(stem)
 
         async def action() -> None:
             target_dir = root / model_id

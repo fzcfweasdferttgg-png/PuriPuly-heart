@@ -532,6 +532,32 @@ class UiProviderRuntimeAdapter:
     async def delete_model_asset(self, model_id: str) -> object:
         return await self._require_model_assets().delete(model_id)
 
+    async def search_model_repos(self, query: str, source: str) -> tuple[object, ...]:
+        return await self._require_model_assets().search_hub(query, source)
+
+    async def list_model_repos(self, owner: str, source: str) -> tuple[object, ...]:
+        return await self._require_model_assets().list_model_repos(owner, source)
+
+    async def install_catalog_model(self, model_id: str, quant: str) -> object:
+        return await self._require_model_assets().install_catalog_model(model_id, quant)
+
+    async def model_repo_files(self, repo: object) -> tuple[object, ...]:
+        return await self._require_model_assets().hub_files(repo)
+
+    async def install_model_file(self, repo: object, file: object) -> object:
+        return await self._require_model_assets().install_hub_file(repo, file)
+
+    async def add_model_file(self, path: Path) -> object:
+        return await self._require_model_assets().add_local_file(Path(path))
+
+    @property
+    def model_operation_progress(self) -> tuple[str, str, int | None] | None:
+        return (
+            self.model_assets.operation_progress
+            if self.model_assets is not None
+            else None
+        )
+
     def _require_model_assets(self) -> ModelAssetsApplication:
         if self.model_assets is None:
             raise RuntimeError("Model assets are unavailable")

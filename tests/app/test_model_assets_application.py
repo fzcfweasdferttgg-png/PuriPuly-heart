@@ -106,8 +106,10 @@ async def test_entries_report_disk_integrity_without_touching_owners(tmp_path) -
     entries = {entry.model_id: entry for entry in await service.refresh()}
 
     assert entries[CPU_MODEL_ID].status == "missing"
-    assert entries[GEMMA_ID].status == "invalid"
-    assert entries[GEMMA_ID].required_files == ("model.gguf", "draft.gguf")
+    assert GEMMA_ID not in entries, "manager listings exclude llama models"
+    gemma = service.entry(GEMMA_ID)
+    assert gemma.status == "invalid"
+    assert gemma.required_files == ("model.gguf", "draft.gguf")
     assert provisioning.requests == []
 
 

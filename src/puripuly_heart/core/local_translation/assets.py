@@ -238,7 +238,7 @@ class GemmaInstallState:
 
 def default_gemma_install_dir(spec: GemmaModelSpec | None = None) -> Path:
     resolved = spec or e4b_gemma_spec()
-    return default_models_dir() / resolved.install_dirname
+    return default_models_dir() / "llama" / resolved.install_dirname
 
 
 def _sha256_file(path: Path, check_cancelled: Callable[[], None] | None = None) -> str:

@@ -211,7 +211,7 @@ class LocalSTTAssetManifest:
 
 
 def default_local_stt_model_root() -> Path:
-    return current_runtime_layout().model_cache_root
+    return current_runtime_layout().model_cache_root / "transcribe"
 
 
 def default_local_stt_model_dir(model_id: str = DEFAULT_LOCAL_STT_MODEL_ID) -> Path:
