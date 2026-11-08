@@ -1,4 +1,4 @@
-"""Model library body: built-in catalog, online search and local GGUF files."""
+"""Model manager body: download, file management and registration of STT models."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from pathlib import Path
 
 import flet as ft
 
-from puripuly_heart.ui.components.modal_kit import CARD_SPACING
-from puripuly_heart.ui.flet_runtime import is_hover_active, update_control_if_mounted
+from puripuly_heart.ui.flet_runtime import update_control_if_mounted
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.theme import (
     COLOR_BACKGROUND,
@@ -26,7 +25,9 @@ from puripuly_heart.ui.theme import (
 logger = logging.getLogger(__name__)
 
 RENDER_INTERVAL_S = 0.25
-_NOTICE_TEXT_SIZE = 14
+TEXT_SIZE = 13
+HEADER_SIZE = 12
+ROW_HEIGHT = 32
 _ERROR_KEYS = frozenset(
     {
         "connection_failed",
@@ -50,6 +51,7 @@ _ORIGIN_KEYS = {
     "local": "model_assets.origin.local",
 }
 _SOURCE_LABELS = {"hf": "Hugging Face", "ms": "ModelScope"}
+_COLUMN_FLEX = (3, 1, 2, 2)
 
 ModelAssetsRunTask = Callable[[Callable[[], Awaitable[None]]], object]
 
@@ -72,113 +74,44 @@ def _failure_label(code: str | None) -> str | None:
     return t("model_assets.error." + (code if code in _ERROR_KEYS else "download_failed"))
 
 
-class _ActionChip(ft.Container):
-    """Small action button used on model rows."""
+class _TableRow(ft.Container):
+    """One table row: four cells and a selection highlight."""
 
-    def __init__(
-        self,
-        label: str,
-        *,
-        on_click: Callable[[], None],
-        primary: bool = False,
-        enabled: bool = True,
-    ) -> None:
-        self._on_click = on_click
-        self._enabled = enabled
-        self._hovered = False
-        self._primary = primary
-        self.label_text = ft.Text(
-            label,
-            size=15,
-            weight=ft.FontWeight.BOLD,
-            text_align=ft.TextAlign.CENTER,
-            max_lines=1,
-        )
+    def __init__(self, key: str, *, on_click: Callable[[str], None]) -> None:
+        self.cells = [
+            ft.Text(
+                "",
+                size=TEXT_SIZE,
+                color=COLOR_NEUTRAL_DARK,
+                max_lines=1,
+                overflow=ft.TextOverflow.ELLIPSIS,
+            )
+            for _ in range(4)
+        ]
+        cells = [
+            ft.Container(content=cell, expand=flex, padding=ft.Padding.only(right=8))
+            for cell, flex in zip(self.cells, _COLUMN_FLEX, strict=True)
+        ]
         super().__init__(
-            content=self.label_text,
-            padding=ft.Padding.symmetric(horizontal=16, vertical=8),
-            border_radius=10,
-            border=ft.Border.all(1, COLOR_DIVIDER),
-            alignment=ft.Alignment.CENTER,
-            on_click=self._handle_click,
-            on_hover=self._handle_hover,
-        )
-        self._paint()
-
-    def _handle_click(self, _event) -> None:
-        if self._enabled:
-            self._on_click()
-
-    def _handle_hover(self, event) -> None:
-        self._hovered = is_hover_active(event)
-        self._paint()
-        with contextlib.suppress(Exception):
-            self.update()
-
-    def _paint(self) -> None:
-        self.disabled = not self._enabled
-        if self._primary and self._enabled:
-            self.bgcolor = COLOR_PRIMARY
-            self.label_text.color = ft.Colors.WHITE
-            return
-        self.bgcolor = COLOR_SURFACE
-        if not self._enabled:
-            self.label_text.color = ft.Colors.with_opacity(0.35, COLOR_NEUTRAL_DARK)
-            return
-        self.label_text.color = COLOR_PRIMARY if self._hovered else COLOR_NEUTRAL_DARK
-
-
-class _ModelRow(ft.Container):
-    """One model (or one source file): name, detail line and action chips."""
-
-    def __init__(self, name: str) -> None:
-        self.title_text = ft.Text(
-            name,
-            size=18,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL_DARK,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self.detail_text = ft.Text(
-            "",
-            size=14,
-            color=COLOR_SECONDARY,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self.actions = ft.Row(spacing=8, alignment=ft.MainAxisAlignment.END)
-        super().__init__(
-            content=ft.Row(
-                [
-                    ft.Column([self.title_text, self.detail_text], spacing=4, expand=True),
-                    self.actions,
-                ],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
-            ),
-            padding=ft.Padding.symmetric(horizontal=20, vertical=12),
-            border_radius=16,
+            content=ft.Row(controls=cells, spacing=8),
+            height=ROW_HEIGHT,
+            padding=ft.Padding.symmetric(horizontal=8),
+            alignment=ft.Alignment.CENTER_LEFT,
+            border=ft.Border.only(bottom=ft.BorderSide(1, COLOR_DIVIDER)),
             bgcolor=COLOR_SURFACE,
-            border=ft.Border.all(1, COLOR_DIVIDER),
+            on_click=lambda _event, key=key: on_click(key),
         )
-        self._actions_signature: tuple | None = None
 
-    def refresh(
-        self,
-        *,
-        detail: str,
-        actions_signature: tuple,
-        build_actions: Callable[[], list],
-    ) -> None:
-        self.detail_text.value = detail
-        if actions_signature != self._actions_signature:
-            self._actions_signature = actions_signature
-            self.actions.controls = build_actions()
+    def refresh(self, values: tuple[str, str, str, str], *, selected: bool) -> None:
+        for cell, value in zip(self.cells, values, strict=True):
+            cell.value = value
+        self.bgcolor = (
+            ft.Colors.with_opacity(0.12, COLOR_PRIMARY) if selected else COLOR_SURFACE
+        )
 
 
 class ModelAssetsView(ft.Container):
-    """STT model library: catalog, online search and local GGUF files."""
+    """Model manager: table of models, search with a repo dropdown, file import."""
 
     def __init__(
         self,
@@ -186,15 +119,11 @@ class ModelAssetsView(ft.Container):
         application,
         run_task: ModelAssetsRunTask,
         *,
-        on_use_model: Callable[[str], None] | None = None,
-        active_model_id: Callable[[], str] | None = None,
         picker_factory: Callable[[], object] = ft.FilePicker,
     ) -> None:
         self._page = page
         self._application = application
         self._run_task = run_task
-        self._on_use_model = on_use_model
-        self._active_model_id = active_model_id
         self._picker_factory = picker_factory
         self._picker = None
         self._is_open = False
@@ -204,55 +133,110 @@ class ModelAssetsView(ft.Container):
         self._repos: tuple = ()
         self._selected_repo = None
         self._repo_files: tuple = ()
+        self._selected: str | None = None
         self._confirm_delete: str | None = None
-        self._install_key: str | None = None
-        self._rows: dict[str, _ModelRow] = {}
-        self._rows_signature: tuple | None = None
+        self._rows: dict[str, _TableRow] = {}
+        self._rows_key: tuple | None = None
 
         self._search_field = ft.TextField(
             hint_text=t("model_assets.search_placeholder"),
+            text_size=TEXT_SIZE,
             expand=True,
-            on_submit=lambda _e: self._on_search_click(),
+            on_submit=lambda _event: self._on_search_click(),
         )
-        self._search_button = _ActionChip(
-            t("model_assets.search_action"), on_click=self._on_search_click, primary=True
+        self._find_button = ft.Button(
+            content=t("model_assets.search_action"), on_click=lambda _event: self._on_search_click()
         )
-        self._add_button = _ActionChip(
-            t("model_assets.action.add_file"), on_click=self._on_add_file_click
+        self._add_button = ft.Button(
+            content=t("model_assets.action.add_file"),
+            on_click=lambda _event: self._on_add_file_click(),
         )
-        self._back_button = _ActionChip(
-            t("model_assets.search_back"), on_click=self._on_back_click
+        self._refresh_button = ft.Button(
+            content=t("model_assets.action.refresh"),
+            on_click=lambda _event: self._on_refresh_click(),
+        )
+        self._back_button = ft.Button(
+            content=t("model_assets.search_back"),
+            on_click=lambda _event: self._on_back_click(),
         )
         self._back_button.visible = False
-        self._notice_text = ft.Text(
-            "",
-            size=_NOTICE_TEXT_SIZE,
-            color=COLOR_WARNING,
-            max_lines=2,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self._list = ft.Column(
-            spacing=CARD_SPACING,
-            scroll=ft.ScrollMode.AUTO,
+        self._repo_dropdown = ft.Dropdown(
+            label=t("model_assets.search_repo"),
+            options=[],
+            text_size=TEXT_SIZE,
+            label_style=ft.TextStyle(size=HEADER_SIZE, color=COLOR_SECONDARY),
             expand=True,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            on_select=self._on_repo_selected,
         )
+        self._repo_row = ft.Row(controls=[self._repo_dropdown], visible=False)
+        self._notice_text = ft.Text("", size=HEADER_SIZE, color=COLOR_WARNING, max_lines=2)
+        self._notice_text.visible = False
+
+        self._install_button = ft.Button(
+            content=t("model_assets.action.download"),
+            on_click=lambda _event: self._on_install_click(),
+            disabled=True,
+        )
+        self._delete_button = ft.Button(
+            content=t("model_assets.action.delete"),
+            on_click=lambda _event: self._on_delete_click(),
+            disabled=True,
+        )
+        self._cancel_button = ft.Button(
+            content=t("model_assets.action.cancel"),
+            on_click=lambda _event: self._on_cancel_click(),
+            disabled=True,
+        )
+        self._progress_bar = ft.ProgressBar(value=0, expand=2, height=6)
+        self._progress_text = ft.Text("", size=TEXT_SIZE, color=COLOR_SECONDARY, width=48)
+
+        header = _TableRow("__header__", on_click=lambda _key: None)
+        header.refresh(
+            (
+                t("model_assets.column.name"),
+                t("model_assets.column.size"),
+                t("model_assets.column.status"),
+                t("model_assets.column.source"),
+            ),
+            selected=False,
+        )
+        for cell in header.cells:
+            cell.size = HEADER_SIZE
+            cell.weight = ft.FontWeight.BOLD
+            cell.color = COLOR_SECONDARY
+        self._header = header
+
+        self._list = ft.ListView(expand=True, spacing=0)
         super().__init__(
             content=ft.Column(
-                [
+                controls=[
                     ft.Row(
-                        [
+                        controls=[
                             self._search_field,
-                            self._search_button,
+                            self._find_button,
                             self._add_button,
+                            self._refresh_button,
                             self._back_button,
                         ],
-                        spacing=12,
+                        spacing=8,
                     ),
+                    self._repo_row,
                     self._notice_text,
+                    self._header,
                     self._list,
+                    ft.Row(
+                        controls=[
+                            self._install_button,
+                            self._delete_button,
+                            self._cancel_button,
+                            ft.Container(expand=True),
+                            self._progress_bar,
+                            self._progress_text,
+                        ],
+                        spacing=8,
+                    ),
                 ],
-                spacing=16,
+                spacing=8,
                 expand=True,
             ),
             expand=True,
@@ -275,22 +259,26 @@ class ModelAssetsView(ft.Container):
     def apply_locale(self) -> None:
         """Refresh localized labels while the window stays open."""
         self._search_field.hint_text = t("model_assets.search_placeholder")
-        self._search_button.label_text.value = t("model_assets.search_action")
-        self._add_button.label_text.value = t("model_assets.action.add_file")
-        self._back_button.label_text.value = t("model_assets.search_back")
-        self._rows_signature = None
+        self._find_button.content = t("model_assets.search_action")
+        self._add_button.content = t("model_assets.action.add_file")
+        self._refresh_button.content = t("model_assets.action.refresh")
+        self._back_button.content = t("model_assets.search_back")
+        self._repo_dropdown.label = t("model_assets.search_repo")
+        self._rows_key = None
         self._rows = {}
         if self._is_open:
             self.render()
 
     def render(self) -> None:
         self._back_button.visible = self._mode != "library"
+        self._repo_row.visible = self._mode == "browse"
         self._notice_text.value = self._notice or ""
         self._notice_text.visible = bool(self._notice)
         if self._mode == "library":
             self._render_library()
         else:
-            self._render_browse()
+            self._render_files()
+        self._render_actions()
         update_control_if_mounted(self)
 
     def _render_library(self) -> None:
@@ -299,212 +287,133 @@ class ModelAssetsView(ft.Container):
             for entry in self._application.model_asset_entries()
             if entry.purpose == "asr"
         ]
-        signature = tuple(
-            (
-                entry.model_id,
-                entry.status,
-                entry.origin,
-                self._confirm_delete == entry.model_id,
-                self._is_active(entry.model_id),
-            )
-            for entry in entries
-        )
-        if signature != self._rows_signature:
-            self._rows_signature = signature
-            self._rows = {}
-            controls: list[ft.Control] = []
-            for entry in entries:
-                row = _ModelRow(entry.name)
-                self._rows[entry.model_id] = row
-                controls.append(row)
-            self._list.controls = controls
+        rows_key = tuple(entry.model_id for entry in entries)
+        if rows_key != self._rows_key:
+            self._rows_key = rows_key
+            self._rebuild_rows(rows_key)
         for entry in entries:
             row = self._rows.get(entry.model_id)
             if row is None:
                 continue
             row.refresh(
-                detail=self._library_detail(entry),
-                actions_signature=signature[self._index_of(entries, entry.model_id)],
-                build_actions=lambda entry=entry: self._library_actions(entry),
+                (
+                    entry.name,
+                    _size_label(int(entry.size_bytes)),
+                    _status_label(entry),
+                    t(_ORIGIN_KEYS.get(entry.origin, "model_assets.origin.catalog")),
+                ),
+                selected=self._selected == entry.model_id,
             )
 
-    @staticmethod
-    def _index_of(entries, model_id: str) -> int:
-        for index, entry in enumerate(entries):
-            if entry.model_id == model_id:
-                return index
-        return -1
-
-    def _library_detail(self, entry: object) -> str:
-        parts = [
-            _size_label(int(entry.size_bytes)),
-            _status_label(entry),
-            t(_ORIGIN_KEYS.get(entry.origin, "model_assets.origin.catalog")),
-        ]
-        failure = _failure_label(getattr(entry, "failure_code", None))
-        if failure and entry.status not in _BUSY_STATUSES:
-            parts.append(failure)
-        return " · ".join(parts)
-
-    def _library_actions(self, entry: object) -> list:
-        chips: list[_ActionChip] = []
-        status = entry.status
-        if status in _BUSY_STATUSES:
-            if status != "deleting":
-                chips.append(
-                    _ActionChip(
-                        t("model_assets.action.cancel"),
-                        on_click=lambda: self._on_cancel(entry.model_id),
-                    )
-                )
-            return chips
-        active = self._is_active(entry.model_id)
-        if status != "installed" and entry.origin == "catalog":
-            chips.append(
-                _ActionChip(
-                    t("model_assets.action.download"),
-                    on_click=lambda: self._on_install(entry.model_id),
-                )
-            )
-        if status == "installed":
-            if active:
-                chips.append(
-                    _ActionChip(
-                        t("model_assets.action.in_use"),
-                        on_click=lambda: None,
-                        primary=True,
-                    )
-                )
-            elif self._on_use_model is not None:
-                chips.append(
-                    _ActionChip(
-                        t("model_assets.action.use"),
-                        on_click=lambda: self._on_use(entry.model_id),
-                        primary=True,
-                    )
-                )
-        removable = status in {"installed", "invalid"} or (
-            status == "missing" and entry.origin != "catalog"
-        )
-        if removable and not active:
-            confirming = self._confirm_delete == entry.model_id
-            chips.append(
-                _ActionChip(
-                    t(
-                        "model_assets.action.delete_confirm"
-                        if confirming
-                        else "model_assets.action.delete"
-                    ),
-                    on_click=lambda: self._on_delete(entry.model_id),
-                )
-            )
-        return chips
-
-    def _render_browse(self) -> None:
-        operation = self._application.operation_progress
-        if self._install_key is not None and operation is None:
-            self._install_key = None
-        if self._mode == "results":
-            signature = (
-                "results",
-                self._loading,
-                tuple((repo.repo_id, repo.source) for repo in self._repos),
-            )
-        else:
-            signature = (
-                "files",
-                self._loading,
-                getattr(self._selected_repo, "repo_id", ""),
-                tuple(file.path for file in self._repo_files),
-                self._install_key,
-            )
-        if signature != self._rows_signature:
-            self._rows_signature = signature
-            self._rows = {}
-            controls = []
-            if self._mode == "results":
-                for repo in self._repos:
-                    row = _ModelRow(repo.repo_id)
-                    self._rows[repo.repo_id] = row
-                    controls.append(row)
-            else:
-                for file in self._repo_files:
-                    row = _ModelRow(file.name)
-                    self._rows[file.path] = row
-                    controls.append(row)
-            self._list.controls = controls
-        if self._mode == "results":
-            for repo in self._repos:
-                row = self._rows.get(repo.repo_id)
-                if row is None:
-                    continue
-                row.refresh(
-                    detail=_SOURCE_LABELS.get(repo.source, repo.source),
-                    actions_signature=(self._loading,),
-                    build_actions=lambda repo=repo: [
-                        _ActionChip(
-                            t("model_assets.action.open"),
-                            on_click=lambda repo=repo: self._on_open_repo(repo),
-                            enabled=not self._loading,
-                        )
-                    ],
-                )
-            return
+    def _render_files(self) -> None:
+        rows_key = tuple(file.path for file in self._repo_files)
+        if rows_key != self._rows_key:
+            self._rows_key = rows_key
+            self._rebuild_rows(rows_key)
+        repo_label = getattr(self._selected_repo, "repo_id", "")
         for file in self._repo_files:
             row = self._rows.get(file.path)
             if row is None:
                 continue
-            installing = self._install_key == file.path
-            percent = operation[2] if (installing and operation is not None) else None
-            detail = _size_label(file.size_bytes)
-            if installing:
-                detail += " · " + (
-                    t("model_assets.status.downloading", percent=percent or 0)
-                )
             row.refresh(
-                detail=detail,
-                actions_signature=(installing, self._loading),
-                build_actions=lambda file=file, installing=installing: self._file_actions(
-                    file, installing
-                ),
+                (file.name, _size_label(file.size_bytes), "—", repo_label),
+                selected=self._selected == file.path,
             )
 
-    def _file_actions(self, file, installing: bool) -> list:
-        if installing:
-            operation = self._application.operation_progress
-            target = operation[0] if operation is not None else None
-            return [
-                _ActionChip(
-                    t("model_assets.action.cancel"),
-                    on_click=lambda: self._on_cancel(target),
-                    enabled=target is not None,
-                )
-            ]
-        return [
-            _ActionChip(
-                t("model_assets.action.download"),
-                on_click=lambda: self._on_install_file(file),
-                enabled=not self._loading,
+    def _rebuild_rows(self, keys: tuple[str, ...]) -> None:
+        self._rows = {}
+        controls: list[ft.Control] = []
+        for key in keys:
+            row = _TableRow(key, on_click=self._on_row_click)
+            self._rows[key] = row
+            controls.append(row)
+        self._list.controls = controls
+
+    def _render_actions(self) -> None:
+        operation = self._application.operation_progress
+        busy = operation is not None
+        if operation is not None and self._selected is not None:
+            if operation[1] != "delete":
+                self._confirm_delete = None
+        entry = self._selected_entry()
+        file = self._selected_file()
+
+        self._cancel_button.disabled = not busy
+        if self._mode == "browse":
+            self._install_button.content = t("model_assets.action.download")
+            self._install_button.disabled = busy or file is None
+            self._delete_button.disabled = True
+        else:
+            confirming = entry is not None and self._confirm_delete == entry.model_id
+            self._install_button.content = t("model_assets.action.download")
+            self._install_button.disabled = (
+                busy
+                or entry is None
+                or entry.status in _BUSY_STATUSES
+                or entry.status == "installed"
+                or entry.origin != "catalog"
             )
-        ]
+            self._delete_button.content = t(
+                "model_assets.action.delete_confirm" if confirming else "model_assets.action.delete"
+            )
+            self._delete_button.disabled = busy or entry is None or not self._removable(entry)
+
+        if operation is not None and operation[2] is not None:
+            self._progress_bar.value = max(0.0, min(1.0, operation[2] / 100))
+            self._progress_text.value = f"{operation[2]}%"
+        else:
+            self._progress_bar.value = None if busy else 0
+            self._progress_text.value = ""
+
+    def _selected_entry(self):
+        if self._mode != "library" or self._selected is None:
+            return None
+        for entry in self._application.model_asset_entries():
+            if entry.model_id == self._selected:
+                return entry
+        return None
+
+    def _selected_file(self):
+        if self._mode != "browse" or self._selected is None:
+            return None
+        for file in self._repo_files:
+            if file.path == self._selected:
+                return file
+        return None
+
+    @staticmethod
+    def _removable(entry: object) -> bool:
+        if entry.status in {"installed", "invalid"}:
+            return True
+        return entry.status == "missing" and entry.origin != "catalog"
+
+    def _on_row_click(self, key: str) -> None:
+        self._selected = key
+        self._confirm_delete = None
+        self.render()
 
     def _on_search_click(self) -> None:
         query = (self._search_field.value or "").strip()
         if not query or self._loading:
             return
-        self._mode = "results"
         self._loading = True
         self._notice = None
-        self._rows_signature = None
 
         async def task() -> None:
             try:
-                self._repos = await self._application.search_hub(query)
+                repos = await self._application.search_hub(query)
             except Exception as error:
                 self._notice = self._error_notice(error)
                 self._repos = ()
             else:
-                if not self._repos:
+                self._repos = repos
+                self._mode = "browse"
+                self._selected = None
+                self._selected_repo = None
+                self._repo_files = ()
+                self._rows_key = None
+                self._fill_repo_dropdown()
+                if not repos:
                     self._notice = t("model_assets.search_empty")
             finally:
                 self._loading = False
@@ -513,61 +422,102 @@ class ModelAssetsView(ft.Container):
         self._run_task(task)
         self.render()
 
-    def _on_back_click(self) -> None:
-        if self._mode == "files":
-            self._mode = "results"
+    def _fill_repo_dropdown(self) -> None:
+        self._repo_dropdown.options = [
+            ft.dropdown.Option(
+                key=repo.repo_id,
+                text=f"{repo.repo_id} · {_SOURCE_LABELS.get(repo.source, repo.source)}",
+            )
+            for repo in self._repos
+        ]
+        if self._repos:
+            self._repo_dropdown.value = self._repos[0].repo_id
+            self._load_repo_files(self._repos[0])
         else:
-            self._mode = "library"
-            self._notice = None
-        self._rows_signature = None
-        self.render()
+            self._repo_dropdown.value = None
 
-    def _on_open_repo(self, repo) -> None:
-        if self._loading:
+    def _on_repo_selected(self, event) -> None:
+        key = getattr(getattr(event, "control", None), "value", None)
+        repo = next((item for item in self._repos if item.repo_id == key), None)
+        if repo is None or self._loading:
             return
+        self._load_repo_files(repo)
+
+    def _load_repo_files(self, repo) -> None:
+        self._selected_repo = repo
+        self._selected = None
         self._loading = True
         self._notice = None
 
         async def task() -> None:
             try:
-                files = await self._application.hub_files(repo)
+                self._repo_files = await self._application.hub_files(repo)
             except Exception as error:
                 self._notice = self._error_notice(error)
-            else:
-                self._selected_repo = repo
-                self._repo_files = files
-                self._mode = "files"
-                self._rows_signature = None
-                if not files:
-                    self._notice = t("model_assets.search_empty")
+                self._repo_files = ()
             finally:
+                self._rows_key = None
                 self._loading = False
                 self.render()
 
         self._run_task(task)
-        self.render()
 
-    def _on_install_file(self, file) -> None:
-        if self._loading or self._selected_repo is None:
-            return
-        repo = self._selected_repo
-        self._install_key = file.path
+    def _on_back_click(self) -> None:
+        self._mode = "library"
         self._notice = None
-
-        async def task() -> None:
-            try:
-                await self._application.install_hub_file(repo, file)
-            except Exception as error:
-                self._notice = self._error_notice(error)
-                self.render()
-            else:
-                self._mode = "library"
-                self._notice = None
-                self._rows_signature = None
-                self.render()
-
-        self._run_task(task)
+        self._selected = None
+        self._rows_key = None
         self.render()
+
+    def _on_refresh_click(self) -> None:
+        if self._loading:
+            return
+        self._run(lambda: self._application.refresh_model_assets())
+
+    def _on_install_click(self) -> None:
+        if self._mode == "browse":
+            file = self._selected_file()
+            repo = self._selected_repo
+            if file is None or repo is None:
+                return
+            self._notice = None
+
+            async def task() -> None:
+                try:
+                    await self._application.install_hub_file(repo, file)
+                except Exception as error:
+                    self._notice = self._error_notice(error)
+                    self.render()
+                else:
+                    self._mode = "library"
+                    self._selected = None
+                    self._rows_key = None
+                    self.render()
+
+            self._run_task(task)
+            self.render()
+            return
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        self._confirm_delete = None
+        self._run(lambda: self._application.download(entry.model_id))
+
+    def _on_delete_click(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        if self._confirm_delete != entry.model_id:
+            self._confirm_delete = entry.model_id
+            self.render()
+            return
+        self._confirm_delete = None
+        self._run(lambda: self._application.delete(entry.model_id))
+
+    def _on_cancel_click(self) -> None:
+        operation = self._application.operation_progress
+        if operation is not None:
+            self._run(lambda: self._application.cancel(operation[0]))
 
     def _on_add_file_click(self) -> None:
         if self._loading:
@@ -591,7 +541,7 @@ class ModelAssetsView(ft.Container):
             self._loading = True
             self._notice = None
             self._mode = "library"
-            self._rows_signature = None
+            self._rows_key = None
             try:
                 await self._application.add_local_file(Path(path))
             except Exception as error:
@@ -601,41 +551,11 @@ class ModelAssetsView(ft.Container):
                 self.render()
 
         self._run_task(task)
-        self.render()
-
-    def _on_install(self, model_id: str) -> None:
-        self._confirm_delete = None
-        self._run(lambda: self._application.download(model_id))
-
-    def _on_use(self, model_id: str) -> None:
-        if self._on_use_model is not None:
-            self._on_use_model(model_id)
-        self.render()
-
-    def _on_delete(self, model_id: str) -> None:
-        if self._confirm_delete != model_id:
-            self._confirm_delete = model_id
-            self.render()
-            return
-        self._confirm_delete = None
-        self._run(lambda: self._application.delete(model_id))
-
-    def _on_cancel(self, model_id: str | None) -> None:
-        if model_id is not None:
-            self._run(lambda: self._application.cancel(model_id))
-
-    def _is_active(self, model_id: str) -> bool:
-        if self._active_model_id is None:
-            return False
-        with contextlib.suppress(Exception):
-            return self._active_model_id() == model_id
-        return False
 
     def _error_notice(self, error: BaseException) -> str:
         code = getattr(error, "failure_code", None)
-        return _failure_label(code if isinstance(code, str) else None) or _failure_label(
-            "download_failed"
-        )
+        label = _failure_label(code if isinstance(code, str) else None)
+        return label or _failure_label("download_failed")
 
     def _ensure_picker(self) -> object:
         if self._picker is None:

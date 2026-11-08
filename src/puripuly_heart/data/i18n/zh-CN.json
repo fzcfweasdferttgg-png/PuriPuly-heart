@@ -564,5 +564,11 @@
   "model_assets.origin.search": "搜索",
   "model_assets.origin.local": "文件",
   "model_assets.error.search_failed": "搜索失败",
-  "model_assets.error.invalid_file": "文件不是 GGUF 模型"
+  "model_assets.error.invalid_file": "文件不是 GGUF 模型",
+  "model_assets.action.refresh": "刷新",
+  "model_assets.search_repo": "仓库",
+  "model_assets.column.name": "名称",
+  "model_assets.column.size": "大小",
+  "model_assets.column.status": "状态",
+  "model_assets.column.source": "来源"
 }

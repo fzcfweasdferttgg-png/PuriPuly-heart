@@ -432,11 +432,7 @@ class TranslatorApp:
         self.view_settings.bind_recent_language_queue(self.view_dashboard)
         self.view_logs = LogsView()
         self.about_window = AboutWindow()
-        self.model_assets_window = ModelAssetsWindow(
-            self.application,
-            on_use_model=self._use_stt_model,
-            active_model_id=self._current_stt_model,
-        )
+        self.model_assets_window = ModelAssetsWindow(self.application)
         self.provider_settings_windows = {
             "translation": ProviderSettingsWindow(),
             "backup": ProviderSettingsWindow(),
@@ -481,15 +477,6 @@ class TranslatorApp:
 
     def _open_model_assets(self) -> None:
         self.model_assets_window.open(self._run_page_task)
-
-    def _use_stt_model(self, model_id: str) -> None:
-        self.view_settings.select_stt_model(model_id)
-        pending = self.view_settings.build_provider_apply_settings()
-        if pending is not None:
-            self._queue_settings_apply(pending, resubmit=False)
-
-    def _current_stt_model(self) -> str:
-        return self.view_settings.current_stt_local_model()
 
     def _build_debug_preview_panel(self) -> DebugPreviewPanel:
         return DebugPreviewPanel(

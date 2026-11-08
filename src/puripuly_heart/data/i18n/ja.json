@@ -564,5 +564,11 @@
   "model_assets.origin.search": "検索",
   "model_assets.origin.local": "ファイル",
   "model_assets.error.search_failed": "検索に失敗しました",
-  "model_assets.error.invalid_file": "ファイルは GGUF モデルではありません"
+  "model_assets.error.invalid_file": "ファイルは GGUF モデルではありません",
+  "model_assets.action.refresh": "更新",
+  "model_assets.search_repo": "リポジトリ",
+  "model_assets.column.name": "名前",
+  "model_assets.column.size": "サイズ",
+  "model_assets.column.status": "状態",
+  "model_assets.column.source": "ソース"
 }

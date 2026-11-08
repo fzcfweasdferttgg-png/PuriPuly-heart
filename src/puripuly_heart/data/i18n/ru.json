@@ -564,5 +564,11 @@
   "model_assets.origin.search": "Поиск",
   "model_assets.origin.local": "Файл",
   "model_assets.error.search_failed": "Поиск не удался",
-  "model_assets.error.invalid_file": "Файл не является моделью GGUF"
+  "model_assets.error.invalid_file": "Файл не является моделью GGUF",
+  "model_assets.action.refresh": "Обновить",
+  "model_assets.search_repo": "Репозиторий",
+  "model_assets.column.name": "Имя",
+  "model_assets.column.size": "Размер",
+  "model_assets.column.status": "Состояние",
+  "model_assets.column.source": "Источник"
 }

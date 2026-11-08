@@ -564,5 +564,11 @@
   "model_assets.origin.search": "검색",
   "model_assets.origin.local": "파일",
   "model_assets.error.search_failed": "검색 실패",
-  "model_assets.error.invalid_file": "파일이 GGUF 모델이 아닙니다"
+  "model_assets.error.invalid_file": "파일이 GGUF 모델이 아닙니다",
+  "model_assets.action.refresh": "새로 고침",
+  "model_assets.search_repo": "저장소",
+  "model_assets.column.name": "이름",
+  "model_assets.column.size": "크기",
+  "model_assets.column.status": "상태",
+  "model_assets.column.source": "출처"
 }

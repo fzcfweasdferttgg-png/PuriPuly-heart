@@ -3236,13 +3236,6 @@ class SettingsView(ft.Column):
             show_description=False,
         ).open(selected)
 
-    def current_stt_local_model(self) -> str:
-        settings = self._build_settings_with_provider_draft()
-        return settings.stt_local_model if settings is not None else ""
-
-    def select_stt_model(self, value: str) -> None:
-        self._on_stt_model_selected(value)
-
     def _on_stt_model_selected(self, value: str) -> None:
         if self._provider_snapshot is None:
             return
