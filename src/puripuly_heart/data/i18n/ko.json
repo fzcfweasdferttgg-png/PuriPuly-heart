@@ -552,5 +552,17 @@
   "provider.chatgpt": "ChatGPT",
   "provider.chatgpt.usage_limit": "ChatGPT (Codex) 사용 한도에 도달했어요. 한도 초기화 이후 사용해주세요.",
   "provider.chatgpt.not_eligible": "이 ChatGPT 계정에서는 해당 모델을 호출 할 수 없어요. Plus 이상의 구독이 필요해요",
-  "provider.chatgpt.reauth_required": "ChatGPT 로그인이 만료되었어요. 설정에서 다시 로그인해주세요."
+  "provider.chatgpt.reauth_required": "ChatGPT 로그인이 만료되었어요. 설정에서 다시 로그인해주세요.",
+  "model_assets.search_placeholder": "Hugging Face에서 모델 검색",
+  "model_assets.search_back": "모델 라이브러리로",
+  "model_assets.search_empty": "결과 없음",
+  "model_assets.action.add_file": "파일 추가",
+  "model_assets.action.use": "사용",
+  "model_assets.action.in_use": "사용 중",
+  "model_assets.action.open": "열기",
+  "model_assets.origin.catalog": "카탈로그",
+  "model_assets.origin.search": "검색",
+  "model_assets.origin.local": "파일",
+  "model_assets.error.search_failed": "검색 실패",
+  "model_assets.error.invalid_file": "파일이 GGUF 모델이 아닙니다"
 }

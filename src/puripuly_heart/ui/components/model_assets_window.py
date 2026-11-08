@@ -90,10 +90,14 @@ class ModelAssetsWindow:
         self,
         application,
         *,
+        on_use_model: Callable[[str], None] | None = None,
+        active_model_id: Callable[[], str] | None = None,
         app_runner: Callable[[Any], Any] | None = None,
         picker_factory: Callable[[], object] = ft.FilePicker,
     ) -> None:
         self._application = application
+        self._on_use_model = on_use_model
+        self._active_model_id = active_model_id
         self._app_runner = app_runner
         self._picker_factory = picker_factory
         self._schedule: ModelAssetsRunTask | None = None
@@ -201,6 +205,8 @@ class ModelAssetsWindow:
             page,
             self._application,
             self._schedule,
+            on_use_model=self._on_use_model,
+            active_model_id=self._active_model_id,
             picker_factory=self._picker_factory,
         )
         self._title_bar = TitleBar(

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import flet as ft
 import pytest
 
+from puripuly_heart.app.services.model_assets import ModelAssetsError
+from puripuly_heart.app.services.model_hub import RepoFile, ModelRepo
 from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.views.model_assets import ModelAssetsView
 
@@ -22,6 +25,7 @@ class Entry:
     failure_code: str | None = None
     importable: bool = False
     required_files: tuple[str, ...] = ()
+    origin: str = "catalog"
 
 
 class Page:
@@ -33,21 +37,32 @@ class Page:
         self.update_calls += 1
 
 
+class Picker:
+    picked: tuple = ()
+
+    async def pick_files(self, **_kwargs):
+        return list(self.picked)
+
+
 class Application:
     def __init__(self) -> None:
         self.entries = [
-            Entry("asr", "Orukeet", "model_assets.description.orukeet", "asr", 2 * 1024**3),
+            Entry("asr", "Orukeet", "d.asr", "asr", 2 * 1024**3),
+            Entry("gemma", "Gemma E4B", "d.gemma", "translation", 4 * 1024**3),
             Entry(
-                "gemma",
-                "Gemma E4B",
-                "model_assets.description.gemma_e4b",
-                "translation",
-                4 * 1024**3,
-                importable=True,
-                required_files=("model.gguf", "draft.gguf"),
+                "custom",
+                "My GGUF",
+                "d.custom",
+                "asr",
+                1024**3,
+                status="installed",
+                origin="local",
             ),
         ]
         self.calls: list[tuple] = []
+        self.operation_progress = None
+        self.repos: tuple = ()
+        self.files: tuple = ()
 
     def model_asset_entries(self):
         return tuple(self.entries)
@@ -56,18 +71,29 @@ class Application:
         self.calls.append(("refresh",))
         return tuple(self.entries)
 
-    async def download_model_asset(self, model_id, *, source=None):
+    async def download(self, model_id, *, source=None):
         self.calls.append(("download", model_id, source))
 
-    async def import_model_asset(self, model_id, directory):
-        self.calls.append(("import", model_id, directory))
+    async def delete(self, model_id):
+        self.calls.append(("delete", model_id))
 
-    async def cancel_model_asset(self, model_id):
+    async def cancel(self, model_id):
         self.calls.append(("cancel", model_id))
         return True
 
-    async def delete_model_asset(self, model_id):
-        self.calls.append(("delete", model_id))
+    async def search_hub(self, query):
+        self.calls.append(("search", query))
+        return self.repos
+
+    async def hub_files(self, repo):
+        self.calls.append(("files", repo.repo_id))
+        return self.files
+
+    async def install_hub_file(self, repo, file):
+        self.calls.append(("install", repo.repo_id, file.path))
+
+    async def add_local_file(self, path):
+        self.calls.append(("add_local", Path(path)))
 
     def set(self, model_id: str, **changes) -> None:
         self.entries = [
@@ -82,7 +108,7 @@ def _texts(control) -> list[str]:
     def walk(node) -> None:
         if isinstance(node, ft.Text) and node.value and getattr(node, "visible", True):
             found.append(node.value)
-        for name in ("content", "controls"):
+        for name in ("content", "controls", "actions"):
             child = getattr(node, name, None)
             if isinstance(child, list):
                 for item in child:
@@ -94,11 +120,39 @@ def _texts(control) -> list[str]:
     return found
 
 
-def _action(view: ModelAssetsView, label: str) -> ft.Container:
-    for card in view._actions.controls:
-        if label in _texts(card):
-            return card
-    raise AssertionError(f"missing action {label}: {_texts(view._actions)}")
+def _chips(control) -> list:
+    found: list = []
+    seen: set[int] = set()
+
+    def walk(node) -> None:
+        if id(node) in seen:
+            return
+        seen.add(id(node))
+        if hasattr(node, "label_text"):
+            found.append(node)
+        for name in ("content", "controls", "actions"):
+            child = getattr(node, name, None)
+            if isinstance(child, list):
+                for item in child:
+                    walk(item)
+            elif child is not None and hasattr(child, "__dict__"):
+                walk(child)
+
+    walk(control)
+    return found
+
+
+def _chip(control, label: str):
+    for chip in _chips(control):
+        if chip.label_text.value == label:
+            return chip
+    raise AssertionError(
+        f"missing chip {label}: {[chip.label_text.value for chip in _chips(control)]}"
+    )
+
+
+def _labels(control) -> list[str]:
+    return [chip.label_text.value for chip in _chips(control)]
 
 
 def _view(app: Application, tasks: list, **kwargs) -> ModelAssetsView:
@@ -114,111 +168,130 @@ async def _run(tasks: list) -> None:
 
 
 @pytest.mark.asyncio
-async def test_manager_lists_models_by_purpose_and_shows_actions_for_the_selection() -> None:
+async def test_library_lists_models_with_state_and_actions() -> None:
     app = Application()
-    tasks: list = []
-    view = _view(app, tasks)
-
+    view = _view(app, [], on_use_model=lambda _model_id: None)
     view.open()
 
-    texts = _texts(view._content)
-    assert t("model_assets.group.asr") in texts
-    assert t("model_assets.group.translation") in texts
-    assert f"2.0 GB ({t('model_assets.status.missing')})" in texts
-    assert view.selected_model_id == "asr"
-    assert "\u00b7" not in " ".join(_texts(view._model_list))
-    assert texts.count("Orukeet") == 1
-    assert [label for card in view._actions.controls for label in _texts(card)] == [
-        f"{t('model_assets.action.download')} \u00b7 HF",
-        f"{t('model_assets.action.download')} \u00b7 ModelScope",
+    texts = _texts(view._list)
+    joined = " ".join(texts)
+    assert "Orukeet" in texts and "My GGUF" in texts
+    assert "Gemma E4B" not in texts
+    assert t("model_assets.status.missing") in joined
+    assert t("model_assets.status.installed") in joined
+    assert t("model_assets.origin.catalog") in joined
+    assert t("model_assets.origin.local") in joined
+    assert _labels(view._rows["asr"]) == [t("model_assets.action.download")]
+    assert _labels(view._rows["custom"]) == [
+        t("model_assets.action.use"),
+        t("model_assets.action.delete"),
     ]
-
-    view.select("gemma")
-    actions = _texts(view._actions)
-    assert t("model_assets.action.import") in actions
-    assert "model.gguf" not in " ".join(actions)
 
 
 @pytest.mark.asyncio
-async def test_download_and_two_step_delete_call_the_application() -> None:
+async def test_install_use_and_two_step_delete_call_the_application() -> None:
     app = Application()
-    app.set("asr", status="installed")
     tasks: list = []
-    view = _view(app, tasks)
+    used: list[str] = []
+    view = _view(app, tasks, on_use_model=used.append)
     view.open()
 
-    _action(view, f"{t('model_assets.action.redownload')} \u00b7 HF").on_click(None)
+    _chip(view._rows["asr"], t("model_assets.action.download"))._handle_click(None)
     await _run(tasks)
-    assert ("download", "asr", "huggingface") in app.calls
+    assert ("download", "asr", None) in app.calls
 
-    _action(view, f"{t('model_assets.action.redownload')} \u00b7 ModelScope").on_click(None)
-    await _run(tasks)
-    assert ("download", "asr", "modelscope") in app.calls
+    _chip(view._rows["custom"], t("model_assets.action.use"))._handle_click(None)
+    assert used == ["custom"]
 
-    _action(view, t("model_assets.action.delete")).on_click(None)
+    _chip(view._rows["custom"], t("model_assets.action.delete"))._handle_click(None)
     await _run(tasks)
     assert not any(call[0] == "delete" for call in app.calls)
-    _action(view, t("model_assets.action.delete_confirm")).on_click(None)
+    _chip(view._rows["custom"], t("model_assets.action.delete_confirm"))._handle_click(None)
     await _run(tasks)
-    assert ("delete", "asr") in app.calls
+    assert ("delete", "custom") in app.calls
 
 
 @pytest.mark.asyncio
-async def test_progress_replaces_actions_and_other_models_wait_for_the_running_task() -> None:
+async def test_active_model_shows_in_use_without_delete() -> None:
+    app = Application()
+    view = _view(app, [], active_model_id=lambda: "custom")
+    view.open()
+
+    assert _labels(view._rows["custom"]) == [t("model_assets.action.in_use")]
+    assert _labels(view._rows["asr"]) == [t("model_assets.action.download")]
+
+
+@pytest.mark.asyncio
+async def test_progress_replaces_actions_while_a_model_is_installing() -> None:
     app = Application()
     app.set("asr", status="downloading", progress_percent=42)
+    view = _view(app, [])
+    view.open()
+
+    texts = " ".join(_texts(view._rows["asr"]))
+    assert t("model_assets.status.downloading", percent=42) in texts
+    assert _labels(view._rows["asr"]) == [t("model_assets.action.cancel")]
+
+
+@pytest.mark.asyncio
+async def test_search_walks_repos_then_files_and_installs() -> None:
+    app = Application()
+    app.repos = (ModelRepo(repo_id="user/qwen3-asr", source="hf", name="qwen3-asr", downloads=10),)
+    app.files = (RepoFile(path="qwen3-asr-Q6_K.gguf", size_bytes=5 * 1024**3),)
     tasks: list = []
     view = _view(app, tasks)
     view.open()
 
-    assert t("model_assets.status.downloading", percent=42) in _texts(view._actions)
-    assert f"2.0 GB ({t('model_assets.status.downloading', percent=42)})" in _texts(
-        view._content
-    )
-    _action(view, t("model_assets.action.cancel")).on_click(None)
+    view._search_field.value = "qwen3"
+    _chip(view, t("model_assets.search_action"))._handle_click(None)
     await _run(tasks)
-    assert ("cancel", "asr") in app.calls
+    assert ("search", "qwen3") in app.calls
+    assert "user/qwen3-asr" in _texts(view._list)
 
-    view.select("gemma")
-    download = _action(view, t("model_assets.action.download"))
-    assert download.disabled is True
-    assert _texts(view._actions) == [
-        t("model_assets.action.download"),
-        t("model_assets.action.import"),
-    ]
+    _chip(view._rows["user/qwen3-asr"], t("model_assets.action.open"))._handle_click(None)
+    await _run(tasks)
+    assert ("files", "user/qwen3-asr") in app.calls
+    assert "qwen3-asr-Q6_K.gguf" in _texts(view._list)
+
+    _chip(view._rows["qwen3-asr-Q6_K.gguf"], t("model_assets.action.download"))._handle_click(None)
+    await _run(tasks)
+    assert ("install", "user/qwen3-asr", "qwen3-asr-Q6_K.gguf") in app.calls
+    assert view._mode == "library"
 
 
 @pytest.mark.asyncio
-async def test_failure_is_shown_with_a_known_reason_or_the_generic_one() -> None:
+async def test_search_failure_shows_the_notice() -> None:
     app = Application()
-    app.set("asr", failure_code="model_in_use")
-    view = _view(app, [])
-    view.open()
-    assert view._failure.value == t("model_assets.error.model_in_use")
-    assert view._failure.visible is True
 
-    app.set("asr", failure_code="mirror_redirect_external")
-    view.render()
-    assert view._failure.value == t("model_assets.error.download_failed")
+    async def fail(_query):
+        raise ModelAssetsError("nope", failure_code="search_failed")
+
+    app.search_hub = fail
+    tasks: list = []
+    view = _view(app, tasks)
+    view.open()
+
+    view._search_field.value = "x"
+    _chip(view, t("model_assets.search_action"))._handle_click(None)
+    await _run(tasks)
+
+    assert t("model_assets.error.search_failed") in _texts(view)
 
 
 @pytest.mark.asyncio
-async def test_import_picks_a_folder_and_closing_never_cancels_work() -> None:
+async def test_add_file_picks_a_gguf_and_registers_it() -> None:
     app = Application()
     tasks: list = []
 
     class Picker:
-        async def get_directory_path(self):
-            return "C:/models"
+        async def pick_files(self, **_kwargs):
+            return [SimpleNamespace(path="C:/models/own.gguf")]
 
     view = _view(app, tasks, picker_factory=Picker)
     view.open()
-    view.select("gemma")
 
-    _action(view, t("model_assets.action.import")).on_click(None)
+    _chip(view, t("model_assets.action.add_file"))._handle_click(None)
     await _run(tasks)
-    assert ("import", "gemma", Path("C:/models")) in app.calls
 
-    view.close()
-    assert view.is_open is False
-    assert not any(call[0] == "cancel" for call in app.calls)
+    assert ("add_local", Path("C:/models/own.gguf")) in app.calls
+    assert view._mode == "library"

@@ -552,5 +552,17 @@
   "provider.chatgpt": "ChatGPT",
   "provider.chatgpt.usage_limit": "You've reached your ChatGPT (Codex) usage limit. Please wait until the limit resets.",
   "provider.chatgpt.not_eligible": "This ChatGPT account can't use this model. A Plus subscription or higher is required.",
-  "provider.chatgpt.reauth_required": "Your ChatGPT sign-in has expired. Sign in again in Settings."
+  "provider.chatgpt.reauth_required": "Your ChatGPT sign-in has expired. Sign in again in Settings.",
+  "model_assets.search_placeholder": "Search models on Hugging Face",
+  "model_assets.search_back": "Back to library",
+  "model_assets.search_empty": "Nothing found",
+  "model_assets.action.add_file": "Add file",
+  "model_assets.action.use": "Use",
+  "model_assets.action.in_use": "In use",
+  "model_assets.action.open": "Open",
+  "model_assets.origin.catalog": "Catalog",
+  "model_assets.origin.search": "Search",
+  "model_assets.origin.local": "File",
+  "model_assets.error.search_failed": "Search failed",
+  "model_assets.error.invalid_file": "The file is not a GGUF model"
 }

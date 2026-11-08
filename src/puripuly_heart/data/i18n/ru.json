@@ -552,5 +552,17 @@
   "provider.chatgpt": "ChatGPT",
   "provider.chatgpt.usage_limit": "Достигнут лимит использования ChatGPT (Codex). Продолжите после сброса лимита.",
   "provider.chatgpt.not_eligible": "Этот аккаунт ChatGPT не может использовать данную модель. Требуется подписка Plus или выше.",
-  "provider.chatgpt.reauth_required": "Срок входа в ChatGPT истёк. Войдите снова в настройках."
+  "provider.chatgpt.reauth_required": "Срок входа в ChatGPT истёк. Войдите снова в настройках.",
+  "model_assets.search_placeholder": "Поиск моделей на Hugging Face",
+  "model_assets.search_back": "К библиотеке",
+  "model_assets.search_empty": "Ничего не найдено",
+  "model_assets.action.add_file": "Добавить файл",
+  "model_assets.action.use": "Использовать",
+  "model_assets.action.in_use": "Используется",
+  "model_assets.action.open": "Открыть",
+  "model_assets.origin.catalog": "Каталог",
+  "model_assets.origin.search": "Поиск",
+  "model_assets.origin.local": "Файл",
+  "model_assets.error.search_failed": "Поиск не удался",
+  "model_assets.error.invalid_file": "Файл не является моделью GGUF"
 }

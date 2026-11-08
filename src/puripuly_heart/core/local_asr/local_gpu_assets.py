@@ -9,6 +9,7 @@ from typing import Literal
 from .local_stt_assets import (
     LOCAL_QWEN_GPU_MODEL_FILENAME,
     LOCAL_QWEN_GPU_MODEL_ID,
+    LocalSTTAssetError,
     LocalSTTAssetManifest,
     LocalSTTInstallState,
     default_local_stt_model_root,
@@ -81,13 +82,29 @@ def local_gpu_model_path(
     model_id: str | None = None,
     manifest: LocalSTTAssetManifest | None = None,
 ) -> Path:
-    resolved_manifest = manifest or load_local_gpu_asset_manifest(
-        model_id or LOCAL_QWEN_GPU_MODEL_ID
-    )
     root = model_root or default_local_stt_model_root()
+    if manifest is None:
+        try:
+            resolved_manifest = load_local_gpu_asset_manifest(
+                model_id or LOCAL_QWEN_GPU_MODEL_ID
+            )
+        except LocalSTTAssetError:
+            return _registry_model_path(root, model_id)
+    else:
+        resolved_manifest = manifest
     if len(resolved_manifest.files) != 1:
         raise ValueError("local GPU model manifest must contain exactly one model file")
     return root / resolved_manifest.install_dirname / resolved_manifest.files[0].relative_path
+
+
+def _registry_model_path(root: Path, model_id: str | None) -> Path:
+    """Resolve a model installed outside the manifest catalog."""
+    from .model_registry import ModelRegistry
+
+    record = ModelRegistry(root).get(model_id or "")
+    if record is None or not record.files:
+        raise ValueError(f"unknown local model: {model_id}")
+    return ModelRegistry(root).model_file_path(record)
 
 
 __all__ = [

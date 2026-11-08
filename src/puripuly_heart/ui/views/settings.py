@@ -138,6 +138,7 @@ from puripuly_heart.config.translation_values import (
 from puripuly_heart.core.http_extensions import http_extension_secret_key
 from puripuly_heart.core.language import get_stt_compatibility_warning
 from puripuly_heart.core.local_asr.local_stt_assets import LOCAL_STT_MODEL_IDS
+from puripuly_heart.core.local_asr.model_registry import default_model_registry
 from puripuly_heart.core.stt.custom import (
     CustomSTTConfigurationError,
     normalize_custom_stt_extra,
@@ -3191,6 +3192,9 @@ class SettingsView(ft.Column):
 
     @staticmethod
     def _stt_model_label(model_id: str) -> str:
+        record = default_model_registry().get(model_id)
+        if record is not None:
+            return record.name
         family, _, quant = model_id.partition("-gguf-")
         if not quant:
             return model_id
@@ -3204,6 +3208,10 @@ class SettingsView(ft.Column):
                 label=self._stt_model_label(model_id),
             )
             for model_id in LOCAL_STT_MODEL_IDS
+        )
+        options.extend(
+            OptionItem(value=record.model_id, label=record.name)
+            for record in default_model_registry().load()
         )
         return options
 
@@ -3227,6 +3235,13 @@ class SettingsView(ft.Column):
             self._on_stt_model_selected,
             show_description=False,
         ).open(selected)
+
+    def current_stt_local_model(self) -> str:
+        settings = self._build_settings_with_provider_draft()
+        return settings.stt_local_model if settings is not None else ""
+
+    def select_stt_model(self, value: str) -> None:
+        self._on_stt_model_selected(value)
 
     def _on_stt_model_selected(self, value: str) -> None:
         if self._provider_snapshot is None:

@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from puripuly_heart.app.services.model_assets_catalog import ModelAssetChoice, model_asset_choices
+from puripuly_heart.app.services.model_hub import (
+    RepoFile,
+    ModelRepo,
+    ModelRepoError,
+    download_file as hub_download_file,
+    list_gguf_files as hub_list_gguf_files,
+    search_repos as hub_search_repos,
+)
 from puripuly_heart.core.feature_diagnostics import log_feature
 from puripuly_heart.core.local_asr.local_asr_provisioning import LocalASRInstallRequest
 from puripuly_heart.core.local_asr.local_stt_assets import (
@@ -15,10 +24,16 @@ from puripuly_heart.core.local_asr.local_stt_assets import (
     inspect_local_stt_install_state,
     load_local_stt_asset_manifest,
 )
+from puripuly_heart.core.local_asr.model_registry import (
+    ModelRegistry,
+    RegistryModelFile,
+    RegistryModelRecord,
+)
 from puripuly_heart.core.model_download_sources import MODEL_DOWNLOAD_SOURCES
 
 MODEL_ASSETS_ORIGIN = "model_assets"
 _INTEGRITY_STATUS = {"ready": "installed", "missing": "missing", "invalid": "invalid"}
+_COPY_CHUNK = 1024 * 1024
 
 
 class ModelAssetsError(RuntimeError):
@@ -39,6 +54,7 @@ class ModelAssetEntry:
     failure_code: str | None = None
     importable: bool = False
     required_files: tuple[str, ...] = ()
+    origin: str = "catalog"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -51,6 +67,7 @@ class ModelAssetEntry:
             "failure_code": self.failure_code,
             "importable": self.importable,
             "required_files": list(self.required_files),
+            "origin": self.origin,
         }
 
 
@@ -80,6 +97,7 @@ class ModelAssetsApplication:
     _failures: dict[str, str] = field(init=False, default_factory=dict)
     _operation: _Operation | None = field(init=False, default=None)
     _cancel_requested: bool = field(init=False, default=False)
+    _cancel_event: asyncio.Event | None = field(init=False, default=None)
 
     def entries(self) -> tuple[ModelAssetEntry, ...]:
         entries: list[ModelAssetEntry] = []
@@ -106,6 +124,28 @@ class ModelAssetsApplication:
                     required_files=choice.required_files,
                 )
             )
+        for record in self._registry().load():
+            status = self._integrity.get(record.model_id) or self._registry().status(record)
+            progress = None
+            operation = self._operation
+            if operation is not None and operation.model_id == record.model_id:
+                status = {"delete": "deleting", "import": "importing"}.get(
+                    operation.kind, "downloading"
+                )
+                progress = operation.progress_percent
+            entries.append(
+                ModelAssetEntry(
+                    model_id=record.model_id,
+                    name=record.name,
+                    description_key="",
+                    purpose="asr",
+                    size_bytes=record.size_bytes,
+                    status=status,
+                    progress_percent=progress,
+                    failure_code=self._failures.get(record.model_id),
+                    origin=record.origin,
+                )
+            )
         return tuple(entries)
 
     def entry(self, model_id: str) -> ModelAssetEntry:
@@ -114,6 +154,13 @@ class ModelAssetsApplication:
     @property
     def busy(self) -> bool:
         return self._operation is not None
+
+    @property
+    def operation_progress(self) -> tuple[str, str, int | None] | None:
+        operation = self._operation
+        if operation is None:
+            return None
+        return (operation.model_id, operation.kind, operation.progress_percent)
 
     async def refresh(self) -> tuple[ModelAssetEntry, ...]:
         self._integrity.update(await asyncio.to_thread(self._inspect_all))
@@ -141,12 +188,115 @@ class ModelAssetsApplication:
             )
         return await self._run(choice, "import", source="local", files=files)
 
+    async def search_hub(self, query: str) -> tuple[ModelRepo, ...]:
+        try:
+            return await hub_search_repos(query)
+        except ModelRepoError as error:
+            raise ModelAssetsError(str(error), failure_code=error.failure_code) from error
+
+    async def hub_files(self, repo: ModelRepo) -> tuple[RepoFile, ...]:
+        try:
+            return await hub_list_gguf_files(repo)
+        except ModelRepoError as error:
+            raise ModelAssetsError(str(error), failure_code=error.failure_code) from error
+
+    async def install_hub_file(self, repo: ModelRepo, file: RepoFile) -> ModelAssetEntry:
+        registry = self._registry()
+        root = self.model_root or default_local_stt_model_root()
+        stem = Path(file.name).stem
+        model_id = registry.allocate_model_id(f"{repo.name}-{stem}")
+
+        async def action() -> None:
+            target_dir = root / model_id
+
+            def on_progress(done: int, total: int | None) -> None:
+                if self._operation is not None and total:
+                    self._operation.progress_percent = min(100, int(done * 100 / total))
+
+            try:
+                path = await hub_download_file(
+                    repo,
+                    file,
+                    target_dir=target_dir,
+                    cancel_event=self._cancel_event,
+                    on_progress=on_progress,
+                )
+            except ModelRepoError as error:
+                raise ModelAssetsError(str(error), failure_code=error.failure_code) from error
+            registry.add(
+                RegistryModelRecord(
+                    model_id=model_id,
+                    name=stem,
+                    files=(RegistryModelFile(name=path.name, size_bytes=path.stat().st_size),),
+                    origin="search",
+                    source=f"{repo.source}:{repo.repo_id}",
+                )
+            )
+
+        await self._run_operation(model_id, "download", action)
+        return self.entry(model_id)
+
+    async def add_local_file(self, path: Path) -> ModelAssetEntry:
+        source = Path(path)
+        if not source.is_file():
+            raise ModelAssetsError("Missing model file", failure_code="missing_file")
+        if source.suffix.lower() != ".gguf":
+            raise ModelAssetsError("Not a GGUF model file", failure_code="invalid_file")
+        registry = self._registry()
+        root = self.model_root or default_local_stt_model_root()
+        model_id = registry.allocate_model_id(source.stem)
+        total = source.stat().st_size
+
+        async def action() -> None:
+            target_dir = root / model_id
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / source.name
+
+            def copy() -> int:
+                copied = 0
+                with open(source, "rb") as reader, open(target, "wb") as writer:
+                    while True:
+                        if self._cancel_requested:
+                            raise ModelAssetsError("cancelled", failure_code="cancelled")
+                        chunk = reader.read(_COPY_CHUNK)
+                        if not chunk:
+                            break
+                        writer.write(chunk)
+                        copied += len(chunk)
+                        if self._operation is not None and total:
+                            self._operation.progress_percent = min(
+                                100, int(copied * 100 / total)
+                            )
+                return copied
+
+            try:
+                copied = await asyncio.to_thread(copy)
+            except BaseException:
+                target.unlink(missing_ok=True)
+                raise
+            registry.add(
+                RegistryModelRecord(
+                    model_id=model_id,
+                    name=source.stem,
+                    files=(RegistryModelFile(name=source.name, size_bytes=copied),),
+                    origin="local",
+                    source=str(source),
+                )
+            )
+
+        await self._run_operation(model_id, "import", action)
+        return self.entry(model_id)
+
     async def cancel(self, model_id: str) -> bool:
         operation = self._operation
         if operation is None or operation.model_id != model_id or operation.kind == "delete":
             return False
         self._cancel_requested = True
-        choice = self._choice(model_id)
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+        choice = self._find_choice(model_id)
+        if choice is None:
+            return True
         if choice.purpose == "translation":
             owner = self.gemma()
             if owner is not None:
@@ -158,11 +308,33 @@ class ModelAssetsApplication:
         return True
 
     async def delete(self, model_id: str) -> ModelAssetEntry:
-        choice = self._choice(model_id)
+        choice = self._find_choice(model_id)
+        record = None if choice is not None else self._registry().get(model_id)
+        if choice is None and record is None:
+            raise ModelAssetsError("Unknown model", failure_code="unknown_model")
         if model_id in self.active_model_ids():
             self._failures[model_id] = "model_in_use"
             raise ModelAssetsError("Model is in use", failure_code="model_in_use")
-        return await self._run(choice, "delete")
+        if choice is not None:
+            return await self._run(choice, "delete")
+        root = self.model_root or default_local_stt_model_root()
+        registry = self._registry()
+
+        async def action() -> None:
+            await asyncio.to_thread(shutil.rmtree, root / record.model_id, True)
+            registry.remove(record.model_id)
+
+        await self._run_operation(model_id, "delete", action)
+        self._integrity.pop(model_id, None)
+        return ModelAssetEntry(
+            model_id=record.model_id,
+            name=record.name,
+            description_key="",
+            purpose="asr",
+            size_bytes=record.size_bytes,
+            status="missing",
+            origin=record.origin,
+        )
 
     async def _run(
         self,
@@ -172,34 +344,43 @@ class ModelAssetsApplication:
         source: str | None = None,
         files: tuple[Path, ...] = (),
     ) -> ModelAssetEntry:
-        if self._operation is not None:
-            raise ModelAssetsError("Another model task is active", failure_code="task_busy")
-        self._operation = _Operation(choice.model_id, kind, 0 if kind != "delete" else None)
-        self._cancel_requested = False
-        self._failures.pop(choice.model_id, None)
-        try:
+        async def action() -> None:
             if kind == "delete":
                 await self._delete(choice)
             elif choice.purpose == "translation":
                 await self._install_gemma(choice, source=source, files=files)
             else:
                 await self._install_asr(choice, source=source)
+
+        await self._run_operation(choice.model_id, kind, action)
+        return self.entry(choice.model_id)
+
+    async def _run_operation(self, model_id: str, kind: str, action) -> None:
+        if self._operation is not None:
+            raise ModelAssetsError("Another model task is active", failure_code="task_busy")
+        self._operation = _Operation(model_id, kind, 0 if kind != "delete" else None)
+        self._cancel_requested = False
+        self._cancel_event = asyncio.Event()
+        self._failures.pop(model_id, None)
+        try:
+            await action()
         except ModelAssetsError as error:
             if error.failure_code != "cancelled":
-                self._failures[choice.model_id] = error.failure_code
+                self._failures[model_id] = error.failure_code
             raise
         except Exception as error:
             code = "cancelled" if self._cancel_requested else _failure_code(error)
             if code != "cancelled":
-                self._failures[choice.model_id] = code
+                self._failures[model_id] = code
                 log_feature("ModelDownload", kind, code, error=error)
             raise ModelAssetsError(str(error) or code, failure_code=code) from error
         finally:
             self._operation = None
             self._cancel_requested = False
+            self._cancel_event = None
             try:
-                self._integrity[choice.model_id] = await asyncio.to_thread(
-                    self._inspect_one, choice
+                self._integrity[model_id] = await asyncio.to_thread(
+                    self._inspect_one_by_id, model_id
                 )
             except Exception as error:
                 log_feature(
@@ -209,7 +390,6 @@ class ModelAssetsApplication:
                     error=error,
                     level=logging.WARNING,
                 )
-        return self.entry(choice.model_id)
 
     async def _install_asr(self, choice: ModelAssetChoice, *, source: str | None) -> None:
         owner = self.provisioning()
@@ -291,6 +471,15 @@ class ModelAssetsApplication:
     def _inspect_all(self) -> dict[str, str]:
         return {choice.model_id: self._inspect_one(choice) for choice in self.choices}
 
+    def _inspect_one_by_id(self, model_id: str) -> str:
+        choice = self._find_choice(model_id)
+        if choice is not None:
+            return self._inspect_one(choice)
+        record = self._registry().get(model_id)
+        if record is None:
+            return "missing"
+        return self._registry().status(record)
+
     def _inspect_one(self, choice: ModelAssetChoice) -> str:
         if choice.purpose == "translation":
             owner = self.gemma()
@@ -306,11 +495,20 @@ class ModelAssetsApplication:
             ).status
         return _INTEGRITY_STATUS.get(status, "invalid")
 
-    def _choice(self, model_id: str) -> ModelAssetChoice:
+    def _registry(self) -> ModelRegistry:
+        return ModelRegistry(self.model_root or default_local_stt_model_root())
+
+    def _find_choice(self, model_id: str) -> ModelAssetChoice | None:
         for choice in self.choices:
             if choice.model_id == model_id:
                 return choice
-        raise ModelAssetsError("Unknown model", failure_code="unknown_model")
+        return None
+
+    def _choice(self, model_id: str) -> ModelAssetChoice:
+        choice = self._find_choice(model_id)
+        if choice is None:
+            raise ModelAssetsError("Unknown model", failure_code="unknown_model")
+        return choice
 
     @staticmethod
     def _backend(model_id: str) -> str:

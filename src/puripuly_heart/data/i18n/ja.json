@@ -552,5 +552,17 @@
   "provider.chatgpt": "ChatGPT",
   "provider.chatgpt.usage_limit": "ChatGPT (Codex) の利用上限に達しました。上限がリセットされてからご利用ください。",
   "provider.chatgpt.not_eligible": "この ChatGPT アカウントではこのモデルを利用できません。Plus 以上のプランが必要です。",
-  "provider.chatgpt.reauth_required": "ChatGPT のログインが期限切れです。設定から再ログインしてください。"
+  "provider.chatgpt.reauth_required": "ChatGPT のログインが期限切れです。設定から再ログインしてください。",
+  "model_assets.search_placeholder": "Hugging Face でモデルを検索",
+  "model_assets.search_back": "ライブラリに戻る",
+  "model_assets.search_empty": "見つかりません",
+  "model_assets.action.add_file": "ファイルを追加",
+  "model_assets.action.use": "使用",
+  "model_assets.action.in_use": "使用中",
+  "model_assets.action.open": "開く",
+  "model_assets.origin.catalog": "カタログ",
+  "model_assets.origin.search": "検索",
+  "model_assets.origin.local": "ファイル",
+  "model_assets.error.search_failed": "検索に失敗しました",
+  "model_assets.error.invalid_file": "ファイルは GGUF モデルではありません"
 }

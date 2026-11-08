@@ -552,5 +552,17 @@
   "provider.chatgpt": "ChatGPT",
   "provider.chatgpt.usage_limit": "已达到 ChatGPT (Codex) 使用上限。请在上限重置后再使用。",
   "provider.chatgpt.not_eligible": "此 ChatGPT 账号无法调用该模型。需要 Plus 或更高等级的订阅。",
-  "provider.chatgpt.reauth_required": "ChatGPT 登录已过期，请在设置中重新登录。"
+  "provider.chatgpt.reauth_required": "ChatGPT 登录已过期，请在设置中重新登录。",
+  "model_assets.search_placeholder": "在 Hugging Face 上搜索模型",
+  "model_assets.search_back": "返回模型库",
+  "model_assets.search_empty": "未找到任何内容",
+  "model_assets.action.add_file": "添加文件",
+  "model_assets.action.use": "使用",
+  "model_assets.action.in_use": "使用中",
+  "model_assets.action.open": "打开",
+  "model_assets.origin.catalog": "目录",
+  "model_assets.origin.search": "搜索",
+  "model_assets.origin.local": "文件",
+  "model_assets.error.search_failed": "搜索失败",
+  "model_assets.error.invalid_file": "文件不是 GGUF 模型"
 }
