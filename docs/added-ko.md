@@ -34,8 +34,8 @@ pip, `python/INSTALLED_PACKAGES.txt` 목록.
 
 transcribe.cpp Vulkan GGUF 모델 12개(gigaam-v3, parakeet-tdt-0.6b-v3,
 qwen3-asr-0.6b, qwen3-asr-1.7b; q8_0/q6_k/f16)를 사용자의 Hugging Face 및
-ModelScope 저장소에서 사용합니다. 간소화된 v2 매니페스트가 소스와 파일을
-크기 + CRC32로 기술하며 검증은 설치 시에만 수행됩니다.
+ModelScope 저장소에서 사용합니다. 통합 카탈로그가 소스와 파일을 크기 +
+SHA-256으로 기술하며 검증은 설치 시와 명시적 무결성 검사 시 수행됩니다.
 의존성: modelscope, modelscope-hub.
 
 ## 로컬 모델 선택

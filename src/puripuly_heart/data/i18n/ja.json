@@ -593,5 +593,13 @@
   "model_assets.filter.name": "名前で検索",
   "model_assets.origin.official": "Transcribe.cpp",
   "model_assets.search_action": "検索",
-  "model_assets.target_folder": "保存先"
+  "model_assets.target_folder": "保存先",
+  "model_assets.empty.library": "まだモデルがありません。GGUFファイルを追加するか、Transcribe.cppからインストールしてください。",
+  "model_assets.empty.official": "現在のフィルターに一致するモデルはありません。",
+  "model_assets.empty.repositories": "リポジトリを選択すると、GGUFファイルが表示されます。",
+  "model_assets.empty.search": "Hugging FaceまたはModelScopeでモデルを検索してください。",
+  "model_assets.error.registry_corrupt": "モデルレジストリが破損しています。ファイルは変更されていません。",
+  "model_assets.error.unknown_model": "このモデルはカタログにありません。",
+  "model_assets.error.unsupported_source": "このモデルでは、そのダウンロードソースを使用できません。",
+  "model_assets.error.model_owner_unavailable": "モデルインストーラーを利用できません。アプリを再起動して再試行してください。"
 }

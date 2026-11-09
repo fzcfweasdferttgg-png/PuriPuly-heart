@@ -9,11 +9,12 @@ side runs through the installed ``modelscope`` SDK.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -54,13 +55,25 @@ class ModelRepo:
 class RepoFile:
     path: str
     size_bytes: int
+    sha256: str | None = None
 
     @property
     def name(self) -> str:
-        return self.path.rsplit("/", 1)[-1]
+        name = self.path.rsplit("/", 1)[-1]
+        if not name or name in {".", ".."} or "\\" in name or Path(name).name != name:
+            raise ModelRepoError("Unsafe repository file name", failure_code="invalid_file")
+        return name
 
 
 RepoProgressCallback = Callable[[int, int | None], None]
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 # ---------- ModelScope SDK seams (lazy import: the dev venv has no modelscope) ----------
@@ -69,9 +82,7 @@ RepoProgressCallback = Callable[[int, int | None], None]
 def _ms_list_models(owner: str, *, limit: int) -> list[dict]:
     from modelscope.hub.api import HubApi as ModelScopeApi
 
-    result = ModelScopeApi().list_models(
-        owner_or_group=owner, page_number=1, page_size=limit
-    )
+    result = ModelScopeApi().list_models(owner_or_group=owner, page_number=1, page_size=limit)
     return list((result or {}).get("Models") or ())
 
 
@@ -223,7 +234,6 @@ async def _hf_search(
     return tuple(repos)
 
 
-
 async def list_repos(
     owner: str,
     *,
@@ -272,6 +282,7 @@ async def list_repos(
     repos.sort(key=lambda repo: repo.downloads or 0, reverse=True)
     return tuple(repos)
 
+
 async def list_gguf_files(
     repo: ModelRepo,
     *,
@@ -291,7 +302,11 @@ def _ms_list_gguf_files(repo_id: str) -> tuple[RepoFile, ...]:
     except Exception as error:
         raise ModelRepoError(str(error), failure_code="connection_failed") from error
     return tuple(
-        RepoFile(path=str(item["Path"]), size_bytes=int(item.get("Size") or 0))
+        RepoFile(
+            path=str(item["Path"]),
+            size_bytes=int(item.get("Size") or 0),
+            sha256=(str(item["Sha256"]).lower() if item.get("Sha256") else None),
+        )
         for item in entries
         if str(item.get("Path") or "") and int(item.get("Size") or 0) > 0
     )
@@ -306,14 +321,24 @@ async def _hf_list_gguf_files(
     client = client or httpx.AsyncClient(timeout=_REQUEST_TIMEOUT, follow_redirects=True)
     try:
         response = await client.get(
-            f"{HF_API}/api/models/{repo_id}/tree/main",
+            f"{HF_API}/api/models/{quote(repo_id, safe='/')}/tree/main",
             params={"recursive": "true"},
         )
         response.raise_for_status()
         payload = response.json()
         entries = payload if isinstance(payload, list) else ()
         files = [
-            RepoFile(path=str(item["path"]), size_bytes=int(item.get("size") or 0))
+            RepoFile(
+                path=str(item["path"]),
+                size_bytes=int(item.get("size") or 0),
+                sha256=(
+                    str(
+                        (item.get("lfs") or {}).get("sha256") or (item.get("lfs") or {}).get("oid")
+                    ).lower()
+                    if (item.get("lfs") or {}).get("sha256") or (item.get("lfs") or {}).get("oid")
+                    else None
+                ),
+            )
             for item in entries
             if isinstance(item, dict) and item.get("type") == "file"
         ]
@@ -341,12 +366,21 @@ async def download_file(
     target = target_dir / file.name
     if repo.source == PROVIDER_MS:
         return await _ms_download(
-            repo, file, target=target, target_dir=target_dir,
-            cancel_event=cancel_event, on_progress=on_progress,
+            repo,
+            file,
+            target=target,
+            target_dir=target_dir,
+            cancel_event=cancel_event,
+            on_progress=on_progress,
         )
     return await _hf_download(
-        repo, file, target=target, target_dir=target_dir,
-        cancel_event=cancel_event, on_progress=on_progress, client=client,
+        repo,
+        file,
+        target=target,
+        target_dir=target_dir,
+        cancel_event=cancel_event,
+        on_progress=on_progress,
+        client=client,
     )
 
 
@@ -383,6 +417,9 @@ async def _ms_download(
     if file.size_bytes and (not target.is_file() or target.stat().st_size != file.size_bytes):
         target.unlink(missing_ok=True)
         raise ModelRepoError("file size mismatch", failure_code="file_size_mismatch")
+    if file.sha256 and await asyncio.to_thread(_file_sha256, target) != file.sha256.lower():
+        target.unlink(missing_ok=True)
+        raise ModelRepoError("checksum mismatch", failure_code="checksum_failed")
     return target
 
 
@@ -400,8 +437,8 @@ async def _hf_download(
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=_REQUEST_TIMEOUT, follow_redirects=True)
     downloaded = 0
-    quoted = file.path.replace(" ", "%20")
-    url = f"{HF_API}/{repo.repo_id}/resolve/main/{quoted}"
+    quoted = quote(file.path, safe="/")
+    url = f"{HF_API}/{quote(repo.repo_id, safe='/')}/resolve/main/{quoted}"
     try:
         async with client.stream("GET", url) as response:
             response.raise_for_status()
@@ -433,6 +470,9 @@ async def _hf_download(
     if file.size_bytes and downloaded != file.size_bytes:
         part.unlink(missing_ok=True)
         raise ModelRepoError("file size mismatch", failure_code="file_size_mismatch")
+    if file.sha256 and await asyncio.to_thread(_file_sha256, part) != file.sha256.lower():
+        part.unlink(missing_ok=True)
+        raise ModelRepoError("checksum mismatch", failure_code="checksum_failed")
     part.replace(target)
     return target
 

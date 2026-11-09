@@ -1,64 +1,76 @@
 {
     "schema_version":  1,
-    "build_id":  "5247bdc01a5d4e0d8345f450b0e9fa6d",
-    "target_dir":  "E:\\PuriPuly-heart\\asr-build\\5247bdc01a5d4e0d8345f450b0e9fa6d",
+    "build_id":  "c98723760a7e4506b4aca645e81119c0",
+    "target_dir":  "E:\\PuriPuly-heart\\asr-build\\c98723760a7e4506b4aca645e81119c0",
     "cpu_selection":  "upstream-cpuid",
     "files":  [
                   {
-                      "sha256":  "ea173f205c23babb742a72a4438e83cffa44c88e73ba89244fca09db987f1d53",
+                      "sha256":  "9f348c8788597c1fd279e0d997f3d430aa88273506643ec73e7c9494ff3b5cad",
                       "path":  "PuriPulyHeartASRWorker.exe"
                   },
                   {
-                      "sha256":  "ed4c90d9883965d791629f623673adacfc681960a8b4af700fc98e990b0e2d61",
+                      "sha256":  "da250d5a051b1d29b1ee8a283199f6ce9f2f77568408ecf0727c078b7eb0ddb1",
                       "path":  "ggml-base.dll"
                   },
                   {
-                      "sha256":  "900c64e51f04f938f4474e9a8aecc182f204c4090d3da84cea1295c929248672",
+                      "sha256":  "0ffe023992ae49b8b64d48880aa2b2700838c45b0ec3debbed915d5be2a69d33",
                       "path":  "ggml-cpu-alderlake.dll"
                   },
                   {
-                      "sha256":  "c4cee23aedad5166e7dbe198fad2265fbb96a72ea323cd105b99c007add4bdb0",
+                      "sha256":  "dfa79893377cc0a10d31ebde28e836196abbd77904c6840ec4d5a87ad5ca3c53",
                       "path":  "ggml-cpu-cannonlake.dll"
                   },
                   {
-                      "sha256":  "e970e785144a8dc7935b0efbfbea0f31d772122ef9917f116d16116058c7f95d",
+                      "sha256":  "c6179c87a6804a68cc23a191eff8677bbf2000b248ae8b24ca56b3f59be1049c",
                       "path":  "ggml-cpu-cascadelake.dll"
                   },
                   {
-                      "sha256":  "d7d4e4b5e10026a7c6315b83766734a0dc9c04320d077d46ff5c7a80f77d2c14",
+                      "sha256":  "5cb55e7a0776aeb86a229e275a4ae26de5ff15c0084b98902d1d7e3fb4889202",
                       "path":  "ggml-cpu-haswell.dll"
                   },
                   {
-                      "sha256":  "6a3fd6490f98d701b162692d5de49faf3295ea85e3c8617b236c5c90e3d3f7d1",
+                      "sha256":  "298b5b8bf930271bf309870c78c0e675d9396dede0d64dbac149f3eb9e6f0d1f",
                       "path":  "ggml-cpu-icelake.dll"
                   },
                   {
-                      "sha256":  "805991056a5b3c4e46b89d474a27e63512b10ddad263788f8e79ce4f43190c39",
+                      "sha256":  "6848c970a14ff4543cad3626dc4212b42deefca458313a313af210a8d4f41200",
                       "path":  "ggml-cpu-sandybridge.dll"
                   },
                   {
-                      "sha256":  "6bd75697e477a63422624a39f2915f34dda9ad2a43c49f6f9b6783758df6bb9c",
+                      "sha256":  "4e2d68d671c1ad6c6a3fbe4abb72ff807463895931dce3d6e7add9b2d7f80eaf",
                       "path":  "ggml-cpu-skylakex.dll"
                   },
                   {
-                      "sha256":  "0228a5a16ef59963aa967678de673fb551fcdc32fcd5d3204babbe954bff4f70",
+                      "sha256":  "d281622021f6a70ed31ec9fbd88824e46a9016d3c332a65bd334491d0a10211e",
                       "path":  "ggml-cpu-sse42.dll"
                   },
                   {
-                      "sha256":  "0a6630a63664d56a6a8fc6b9ef797db818035f0aa66f5a7f4ca9778523bcc692",
+                      "sha256":  "c6df675080781b4850780691acffa49b1705f8056d44d75642628b27021fb043",
                       "path":  "ggml-cpu-x64.dll"
                   },
                   {
-                      "sha256":  "e9d95efb985ddfdfec1f6215ea99521b40ce45e71c090733689eb7ac696435fe",
+                      "sha256":  "a707bc7b3488b0660189559455a6c33595a5eb697dbf46a50d6ca93831658267",
+                      "path":  "ggml-cuda.dll"
+                  },
+                  {
+                      "sha256":  "9435507de34120e93569e505a557dce50a718cdf39ba747fbc137c8076fef22f",
                       "path":  "ggml-vulkan.dll"
                   },
                   {
-                      "sha256":  "cef39befa1c8c4e0dc0198c956e81cc13c3096ef9d77f29c8f8f0ec8c1054cd6",
+                      "sha256":  "d37d8361fe5d08bd34166925fdc75361b314e14da2a482431c29857ffe3ab81b",
                       "path":  "ggml.dll"
                   },
                   {
-                      "sha256":  "1d20c26a3ac6834a8bf2158475c5e9273a4ffe877513d28691fba4c42a45a5c9",
+                      "sha256":  "b9eb3bc272e04d038d3efc2767894310bd4eaf2df27ef7a6da1f8c4244091763",
                       "path":  "transcribe.dll"
+                  },
+                  {
+                      "sha256":  "db5a1d5a0ed0ef126e005fc7449d3584353aaeb8739a18d716fe74be1254a3da",
+                      "path":  "cublas64_13.dll"
+                  },
+                  {
+                      "sha256":  "ca478e1ea932f883ef4fc284f8f33d910079df4e77f9a2ec38d9b4387795f96f",
+                      "path":  "cublasLt64_13.dll"
                   }
               ]
 }

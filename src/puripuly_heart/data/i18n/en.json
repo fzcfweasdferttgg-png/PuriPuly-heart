@@ -593,5 +593,13 @@
   "model_assets.filter.name": "Search by name",
   "model_assets.origin.official": "Transcribe.cpp",
   "model_assets.search_action": "Search",
-  "model_assets.target_folder": "Save to"
+  "model_assets.target_folder": "Save to",
+  "model_assets.empty.library": "No models yet. Add a GGUF file or install one from Transcribe.cpp.",
+  "model_assets.empty.official": "No models match the current filters.",
+  "model_assets.empty.repositories": "Choose a repository to see its GGUF files.",
+  "model_assets.empty.search": "Search Hugging Face or ModelScope to find a model.",
+  "model_assets.error.registry_corrupt": "The model registry is damaged. Your files were left untouched.",
+  "model_assets.error.unknown_model": "This model is no longer in the catalog.",
+  "model_assets.error.unsupported_source": "This download source is not supported for the selected model.",
+  "model_assets.error.model_owner_unavailable": "The model installer is unavailable. Restart the application and try again."
 }

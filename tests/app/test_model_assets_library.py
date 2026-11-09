@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from puripuly_heart.app.services.model_assets import ModelAssetsApplication, ModelAssetsError
-from puripuly_heart.app.services.model_hub import RepoFile, ModelRepo
+from puripuly_heart.app.services.model_hub import ModelRepo, RepoFile
 from puripuly_heart.core.local_asr.model_registry import ModelRegistry
 
 
@@ -121,3 +119,52 @@ async def test_operation_progress_reflects_the_running_task(tmp_path) -> None:
     entry = await service.add_local_file(source)
     assert service.operation_progress is None
     assert entry.size_bytes == 4
+
+
+async def test_registry_delete_failure_keeps_the_record_and_files(tmp_path, monkeypatch) -> None:
+    import puripuly_heart.app.services.model_assets as module
+    from puripuly_heart.core.model_install_removal import ModelInstallInUseError
+
+    service = _service(tmp_path)
+    source = tmp_path / "own.gguf"
+    source.write_bytes(b"gguf-data")
+    entry = await service.add_local_file(source)
+
+    def fail_delete(_path):
+        raise ModelInstallInUseError("locked")
+
+    monkeypatch.setattr(module, "remove_model_install_dir", fail_delete)
+    with pytest.raises(ModelAssetsError) as caught:
+        await service.delete(entry.model_id)
+
+    assert caught.value.failure_code == "model_in_use"
+    assert (tmp_path / entry.model_id / "own.gguf").is_file()
+    assert ModelRegistry(tmp_path).get(entry.model_id) is not None
+
+
+async def test_refresh_rechecks_registry_files(tmp_path) -> None:
+    service = _service(tmp_path)
+    source = tmp_path / "own.gguf"
+    source.write_bytes(b"gguf-data")
+    entry = await service.add_local_file(source)
+    installed = tmp_path / entry.model_id / "own.gguf"
+    installed.unlink()
+
+    entries = await service.refresh()
+
+    refreshed = next(item for item in entries if item.model_id == entry.model_id)
+    assert refreshed.status == "missing"
+
+
+async def test_local_import_records_sha256(tmp_path) -> None:
+    import hashlib
+
+    service = _service(tmp_path)
+    source = tmp_path / "own.gguf"
+    payload = b"gguf-data"
+    source.write_bytes(payload)
+
+    entry = await service.add_local_file(source)
+
+    record = ModelRegistry(tmp_path).get(entry.model_id)
+    assert record.files[0].sha256 == hashlib.sha256(payload).hexdigest()

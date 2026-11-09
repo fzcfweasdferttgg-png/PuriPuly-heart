@@ -19,7 +19,14 @@ def remove_model_install_dir(install_dir: Path) -> bool:
         install_dir.rename(trash)
     except OSError as error:
         raise ModelInstallInUseError("Model files are in use") from error
-    shutil.rmtree(trash, ignore_errors=True)
+    try:
+        shutil.rmtree(trash)
+    except OSError as error:
+        try:
+            trash.rename(install_dir)
+        except OSError:
+            pass
+        raise ModelInstallInUseError("Model files could not be deleted") from error
     return True
 
 

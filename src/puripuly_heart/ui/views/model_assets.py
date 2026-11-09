@@ -37,6 +37,10 @@ _ERROR_KEYS = frozenset(
         "task_busy",
         "search_failed",
         "download_failed",
+        "registry_corrupt",
+        "unknown_model",
+        "unsupported_source",
+        "model_owner_unavailable",
     }
 )
 _BUSY_STATUSES = frozenset({"downloading", "importing", "deleting"})
@@ -162,9 +166,7 @@ class _TableRow(ft.Container):
             cell.value = value
         self._selected = selected
         self.bgcolor = (
-            ft.Colors.with_opacity(0.12, COLOR_PRIMARY)
-            if selected
-            else ft.Colors.TRANSPARENT
+            ft.Colors.with_opacity(0.12, COLOR_PRIMARY) if selected else ft.Colors.TRANSPARENT
         )
 
 
@@ -183,7 +185,8 @@ class ModelAssetsView(ft.Container):
         self._page = page
         self._application = application
         self._run_task = run_task
-        self._catalog = catalog if catalog is not None else load_transcribe_catalog()
+        available_catalog = catalog if catalog is not None else load_transcribe_catalog()
+        self._catalog = tuple(model for model in available_catalog if model.role != "vad")
         self._official_repos = {model.repo for model in self._catalog}
         self._picker_factory = picker_factory
         self._picker = None
@@ -358,6 +361,18 @@ class ModelAssetsView(ft.Container):
             alignment=ft.Alignment.CENTER_LEFT,
         )
         self._list = ft.ListView(expand=True, spacing=0)
+        self._empty_text = ft.Container(
+            content=ft.Text(
+                "",
+                size=TEXT_SIZE,
+                color=COLOR_NEUTRAL_DARK,
+                max_lines=3,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            alignment=ft.Alignment.CENTER,
+            padding=ft.Padding.symmetric(horizontal=24, vertical=16),
+            visible=False,
+        )
 
         self._quant_dropdown = ft.Dropdown(
             label=t("model_assets.column.params"),
@@ -396,10 +411,14 @@ class ModelAssetsView(ft.Container):
             content=ft.Column(
                 controls=[
                     ft.Row(controls=list(self._tabs.values()), spacing=8),
-                    *[self._toolbars[key] for key in (TAB_LIBRARY, TAB_OFFICIAL, TAB_USER_REPOS, TAB_SEARCH)],
+                    *[
+                        self._toolbars[key]
+                        for key in (TAB_LIBRARY, TAB_OFFICIAL, TAB_USER_REPOS, TAB_SEARCH)
+                    ],
                     self._notice_text,
                     self._header,
                     self._list,
+                    self._empty_text,
                     ft.Row(
                         controls=[
                             self._quant_dropdown,
@@ -479,15 +498,24 @@ class ModelAssetsView(ft.Container):
             self._render_files(self._user_files, cells=_CELLS_FILES)
         else:
             self._render_files(self._repo_files, cells=_CELLS_FILES)
+        self._render_empty_state()
         self._render_actions()
         update_control_if_mounted(self)
+
+    def _render_empty_state(self) -> None:
+        message_keys = {
+            TAB_LIBRARY: "model_assets.empty.library",
+            TAB_OFFICIAL: "model_assets.empty.official",
+            TAB_USER_REPOS: "model_assets.empty.repositories",
+            TAB_SEARCH: "model_assets.empty.search",
+        }
+        self._empty_text.content.value = t(message_keys[self._tab])
+        self._empty_text.visible = not self._rows and not self._loading
 
     def _refresh_state(self) -> None:
         self._entries = tuple(self._application.model_asset_entries())
         self._installed_files = {
-            name
-            for entry in self._entries
-            for name in (getattr(entry, "files", ()) or ())
+            name for entry in self._entries for name in (getattr(entry, "files", ()) or ())
         }
 
     # ---------- rows ----------
@@ -599,11 +627,7 @@ class ModelAssetsView(ft.Container):
                         None if self._lang_filter == "all" else self._lang_filter,
                         None,
                     ),
-                    (
-                        f"{t('model_assets.status.installed')} · {installed}"
-                        if installed
-                        else "—"
-                    ),
+                    (f"{t('model_assets.status.installed')} · {installed}" if installed else "—"),
                 ),
                 selected=self._selected[TAB_OFFICIAL] == model.model_id,
             )
@@ -621,9 +645,7 @@ class ModelAssetsView(ft.Container):
         rows_key = (key_prefix, tuple(getattr(file, "path", "") for file in files))
         if rows_key != self._rows_key:
             self._rows_key = rows_key
-            self._rebuild_rows(
-                tuple(getattr(file, "path", "") for file in files), cells
-            )
+            self._rebuild_rows(tuple(getattr(file, "path", "") for file in files), cells)
         for file in files:
             key = str(getattr(file, "path", ""))
             row = self._rows.get(key)
@@ -665,13 +687,13 @@ class ModelAssetsView(ft.Container):
         self._path_text.value = self._target_path_label()
         self._path_text.visible = bool(self._path_text.value)
         entry = self._delete_target()
-        confirming = entry is not None and self._confirm_delete == getattr(
-            entry, "model_id", None
-        )
+        confirming = entry is not None and self._confirm_delete == getattr(entry, "model_id", None)
         self._delete_button.content = t(
             "model_assets.action.delete_confirm" if confirming else "model_assets.action.delete"
         )
         self._delete_button.disabled = busy or entry is None
+        self._progress_bar.visible = busy
+        self._progress_text.visible = busy
         if operation is not None and operation[2] is not None:
             self._progress_bar.value = max(0.0, min(1.0, operation[2] / 100))
             self._progress_text.value = f"{operation[2]}%"
@@ -889,9 +911,7 @@ class ModelAssetsView(ft.Container):
     # user repositories tab
 
     def _on_user_provider_selected(self, event) -> None:
-        self._user_provider = (
-            getattr(getattr(event, "control", None), "value", None) or "hf"
-        )
+        self._user_provider = getattr(getattr(event, "control", None), "value", None) or "hf"
         self._user_repo = None
         self._user_files = ()
         self._selected[TAB_USER_REPOS] = None
@@ -931,8 +951,7 @@ class ModelAssetsView(ft.Container):
 
     def _fill_user_repo_dropdown(self) -> None:
         self._user_repo_dropdown.options = [
-            ft.dropdown.Option(key=repo.repo_id, text=repo.repo_id)
-            for repo in self._user_repos
+            ft.dropdown.Option(key=repo.repo_id, text=repo.repo_id) for repo in self._user_repos
         ]
         if self._user_repos:
             self._user_repo_dropdown.value = self._user_repos[0].repo_id
@@ -958,9 +977,7 @@ class ModelAssetsView(ft.Container):
         )
 
     def _on_provider_selected(self, event) -> None:
-        self._search_provider = (
-            getattr(getattr(event, "control", None), "value", None) or "hf"
-        )
+        self._search_provider = getattr(getattr(event, "control", None), "value", None) or "hf"
         self._search_field.hint_text = self._search_hint()
         with contextlib.suppress(Exception):
             self._search_field.update()
@@ -976,13 +993,17 @@ class ModelAssetsView(ft.Container):
 
         async def task() -> None:
             try:
-                self._repos = await self._application.search_model_repos(
+                repos = await self._application.search_model_repos(
                     query, self._search_provider_dropdown.value or "hf"
                 )
             except Exception as error:
-                self._repos = ()
                 if generation == self._load_generation:
+                    self._repos = ()
                     self._notice = self._error_notice(error)
+            else:
+                if generation != self._load_generation:
+                    return
+                self._repos = repos
             if generation != self._load_generation:
                 return
             self._selected_repo = None
@@ -1051,8 +1072,10 @@ class ModelAssetsView(ft.Container):
 
     # shared
 
-    def _error_notice(self, error: BaseException) -> str:
+    def _error_notice(self, error: BaseException) -> str | None:
         code = getattr(error, "failure_code", None)
+        if code == "cancelled":
+            return None
         label = _failure_label(code if isinstance(code, str) else None)
         return label or _failure_label("download_failed")
 

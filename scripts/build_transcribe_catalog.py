@@ -1,8 +1,8 @@
 """Generate the bundled transcribe.cpp model catalog digest.
 
 Fetches ``catalog/*.json`` from the handy-computer/transcribe.cpp repository
-and distills the fields the model manager needs into
-``src/puripuly_heart/data/transcribe_catalog.json``.
+and distills the fields the model manager needs into the ``official_catalog``
+section of ``src/puripuly_heart/data/models/catalog.json``.
 
 Regenerate after upstream catalog changes:
 
@@ -25,7 +25,8 @@ OUT_PATH = (
     / "src"
     / "puripuly_heart"
     / "data"
-    / "transcribe_catalog.json"
+    / "models"
+    / "catalog.json"
 )
 
 CAPABILITY_KEYS = (
@@ -106,7 +107,8 @@ def main() -> None:
     names = sorted(
         item["name"]
         for item in listing
-        if item.get("type") == "file" and item["name"].endswith(".json")
+        if item.get("type") == "file"
+        and item["name"].endswith(".json")
         and not item["name"].startswith("_")
     )
     print(f"catalog entries: {len(names)}")
@@ -125,10 +127,16 @@ def main() -> None:
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "models": models,
     }
-    OUT_PATH.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    catalog = (
+        json.loads(OUT_PATH.read_text(encoding="utf-8"))
+        if OUT_PATH.is_file()
+        else {"catalog_version": 1, "models": []}
     )
-    print(f"wrote {OUT_PATH} ({len(models)} models)")
+    catalog["official_catalog"] = payload
+    temporary = OUT_PATH.with_suffix(".tmp")
+    temporary.write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(OUT_PATH)
+    print(f"wrote {OUT_PATH} ({len(models)} official models)")
 
 
 if __name__ == "__main__":

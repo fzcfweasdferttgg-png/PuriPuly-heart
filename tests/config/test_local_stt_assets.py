@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import codecs
+import hashlib
 import json
-import zlib
 from pathlib import Path
 
 import pytest
@@ -28,8 +28,8 @@ from puripuly_heart.core.local_asr.local_stt_assets import (
 from puripuly_heart.runtime_layout import current_runtime_layout
 
 
-def _crc32_bytes(payload: bytes) -> str:
-    return f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}"
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _test_manifest() -> LocalSTTAssetManifest:
@@ -52,12 +52,12 @@ def _test_manifest() -> LocalSTTAssetManifest:
             LocalSTTAssetFile(
                 relative_path="model.int8.onnx",
                 size_bytes=len(b"model-bytes"),
-                crc32=_crc32_bytes(b"model-bytes"),
+                sha256=_sha256_bytes(b"model-bytes"),
             ),
             LocalSTTAssetFile(
                 relative_path="tokens.txt",
                 size_bytes=len(b"token-bytes"),
-                crc32=_crc32_bytes(b"token-bytes"),
+                sha256=_sha256_bytes(b"token-bytes"),
             ),
         ),
     )
@@ -271,7 +271,9 @@ def test_inspect_local_stt_install_state_returns_ready_for_valid_install(tmp_pat
     assert state.installed_manifest.selected_source == "huggingface"
 
 
-@pytest.mark.parametrize("locale", ["zh-CN", "zh-cn", "zh-HK", "zh_HK", "zh-Hant-HK", "ru_RU", None])
+@pytest.mark.parametrize(
+    "locale", ["zh-CN", "zh-cn", "zh-HK", "zh_HK", "zh-Hant-HK", "ru_RU", None]
+)
 def test_default_local_stt_source_for_locale_is_huggingface(locale) -> None:
     assert default_local_stt_source_for_locale(locale) == "huggingface"
 
@@ -280,7 +282,7 @@ def test_local_stt_asset_file_round_trips_integrity_fields() -> None:
     payload = {
         "relative_path": "conv_frontend.onnx",
         "size_bytes": 44148281,
-        "crc32": "d22dc442",
+        "sha256": "a" * 64,
     }
 
     asset = LocalSTTAssetFile.from_dict(payload)
@@ -290,8 +292,29 @@ def test_local_stt_asset_file_round_trips_integrity_fields() -> None:
     assert asset.remote_path_for_source("modelscope") == "conv_frontend.onnx"
 
 
-def test_normalize_crc32_accepts_prefixed_and_normalizes_case() -> None:
-    assert local_stt_assets_module.normalize_crc32("0xD22DC442") == "d22dc442"
+def test_normalize_sha256_normalizes_case_and_rejects_invalid_values() -> None:
+    digest = "A" * 64
+    assert local_stt_assets_module.normalize_sha256(digest) == "a" * 64
 
-    with pytest.raises(LocalSTTManifestInvalidError, match="invalid crc32"):
-        local_stt_assets_module.normalize_crc32("xyz")
+    with pytest.raises(LocalSTTManifestInvalidError, match="invalid sha256"):
+        local_stt_assets_module.normalize_sha256("xyz")
+
+
+def test_builtin_catalog_uses_sha256_for_every_model() -> None:
+    for model_id in LOCAL_STT_MODEL_IDS:
+        manifest = load_local_stt_asset_manifest(model_id)
+        assert manifest.files
+        for asset in manifest.files:
+            assert len(asset.sha256) == 64
+
+
+def test_sha256_asset_serialization() -> None:
+    import hashlib
+
+    payload = b"model-bytes"
+    asset = LocalSTTAssetFile(
+        relative_path="model.gguf",
+        size_bytes=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+    )
+    assert asset.to_dict()["sha256"] == hashlib.sha256(payload).hexdigest()

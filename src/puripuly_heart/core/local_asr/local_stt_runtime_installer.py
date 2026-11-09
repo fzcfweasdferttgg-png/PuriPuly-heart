@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import hashlib
 import inspect
 import json
 import logging
@@ -458,11 +457,11 @@ def _validate_downloaded_asset(
     *,
     asset_path: Path,
     relative_path: str,
-    expected_crc32: str,
+    expected_sha256: str,
     expected_size_bytes: int | None,
     cancel_event: threading.Event | None = None,
 ) -> None:
-    from puripuly_heart.core.local_asr.local_stt_assets import file_crc32, normalize_crc32
+    from puripuly_heart.core.local_asr.local_stt_assets import file_sha256, normalize_sha256
 
     _raise_if_cancelled(cancel_event)
     size_bytes = asset_path.stat().st_size
@@ -471,7 +470,7 @@ def _validate_downloaded_asset(
             f"size mismatch for required model file: {relative_path}",
             failure_code="file_size_mismatch",
         )
-    if file_crc32(asset_path) != normalize_crc32(expected_crc32):
+    if file_sha256(asset_path) != normalize_sha256(expected_sha256):
         raise LocalSTTRuntimeInstallError(
             f"checksum mismatch for required model file: {relative_path}",
             failure_code="checksum_failed",
@@ -519,7 +518,7 @@ async def _download_huggingface_xet_source_into_staging(
                 _validate_downloaded_asset,
                 asset_path=asset_path,
                 relative_path=asset.relative_path,
-                expected_crc32=asset.crc32,
+                expected_sha256=asset.sha256,
                 expected_size_bytes=asset.size_bytes,
                 cancel_event=cancel_event,
                 io_cancel_event=cancel_event or threading.Event(),

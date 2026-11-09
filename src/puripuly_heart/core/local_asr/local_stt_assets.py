@@ -1,16 +1,14 @@
-"""Local STT model assets: manifest catalog (v2, simplified).
+"""Local STT assets from the unified audio-model catalog.
 
-Models are described by small JSON manifests in ``data/models`` and installed
-into the user model root (``<user data>/models/<install_dirname>/``). The
-integrity contract is lightweight: byte size + CRC32 per file, checked at
-install time only. The installed marker (``installed-manifest.json``) records
-a completed install and is never re-hashed at startup.
+Built-in definitions live in ``data/models/catalog.json`` and use SHA-256 for
+integrity checks. The installed marker records a completed install; routine
+status checks use file sizes only.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,7 +36,8 @@ LOCAL_QWEN_GPU_MODEL_FILENAME = "Qwen3-ASR-1.7B-Q6_K.gguf"
 
 
 def local_stt_manifest_relative_path(model_id: str) -> str:
-    return f"data/models/{model_id}.manifest.json"
+    _ = model_id
+    return "data/models/catalog.json"
 
 
 LOCAL_STT_MANIFEST_RELATIVE_PATHS = {
@@ -58,21 +57,19 @@ class LocalSTTManifestInvalidError(LocalSTTAssetError):
     """Raised when the installed local STT manifest or files are invalid."""
 
 
-def normalize_crc32(value: object) -> str:
+def normalize_sha256(value: object) -> str:
     text = str(value).strip().lower()
-    if text.startswith("0x"):
-        text = text[2:]
-    if len(text) != 8 or any(char not in "0123456789abcdef" for char in text):
-        raise LocalSTTManifestInvalidError(f"invalid crc32 value: {value!r}")
+    if len(text) != 64 or any(char not in "0123456789abcdef" for char in text):
+        raise LocalSTTManifestInvalidError(f"invalid sha256 value: {value!r}")
     return text
 
 
-def file_crc32(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
-    digest = 0
+def file_sha256(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(chunk_size), b""):
-            digest = zlib.crc32(chunk, digest)
-    return f"{digest & 0xFFFFFFFF:08x}"
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +100,7 @@ class LocalSTTAssetSource:
 class LocalSTTAssetFile:
     relative_path: str
     size_bytes: int
-    crc32: str
+    sha256: str
 
     def remote_path_for_source(self, source_name: str) -> str:
         _ = source_name
@@ -113,7 +110,7 @@ class LocalSTTAssetFile:
         return {
             "relative_path": self.relative_path,
             "size_bytes": self.size_bytes,
-            "crc32": self.crc32,
+            "sha256": self.sha256,
         }
 
     @classmethod
@@ -121,7 +118,7 @@ class LocalSTTAssetFile:
         return cls(
             relative_path=str(data["relative_path"]),
             size_bytes=int(data["size_bytes"]),
-            crc32=normalize_crc32(data["crc32"]),
+            sha256=normalize_sha256(data["sha256"]),
         )
 
 
@@ -231,18 +228,17 @@ def default_local_stt_source_for_locale(locale: str | None) -> str:
 def load_local_stt_asset_manifest(
     model_id: str = DEFAULT_LOCAL_STT_MODEL_ID,
 ) -> LocalSTTAssetManifest:
-    manifest_path = current_runtime_layout().package_resource(
-        *local_stt_manifest_relative_path(model_id).split("/")
-    )
-    if not manifest_path.is_file():
-        raise LocalSTTModelMissingError(f"model manifest not found: {model_id}")
-    payload = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    manifest = LocalSTTAssetManifest.from_dict(payload)
-    if manifest.model_id != model_id:
-        raise LocalSTTManifestInvalidError(
-            f"manifest model_id mismatch: {manifest.model_id!r} != {model_id!r}"
-        )
-    return manifest
+    layout = current_runtime_layout()
+    catalog_path = layout.package_resource("data", "models", "catalog.json")
+    if not catalog_path.is_file():
+        raise LocalSTTModelMissingError("unified audio-model catalog is missing")
+    payload = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
+    if payload.get("catalog_version") != 1 or not isinstance(payload.get("models"), list):
+        raise LocalSTTManifestInvalidError("invalid unified audio-model catalog")
+    for item in payload["models"]:
+        if item.get("model_id") == model_id:
+            return LocalSTTAssetManifest.from_dict(item)
+    raise LocalSTTModelMissingError(f"model manifest not found: {model_id}")
 
 
 def load_installed_local_stt_manifest(
@@ -260,9 +256,7 @@ def load_installed_local_stt_manifest(
             json.loads(installed_path.read_text(encoding="utf-8-sig"))
         )
     except (ValueError, TypeError, KeyError) as exc:
-        raise LocalSTTManifestInvalidError(
-            f"invalid installed manifest: {installed_path}"
-        ) from exc
+        raise LocalSTTManifestInvalidError(f"invalid installed manifest: {installed_path}") from exc
     if installed.model_id != resolved_manifest.model_id:
         raise LocalSTTManifestInvalidError(
             f"installed manifest model_id mismatch: {installed.model_id!r}"
@@ -282,16 +276,14 @@ def validate_local_stt_install(
     for asset in manifest.files:
         asset_path = model_dir / asset.relative_path
         if not asset_path.is_file():
-            raise LocalSTTManifestInvalidError(
-                f"missing model file: {asset.relative_path}"
-            )
+            raise LocalSTTManifestInvalidError(f"missing model file: {asset.relative_path}")
         actual_size = asset_path.stat().st_size
         if actual_size != asset.size_bytes:
             raise LocalSTTManifestInvalidError(
                 f"size mismatch for model file: {asset.relative_path} "
                 f"({actual_size} != {asset.size_bytes})"
             )
-        if verify_checksums and file_crc32(asset_path) != asset.crc32:
+        if verify_checksums and file_sha256(asset_path) != asset.sha256:
             raise LocalSTTManifestInvalidError(
                 f"checksum mismatch for model file: {asset.relative_path}"
             )
@@ -337,11 +329,11 @@ __all__ = [
     "default_local_stt_model_dir",
     "default_local_stt_model_root",
     "default_local_stt_source_for_locale",
-    "file_crc32",
+    "file_sha256",
     "inspect_local_stt_install_state",
     "load_installed_local_stt_manifest",
     "load_local_stt_asset_manifest",
     "local_stt_manifest_relative_path",
-    "normalize_crc32",
+    "normalize_sha256",
     "validate_local_stt_install",
 ]

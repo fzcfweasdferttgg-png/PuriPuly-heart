@@ -593,5 +593,13 @@
   "model_assets.filter.name": "Поиск по имени",
   "model_assets.origin.official": "Transcribe.cpp",
   "model_assets.search_action": "Найти",
-  "model_assets.target_folder": "Сохранить в"
+  "model_assets.target_folder": "Сохранить в",
+  "model_assets.empty.library": "Пока нет моделей. Добавьте GGUF-файл или установите модель из Transcribe.cpp.",
+  "model_assets.empty.official": "По выбранным фильтрам ничего не найдено.",
+  "model_assets.empty.repositories": "Выберите репозиторий, чтобы увидеть его GGUF-файлы.",
+  "model_assets.empty.search": "Найдите модель на Hugging Face или ModelScope.",
+  "model_assets.error.registry_corrupt": "Реестр моделей повреждён. Файлы не изменялись.",
+  "model_assets.error.unknown_model": "Эта модель больше не указана в каталоге.",
+  "model_assets.error.unsupported_source": "Этот источник не поддерживается для выбранной модели.",
+  "model_assets.error.model_owner_unavailable": "Установщик моделей недоступен. Перезапустите приложение и повторите."
 }

@@ -593,5 +593,13 @@
   "model_assets.filter.name": "按名称搜索",
   "model_assets.origin.official": "Transcribe.cpp",
   "model_assets.search_action": "搜索",
-  "model_assets.target_folder": "保存到"
+  "model_assets.target_folder": "保存到",
+  "model_assets.empty.library": "还没有模型。请添加 GGUF 文件，或从 Transcribe.cpp 安装模型。",
+  "model_assets.empty.official": "没有符合当前筛选条件的模型。",
+  "model_assets.empty.repositories": "选择仓库即可查看其中的 GGUF 文件。",
+  "model_assets.empty.search": "请在 Hugging Face 或 ModelScope 上搜索模型。",
+  "model_assets.error.registry_corrupt": "模型注册表已损坏。文件未被更改。",
+  "model_assets.error.unknown_model": "此模型已不在目录中。",
+  "model_assets.error.unsupported_source": "所选模型不支持此下载来源。",
+  "model_assets.error.model_owner_unavailable": "模型安装器不可用。请重启应用后重试。"
 }

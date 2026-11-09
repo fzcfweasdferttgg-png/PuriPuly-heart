@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import threading
 from dataclasses import replace
 
@@ -9,14 +8,18 @@ import pytest
 from puripuly_heart.core.local_asr.local_asr_provisioning import LocalASRInstallRequest
 from puripuly_heart.core.local_asr.local_stt_assets import (
     LOCAL_QWEN_GPU_MODEL_ID,
-    load_local_stt_asset_manifest,
     validate_local_stt_install,
 )
+
 # Fixture identities for install flows must be registered models.
 FUN_ASR_MLT_NANO_MODEL_ID = "gigaam-v3-gguf-q8_0"
 FUN_ASR_NANO_MODEL_ID = "qwen3-asr-0.6b-gguf-q8_0"
 ORUKEET_MODEL_ID = "parakeet-tdt-0.6b-v3-gguf-q8_0"
-REQUIRED_CPU_LOCAL_STT_MODEL_IDS = (FUN_ASR_MLT_NANO_MODEL_ID, FUN_ASR_NANO_MODEL_ID, ORUKEET_MODEL_ID)
+REQUIRED_CPU_LOCAL_STT_MODEL_IDS = (
+    FUN_ASR_MLT_NANO_MODEL_ID,
+    FUN_ASR_NANO_MODEL_ID,
+    ORUKEET_MODEL_ID,
+)
 from puripuly_heart.core.local_asr.local_stt_download_port import LocalSTTDownloadPortError
 from puripuly_heart.core.local_asr.local_stt_runtime_installer import (
     LocalSTTRuntimeInstallError,
@@ -27,9 +30,9 @@ from puripuly_heart.core.runtime.local_asr_provisioning import LocalASRProvision
 from tests.core.runtime.test_local_asr_provisioning import (
     MutableProvisioningBackend,
     _all_states,
-    _crc32,
     _fixture_manifest,
     _owner,
+    _sha256,
 )
 from tests.core.test_external_network import (
     isolated_network_environment as isolated_network_environment,
@@ -50,7 +53,7 @@ def _local_manifest(model_id, source_directory, base_url):
     asset = replace(
         canonical.files[0],
         size_bytes=len(payload),
-        crc32=_crc32(payload),
+        sha256=_sha256(payload),
     )
     sources = {
         name: replace(
@@ -210,6 +213,8 @@ async def test_owner_selected_source_completes_real_install_and_ready_publicatio
         assert result.failed_model_ids == ()
         assert result.failure_codes == ()
         assert result.snapshot.state_for(FUN_ASR_NANO_MODEL_ID).integrity == "ready"
+        assert result.snapshot.activities == ()
+        assert owner.snapshot.activities == ()
         installed = validate_local_stt_install(
             tmp_path / "models" / manifest.install_dirname, manifest=manifest
         )
@@ -319,3 +324,54 @@ async def test_cancelled_lease_acquisition_waits_and_releases_acquired_lease(tmp
             await task
     assert cancellation.is_set()
     assert closed.is_set()
+
+
+async def test_modelscope_adapter_cancels_from_progress_callback(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    from puripuly_heart.core.local_asr.local_stt_download_port import (
+        HuggingFaceDownloadRequest,
+        LocalSTTDownloadPortCancelled,
+    )
+    from puripuly_heart.core.local_asr.local_stt_modelscope_adapter import (
+        ModelScopeDownloadAdapter,
+    )
+
+    class ProgressCallback:
+        def __init__(self, filename, size):
+            self.file_size = size
+
+    cancellation = threading.Event()
+    progress = []
+
+    def http_get_model_file(*args, **kwargs):
+        bridge = kwargs["progress_callbacks"][0]()
+        bridge.update(4)
+        cancellation.set()
+        bridge.update(4)
+
+    callback_module = types.ModuleType("modelscope.hub.callback")
+    callback_module.ProgressCallback = ProgressCallback
+    download_module = types.ModuleType("modelscope.hub.file_download")
+    download_module.get_file_download_url = lambda *args, **kwargs: "https://example.invalid/model"
+    download_module.http_get_model_file = http_get_model_file
+    monkeypatch.setitem(sys.modules, "modelscope", types.ModuleType("modelscope"))
+    monkeypatch.setitem(sys.modules, "modelscope.hub", types.ModuleType("modelscope.hub"))
+    monkeypatch.setitem(sys.modules, "modelscope.hub.callback", callback_module)
+    monkeypatch.setitem(sys.modules, "modelscope.hub.file_download", download_module)
+
+    with pytest.raises(LocalSTTDownloadPortCancelled):
+        await ModelScopeDownloadAdapter().download(
+            HuggingFaceDownloadRequest(
+                repo_id="owner/repo",
+                revision="master",
+                remote_path="model.gguf",
+                local_dir=tmp_path,
+                expected_size_bytes=8,
+            ),
+            cancel_event=cancellation,
+            on_progress=progress.append,
+        )
+
+    assert [(item.downloaded_bytes, item.total_bytes) for item in progress] == [(4, 8)]

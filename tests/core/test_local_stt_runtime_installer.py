@@ -35,6 +35,7 @@ from puripuly_heart.core.local_asr.local_stt_runtime_installer import (
     LocalSTTRuntimeInstallCancelled,
     LocalSTTRuntimeInstallError,
     RuntimeLocalSTTStatusUpdate,
+    _validate_downloaded_asset,
     cleanup_local_stt_install_residue,
     ensure_local_stt_installed,
 )
@@ -229,10 +230,8 @@ def file_server(temp_dir: Path):
         thread.join(timeout=5)
 
 
-def _crc32_bytes(payload: bytes) -> str:
-    import zlib
-
-    return f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}"
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _build_manifest(
@@ -263,12 +262,12 @@ def _build_manifest(
         files=(
             LocalSTTAssetFile(
                 relative_path="model.gguf",
-                crc32=_crc32_bytes(model_bytes),
+                sha256=_sha256_bytes(model_bytes),
                 size_bytes=len(model_bytes),
             ),
             LocalSTTAssetFile(
                 relative_path="tokenizer/tokens.txt",
-                crc32=_crc32_bytes(token_bytes),
+                sha256=_sha256_bytes(token_bytes),
                 size_bytes=len(token_bytes),
             ),
         ),
@@ -1464,3 +1463,25 @@ async def test_runtime_install_rejects_cross_model_manifest_target() -> None:
 
     with pytest.raises(LocalSTTRuntimeInstallError, match="does not match"):
         await ensure_local_stt_installed(model_id="model-b", manifest=manifest)
+
+
+def test_downloaded_asset_validation_uses_sha256(tmp_path) -> None:
+    payload = b"model-bytes"
+    path = tmp_path / "model.gguf"
+    path.write_bytes(payload)
+
+    _validate_downloaded_asset(
+        asset_path=path,
+        relative_path=path.name,
+        expected_sha256=hashlib.sha256(payload).hexdigest(),
+        expected_size_bytes=len(payload),
+    )
+    with pytest.raises(LocalSTTRuntimeInstallError) as caught:
+        _validate_downloaded_asset(
+            asset_path=path,
+            relative_path=path.name,
+            expected_sha256="0" * 64,
+            expected_size_bytes=len(payload),
+        )
+
+    assert caught.value.failure_code == "checksum_failed"

@@ -38,8 +38,8 @@ Dependencies: none.
 
 Twelve transcribe.cpp Vulkan GGUF models (gigaam-v3, parakeet-tdt-0.6b-v3,
 qwen3-asr-0.6b, qwen3-asr-1.7b; q8_0/q6_k/f16) from the user's Hugging Face
-and ModelScope repositories. Simplified v2 manifests describe sources and
-files with size + CRC32, verified at install time only.
+and ModelScope repositories. A unified catalog describes sources and files
+with size + SHA-256, verified at install time and during explicit integrity checks.
 Dependencies: modelscope, modelscope-hub.
 
 ## Local model selection

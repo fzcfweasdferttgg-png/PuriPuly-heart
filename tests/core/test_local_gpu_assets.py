@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import zlib
 from pathlib import Path
 
 from puripuly_heart.core.local_asr.local_gpu_assets import (
@@ -37,7 +37,7 @@ def _fixture_manifest(payload: bytes) -> LocalSTTAssetManifest:
             LocalSTTAssetFile(
                 relative_path=LOCAL_QWEN_GPU_MODEL_FILENAME,
                 size_bytes=len(payload),
-                crc32=f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}",
+                sha256=hashlib.sha256(payload).hexdigest(),
             ),
         ),
     )
@@ -67,11 +67,11 @@ def test_gpu_manifest_pins_one_strict_vulkan_q6_k_asset() -> None:
     assert manifest.model_id == LOCAL_QWEN_GPU_MODEL_ID
     assert manifest.engine == LOCAL_QWEN_GPU_ENGINE
     assert manifest.sources["huggingface"].revision == "main"
-    assert [(item.relative_path, item.size_bytes, item.crc32) for item in manifest.files] == [
+    assert [(item.relative_path, item.size_bytes, item.sha256) for item in manifest.files] == [
         (
             "qwen3-asr-1.7b/gguf/q6_k/Qwen3-ASR-1.7B-Q6_K.gguf",
             1_692_554_208,
-            "29aac2ac",
+            "c75a961b7134a6c952d89797865cb0d0376876185aee04ef6d12c31c2952e4e1",
         )
     ]
     source = manifest.sources["huggingface"]

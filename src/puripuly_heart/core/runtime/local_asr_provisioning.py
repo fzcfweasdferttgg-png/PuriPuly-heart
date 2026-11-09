@@ -33,7 +33,6 @@ from puripuly_heart.core.local_asr.local_stt_assets import (
     InstalledLocalSTTManifest,
     LocalSTTAssetManifest,
     LocalSTTInstallState,
-    LocalSTTManifestInvalidError,
     default_local_stt_model_root,
     load_local_stt_asset_manifest,
 )
@@ -828,7 +827,7 @@ class LocalASRProvisioningOwner:
             operation=operation,
         )
         if activity is not None:
-            self._activities[current.backend] = activity
+            self._activities[activity.backend] = activity
 
     @staticmethod
     def _state_from_install(

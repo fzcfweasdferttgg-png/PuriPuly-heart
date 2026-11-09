@@ -15,11 +15,16 @@ from puripuly_heart.core import network_clients
 from puripuly_heart.core.local_asr import local_stt_runtime_installer as installer
 from puripuly_heart.core.local_asr.local_stt_assets import (
     LOCAL_QWEN_GPU_MODEL_ID,
-    load_local_stt_asset_manifest,
 )
+
 # Fixture identities for owner operations must be registered models.
 ORUKEET_MODEL_ID = "qwen3-asr-0.6b-gguf-q8_0"
-REQUIRED_CPU_LOCAL_STT_MODEL_IDS = ("gigaam-v3-gguf-q8_0", "parakeet-tdt-0.6b-v3-gguf-q8_0", "qwen3-asr-0.6b-gguf-f16", "gigaam-v3-gguf-f16")
+REQUIRED_CPU_LOCAL_STT_MODEL_IDS = (
+    "gigaam-v3-gguf-q8_0",
+    "parakeet-tdt-0.6b-v3-gguf-q8_0",
+    "qwen3-asr-0.6b-gguf-f16",
+    "gigaam-v3-gguf-f16",
+)
 from puripuly_heart.core.local_asr.local_stt_download_port import (
     HuggingFaceDownloadProgress,
     LocalSTTDownloadPortCancelled,
@@ -31,9 +36,9 @@ from tests.app.test_managed_gemma_translation import RecordingRuntime, _readines
 from tests.core.runtime.test_local_asr_provisioning import (
     MutableProvisioningBackend,
     _all_states,
-    _crc32,
     _fixture_manifest,
     _owner,
+    _sha256,
 )
 
 ASR_IDS = (*REQUIRED_CPU_LOCAL_STT_MODEL_IDS, LOCAL_QWEN_GPU_MODEL_ID)
@@ -58,8 +63,7 @@ async def test_every_asr_mirror_uses_guarded_range_and_preserves_registered_pins
     manifest = replace(
         original,
         files=tuple(
-            replace(asset, size_bytes=len(data), crc32=_crc32(data))
-            for asset in original.files
+            replace(asset, size_bytes=len(data), sha256=_sha256(data)) for asset in original.files
         ),
     )
     requests, updates = [], []

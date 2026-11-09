@@ -145,7 +145,7 @@ def test_native_child_consumes_production_bundle_resources_without_installed_wri
         "data/fonts/NotoSansCJK-Medium.ttc",
         "data/THIRD_PARTY_NOTICES.txt",
         "data/licenses/PYTHON-3.14.10-LICENSE.txt",
-        "data/models/qwen3-asr-1.7b-gguf-q6_k.manifest.json",
+        "data/models/catalog.json",
     )
     for relative in resource_paths:
         destination = package / relative
@@ -237,10 +237,7 @@ print(json.dumps({
         for relative in resource_paths[:4]
     ]
     assert result["font_url"] == "/fonts/NotoSansCJK-Medium.ttc"
-    assert (
-        result["manifest_id"]
-        == json.loads((SOURCE_ROOT / resource_paths[4]).read_text(encoding="utf-8"))["model_id"]
-    )
+    assert result["manifest_id"] == "qwen3-asr-1.7b-gguf-q6_k"
     assert sorted(result["locales"]) == sorted(
         path.stem for path in (SOURCE_ROOT / "data/i18n").glob("*.json")
     )

@@ -8,10 +8,13 @@ picker and the runtime all resolve registry models exactly like catalog ones.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 REGISTRY_FILENAME = "registry.json"
 REGISTRY_VERSION = 1
@@ -25,6 +28,30 @@ REGISTRY_STATUS_INVALID = "invalid"
 class RegistryModelFile:
     name: str
     size_bytes: int
+    sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not self.name
+            or self.name in {".", ".."}
+            or Path(self.name).name != self.name
+            or "/" in self.name
+            or "\\" in self.name
+        ):
+            raise ValueError(f"Unsafe registry file name: {self.name!r}")
+        if self.size_bytes < 0:
+            raise ValueError("Registry file size cannot be negative")
+        if self.sha256 is not None:
+            digest = self.sha256.lower()
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+                raise ValueError("Invalid registry SHA-256")
+            object.__setattr__(self, "sha256", digest)
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {"name": self.name, "size_bytes": self.size_bytes}
+        if self.sha256 is not None:
+            payload["sha256"] = self.sha256
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +62,10 @@ class RegistryModelRecord:
     origin: str = "local"
     source: str | None = None
 
+    def __post_init__(self) -> None:
+        if sanitize_model_id(self.model_id) != self.model_id or not self.files:
+            raise ValueError(f"Invalid registry model record: {self.model_id!r}")
+
     @property
     def size_bytes(self) -> int:
         return sum(file.size_bytes for file in self.files)
@@ -43,7 +74,7 @@ class RegistryModelRecord:
         return {
             "model_id": self.model_id,
             "name": self.name,
-            "files": [{"name": f.name, "size_bytes": f.size_bytes} for f in self.files],
+            "files": [file.to_dict() for file in self.files],
             "origin": self.origin,
             "source": self.source,
         }
@@ -54,6 +85,7 @@ class RegistryModelRecord:
             RegistryModelFile(
                 name=str(item["name"]),
                 size_bytes=int(item.get("size_bytes", 0) or 0),
+                sha256=(str(item["sha256"]) if item.get("sha256") else None),
             )
             for item in data.get("files", ())
         )
@@ -77,6 +109,14 @@ def sanitize_model_id(raw: str) -> str:
     return cleaned or "model"
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 class ModelRegistry:
     """Plain JSON registry of models installed outside the manifest catalog."""
 
@@ -89,20 +129,18 @@ class ModelRegistry:
         return self._path
 
     def load(self) -> tuple[RegistryModelRecord, ...]:
+        if not self._path.exists():
+            return ()
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return ()
-        models = data.get("models") if isinstance(data, dict) else None
-        if not isinstance(models, list):
-            return ()
-        records: list[RegistryModelRecord] = []
-        for item in models:
-            try:
-                records.append(RegistryModelRecord.from_dict(item))
-            except (KeyError, TypeError, ValueError):
-                continue
-        return tuple(records)
+            models = data.get("models") if isinstance(data, dict) else None
+            if not isinstance(models, list):
+                raise ValueError("Registry models must be a list")
+            return tuple(RegistryModelRecord.from_dict(item) for item in models)
+        except (OSError, KeyError, TypeError, ValueError) as error:
+            raise ModelRegistryError(
+                "Model registry is unreadable or corrupt", failure_code="registry_corrupt"
+            ) from error
 
     def save(self, records: tuple[RegistryModelRecord, ...]) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
@@ -110,10 +148,16 @@ class ModelRegistry:
             "version": REGISTRY_VERSION,
             "models": [record.to_dict() for record in records],
         }
-        self._path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        temporary = self._path.with_name(f".{self._path.name}.{uuid4().hex}.tmp")
+        try:
+            with temporary.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self._path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def get(self, model_id: str) -> RegistryModelRecord | None:
         for record in self.load():

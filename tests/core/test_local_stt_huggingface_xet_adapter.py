@@ -354,7 +354,6 @@ raise SystemExit(run_huggingface_xet_worker(
 
 
 def _gpu_manifest(payload: bytes, *, modelscope_url: str = "") -> LocalSTTAssetManifest:
-    import zlib
 
     sources = {
         "huggingface": LocalSTTAssetSource(
@@ -380,7 +379,7 @@ def _gpu_manifest(payload: bytes, *, modelscope_url: str = "") -> LocalSTTAssetM
             LocalSTTAssetFile(
                 relative_path="Qwen3-ASR-1.7B-Q6_K.gguf",
                 size_bytes=len(payload),
-                crc32=f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}",
+                sha256=hashlib.sha256(payload).hexdigest(),
             ),
         ),
     )

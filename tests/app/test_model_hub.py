@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+
 import httpx
 import pytest
 
 from puripuly_heart.app.services.model_hub import (
-    RepoFile,
     ModelRepo,
     ModelRepoError,
+    RepoFile,
     download_file,
     list_gguf_files,
     search_repos,
@@ -187,7 +189,9 @@ async def test_ms_files_and_download_go_through_the_sdk(monkeypatch, tmp_path) -
     files = await list_gguf_files(ModelRepo(repo_id="u/r", source="ms", name="r"))
     assert files == (RepoFile(path="sub/model-Q4.gguf", size_bytes=8),)
 
-    def fake_download(repo_id, file_path, *, file_name, file_size, local_dir, on_update, cancel_event):
+    def fake_download(
+        repo_id, file_path, *, file_name, file_size, local_dir, on_update, cancel_event
+    ):
         assert (repo_id, file_path) == ("u/r", "sub/model-Q4.gguf")
         (local_dir / file_name).write_bytes(b"12345678")
         on_update(8, 8)
@@ -204,7 +208,9 @@ async def test_ms_files_and_download_go_through_the_sdk(monkeypatch, tmp_path) -
 async def test_ms_download_cancel_is_reported(monkeypatch, tmp_path) -> None:
     import puripuly_heart.app.services.model_hub as model_hub
 
-    def fake_download(repo_id, file_path, *, file_name, file_size, local_dir, on_update, cancel_event):
+    def fake_download(
+        repo_id, file_path, *, file_name, file_size, local_dir, on_update, cancel_event
+    ):
         raise model_hub._CancelDownload()
 
     monkeypatch.setattr(model_hub, "_ms_download_file", fake_download)
@@ -217,3 +223,61 @@ async def test_ms_download_cancel_is_reported(monkeypatch, tmp_path) -> None:
 
     assert caught.value.failure_code == "cancelled"
     assert not (tmp_path / "m.gguf").exists()
+
+
+async def test_download_file_verifies_sha256(tmp_path) -> None:
+    payload = b"123456"
+
+    async with _client(lambda request: httpx.Response(200, content=payload)) as client:
+        path = await download_file(
+            ModelRepo(repo_id="x/y", source="hf", name="y"),
+            RepoFile(
+                path="model.gguf",
+                size_bytes=len(payload),
+                sha256=hashlib.sha256(payload).hexdigest(),
+            ),
+            target_dir=tmp_path,
+            client=client,
+        )
+
+    assert path.read_bytes() == payload
+
+
+async def test_download_file_rejects_a_sha256_mismatch(tmp_path) -> None:
+    async with _client(lambda request: httpx.Response(200, content=b"123456")) as client:
+        with pytest.raises(ModelRepoError) as caught:
+            await download_file(
+                ModelRepo(repo_id="x/y", source="hf", name="y"),
+                RepoFile(path="model.gguf", size_bytes=6, sha256="0" * 64),
+                target_dir=tmp_path,
+                client=client,
+            )
+
+    assert caught.value.failure_code == "checksum_failed"
+    assert not (tmp_path / "model.gguf").exists()
+    assert not (tmp_path / "model.gguf.part").exists()
+
+
+async def test_download_file_quotes_the_complete_repo_path(tmp_path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "sub%20folder/a%23b.gguf" in request.url.raw_path.decode()
+        return httpx.Response(200, content=b"x")
+
+    async with _client(handler) as client:
+        await download_file(
+            ModelRepo(repo_id="x/y", source="hf", name="y"),
+            RepoFile(path="sub folder/a#b.gguf", size_bytes=1),
+            target_dir=tmp_path,
+            client=client,
+        )
+
+
+async def test_download_file_rejects_unsafe_names(tmp_path) -> None:
+    with pytest.raises(ModelRepoError) as caught:
+        await download_file(
+            ModelRepo(repo_id="x/y", source="hf", name="y"),
+            RepoFile(path="..\\outside.gguf", size_bytes=1),
+            target_dir=tmp_path,
+        )
+
+    assert caught.value.failure_code == "invalid_file"

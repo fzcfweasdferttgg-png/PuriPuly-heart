@@ -10,12 +10,20 @@ from pathlib import Path
 
 from puripuly_heart.app.services.model_assets_catalog import ModelAssetChoice, model_asset_choices
 from puripuly_heart.app.services.model_hub import (
-    RepoFile,
     ModelRepo,
     ModelRepoError,
+    RepoFile,
+)
+from puripuly_heart.app.services.model_hub import (
     download_file as hub_download_file,
+)
+from puripuly_heart.app.services.model_hub import (
     list_gguf_files as hub_list_gguf_files,
+)
+from puripuly_heart.app.services.model_hub import (
     list_repos as hub_list_repos,
+)
+from puripuly_heart.app.services.model_hub import (
     search_repos as hub_search_repos,
 )
 from puripuly_heart.core.feature_diagnostics import log_feature
@@ -30,8 +38,10 @@ from puripuly_heart.core.local_asr.model_registry import (
     ModelRegistry,
     RegistryModelFile,
     RegistryModelRecord,
+    file_sha256,
 )
 from puripuly_heart.core.model_download_sources import MODEL_DOWNLOAD_SOURCES
+from puripuly_heart.core.model_install_removal import remove_model_install_dir
 
 MODEL_ASSETS_ORIGIN = "model_assets"
 _INTEGRITY_STATUS = {"ready": "installed", "missing": "missing", "invalid": "invalid"}
@@ -210,7 +220,7 @@ class ModelAssetsApplication:
         return (operation.model_id, operation.kind, operation.progress_percent)
 
     async def refresh(self) -> tuple[ModelAssetEntry, ...]:
-        self._integrity.update(await asyncio.to_thread(self._inspect_all))
+        self._integrity = await asyncio.to_thread(self._inspect_all)
         return self.entries()
 
     async def download(self, model_id: str, *, source: str | None = None) -> ModelAssetEntry:
@@ -259,9 +269,12 @@ class ModelAssetsApplication:
         download = model.download(quant)
         if download is None:
             raise ModelAssetsError("Unknown quant", failure_code="unknown_model")
+        repo = ModelRepo(repo_id=model.repo, source="hf", name=model.name)
+        remote_files = await self.hub_files(repo)
+        remote = next((item for item in remote_files if item.name == download.filename), None)
         return await self.install_hub_file(
-            ModelRepo(repo_id=model.repo, source="hf", name=model.name),
-            RepoFile(path=download.filename, size_bytes=download.size_bytes),
+            repo,
+            remote or RepoFile(path=download.filename, size_bytes=download.size_bytes),
         )
 
     async def hub_files(self, repo: ModelRepo) -> tuple[RepoFile, ...]:
@@ -284,24 +297,35 @@ class ModelAssetsApplication:
                     self._operation.progress_percent = min(100, int(done * 100 / total))
 
             try:
-                path = await hub_download_file(
-                    repo,
-                    file,
-                    target_dir=target_dir,
-                    cancel_event=self._cancel_event,
-                    on_progress=on_progress,
+                try:
+                    path = await hub_download_file(
+                        repo,
+                        file,
+                        target_dir=target_dir,
+                        cancel_event=self._cancel_event,
+                        on_progress=on_progress,
+                    )
+                except ModelRepoError as error:
+                    raise ModelAssetsError(str(error), failure_code=error.failure_code) from error
+                digest = file.sha256 or await asyncio.to_thread(file_sha256, path)
+                registry.add(
+                    RegistryModelRecord(
+                        model_id=model_id,
+                        name=stem,
+                        files=(
+                            RegistryModelFile(
+                                name=path.name,
+                                size_bytes=file.size_bytes,
+                                sha256=digest,
+                            ),
+                        ),
+                        origin="search",
+                        source=f"{repo.source}:{repo.repo_id}",
+                    )
                 )
-            except ModelRepoError as error:
-                raise ModelAssetsError(str(error), failure_code=error.failure_code) from error
-            registry.add(
-                RegistryModelRecord(
-                    model_id=model_id,
-                    name=stem,
-                    files=(RegistryModelFile(name=path.name, size_bytes=path.stat().st_size),),
-                    origin="search",
-                    source=f"{repo.source}:{repo.repo_id}",
-                )
-            )
+            except BaseException:
+                shutil.rmtree(target_dir, ignore_errors=True)
+                raise
 
         await self._run_operation(model_id, "download", action)
         return self.entry(model_id)
@@ -334,25 +358,31 @@ class ModelAssetsApplication:
                         writer.write(chunk)
                         copied += len(chunk)
                         if self._operation is not None and total:
-                            self._operation.progress_percent = min(
-                                100, int(copied * 100 / total)
-                            )
+                            self._operation.progress_percent = min(100, int(copied * 100 / total))
                 return copied
 
             try:
                 copied = await asyncio.to_thread(copy)
+                digest = await asyncio.to_thread(file_sha256, target)
+                registry.add(
+                    RegistryModelRecord(
+                        model_id=model_id,
+                        name=source.stem,
+                        files=(
+                            RegistryModelFile(
+                                name=source.name,
+                                size_bytes=copied,
+                                sha256=digest,
+                            ),
+                        ),
+                        origin="local",
+                        source=str(source),
+                    )
+                )
             except BaseException:
                 target.unlink(missing_ok=True)
+                shutil.rmtree(target_dir, ignore_errors=True)
                 raise
-            registry.add(
-                RegistryModelRecord(
-                    model_id=model_id,
-                    name=source.stem,
-                    files=(RegistryModelFile(name=source.name, size_bytes=copied),),
-                    origin="local",
-                    source=str(source),
-                )
-            )
 
         await self._run_operation(model_id, "import", action)
         return self.entry(model_id)
@@ -391,7 +421,7 @@ class ModelAssetsApplication:
         registry = self._registry()
 
         async def action() -> None:
-            await asyncio.to_thread(shutil.rmtree, root / record.model_id, True)
+            await asyncio.to_thread(remove_model_install_dir, root / record.model_id)
             registry.remove(record.model_id)
 
         await self._run_operation(model_id, "delete", action)
@@ -539,7 +569,10 @@ class ModelAssetsApplication:
         await owner.delete_model(choice.model_id)
 
     def _inspect_all(self) -> dict[str, str]:
-        return {choice.model_id: self._inspect_one(choice) for choice in self.choices}
+        statuses = {choice.model_id: self._inspect_one(choice) for choice in self.choices}
+        registry = self._registry()
+        statuses.update({record.model_id: registry.status(record) for record in registry.load()})
+        return statuses
 
     def _inspect_one_by_id(self, model_id: str) -> str:
         choice = self._find_choice(model_id)

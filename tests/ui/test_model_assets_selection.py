@@ -31,7 +31,9 @@ class Entry:
     source: str | None = None
 
 
-def _model(model_id: str, *, role: str = "asr", repo: str | None = None, languages=("ru", "en")) -> CatalogModel:
+def _model(
+    model_id: str, *, role: str = "asr", repo: str | None = None, languages=("ru", "en")
+) -> CatalogModel:
     return CatalogModel(
         model_id=model_id,
         family="test",
@@ -54,6 +56,7 @@ CATALOG = (
     _model("qwen3-test"),
     _model("whisper-tiny", languages=("en",)),
     _model("diar-test", role="diarize", languages=()),
+    _model("vad-test", role="vad", languages=()),
 )
 
 
@@ -197,6 +200,7 @@ async def test_official_tab_lists_models_including_whisper_and_filters() -> None
     view._on_tab_click("official")
 
     assert set(view._rows) == {"qwen3-test", "whisper-tiny", "diar-test"}
+    assert all(model.model_id != "vad-test" for model in view._catalog)
     joined = " ".join(_texts(view._list))
     assert "whisper-tiny" in joined, "whisper GGUF models stay listed"
     assert t("model_assets.role.asr") in joined
@@ -239,7 +243,9 @@ async def test_official_tab_quant_choice_and_install() -> None:
 @pytest.mark.asyncio
 async def test_user_repos_tab_lists_owner_repos_and_installs_files() -> None:
     app = Application()
-    app.repos = (ModelRepo(repo_id="fzcfweasdferttgg/asr-gguf-onnx", source="hf", name="asr-gguf-onnx"),)
+    app.repos = (
+        ModelRepo(repo_id="fzcfweasdferttgg/asr-gguf-onnx", source="hf", name="asr-gguf-onnx"),
+    )
     app.files = (RepoFile(path="gigaam/gigaam-Q8_0.gguf", size_bytes=1024**3),)
     tasks: list = []
     view = _view(app, tasks)
@@ -254,7 +260,11 @@ async def test_user_repos_tab_lists_owner_repos_and_installs_files() -> None:
     assert view._install_button.disabled is False
     view._install_button.on_click(None)
     await _run(tasks)
-    assert ("install_file", "fzcfweasdferttgg/asr-gguf-onnx", "gigaam/gigaam-Q8_0.gguf") in app.calls
+    assert (
+        "install_file",
+        "fzcfweasdferttgg/asr-gguf-onnx",
+        "gigaam/gigaam-Q8_0.gguf",
+    ) in app.calls
 
 
 @pytest.mark.asyncio
@@ -319,3 +329,38 @@ async def test_manager_offers_no_use_actions() -> None:
 
     assert t("model_assets.action.use") not in _texts(view)
     assert t("model_assets.action.in_use") not in _texts(view)
+
+
+def test_cancelled_operation_does_not_show_download_failure() -> None:
+    view = _view(Application(), [])
+
+    assert view._error_notice(ModelAssetsError("cancelled", failure_code="cancelled")) is None
+
+
+@pytest.mark.asyncio
+async def test_empty_states_offer_localized_guidance_and_hide_idle_progress() -> None:
+    app = Application()
+    app.entries = []
+    view = _view(app, [])
+    view.open()
+
+    assert view._empty_text.visible
+    assert view._empty_text.content.value == t("model_assets.empty.library")
+    assert not view._progress_bar.visible
+    assert not view._progress_text.visible
+
+    view._on_tab_click("official")
+    view._name_field.value = "no-such-model"
+    view.render()
+    assert view._empty_text.visible
+    assert view._empty_text.content.value == t("model_assets.empty.official")
+
+    view._on_tab_click("search")
+    assert view._empty_text.content.value == t("model_assets.empty.search")
+
+
+def test_registry_corruption_has_a_specific_error_message() -> None:
+    view = _view(Application(), [])
+    error = ModelAssetsError("corrupt", failure_code="registry_corrupt")
+
+    assert view._error_notice(error) == t("model_assets.error.registry_corrupt")

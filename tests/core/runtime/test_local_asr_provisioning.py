@@ -33,10 +33,10 @@ def isolated_provisioning_root(tmp_path, monkeypatch):
     monkeypatch.setattr(installer_module, "default_local_stt_model_root", lambda: root)
 
 
-def _crc32(payload: bytes) -> str:
-    import zlib
+def _sha256(payload: bytes) -> str:
+    import hashlib
 
-    return f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}"
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _fixture_manifest(model_id: str) -> LocalSTTAssetManifest:
@@ -63,7 +63,7 @@ def _fixture_manifest(model_id: str) -> LocalSTTAssetManifest:
             LocalSTTAssetFile(
                 relative_path="synthetic.gguf",
                 size_bytes=len(payload),
-                crc32=_crc32(payload),
+                sha256=_sha256(payload),
             ),
         ),
     )
