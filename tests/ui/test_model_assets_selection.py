@@ -225,6 +225,11 @@ async def test_official_tab_quant_choice_and_install() -> None:
     view._on_tab_click("official")
 
     view._rows["qwen3-test"].on_click(None)
+    assert view._side_panel.visible
+    assert view._details_name.value == "qwen3-test"
+    assert view._details_languages.value == f"{t('model_assets.column.languages')}: ru, en"
+    assert view._details_parameters.value == f"{t('model_assets.column.params')}: 2.0B"
+    assert view._quant_dropdown in view._side_panel.content.controls
     assert [option.key for option in view._quant_dropdown.options] == ["Q6_K", "Q8_0"]
     assert view._quant_dropdown.value == "Q6_K"
 
@@ -241,20 +246,25 @@ async def test_official_tab_quant_choice_and_install() -> None:
 
 
 @pytest.mark.asyncio
-async def test_user_repos_tab_lists_owner_repos_and_installs_files() -> None:
+async def test_user_repos_tab_uses_fixed_repository_and_installs_files() -> None:
     app = Application()
     app.repos = (
         ModelRepo(repo_id="fzcfweasdferttgg/asr-gguf-onnx", source="hf", name="asr-gguf-onnx"),
     )
-    app.files = (RepoFile(path="gigaam/gigaam-Q8_0.gguf", size_bytes=1024**3),)
+    app.files = (
+        RepoFile(path="z/z-last.gguf", size_bytes=1),
+        RepoFile(path="gigaam/gigaam-Q8_0.gguf", size_bytes=1024**3),
+    )
     tasks: list = []
     view = _view(app, tasks)
     view.open()
     view._on_tab_click("user_repos")
 
     await _run(tasks)
-    assert ("list", "fzcfweasdferttgg", "hf") in app.calls
+    assert view._user_repo_dropdown.disabled
+    assert not any(call[0] == "list" for call in app.calls)
     assert ("files", "fzcfweasdferttgg/asr-gguf-onnx") in app.calls
+    assert list(view._rows) == ["gigaam/gigaam-Q8_0.gguf", "z/z-last.gguf"]
 
     view._rows["gigaam/gigaam-Q8_0.gguf"].on_click(None)
     assert view._install_button.disabled is False

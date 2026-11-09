@@ -84,9 +84,9 @@ def test_model_assets_window_configures_default_size_and_title() -> None:
     page = FakePage()
     window.configure_page(page)
 
-    assert (MODEL_ASSETS_WINDOW_WIDTH, MODEL_ASSETS_WINDOW_HEIGHT) == (960, 540)
-    assert page.window.width == 960
-    assert page.window.height == 540
+    assert (MODEL_ASSETS_WINDOW_WIDTH, MODEL_ASSETS_WINDOW_HEIGHT) == (1280, 680)
+    assert page.window.width == 1280
+    assert page.window.height == 680
     assert page.window.resizable is True
     assert page.window.frameless is True
     assert page.title == t("settings.model_assets")

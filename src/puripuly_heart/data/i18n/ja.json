@@ -1,5 +1,5 @@
 {
-  "settings.model_assets": "モデル管理",
+  "settings.model_assets": "モデルマネージャー",
   "settings.model_assets.action": "管理",
   "model_assets.group.asr": "音声認識",
   "model_assets.group.translation": "翻訳",
@@ -601,5 +601,8 @@
   "model_assets.error.registry_corrupt": "モデルレジストリが破損しています。ファイルは変更されていません。",
   "model_assets.error.unknown_model": "このモデルはカタログにありません。",
   "model_assets.error.unsupported_source": "このモデルでは、そのダウンロードソースを使用できません。",
-  "model_assets.error.model_owner_unavailable": "モデルインストーラーを利用できません。アプリを再起動して再試行してください。"
+  "model_assets.error.model_owner_unavailable": "モデルインストーラーを利用できません。アプリを再起動して再試行してください。",
+  "model_assets.details.title": "フィルターと詳細",
+  "model_assets.details.select": "モデルを選択すると、詳細とオプションが表示されます。",
+  "model_assets.details.quantization": "量子化"
 }

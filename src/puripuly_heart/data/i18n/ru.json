@@ -1,5 +1,5 @@
 {
-  "settings.model_assets": "Управление моделями",
+  "settings.model_assets": "Менеджер моделей",
   "settings.model_assets.action": "Открыть",
   "model_assets.group.asr": "Распознавание речи",
   "model_assets.group.translation": "Перевод",
@@ -575,7 +575,7 @@
   "model_assets.search_placeholder_ms": "ID репозитория ModelScope, ссылка или имя издателя",
   "model_assets.tab.library": "Модели",
   "model_assets.tab.official": "Transcribe.cpp",
-  "model_assets.tab.user_repos": "Репозитории",
+  "model_assets.tab.user_repos": "Репозиторий",
   "model_assets.tab.search": "Поиск HF/MS",
   "model_assets.filter.role": "Роль",
   "model_assets.filter.language": "Язык",
@@ -601,5 +601,8 @@
   "model_assets.error.registry_corrupt": "Реестр моделей повреждён. Файлы не изменялись.",
   "model_assets.error.unknown_model": "Эта модель больше не указана в каталоге.",
   "model_assets.error.unsupported_source": "Этот источник не поддерживается для выбранной модели.",
-  "model_assets.error.model_owner_unavailable": "Установщик моделей недоступен. Перезапустите приложение и повторите."
+  "model_assets.error.model_owner_unavailable": "Установщик моделей недоступен. Перезапустите приложение и повторите.",
+  "model_assets.details.title": "Фильтры и сведения",
+  "model_assets.details.select": "Выберите модель, чтобы увидеть сведения и параметры.",
+  "model_assets.details.quantization": "Квантование"
 }

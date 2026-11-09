@@ -1,5 +1,5 @@
 {
-  "settings.model_assets": "Model management",
+  "settings.model_assets": "Model manager",
   "settings.model_assets.action": "Manage",
   "model_assets.group.asr": "Speech recognition",
   "model_assets.group.translation": "Translation",
@@ -575,7 +575,7 @@
   "model_assets.search_placeholder_ms": "ModelScope repo id, link or owner",
   "model_assets.tab.library": "Models",
   "model_assets.tab.official": "Transcribe.cpp",
-  "model_assets.tab.user_repos": "Repositories",
+  "model_assets.tab.user_repos": "Repository",
   "model_assets.tab.search": "Search HF/MS",
   "model_assets.filter.role": "Role",
   "model_assets.filter.language": "Language",
@@ -601,5 +601,8 @@
   "model_assets.error.registry_corrupt": "The model registry is damaged. Your files were left untouched.",
   "model_assets.error.unknown_model": "This model is no longer in the catalog.",
   "model_assets.error.unsupported_source": "This download source is not supported for the selected model.",
-  "model_assets.error.model_owner_unavailable": "The model installer is unavailable. Restart the application and try again."
+  "model_assets.error.model_owner_unavailable": "The model installer is unavailable. Restart the application and try again.",
+  "model_assets.details.title": "Filters and details",
+  "model_assets.details.select": "Select a model to see its details and options.",
+  "model_assets.details.quantization": "Quantization"
 }

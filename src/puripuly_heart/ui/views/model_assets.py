@@ -10,12 +10,13 @@ from pathlib import Path
 
 import flet as ft
 
+from puripuly_heart.app.services.model_hub import ModelRepo
 from puripuly_heart.core.local_asr.local_stt_assets import default_local_stt_model_root
 from puripuly_heart.core.local_asr.model_registry import sanitize_model_id
 from puripuly_heart.core.transcribe_catalog import CatalogModel, load_transcribe_catalog
 from puripuly_heart.ui.flet_runtime import update_control_if_mounted
 from puripuly_heart.ui.i18n import t
-from puripuly_heart.ui.theme import COLOR_NEUTRAL_DARK, COLOR_PRIMARY
+from puripuly_heart.ui.theme import COLOR_DIVIDER, COLOR_NEUTRAL_DARK, COLOR_PRIMARY
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +64,13 @@ TAB_OFFICIAL = "official"
 TAB_USER_REPOS = "user_repos"
 TAB_SEARCH = "search"
 
-USER_REPO_OWNERS = {"hf": "fzcfweasdferttgg", "ms": "fzcfweasdferttggpng"}
+USER_REPO_IDS = {
+    "hf": "fzcfweasdferttgg/asr-gguf-onnx",
+    "ms": "fzcfweasdferttggpng/asr-gguf-onnx",
+}
 
 _CELLS_LIBRARY = (3, 1, 2, 2)
-_CELLS_OFFICIAL = (3, 1, 1, 2, 1, 2)
+_CELLS_OFFICIAL = (3, 1, 1, 2, 2)
 _CELLS_FILES = (4, 1, 2)
 
 ModelAssetsRunTask = Callable[[Callable[[], Awaitable[None]]], object]
@@ -98,8 +102,8 @@ def _origin_label(entry: object, official_repos: set[str]) -> str:
     repo = source.split(":", 1)[-1]
     if repo in official_repos:
         return t("model_assets.origin.official")
-    if repo.split("/", 1)[0] in set(USER_REPO_OWNERS.values()):
-        return USER_REPO_OWNERS["hf"]
+    if repo in set(USER_REPO_IDS.values()):
+        return USER_REPO_IDS["hf"].split("/", 1)[0]
     return t(_ORIGIN_KEYS.get(origin, "model_assets.origin.search"))
 
 
@@ -156,7 +160,7 @@ class _TableRow(ft.Container):
             height=ROW_HEIGHT,
             padding=ft.Padding.symmetric(horizontal=8),
             alignment=ft.Alignment.CENTER_LEFT,
-            border=ft.Border.only(bottom=ft.BorderSide(1, ft.Colors.TRANSPARENT)),
+            border=ft.Border.only(bottom=ft.BorderSide(1, COLOR_DIVIDER)),
             on_click=(lambda _event, key=key: on_click(key)) if on_click else None,
         )
         self._selected = False
@@ -288,6 +292,7 @@ class ModelAssetsView(ft.Container):
             text_size=TEXT_SIZE,
             label_style=ft.TextStyle(size=HEADER_SIZE),
             expand=True,
+            disabled=True,
             on_select=self._on_user_repo_selected,
         )
         self._user_refresh_button = ft.Button(
@@ -330,10 +335,7 @@ class ModelAssetsView(ft.Container):
                 controls=[self._add_button, self._refresh_button, ft.Container(expand=True)],
                 spacing=8,
             ),
-            TAB_OFFICIAL: ft.Row(
-                controls=[self._role_dropdown, self._lang_dropdown, self._name_field],
-                spacing=8,
-            ),
+            TAB_OFFICIAL: ft.Row(controls=[], height=0),
             TAB_USER_REPOS: ft.Row(
                 controls=[
                     self._user_provider_dropdown,
@@ -359,6 +361,7 @@ class ModelAssetsView(ft.Container):
             height=ROW_HEIGHT,
             padding=ft.Padding.symmetric(horizontal=8),
             alignment=ft.Alignment.CENTER_LEFT,
+            border=ft.Border.only(bottom=ft.BorderSide(1, COLOR_DIVIDER)),
         )
         self._list = ft.ListView(expand=True, spacing=0)
         self._empty_text = ft.Container(
@@ -375,11 +378,11 @@ class ModelAssetsView(ft.Container):
         )
 
         self._quant_dropdown = ft.Dropdown(
-            label=t("model_assets.column.params"),
+            label=t("model_assets.details.quantization"),
             options=[],
             text_size=TEXT_SIZE,
             label_style=ft.TextStyle(size=HEADER_SIZE),
-            width=220,
+            width=300,
             visible=False,
             on_select=self._on_quant_selected,
         )
@@ -406,6 +409,44 @@ class ModelAssetsView(ft.Container):
         )
         self._progress_bar = ft.ProgressBar(value=0, expand=2, height=6)
         self._progress_text = ft.Text("", size=TEXT_SIZE, width=48)
+        self._details_heading = ft.Text(
+            t("model_assets.details.title"),
+            size=TEXT_SIZE,
+            weight=ft.FontWeight.BOLD,
+        )
+        self._details_name = ft.Text("", size=TEXT_SIZE, weight=ft.FontWeight.BOLD)
+        self._details_parameters = ft.Text("", size=HEADER_SIZE)
+        self._details_languages = ft.Text("", size=HEADER_SIZE)
+        self._details_accuracy = ft.Text("", size=HEADER_SIZE)
+        self._side_panel = ft.Container(
+            content=ft.Column(
+                controls=[
+                    self._details_heading,
+                    self._name_field,
+                    self._role_dropdown,
+                    self._lang_dropdown,
+                    self._quant_dropdown,
+                    ft.Divider(height=12, color=COLOR_DIVIDER),
+                    self._details_name,
+                    self._details_parameters,
+                    self._details_languages,
+                    self._details_accuracy,
+                ],
+                spacing=10,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            width=330,
+            visible=False,
+            padding=ft.Padding.all(12),
+            border=ft.Border.only(left=ft.BorderSide(1, COLOR_DIVIDER)),
+        )
+        self._table_frame = ft.Container(
+            content=self._list,
+            expand=True,
+            border=ft.Border.all(1, COLOR_DIVIDER),
+            border_radius=10,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        )
 
         super().__init__(
             content=ft.Column(
@@ -416,12 +457,21 @@ class ModelAssetsView(ft.Container):
                         for key in (TAB_LIBRARY, TAB_OFFICIAL, TAB_USER_REPOS, TAB_SEARCH)
                     ],
                     self._notice_text,
-                    self._header,
-                    self._list,
+                    ft.Row(
+                        controls=[
+                            ft.Column(
+                                controls=[self._header, self._table_frame],
+                                expand=True,
+                                spacing=8,
+                            ),
+                            self._side_panel,
+                        ],
+                        expand=True,
+                        spacing=0,
+                    ),
                     self._empty_text,
                     ft.Row(
                         controls=[
-                            self._quant_dropdown,
                             self._install_button,
                             self._delete_button,
                             self._cancel_button,
@@ -475,7 +525,8 @@ class ModelAssetsView(ft.Container):
         self._install_button.content = t("model_assets.action.install")
         self._delete_button.content = t("model_assets.action.delete")
         self._cancel_button.content = t("model_assets.action.cancel")
-        self._quant_dropdown.label = t("model_assets.column.params")
+        self._quant_dropdown.label = t("model_assets.details.quantization")
+        self._details_heading.value = t("model_assets.details.title")
         self._path_text.value = self._target_path_label()
         self._rows_key = None
         self._rows = {}
@@ -498,9 +549,28 @@ class ModelAssetsView(ft.Container):
             self._render_files(self._user_files, cells=_CELLS_FILES)
         else:
             self._render_files(self._repo_files, cells=_CELLS_FILES)
+        self._render_details()
         self._render_empty_state()
         self._render_actions()
         update_control_if_mounted(self)
+
+    def _render_details(self) -> None:
+        self._side_panel.visible = self._tab == TAB_OFFICIAL
+        model = self._selected_model()
+        self._quant_dropdown.visible = model is not None
+        if model is None:
+            self._details_name.value = t("model_assets.details.select")
+            self._details_parameters.value = ""
+            self._details_languages.value = ""
+            self._details_accuracy.value = ""
+            return
+        self._details_name.value = model.name
+        self._details_parameters.value = f"{t('model_assets.column.params')}: {model.params_label}"
+        languages = ", ".join(model.languages) if model.languages else "—"
+        self._details_languages.value = f"{t('model_assets.column.languages')}: {languages}"
+        language = None if self._lang_filter == "all" else self._lang_filter
+        accuracy = model.accuracy_for(language, self._quant) or "—"
+        self._details_accuracy.value = f"{t('model_assets.column.accuracy')}: {accuracy}"
 
     def _render_empty_state(self) -> None:
         message_keys = {
@@ -588,7 +658,6 @@ class ModelAssetsView(ft.Container):
             (
                 t("model_assets.column.name"),
                 t("model_assets.column.role"),
-                t("model_assets.column.params"),
                 t("model_assets.column.languages"),
                 t("model_assets.column.accuracy"),
                 t("model_assets.column.status"),
@@ -621,7 +690,6 @@ class ModelAssetsView(ft.Container):
                 (
                     model.name,
                     t(_ROLE_KEYS.get(model.role, "model_assets.role.asr")),
-                    model.params_label,
                     self._languages_label(model.languages),
                     model.accuracy_for(
                         None if self._lang_filter == "all" else self._lang_filter,
@@ -669,10 +737,7 @@ class ModelAssetsView(ft.Container):
 
     @staticmethod
     def _languages_label(languages: tuple[str, ...]) -> str:
-        if not languages:
-            return "—"
-        head = ", ".join(languages[:4])
-        return head if len(languages) <= 4 else f"{head} +{len(languages) - 4}"
+        return str(len(languages)) if languages else "—"
 
     # ---------- actions ----------
 
@@ -683,7 +748,6 @@ class ModelAssetsView(ft.Container):
         install_target = self._install_target()
         self._install_button.visible = self._tab != TAB_LIBRARY
         self._install_button.disabled = busy or install_target is None
-        self._quant_dropdown.visible = self._tab == TAB_OFFICIAL
         self._path_text.value = self._target_path_label()
         self._path_text.visible = bool(self._path_text.value)
         entry = self._delete_target()
@@ -922,31 +986,12 @@ class ModelAssetsView(ft.Container):
         self._load_user_repos()
 
     def _load_user_repos(self) -> None:
-        self._load_generation += 1
-        generation = self._load_generation
-        owner = USER_REPO_OWNERS.get(
-            self._user_provider_dropdown.value or "hf", USER_REPO_OWNERS["hf"]
-        )
-        self._loading = True
+        provider = self._user_provider_dropdown.value or "hf"
+        repo_id = USER_REPO_IDS.get(provider, USER_REPO_IDS["hf"])
+        self._user_repos = (ModelRepo(repo_id=repo_id, source=provider, name="asr-gguf-onnx"),)
+        self._loading = False
         self._notice = None
-
-        async def task() -> None:
-            try:
-                repos = await self._application.list_model_repos(
-                    owner, self._user_provider_dropdown.value or "hf"
-                )
-            except Exception as error:
-                repos = ()
-                if generation == self._load_generation:
-                    self._notice = self._error_notice(error)
-            if generation != self._load_generation:
-                return
-            self._user_repos = repos
-            self._loading = False
-            self._fill_user_repo_dropdown()
-            self.render()
-
-        self._run_task(task)
+        self._fill_user_repo_dropdown()
         self.render()
 
     def _fill_user_repo_dropdown(self) -> None:
@@ -1060,6 +1105,15 @@ class ModelAssetsView(ft.Container):
                     self._notice = self._error_notice(error)
             if generation != self._load_generation:
                 return
+            files = tuple(
+                sorted(
+                    files,
+                    key=lambda file: (
+                        str(getattr(file, "name", "")).casefold(),
+                        str(getattr(file, "path", "")).casefold(),
+                    ),
+                )
+            )
             if tab == TAB_USER_REPOS:
                 self._user_files = files
             else:

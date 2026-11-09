@@ -1,5 +1,5 @@
 {
-  "settings.model_assets": "模型管理",
+  "settings.model_assets": "模型管理器",
   "settings.model_assets.action": "管理",
   "model_assets.group.asr": "语音识别",
   "model_assets.group.translation": "翻译",
@@ -601,5 +601,8 @@
   "model_assets.error.registry_corrupt": "模型注册表已损坏。文件未被更改。",
   "model_assets.error.unknown_model": "此模型已不在目录中。",
   "model_assets.error.unsupported_source": "所选模型不支持此下载来源。",
-  "model_assets.error.model_owner_unavailable": "模型安装器不可用。请重启应用后重试。"
+  "model_assets.error.model_owner_unavailable": "模型安装器不可用。请重启应用后重试。",
+  "model_assets.details.title": "筛选和详细信息",
+  "model_assets.details.select": "选择模型以查看详细信息和选项。",
+  "model_assets.details.quantization": "量化"
 }

@@ -1,5 +1,5 @@
 {
-  "settings.model_assets": "모델 관리",
+  "settings.model_assets": "모델 관리자",
   "settings.model_assets.action": "관리",
   "model_assets.group.asr": "음성 인식",
   "model_assets.group.translation": "번역",
@@ -601,5 +601,8 @@
   "model_assets.error.registry_corrupt": "모델 레지스트리가 손상되었습니다. 파일은 변경되지 않았습니다.",
   "model_assets.error.unknown_model": "이 모델은 카탈로그에 없습니다.",
   "model_assets.error.unsupported_source": "선택한 모델에서는 이 다운로드 소스를 지원하지 않습니다.",
-  "model_assets.error.model_owner_unavailable": "모델 설치 관리자를 사용할 수 없습니다. 앱을 다시 시작한 후 다시 시도하세요."
+  "model_assets.error.model_owner_unavailable": "모델 설치 관리자를 사용할 수 없습니다. 앱을 다시 시작한 후 다시 시도하세요.",
+  "model_assets.details.title": "필터 및 세부 정보",
+  "model_assets.details.select": "모델을 선택하면 세부 정보와 옵션이 표시됩니다.",
+  "model_assets.details.quantization": "양자화"
 }

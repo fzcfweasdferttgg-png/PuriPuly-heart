@@ -10,6 +10,7 @@ import flet as ft
 
 from puripuly_heart.runtime_layout import current_runtime_layout
 from puripuly_heart.ui.components.title_bar import TitleBar
+from puripuly_heart.ui.flet_runtime import invoke_control_method, run_control_method
 from puripuly_heart.ui.fonts import (
     assets_dir,
     register_ui_fonts,
@@ -17,13 +18,12 @@ from puripuly_heart.ui.fonts import (
 )
 from puripuly_heart.ui.foundation.resources import DEFAULT_FOUNDATION_RESOURCES
 from puripuly_heart.ui.foundation.tokens import FOUNDATION_DESIGN_TOKENS
-from puripuly_heart.ui.flet_runtime import invoke_control_method, run_control_method
 from puripuly_heart.ui.i18n import get_locale, t
 from puripuly_heart.ui.theme import COLOR_BACKGROUND, COLOR_DIVIDER, get_app_theme
 from puripuly_heart.ui.views.model_assets import ModelAssetsRunTask, ModelAssetsView
 
-MODEL_ASSETS_WINDOW_WIDTH = 960
-MODEL_ASSETS_WINDOW_HEIGHT = 540
+MODEL_ASSETS_WINDOW_WIDTH = 1280
+MODEL_ASSETS_WINDOW_HEIGHT = 680
 MODEL_ASSETS_CONTENT_PADDING = FOUNDATION_DESIGN_TOKENS.spacing.page
 RESIZE_GRIP_SIZE = 6
 RESIZE_CORNER_SIZE = 16
@@ -38,7 +38,9 @@ def _resize_zones() -> tuple[tuple[ft.WindowResizeEdge, dict[str, int]], ...]:
         ),
         (
             ft.WindowResizeEdge.BOTTOM,
-            dict(bottom=0, left=RESIZE_CORNER_SIZE, right=RESIZE_CORNER_SIZE, height=RESIZE_GRIP_SIZE),
+            dict(
+                bottom=0, left=RESIZE_CORNER_SIZE, right=RESIZE_CORNER_SIZE, height=RESIZE_GRIP_SIZE
+            ),
         ),
         (
             ft.WindowResizeEdge.LEFT,
@@ -46,7 +48,9 @@ def _resize_zones() -> tuple[tuple[ft.WindowResizeEdge, dict[str, int]], ...]:
         ),
         (
             ft.WindowResizeEdge.RIGHT,
-            dict(right=0, top=RESIZE_CORNER_SIZE, bottom=RESIZE_CORNER_SIZE, width=RESIZE_GRIP_SIZE),
+            dict(
+                right=0, top=RESIZE_CORNER_SIZE, bottom=RESIZE_CORNER_SIZE, width=RESIZE_GRIP_SIZE
+            ),
         ),
         (
             ft.WindowResizeEdge.TOP_LEFT,
@@ -228,7 +232,9 @@ class ModelAssetsWindow:
             border_radius=16,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
-        page.add(ft.Stack([content, *self._build_resize_grips()], fit=ft.StackFit.EXPAND, expand=True))
+        page.add(
+            ft.Stack([content, *self._build_resize_grips()], fit=ft.StackFit.EXPAND, expand=True)
+        )
         self._view.open()
         page.window.visible = True
         page.update()
