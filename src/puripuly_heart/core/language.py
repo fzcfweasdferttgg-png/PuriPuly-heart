@@ -75,15 +75,18 @@ SUPPORTED_LANGUAGES: dict[str, LanguageInfo] = {
 }
 
 
+def _normalized_language_code(code: str) -> str:
+    normalized = str(code).strip().replace("_", "-")
+    return {"zh-cn": "zh-CN", "zh-tw": "zh-TW"}.get(normalized.casefold(), normalized)
+
+
 def get_language_info(code: str) -> LanguageInfo | None:
     """Get language info by code. Returns None if not supported."""
-    # 1. Try exact match (e.g. "zh-CN", "zh-TW")
-    if code in SUPPORTED_LANGUAGES:
-        return SUPPORTED_LANGUAGES[code]
-
-    # 2. Normalize: strip regional suffix (e.g., "ko-KR" -> "ko")
-    normalized = code.split("-")[0].lower()
-    return SUPPORTED_LANGUAGES.get(normalized)
+    normalized = _normalized_language_code(code)
+    if normalized in SUPPORTED_LANGUAGES:
+        return SUPPORTED_LANGUAGES[normalized]
+    base_code = normalized.split("-")[0].lower()
+    return SUPPORTED_LANGUAGES.get(base_code)
 
 
 def get_deepgram_language(code: str) -> str:
@@ -174,9 +177,10 @@ _QWEN_AUDIO_ASR_LANGUAGE_MAP: dict[str, str] = {
 
 
 def _language_from_map(code: str, language_map: dict[str, str]) -> str:
-    if code in language_map:
-        return language_map[code]
-    base_code = code.split("-")[0].lower()
+    normalized = _normalized_language_code(code)
+    if normalized in language_map:
+        return language_map[normalized]
+    base_code = normalized.split("-")[0].lower()
     return language_map.get(base_code, "en")
 
 
@@ -210,15 +214,17 @@ def qwen_audio_asr_language_hints(
 
 
 def is_qwen3_asr_supported(code: str) -> bool:
-    if code in _QWEN3_ASR_LANGUAGE_MAP:
+    normalized = _normalized_language_code(code)
+    if normalized in _QWEN3_ASR_LANGUAGE_MAP:
         return True
-    return code.split("-")[0].lower() in _QWEN3_ASR_LANGUAGE_MAP
+    return normalized.split("-")[0].lower() in _QWEN3_ASR_LANGUAGE_MAP
 
 
 def is_qwen_audio_asr_supported(code: str) -> bool:
-    if code in _QWEN_AUDIO_ASR_LANGUAGE_MAP:
+    normalized = _normalized_language_code(code)
+    if normalized in _QWEN_AUDIO_ASR_LANGUAGE_MAP:
         return True
-    return code.split("-")[0].lower() in _QWEN_AUDIO_ASR_LANGUAGE_MAP
+    return normalized.split("-")[0].lower() in _QWEN_AUDIO_ASR_LANGUAGE_MAP
 
 
 GEMINI_TRANSCRIBE_MAX_LANGUAGE_HINTS = 32
@@ -285,14 +291,15 @@ _GEMINI_TRANSCRIBE_PRIMARY_LOCALES: dict[str, str] = {
 
 
 def gemini_transcribe_language_hint(code: str) -> str | None:
-    normalized = str(code).strip()
+    normalized = _normalized_language_code(code)
     if not normalized or normalized.lower() == "auto":
         return None
     base = normalized.split("-")[0].lower()
     if base not in _GEMINI_TRANSCRIBE_LANGUAGE_BASES:
         return None
     if "-" in normalized:
-        return normalized
+        language, region = normalized.split("-", 1)
+        return f"{language.lower()}-{region.upper()}"
     return _GEMINI_TRANSCRIBE_PRIMARY_LOCALES.get(base, normalized)
 
 
@@ -327,7 +334,7 @@ _LOCAL_QWEN_LANGUAGE_HINT_MAP: dict[str, str] = {
 
 def get_local_qwen_language_hint(code: str) -> str | None:
     """Get a conservative Qwen language code for local GPU STT."""
-    normalized = code.strip()
+    normalized = _normalized_language_code(code)
     if normalized in _LOCAL_QWEN_LANGUAGE_HINT_MAP:
         return _LOCAL_QWEN_LANGUAGE_HINT_MAP[normalized]
     base_code = normalized.split("-")[0].lower()
@@ -400,9 +407,10 @@ _DEEPGRAM_SUPPORTED: set[str] = {
 
 def is_deepgram_supported(code: str) -> bool:
     """Check if a language is supported by Deepgram Nova-3."""
-    if code in _DEEPGRAM_SUPPORTED:
+    normalized = _normalized_language_code(code)
+    if normalized in _DEEPGRAM_SUPPORTED:
         return True
-    base_code = code.split("-")[0].lower()
+    base_code = normalized.split("-")[0].lower()
     return base_code in _DEEPGRAM_SUPPORTED
 
 

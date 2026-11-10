@@ -183,3 +183,23 @@ def test_get_language_info_returns_supported(code: str) -> None:
     assert info is not None
     assert info.code
     assert info.name
+
+
+def test_language_codes_are_normalized_across_provider_paths() -> None:
+    from puripuly_heart.core.language import (
+        gemini_transcribe_language_hint,
+        get_local_qwen_language_hint,
+        qwen_audio_asr_language_hint,
+    )
+
+    assert get_language_info(" zh_cn ").code == "zh-CN"
+    assert get_language_info("ZH-TW").code == "zh-TW"
+    assert get_deepgram_language("ZH_cn") == "zh-CN"
+    assert gemini_transcribe_language_hint("EN_us") == "en-US"
+    assert gemini_transcribe_language_hint(" ZH-TW ") == "zh-TW"
+    assert get_qwen3_asr_language("zh_cn") == "zh"
+    assert qwen_audio_asr_language_hint(" ZH-TW ") == "zh"
+    assert get_local_qwen_language_hint("ZH_cn") == "zh"
+    assert is_deepgram_supported(" ZH-TW ") is True
+    assert is_qwen3_asr_supported("zh_cn") is True
+    assert is_qwen_audio_asr_supported(" ZH-TW ") is True
