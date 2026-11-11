@@ -65,6 +65,26 @@ def test_status_tracks_files_on_disk(tmp_path) -> None:
     assert registry.status(record) == REGISTRY_STATUS_INVALID
 
 
+def test_status_flags_zero_byte_file_without_recorded_size(tmp_path) -> None:
+    registry = ModelRegistry(tmp_path)
+    record = RegistryModelRecord(
+        model_id="zero-sized",
+        name="zero-sized",
+        files=(RegistryModelFile(name="model.gguf", size_bytes=0),),
+        origin="search",
+        source="hf:user/repo",
+    )
+    registry.add(record)
+
+    model_dir = tmp_path / "zero-sized"
+    model_dir.mkdir()
+    (model_dir / "model.gguf").write_bytes(b"")
+    assert registry.status(record) == REGISTRY_STATUS_INVALID
+
+    (model_dir / "model.gguf").write_bytes(b"123456")
+    assert registry.status(record) == REGISTRY_STATUS_INSTALLED
+
+
 def test_model_file_path_points_at_the_first_file(tmp_path) -> None:
     registry = ModelRegistry(tmp_path)
     record = _record()
@@ -105,3 +125,13 @@ def test_registry_roundtrip_preserves_sha256(tmp_path) -> None:
     registry.add(record)
 
     assert registry.get("hashed").files[0].sha256 == digest
+
+
+def test_allocate_model_id_avoids_reserved_catalog_ids(tmp_path) -> None:
+    registry = ModelRegistry(tmp_path)
+
+    assert registry.allocate_model_id("qwen3-asr-1.7b-q6_k") == "qwen3-asr-1.7b-q6_k"
+    assert (
+        registry.allocate_model_id("qwen3-asr-1.7b-q6_k", reserved={"qwen3-asr-1.7b-q6_k"})
+        == "qwen3-asr-1.7b-q6_k-2"
+    )

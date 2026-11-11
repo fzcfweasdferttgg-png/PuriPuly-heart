@@ -287,7 +287,7 @@ class ModelAssetsApplication:
         registry = self._registry()
         root = self.model_root or default_local_stt_model_root()
         stem = Path(file.name).stem
-        model_id = registry.allocate_model_id(stem)
+        model_id = registry.allocate_model_id(stem, reserved=self._reserved_model_ids())
 
         async def action() -> None:
             target_dir = root / model_id
@@ -338,7 +338,7 @@ class ModelAssetsApplication:
             raise ModelAssetsError("Not a GGUF model file", failure_code="invalid_file")
         registry = self._registry()
         root = self.model_root or default_local_stt_model_root()
-        model_id = registry.allocate_model_id(source.stem)
+        model_id = registry.allocate_model_id(source.stem, reserved=self._reserved_model_ids())
         total = source.stat().st_size
 
         async def action() -> None:
@@ -606,6 +606,9 @@ class ModelAssetsApplication:
             if choice.model_id == model_id:
                 return choice
         return None
+
+    def _reserved_model_ids(self) -> frozenset[str]:
+        return frozenset(choice.model_id for choice in self.choices)
 
     def _choice(self, model_id: str) -> ModelAssetChoice:
         choice = self._find_choice(model_id)

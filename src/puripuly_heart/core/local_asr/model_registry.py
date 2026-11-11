@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -174,9 +175,9 @@ class ModelRegistry:
         records = tuple(item for item in self.load() if item.model_id != model_id)
         self.save(records)
 
-    def allocate_model_id(self, base: str) -> str:
+    def allocate_model_id(self, base: str, *, reserved: Iterable[str] = ()) -> str:
         base_id = sanitize_model_id(base)
-        taken = {record.model_id for record in self.load()}
+        taken = {record.model_id for record in self.load()} | {str(item) for item in reserved}
         candidate = base_id
         suffix = 2
         while candidate in taken or (self._root / candidate).exists():
@@ -194,7 +195,11 @@ class ModelRegistry:
             if not path.is_file():
                 missing = True
                 continue
-            if file.size_bytes and path.stat().st_size != file.size_bytes:
+            size = path.stat().st_size
+            if file.size_bytes:
+                if size != file.size_bytes:
+                    return REGISTRY_STATUS_INVALID
+            elif not size:
                 return REGISTRY_STATUS_INVALID
         return REGISTRY_STATUS_MISSING if missing else REGISTRY_STATUS_INSTALLED
 

@@ -264,7 +264,7 @@ class ModelAssetsView(ft.Container):
             hint_text=t("model_assets.filter.name"),
             text_size=TEXT_SIZE,
             expand=True,
-            on_change=lambda _event: self.render(),
+            on_change=self._on_filter_changed,
         )
         self._add_button = ft.Button(
             content=t("model_assets.action.add_file"),
@@ -585,7 +585,10 @@ class ModelAssetsView(ft.Container):
     def _refresh_state(self) -> None:
         self._entries = tuple(self._application.model_asset_entries())
         self._installed_files = {
-            name for entry in self._entries for name in (getattr(entry, "files", ()) or ())
+            name
+            for entry in self._entries
+            if getattr(entry, "status", "missing") == "installed"
+            for name in (getattr(entry, "files", ()) or ())
         }
 
     # ---------- rows ----------

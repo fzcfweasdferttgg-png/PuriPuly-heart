@@ -216,6 +216,24 @@ async def test_official_tab_lists_models_including_whisper_and_filters() -> None
     assert set(view._rows) == {"qwen3-test", "whisper-tiny"}
 
 
+def test_official_name_filter_clears_hidden_selection() -> None:
+    app = Application()
+    view = _view(app, [])
+    view._on_tab_click("official")
+    view._rows["qwen3-test"].on_click(None)
+    assert view._install_target() == ("catalog", "qwen3-test", "Q6_K")
+
+    view._name_field.value = "whisper"
+    view._name_field.on_change(None)
+
+    assert set(view._rows) == {"whisper-tiny"}
+    assert view._selected_model() is None
+    assert view._install_target() is None
+    assert view._install_button.disabled
+    view._install_button.on_click(None)
+    assert not any(call[0] == "install_catalog" for call in app.calls)
+
+
 @pytest.mark.asyncio
 async def test_official_tab_quant_choice_and_install() -> None:
     app = Application()
@@ -275,6 +293,82 @@ async def test_user_repos_tab_uses_fixed_repository_and_installs_files() -> None
         "fzcfweasdferttgg/asr-gguf-onnx",
         "gigaam/gigaam-Q8_0.gguf",
     ) in app.calls
+
+
+@pytest.mark.asyncio
+async def test_files_of_uninstalled_models_are_not_marked_installed() -> None:
+    app = Application()
+    app.entries = [
+        Entry(
+            "gone",
+            "Gone",
+            "d",
+            "asr",
+            1024**3,
+            status="missing",
+            origin="search",
+            files=("Qwen3-ASR-1.7B-Q6_K.gguf",),
+            source="hf:user/repo",
+        ),
+        Entry(
+            "ready",
+            "Ready",
+            "d",
+            "asr",
+            1024**3,
+            status="installed",
+            origin="search",
+            files=("ready.gguf",),
+            source="hf:user/repo",
+        ),
+    ]
+    app.files = (
+        RepoFile(path="Qwen3-ASR-1.7B-Q6_K.gguf", size_bytes=1),
+        RepoFile(path="ready.gguf", size_bytes=1),
+    )
+    tasks: list = []
+    view = _view(app, tasks)
+    view.open()
+    view._on_tab_click("user_repos")
+    await _run(tasks)
+
+    view._rows["Qwen3-ASR-1.7B-Q6_K.gguf"].on_click(None)
+    assert t("model_assets.status.installed") not in _texts(view._rows["Qwen3-ASR-1.7B-Q6_K.gguf"])
+    assert view._install_button.disabled is False
+
+    view._rows["ready.gguf"].on_click(None)
+    assert t("model_assets.status.installed") in _texts(view._rows["ready.gguf"])
+    assert view._install_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_official_tab_quant_badge_requires_installed_files() -> None:
+    app = Application()
+    app.entries = [
+        Entry(
+            "gone",
+            "Gone",
+            "d",
+            "asr",
+            1024**3,
+            status="missing",
+            files=("qwen3-test-Q6_K.gguf",),
+        ),
+    ]
+    tasks: list = []
+    view = _view(app, tasks)
+    view.open()
+    view._on_tab_click("official")
+    await _run(tasks)
+
+    view._rows["qwen3-test"].on_click(None)
+    joined = " ".join(_texts(view._rows["qwen3-test"]))
+    assert f"{t('model_assets.status.installed')} · Q6_K" not in joined
+
+    app.set("gone", status="installed")
+    view.render()
+    joined = " ".join(_texts(view._rows["qwen3-test"]))
+    assert f"{t('model_assets.status.installed')} · Q6_K" in joined
 
 
 @pytest.mark.asyncio

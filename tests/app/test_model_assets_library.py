@@ -168,3 +168,35 @@ async def test_local_import_records_sha256(tmp_path) -> None:
 
     record = ModelRegistry(tmp_path).get(entry.model_id)
     assert record.files[0].sha256 == hashlib.sha256(payload).hexdigest()
+
+
+async def test_add_local_file_never_clashes_with_catalog_model_ids(tmp_path) -> None:
+    from puripuly_heart.app.services.model_assets_catalog import ModelAssetChoice
+    from puripuly_heart.core.local_asr.local_stt_assets import LOCAL_QWEN_GPU_MODEL_ID
+
+    service = ModelAssetsApplication(
+        provisioning=lambda: None,
+        gemma=lambda: None,
+        locale=lambda: "en",
+        active_model_ids=lambda: frozenset(),
+        model_root=tmp_path,
+        choices=(ModelAssetChoice(LOCAL_QWEN_GPU_MODEL_ID, "Qwen GPU", "d.gpu", "asr", 20),),
+    )
+    source = tmp_path / "qwen3-asr-1.7b-gguf-q6_k.gguf"
+    source.write_bytes(b"gguf-data")
+
+    entry = await service.add_local_file(source)
+
+    assert entry.model_id == "qwen3-asr-1.7b-gguf-q6_k-2"
+    assert entry.origin == "local"
+    assert (tmp_path / entry.model_id / "qwen3-asr-1.7b-gguf-q6_k.gguf").is_file()
+
+    listed = [item.model_id for item in service.entries()]
+    assert listed.count(LOCAL_QWEN_GPU_MODEL_ID) == 1
+    assert service.entry(LOCAL_QWEN_GPU_MODEL_ID).origin == "catalog"
+    assert service.entry(entry.model_id).origin == "local"
+
+    deleted = await service.delete(entry.model_id)
+    assert deleted.status == "missing"
+    assert ModelRegistry(tmp_path).load() == ()
+    assert not (tmp_path / entry.model_id).exists()
