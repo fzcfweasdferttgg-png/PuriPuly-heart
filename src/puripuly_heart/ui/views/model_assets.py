@@ -1027,23 +1027,34 @@ class ModelAssetsView(ft.Container):
     # search tab
 
     def _search_hint(self) -> str:
-        source = self._search_provider_dropdown.value or "hf"
         return (
             t("model_assets.search_placeholder_ms")
-            if source == "ms"
+            if self._search_provider == "ms"
             else t("model_assets.search_placeholder")
         )
 
     def _on_provider_selected(self, event) -> None:
         self._search_provider = getattr(getattr(event, "control", None), "value", None) or "hf"
+        self._repos = ()
+        self._selected_repo = None
+        self._repo_files = ()
+        self._search_repo_dropdown.options = []
+        self._search_repo_dropdown.value = None
+        self._selected[TAB_SEARCH] = None
+        self._rows_key = None
+        self._loading = False
+        self._notice = None
+        self._load_generation += 1
         self._search_field.hint_text = self._search_hint()
         with contextlib.suppress(Exception):
             self._search_field.update()
+        self.render()
 
     def _on_search_click(self) -> None:
         query = (self._search_field.value or "").strip()
         if not query:
             return
+        self._search_provider = self._search_provider_dropdown.value or "hf"
         self._load_generation += 1
         generation = self._load_generation
         self._loading = True
@@ -1051,9 +1062,7 @@ class ModelAssetsView(ft.Container):
 
         async def task() -> None:
             try:
-                repos = await self._application.search_model_repos(
-                    query, self._search_provider_dropdown.value or "hf"
-                )
+                repos = await self._application.search_model_repos(query, self._search_provider)
             except Exception as error:
                 if generation == self._load_generation:
                     self._repos = ()
