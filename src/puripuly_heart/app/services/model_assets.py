@@ -42,7 +42,10 @@ from puripuly_heart.core.local_asr.model_registry import (
     file_sha256,
 )
 from puripuly_heart.core.model_download_sources import MODEL_DOWNLOAD_SOURCES
-from puripuly_heart.core.model_install_removal import remove_model_install_dir
+from puripuly_heart.core.model_install_removal import (
+    remove_interrupted_install_residue,
+    remove_model_install_dir,
+)
 
 MODEL_ASSETS_ORIGIN = "model_assets"
 _INTEGRITY_STATUS = {"ready": "installed", "missing": "missing", "invalid": "invalid"}
@@ -127,6 +130,7 @@ class ModelAssetsApplication:
     _operation: _Operation | None = field(init=False, default=None)
     _cancel_requested: bool = field(init=False, default=False)
     _cancel_event: asyncio.Event | None = field(init=False, default=None)
+    _cleaning: bool = field(init=False, default=False)
 
     def entries(self) -> tuple[ModelAssetEntry, ...]:
         entries: list[ModelAssetEntry] = []
@@ -221,6 +225,12 @@ class ModelAssetsApplication:
         return (operation.model_id, operation.kind, operation.progress_percent)
 
     async def refresh(self) -> tuple[ModelAssetEntry, ...]:
+        if self._operation is None and not self._cleaning:
+            self._cleaning = True
+            try:
+                await asyncio.to_thread(self._clean_interrupted_installs)
+            finally:
+                self._cleaning = False
         self._integrity = await asyncio.to_thread(self._inspect_all)
         return self.entries()
 
@@ -459,7 +469,7 @@ class ModelAssetsApplication:
         return self.entry(choice.model_id)
 
     async def _run_operation(self, model_id: str, kind: str, action) -> None:
-        if self._operation is not None:
+        if self._operation is not None or self._cleaning:
             raise ModelAssetsError("Another model task is active", failure_code="task_busy")
         self._operation = _Operation(model_id, kind, 0 if kind != "delete" else None)
         self._cancel_requested = False
@@ -570,6 +580,28 @@ class ModelAssetsApplication:
                 "Model owner unavailable", failure_code="model_owner_unavailable"
             )
         await owner.delete_model(choice.model_id)
+
+    def _clean_interrupted_installs(self) -> None:
+        try:
+            keep = {record.model_id for record in self._registry().load()}
+            for choice in self.choices:
+                if choice.purpose == "translation":
+                    continue
+                try:
+                    manifest = load_local_stt_asset_manifest(choice.model_id)
+                except Exception:
+                    continue
+                keep.add(manifest.install_dirname)
+            root = self.model_root or default_local_stt_model_root()
+            remove_interrupted_install_residue(root, keep=keep)
+        except Exception as error:
+            log_feature(
+                "ModelDownload",
+                "cleanup",
+                "residue_cleanup_failed",
+                error=error,
+                level=logging.WARNING,
+            )
 
     def _inspect_all(self) -> dict[str, str]:
         statuses = {choice.model_id: self._inspect_one(choice) for choice in self.choices}
