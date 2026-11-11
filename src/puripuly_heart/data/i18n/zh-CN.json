@@ -599,6 +599,7 @@
   "model_assets.empty.repositories": "选择仓库即可查看其中的 GGUF 文件。",
   "model_assets.empty.search": "请在 Hugging Face 或 ModelScope 上搜索模型。",
   "model_assets.error.registry_corrupt": "模型注册表已损坏。文件未被更改。",
+  "model_assets.error.already_installed": "此文件已在模型库中。",
   "model_assets.error.unknown_model": "此模型已不在目录中。",
   "model_assets.error.unsupported_source": "所选模型不支持此下载来源。",
   "model_assets.error.model_owner_unavailable": "模型安装器不可用。请重启应用后重试。",

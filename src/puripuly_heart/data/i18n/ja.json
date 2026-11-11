@@ -599,6 +599,7 @@
   "model_assets.empty.repositories": "リポジトリを選択すると、GGUFファイルが表示されます。",
   "model_assets.empty.search": "Hugging FaceまたはModelScopeでモデルを検索してください。",
   "model_assets.error.registry_corrupt": "モデルレジストリが破損しています。ファイルは変更されていません。",
+  "model_assets.error.already_installed": "このファイルはすでにモデルライブラリにあります。",
   "model_assets.error.unknown_model": "このモデルはカタログにありません。",
   "model_assets.error.unsupported_source": "このモデルでは、そのダウンロードソースを使用できません。",
   "model_assets.error.model_owner_unavailable": "モデルインストーラーを利用できません。アプリを再起動して再試行してください。",

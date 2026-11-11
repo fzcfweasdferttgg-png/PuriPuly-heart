@@ -39,6 +39,7 @@ _ERROR_KEYS = frozenset(
         "search_failed",
         "download_failed",
         "registry_corrupt",
+        "already_installed",
         "unknown_model",
         "unsupported_source",
         "model_owner_unavailable",

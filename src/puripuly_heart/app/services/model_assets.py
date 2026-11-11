@@ -35,6 +35,7 @@ from puripuly_heart.core.local_asr.local_stt_assets import (
     load_local_stt_asset_manifest,
 )
 from puripuly_heart.core.local_asr.model_registry import (
+    REGISTRY_STATUS_INSTALLED,
     ModelRegistry,
     RegistryModelFile,
     RegistryModelRecord,
@@ -287,6 +288,7 @@ class ModelAssetsApplication:
         registry = self._registry()
         root = self.model_root or default_local_stt_model_root()
         stem = Path(file.name).stem
+        self._require_file_not_installed(file.name)
         model_id = registry.allocate_model_id(stem, reserved=self._reserved_model_ids())
 
         async def action() -> None:
@@ -336,6 +338,7 @@ class ModelAssetsApplication:
             raise ModelAssetsError("Missing model file", failure_code="missing_file")
         if source.suffix.lower() != ".gguf":
             raise ModelAssetsError("Not a GGUF model file", failure_code="invalid_file")
+        self._require_file_not_installed(source.name)
         registry = self._registry()
         root = self.model_root or default_local_stt_model_root()
         model_id = registry.allocate_model_id(source.stem, reserved=self._reserved_model_ids())
@@ -609,6 +612,24 @@ class ModelAssetsApplication:
 
     def _reserved_model_ids(self) -> frozenset[str]:
         return frozenset(choice.model_id for choice in self.choices)
+
+    def _require_file_not_installed(self, name: str) -> None:
+        if name in self._installed_file_names():
+            raise ModelAssetsError(
+                "Model file is already in the library", failure_code="already_installed"
+            )
+
+    def _installed_file_names(self) -> frozenset[str]:
+        """File names behind installed models — the invariant the UI applies to installs."""
+        names: set[str] = set()
+        registry = self._registry()
+        for choice in self.choices:
+            if choice.purpose != "translation" and self._inspect_one(choice) == "installed":
+                names.update(_choice_files(choice))
+        for record in registry.load():
+            if registry.status(record) == REGISTRY_STATUS_INSTALLED:
+                names.update(file.name for file in record.files)
+        return frozenset(names)
 
     def _choice(self, model_id: str) -> ModelAssetChoice:
         choice = self._find_choice(model_id)

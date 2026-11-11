@@ -599,6 +599,7 @@
   "model_assets.empty.repositories": "Выберите репозиторий, чтобы увидеть его GGUF-файлы.",
   "model_assets.empty.search": "Найдите модель на Hugging Face или ModelScope.",
   "model_assets.error.registry_corrupt": "Реестр моделей повреждён. Файлы не изменялись.",
+  "model_assets.error.already_installed": "Этот файл уже есть в библиотеке моделей.",
   "model_assets.error.unknown_model": "Эта модель больше не указана в каталоге.",
   "model_assets.error.unsupported_source": "Этот источник не поддерживается для выбранной модели.",
   "model_assets.error.model_owner_unavailable": "Установщик моделей недоступен. Перезапустите приложение и повторите.",

@@ -599,6 +599,7 @@
   "model_assets.empty.repositories": "Choose a repository to see its GGUF files.",
   "model_assets.empty.search": "Search Hugging Face or ModelScope to find a model.",
   "model_assets.error.registry_corrupt": "The model registry is damaged. Your files were left untouched.",
+  "model_assets.error.already_installed": "This file is already in your model library.",
   "model_assets.error.unknown_model": "This model is no longer in the catalog.",
   "model_assets.error.unsupported_source": "This download source is not supported for the selected model.",
   "model_assets.error.model_owner_unavailable": "The model installer is unavailable. Restart the application and try again.",

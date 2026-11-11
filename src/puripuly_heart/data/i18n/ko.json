@@ -599,6 +599,7 @@
   "model_assets.empty.repositories": "리포지터리를 선택하면 GGUF 파일이 표시됩니다.",
   "model_assets.empty.search": "Hugging Face 또는 ModelScope에서 모델을 검색하세요.",
   "model_assets.error.registry_corrupt": "모델 레지스트리가 손상되었습니다. 파일은 변경되지 않았습니다.",
+  "model_assets.error.already_installed": "이 파일은 이미 모델 라이브러리에 있습니다.",
   "model_assets.error.unknown_model": "이 모델은 카탈로그에 없습니다.",
   "model_assets.error.unsupported_source": "선택한 모델에서는 이 다운로드 소스를 지원하지 않습니다.",
   "model_assets.error.model_owner_unavailable": "모델 설치 관리자를 사용할 수 없습니다. 앱을 다시 시작한 후 다시 시도하세요.",
