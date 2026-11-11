@@ -12,7 +12,7 @@ import flet as ft
 
 from puripuly_heart.app.services.model_hub import ModelRepo
 from puripuly_heart.core.local_asr.local_stt_assets import default_local_stt_model_root
-from puripuly_heart.core.local_asr.model_registry import sanitize_model_id
+from puripuly_heart.core.local_asr.model_registry import ModelRegistryError, sanitize_model_id
 from puripuly_heart.core.transcribe_catalog import CatalogModel, load_transcribe_catalog
 from puripuly_heart.ui.flet_runtime import update_control_if_mounted
 from puripuly_heart.ui.i18n import t
@@ -199,6 +199,7 @@ class ModelAssetsView(ft.Container):
         self._tab = TAB_LIBRARY
         self._loading = False
         self._notice: str | None = None
+        self._refresh_error: str | None = None
         self._entries: tuple = ()
         self._installed_files: set[str] = set()
         self._selected: dict[str, str | None] = {
@@ -539,9 +540,10 @@ class ModelAssetsView(ft.Container):
             button.set_selected(key == self._tab)
         for key, toolbar in self._toolbars.items():
             toolbar.visible = key == self._tab
-        self._notice_text.value = self._notice or ""
-        self._notice_text.visible = bool(self._notice)
         self._refresh_state()
+        notice = self._notice or self._refresh_error
+        self._notice_text.value = notice or ""
+        self._notice_text.visible = bool(notice)
         if self._tab == TAB_LIBRARY:
             self._render_library()
         elif self._tab == TAB_OFFICIAL:
@@ -584,7 +586,14 @@ class ModelAssetsView(ft.Container):
         self._empty_text.visible = not self._rows and not self._loading
 
     def _refresh_state(self) -> None:
-        self._entries = tuple(self._application.model_asset_entries())
+        try:
+            entries = tuple(self._application.model_asset_entries())
+        except ModelRegistryError as error:
+            logger.debug("Model asset entries are unavailable", exc_info=True)
+            self._refresh_error = self._error_notice(error) or self._refresh_error
+            return
+        self._refresh_error = None
+        self._entries = entries
         self._installed_files = {
             name
             for entry in self._entries
