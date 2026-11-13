@@ -95,6 +95,7 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 
 - A portable launcher and embedded Python runtime, with user data in
   `var/data_user/` and regenerable files in `var/cache/`.
+- CUDA support for local speech recognition.
 - A generic OpenAI-compatible translation provider with editable presets for
   local or hosted endpoints, plus independent primary and backup configuration.
 - Explicit not-selected states for speech recognition and translation providers.
@@ -125,9 +126,9 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 
 ### Work plan
 
-- [ ] Stabilize the model manager and the OpenAI-compatible and local server GUIs.
+- [ ] Stabilize and refine the model manager, OpenAI-compatible server, and local server concepts.
 - [ ] Add native Anthropic Messages API support, provider addresses, and required dependencies.
-- [ ] Add CPU/Vulkan/CUDA selection for self and peer speech recognition and a one-model/two-model toggle.
+- [ ] Add CPU/Vulkan/CUDA selection for self and peer speech recognition, with a toggle between one shared model instance for both channels and separate model instances for each channel.
 - [ ] ... ???
 
 ## License
