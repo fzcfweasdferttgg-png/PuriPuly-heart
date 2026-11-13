@@ -87,9 +87,39 @@ application is closed. Both directories are excluded by `.gitignore`.
 
 ## TODO
 
+This section is a compact roadmap of the portable branch's differences and
+remaining work. The baseline was the original author's development snapshot
+marked as version 2.10.0, not the author's official 2.10.0 release.
+
+### Added
+
+- A portable launcher and an embedded Python runtime, with user data in
+  `var/data_user/` and regenerable files in `var/cache/`.
+- A transcribe.cpp GGUF model catalog using the user's Hugging Face and
+  ModelScope repositories, SHA-256 verification, and a model manager.
+- Local model and device selection, including explicit not-selected states for
+  channels that are not configured.
+- Portable documentation in English, Russian, and Korean.
+
+### Removed
+
+- The managed broker, account sign-ins, managed key delivery, and daily
+  activity telemetry.
+- Cloud speech-recognition and hosted translation integrations. Translation
+  through a local OpenAI-compatible endpoint or local Gemma runtime remains.
+- The Sherpa/ONNX recognition path and the author's original ASR model catalog;
+  the portable branch uses its transcribe.cpp GGUF catalog instead.
+- The Inno Setup installer, managed packaging and broker deployment flow, and
+  promotional interface elements.
+- Encrypted secret stores and managed identity verification. Secrets are now
+  stored locally in plain text in `var/data_user/`.
+
+### Remaining work
+
 - [ ] Complete runtime model switching when speech recognition work reaches that stage.
 - [ ] Finish the llama.cpp backend integration and evaluate its translation quality.
 - [ ] Continue refining model manager filtering, model details, and localization.
+- [ ] Reconcile `docs/added*` and `docs/deleted*` with the current code and paths.
 
 ## License
 
