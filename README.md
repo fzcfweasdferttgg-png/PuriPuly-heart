@@ -95,8 +95,6 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 
 - A portable launcher and embedded Python runtime, with user data in
   `var/data_user/` and regenerable files in `var/cache/`.
-- A separate model manager window with GGUF search, local inventory, and
-  Hugging Face or ModelScope source selection.
 - A generic OpenAI-compatible translation provider with editable presets for
   local or hosted endpoints, plus independent primary and backup configuration.
 - Explicit not-selected states for speech recognition and translation providers.
@@ -104,29 +102,26 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 
 ### Removed
 
-- The broker service, its deployment files and migrations, and app-active-day
-  telemetry. Some managed-client code remains in the Python tree.
-- Dedicated cloud STT adapters and the Sherpa/ONNX recognition path. Only the
-  local transcribe.cpp provider remains selectable for speech recognition.
+- The broker service, its deployment files and migrations, and app-active-day telemetry.
+- Dedicated cloud STT adapters and the Sherpa/ONNX recognition path.
 - Dedicated LLM adapters for Gemini, OpenAI, OpenRouter, DeepSeek, Qwen,
-  ChatGPT Plan, and index-translate. Hosted APIs can still be used through the
-  generic OpenAI-compatible provider.
-- Account and managed-account cards in the settings UI. Some OpenRouter and
-  managed-identity modules remain.
-- Inno Setup scripts and the author's GitHub workflows. Native packaging code
-  and installer-related release-evidence checks remain.
-- Fernet and keyring secret-store implementations. Secrets now use a local
-  plaintext file in `var/data_user/`.
+  ChatGPT Plan, and index-translate.
+- Account and managed-account cards in the settings UI.
+- Inno Setup scripts and the author's GitHub workflows.
+- Fernet and keyring secret-store implementations.
 
-### Changed rather than added
+### Changed
 
-- The author's five ASR manifests were replaced by twelve GGUF models from the
-  user's repositories, all using transcribe.cpp Vulkan. SHA-256 verification
-  already existed in the author's manifests and is not a new feature.
-- Local model and GPU device selection already existed and was reworked. The
-  separate model manager and its search/source workflow are the new parts.
-- Managed Gemma remains in the code but is no longer a selectable translation
-  model in the GUI. The GitHub Star prompt also remains active.
+- The ASR catalog now contains twelve GGUF models from the user's repositories,
+  all using transcribe.cpp Vulkan and SHA-256-pinned files, instead of the
+  author's five manifests.
+- Model and GPU selection was reworked, and model management moved to a separate
+  window with search, local inventory, and Hugging Face or ModelScope sources.
+- Local and hosted translation endpoints are configured through the generic
+  OpenAI-compatible provider instead of dedicated hosted adapters.
+- Managed Gemma remains in the code but is not a selectable translation model.
+- OpenRouter and managed-identity modules, native packaging and release-evidence
+  checks remain in the tree. The GitHub Star prompt remains active.
 
 ### Remaining work
 
