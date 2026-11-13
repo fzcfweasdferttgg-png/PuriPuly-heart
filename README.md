@@ -123,12 +123,12 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 - OpenRouter and managed-identity modules, native packaging and release-evidence
   checks remain in the tree. The GitHub Star prompt remains active.
 
-### Remaining work
+### Work plan
 
-- [ ] Complete runtime model switching when speech recognition work reaches that stage.
-- [ ] Finish the llama.cpp backend integration and evaluate its translation quality.
-- [ ] Continue refining model manager filtering, model details, and localization.
-- [ ] Reconcile `docs/added*` and `docs/deleted*` with the verified distinctions above.
+- [ ] Stabilize the model manager and the OpenAI-compatible and local server GUIs.
+- [ ] Add native Anthropic Messages API support, provider addresses, and required dependencies.
+- [ ] Add CPU/Vulkan/CUDA selection for self and peer speech recognition and a one-model/two-model toggle.
+- [ ] ... ???
 
 ## License
 
