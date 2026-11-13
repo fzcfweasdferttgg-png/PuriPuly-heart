@@ -126,7 +126,7 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
   OpenAI-compatible provider instead of dedicated hosted adapters.
 - Managed Gemma remains in the code but is not a selectable translation model.
 
-### Retained
+### Legacy cleanup
 
 - Legacy provider enums and runtime configuration fields, plus OpenRouter and
   managed-identity modules.
