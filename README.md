@@ -113,9 +113,11 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 
 ### Changed
 
-- The ASR catalog now contains twelve GGUF models from the user's repositories,
-  all using transcribe.cpp Vulkan and SHA-256-pinned files, instead of the
-  author's five manifests.
+- The bundled ASR data includes twelve user manifests with SHA-256-pinned GGUF
+  files and a 77-entry transcribe.cpp catalog, with VAD hidden in the GUI,
+  instead of the author's five manifests. The model manager also supports local
+  GGUF imports and GGUF downloads from Hugging Face and ModelScope, with
+  role/language filters, quantization selection, and install lifecycle handling.
 - Model and GPU selection was reworked, and model management moved to a separate
   window with search, local inventory, and Hugging Face or ModelScope sources.
 - Local and hosted translation endpoints are configured through the generic
