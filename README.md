@@ -87,39 +87,53 @@ application is closed. Both directories are excluded by `.gitignore`.
 
 ## TODO
 
-This section is a compact roadmap of the portable branch's differences and
-remaining work. The baseline was the original author's development snapshot
-marked as version 2.10.0, not the author's official 2.10.0 release.
+This section tracks differences and remaining work. The comparison baseline is
+the original author's `kap/dev@4c3324d4a` snapshot from 2026-10-31. It was a
+development tree marked as version 2.10.0, not the author's official 2.10.0 release.
 
 ### Added
 
-- A portable launcher and an embedded Python runtime, with user data in
+- A portable launcher and embedded Python runtime, with user data in
   `var/data_user/` and regenerable files in `var/cache/`.
-- A transcribe.cpp GGUF model catalog using the user's Hugging Face and
-  ModelScope repositories, SHA-256 verification, and a model manager.
-- Local model and device selection, including explicit not-selected states for
-  channels that are not configured.
+- A separate model manager window with GGUF search, local inventory, and
+  Hugging Face or ModelScope source selection.
+- A generic OpenAI-compatible translation provider with editable presets for
+  local or hosted endpoints, plus independent primary and backup configuration.
+- Explicit not-selected states for speech recognition and translation providers.
 - Portable documentation in English, Russian, and Korean.
 
 ### Removed
 
-- The managed broker, account sign-ins, managed key delivery, and daily
-  activity telemetry.
-- Cloud speech-recognition and hosted translation integrations. Translation
-  through a local OpenAI-compatible endpoint or local Gemma runtime remains.
-- The Sherpa/ONNX recognition path and the author's original ASR model catalog;
-  the portable branch uses its transcribe.cpp GGUF catalog instead.
-- The Inno Setup installer, managed packaging and broker deployment flow, and
-  promotional interface elements.
-- Encrypted secret stores and managed identity verification. Secrets are now
-  stored locally in plain text in `var/data_user/`.
+- The broker service, its deployment files and migrations, and app-active-day
+  telemetry. Some managed-client code remains in the Python tree.
+- Dedicated cloud STT adapters and the Sherpa/ONNX recognition path. Only the
+  local transcribe.cpp provider remains selectable for speech recognition.
+- Dedicated LLM adapters for Gemini, OpenAI, OpenRouter, DeepSeek, Qwen,
+  ChatGPT Plan, and index-translate. Hosted APIs can still be used through the
+  generic OpenAI-compatible provider.
+- Account and managed-account cards in the settings UI. Some OpenRouter and
+  managed-identity modules remain.
+- Inno Setup scripts and the author's GitHub workflows. Native packaging code
+  and installer-related release-evidence checks remain.
+- Fernet and keyring secret-store implementations. Secrets now use a local
+  plaintext file in `var/data_user/`.
+
+### Changed rather than added
+
+- The author's five ASR manifests were replaced by twelve GGUF models from the
+  user's repositories, all using transcribe.cpp Vulkan. SHA-256 verification
+  already existed in the author's manifests and is not a new feature.
+- Local model and GPU device selection already existed and was reworked. The
+  separate model manager and its search/source workflow are the new parts.
+- Managed Gemma remains in the code but is no longer a selectable translation
+  model in the GUI. The GitHub Star prompt also remains active.
 
 ### Remaining work
 
 - [ ] Complete runtime model switching when speech recognition work reaches that stage.
 - [ ] Finish the llama.cpp backend integration and evaluate its translation quality.
 - [ ] Continue refining model manager filtering, model details, and localization.
-- [ ] Reconcile `docs/added*` and `docs/deleted*` with the current code and paths.
+- [ ] Reconcile `docs/added*` and `docs/deleted*` with the verified distinctions above.
 
 ## License
 
