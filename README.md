@@ -130,7 +130,7 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 
 - [ ] Stabilize and refine the model manager, OpenAI-compatible server, and local server concepts.
 - [ ] Add native Anthropic Messages API support, provider addresses, and required dependencies.
-- [ ] Add CPU/Vulkan/CUDA selection for self and peer speech recognition, with a toggle between one shared model instance for both channels and separate model instances for each channel.
+- [ ] Add configurable workload-to-backend assignment for self and peer speech recognition, allowing each channel to run on CPU, Vulkan, or CUDA and either share one model instance or use separate model instances.
 - [ ] ... ???
 
 ## License
