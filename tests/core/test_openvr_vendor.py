@@ -26,7 +26,7 @@ def _load_openvr_vendor_module():
 
 def test_openvr_vendor_module_exposes_pinned_bundle_contract() -> None:
     module = _load_openvr_vendor_module()
-    bundle = module.validate_vendored_openvr_bundle(ROOT / "third_party" / "openvr")
+    bundle = module.validate_vendored_openvr_bundle(ROOT / "native" / "third_party" / "openvr")
 
     assert (
         module.OPENVR_VENDOR_DLL_SHA256 == bundle.dll_sha256
@@ -37,9 +37,9 @@ def test_openvr_vendor_module_exposes_pinned_bundle_contract() -> None:
 def test_validate_vendored_openvr_bundle_accepts_repo_bundle() -> None:
     module = _load_openvr_vendor_module()
 
-    bundle = module.validate_vendored_openvr_bundle(ROOT / "third_party" / "openvr")
+    bundle = module.validate_vendored_openvr_bundle(ROOT / "native" / "third_party" / "openvr")
 
-    assert bundle.bundle_dir == ROOT / "third_party" / "openvr"
+    assert bundle.bundle_dir == ROOT / "native" / "third_party" / "openvr"
     assert bundle.dll_path == bundle.bundle_dir / "win64" / "openvr_api.dll"
     assert bundle.sha256_path == bundle.bundle_dir / "win64" / "openvr_api.dll.sha256"
     assert bundle.license_path == bundle.bundle_dir / "LICENSE"
@@ -86,5 +86,5 @@ def test_default_vendored_bundle_uses_source_resource_boundary(
 
     bundle = module.validate_vendored_openvr_bundle()
 
-    assert bundle.bundle_dir == ROOT / "third_party" / "openvr"
+    assert bundle.bundle_dir == ROOT / "native" / "third_party" / "openvr"
     assert bundle.dll_sha256 == PINNED_OPENVR_DLL_SHA256

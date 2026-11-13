@@ -476,7 +476,7 @@ def test_provenance_hashes_are_reverified_against_bytes(tmp_path) -> None:
 
 
 def _write_soxr_fixture(repo: Path, package: Path) -> None:
-    inputs = repo / "build" / "soxr-release-inputs"
+    inputs = repo / "native" / "build" / "soxr-release-inputs"
     inputs.mkdir(parents=True, exist_ok=True)
     source_bytes = b"fake-source-archive"
     bundle_path = inputs / "fake-source-bundle.zip"
@@ -499,7 +499,9 @@ def _write_soxr_fixture(repo: Path, package: Path) -> None:
         archive.writestr("fix.patch", b"patch")
     (inputs / "manifest.json").write_text(
         json.dumps(
-            {"third_party_source_bundle_path": "build/soxr-release-inputs/fake-source-bundle.zip"}
+            {
+                "third_party_source_bundle_path": "native/build/soxr-release-inputs/fake-source-bundle.zip"
+            }
         ),
         encoding="utf-8",
     )
@@ -601,7 +603,7 @@ def test_verify_soxr_packaging_rejects_tampered_source_or_modification(tmp_path)
     package = tmp_path / "package"
     package.mkdir()
     _write_soxr_fixture(repo, package)
-    bundle_path = repo / "build" / "soxr-release-inputs" / "fake-source-bundle.zip"
+    bundle_path = repo / "native" / "build" / "soxr-release-inputs" / "fake-source-bundle.zip"
 
     with zipfile.ZipFile(bundle_path) as archive:
         stored = {name: archive.read(name) for name in archive.namelist()}

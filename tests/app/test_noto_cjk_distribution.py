@@ -6,7 +6,7 @@ from pathlib import Path
 from tests.helpers.paths import REPO_ROOT as ROOT
 
 NOTO_CJK_FONT_SOURCE_RELATIVE_DIR = Path("src/puripuly_heart/data/fonts")
-NOTO_CJK_PROVENANCE_RELATIVE_DIR = Path("third_party/noto-sans-cjk")
+NOTO_CJK_PROVENANCE_RELATIVE_DIR = Path("native/third_party/noto-sans-cjk")
 NOTO_CJK_FONT_FILENAME = "NotoSansCJK-Medium.ttc"
 NOTO_CJK_FONT_SHA256 = "197d5e1e019faca33a4d55931c7d68b8056f3b97cb862049f5cb8de9efdfb8ce"
 NOTO_CJK_FONT_SIZE_BYTES = 18_354_360

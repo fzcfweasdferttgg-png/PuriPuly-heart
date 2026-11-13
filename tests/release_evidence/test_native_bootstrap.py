@@ -97,7 +97,7 @@ def test_embedded_bootstrap_only_persists_bounded_uncaught_error_diagnostics(
     (package / "config").mkdir(parents=True)
     for relative in ("__init__.py", "config/__init__.py", "config/paths.py", "runtime_layout.py"):
         shutil.copy2(root / "src" / "puripuly_heart" / relative, package / relative)
-    error_path = app_root / "data_user" / "logs" / "native-bootstrap-error.log"
+    error_path = app_root / "var" / "data_user" / "logs" / "native-bootstrap-error.log"
 
     def invoke(
         module_source: str,
@@ -129,7 +129,7 @@ def test_embedded_bootstrap_only_persists_bounded_uncaught_error_diagnostics(
             .replace("{error_exit_code}", "255")
         )
         bridge_output.unlink(missing_ok=True)
-        user_data = app_root / "data_user"
+        user_data = app_root / "var" / "data_user"
         if block_user_data:
             shutil.rmtree(user_data, ignore_errors=True)
             user_data.write_text("not a directory", encoding="utf-8")
@@ -167,9 +167,7 @@ def test_embedded_bootstrap_only_persists_bounded_uncaught_error_diagnostics(
     assert system_exit_payload == {"code": 23, "error": ""}
     assert not error_path.exists()
 
-    failed, failed_payload = invoke(
-        "def fail():\n    raise RuntimeError('한' * 100000)\nfail()\n"
-    )
+    failed, failed_payload = invoke("def fail():\n    raise RuntimeError('한' * 100000)\nfail()\n")
     encoded = failed_payload["error"].encode("utf-8")
     assert failed_payload["code"] == 255
     assert len(encoded) <= 65536

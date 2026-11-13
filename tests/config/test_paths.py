@@ -6,7 +6,7 @@ from puripuly_heart.config import paths
 
 
 def test_user_config_dir_is_portable_data_user_dir() -> None:
-    assert paths.user_config_dir() == paths.app_root() / "data_user"
+    assert paths.user_config_dir() == paths.app_root() / "var" / "data_user"
 
 
 def test_default_paths_use_user_config_dir(monkeypatch, tmp_path):

@@ -1309,7 +1309,7 @@ def _validate_bundle_evidence(
 
 
 def _validate_packaged_resources(target_root: Path, repo_root: Path) -> dict[str, Any]:
-    openvr = validate_vendored_openvr_bundle(repo_root / "third_party" / "openvr")
+    openvr = validate_vendored_openvr_bundle(repo_root / "native" / "third_party" / "openvr")
     packaged_openvr = validate_openvr_runtime_dll(target_root / "openvr_api.dll")
     font = target_root / "app" / "puripuly_heart" / "data" / "fonts" / _NOTO_CJK_FILENAME
     if not font.is_file():
@@ -1318,7 +1318,7 @@ def _validate_packaged_resources(target_root: Path, repo_root: Path) -> dict[str
         raise ValueError("native Noto CJK font does not match the pinned payload")
     provenance = {}
     for name in ("OFL.txt", "README.md", "SHA256SUMS.txt"):
-        source = repo_root / "third_party" / "noto-sans-cjk" / name
+        source = repo_root / "native" / "third_party" / "noto-sans-cjk" / name
         packaged = target_root / "third_party" / "noto-sans-cjk" / name
         if not source.is_file() or not packaged.is_file():
             raise FileNotFoundError(f"native Noto CJK provenance not found: {name}")

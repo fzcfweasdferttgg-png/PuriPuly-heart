@@ -49,14 +49,23 @@ def packaged_resource_compliance(tmp_path: Path, monkeypatch) -> tuple[Path, Pat
 
     checkout = Path(__file__).resolve().parents[2]
     repo = tmp_path / "source repository"
-    shutil.copytree(checkout / "third_party/openvr", repo / "third_party/openvr")
-    shutil.copytree(checkout / "third_party/noto-sans-cjk", repo / "third_party/noto-sans-cjk")
+    shutil.copytree(
+        checkout / "native" / "third_party" / "openvr", repo / "native" / "third_party/openvr"
+    )
+    shutil.copytree(
+        checkout / "native" / "third_party" / "noto-sans-cjk",
+        repo / "native" / "third_party/noto-sans-cjk",
+    )
     target = tmp_path / "native payload 한글"
     font = target / "app/puripuly_heart/data/fonts/NotoSansCJK-Medium.ttc"
     font.parent.mkdir(parents=True)
     shutil.copy2(checkout / "src/puripuly_heart/data/fonts/NotoSansCJK-Medium.ttc", font)
-    shutil.copy2(repo / "third_party/openvr/win64/openvr_api.dll", target / "openvr_api.dll")
-    shutil.copytree(repo / "third_party/noto-sans-cjk", target / "third_party/noto-sans-cjk")
+    shutil.copy2(
+        repo / "native" / "third_party/openvr/win64/openvr_api.dll", target / "openvr_api.dll"
+    )
+    shutil.copytree(
+        repo / "native" / "third_party/noto-sans-cjk", target / "third_party/noto-sans-cjk"
+    )
     monkeypatch.setattr(
         release_identity, "verify_packaged_license_payloads", lambda *_args, **_kwargs: []
     )
@@ -72,7 +81,11 @@ def test_native_compliance_accepts_independently_pinned_resources(
     target, repo = packaged_resource_compliance
     checksum = NOTO_CJK_CHECKSUM_RECORD + line_ending
     for root in (repo, target):
-        (root / "third_party/noto-sans-cjk/SHA256SUMS.txt").write_bytes(checksum)
+        (
+            root / "native" / "third_party/noto-sans-cjk/SHA256SUMS.txt"
+            if root == repo
+            else root / "third_party/noto-sans-cjk/SHA256SUMS.txt"
+        ).write_bytes(checksum)
     report = validate_compliance(target, repo, target / "soxr.json")["resources"]
     assert (
         report["openvr_sha256"]
@@ -104,7 +117,11 @@ def test_native_compliance_rejects_noncanonical_checksum_records(
 ) -> None:
     target, repo = packaged_resource_compliance
     for root in (repo, target):
-        (root / "third_party/noto-sans-cjk/SHA256SUMS.txt").write_bytes(checksum)
+        (
+            root / "native" / "third_party/noto-sans-cjk/SHA256SUMS.txt"
+            if root == repo
+            else root / "third_party/noto-sans-cjk/SHA256SUMS.txt"
+        ).write_bytes(checksum)
     with pytest.raises(ValueError, match="does not record the pinned font"):
         validate_compliance(target, repo, target / "soxr.json")
 
@@ -114,7 +131,7 @@ def test_native_compliance_requires_exact_source_payload_provenance_bytes(
     packaged_resource_compliance, source_ending: bytes
 ) -> None:
     target, repo = packaged_resource_compliance
-    (repo / "third_party/noto-sans-cjk/SHA256SUMS.txt").write_bytes(
+    (repo / "native" / "third_party/noto-sans-cjk/SHA256SUMS.txt").write_bytes(
         NOTO_CJK_CHECKSUM_RECORD + source_ending
     )
     packaged_ending = b"\r\n" if source_ending == b"\n" else b"\n"

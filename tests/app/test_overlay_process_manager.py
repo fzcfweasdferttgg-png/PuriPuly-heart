@@ -762,7 +762,7 @@ def _write_vendored_openvr_bundle(
     *,
     dll_bytes: bytes = b"vendored-openvr-runtime",
 ) -> VendoredOpenVrBundle:
-    bundle_dir = repo_root / "third_party" / "openvr"
+    bundle_dir = repo_root / "native" / "third_party" / "openvr"
     dll_path = bundle_dir / "win64" / "openvr_api.dll"
     sha256_path = bundle_dir / "win64" / "openvr_api.dll.sha256"
     license_path = bundle_dir / "LICENSE"
@@ -794,7 +794,7 @@ def _make_local_dev_overlay_fixture(
     vendored_dll_bytes: bytes = b"vendored-openvr-runtime",
 ) -> tuple[Path, VendoredOpenVrBundle]:
     repo_root = tmp_path / "repo"
-    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged = repo_root / "native" / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_text("staged-overlay", encoding="utf-8")
 
@@ -833,7 +833,12 @@ def _make_packaged_overlay_fixture(
 
 def _repo_vendored_openvr_dll_path() -> Path:
     return (
-        Path(__file__).resolve().parents[2] / "third_party" / "openvr" / "win64" / "openvr_api.dll"
+        Path(__file__).resolve().parents[2]
+        / "native"
+        / "third_party"
+        / "openvr"
+        / "win64"
+        / "openvr_api.dll"
     )
 
 
@@ -1953,6 +1958,7 @@ def test_default_overlay_process_runner_uses_repository_root_after_module_extrac
     assert packaged == app_executable.resolve().with_name("PuriPulyHeartOverlay.exe")
     assert staged == (
         Path(process_runners_module.__file__).resolve().parents[4]
+        / "native"
         / "build"
         / "overlay"
         / "PuriPulyHeartOverlay.exe"
@@ -1971,7 +1977,7 @@ def test_default_overlay_process_runner_prefers_newer_packaged_sibling_over_stag
     packaged_sibling.write_text("packaged", encoding="utf-8")
 
     repo_root = tmp_path / "repo"
-    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged = repo_root / "native" / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
     staged.parent.mkdir(parents=True)
     staged.write_text("staged", encoding="utf-8")
 
@@ -1999,7 +2005,7 @@ def test_default_overlay_process_runner_prefers_newer_staged_overlay_over_packag
     packaged_sibling.write_text("packaged", encoding="utf-8")
 
     repo_root = tmp_path / "repo"
-    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged = repo_root / "native" / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
     staged.parent.mkdir(parents=True)
     staged.write_text("staged", encoding="utf-8")
 
@@ -2024,7 +2030,7 @@ def test_default_overlay_process_runner_uses_staged_overlay_for_local_dev_when_s
     app_executable.write_text("", encoding="utf-8")
 
     repo_root = tmp_path / "repo"
-    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged = repo_root / "native" / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
     staged.parent.mkdir(parents=True)
     staged.write_text("staged", encoding="utf-8")
 
@@ -2046,7 +2052,7 @@ async def test_overlay_process_manager_rejects_stale_staged_overlay_build(
     source_relative_path: str,
 ) -> None:
     repo_root = tmp_path / "repo"
-    staged = repo_root / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
+    staged = repo_root / "native" / "build" / "overlay" / "PuriPulyHeartOverlay.exe"
     staged.parent.mkdir(parents=True)
     staged.write_text("staged", encoding="utf-8")
 

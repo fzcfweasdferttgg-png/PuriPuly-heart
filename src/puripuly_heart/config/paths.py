@@ -7,7 +7,7 @@ APP_DIR_NAME = STABLE_APP_DIR_NAME
 SETTINGS_FILENAME = "settings.json"
 MODELS_DIRNAME = "models"
 HTTP_EXTENSIONS_DIRNAME = "http_extensions"
-USER_DATA_DIRNAME = "data_user"
+USER_DATA_DIRNAME = "var/data_user"
 
 
 def app_root() -> Path:

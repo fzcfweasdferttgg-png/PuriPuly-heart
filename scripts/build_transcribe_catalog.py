@@ -6,7 +6,7 @@ section of ``src/puripuly_heart/data/models/catalog.json``.
 
 Regenerate after upstream catalog changes:
 
-    .venv\\Scripts\\python.exe scripts\\build_transcribe_catalog.py
+    runtime\\.venv\\Scripts\\python.exe scripts\\build_transcribe_catalog.py
 """
 
 from __future__ import annotations

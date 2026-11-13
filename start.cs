@@ -214,6 +214,7 @@ ko|캐시 지우기|cache 폴더의 내용 삭제: 다운로드한 패키지, �
         AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling", false);
         AppContext.SetSwitch("Switch.System.IO.BlockLongPaths", false);
         string root = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+        Environment.SetEnvironmentVariable("UV_PROJECT_ENVIRONMENT", Path.Combine(root, "runtime", ".venv"));
         T = Tr();
         InitColors(IsDarkTheme());
         Application.EnableVisualStyles();
@@ -459,7 +460,7 @@ ko|캐시 지우기|cache 폴더의 내용 삭제: 다운로드한 패키지, �
     }
     static void Launch(string root, bool debug, Form form)
     {
-        string python = Path.Combine(root, "python", debug ? "python.exe" : "pythonw.exe");
+        string python = Path.Combine(root, "runtime", "python", debug ? "python.exe" : "pythonw.exe");
         if (!File.Exists(python))
         {
             MessageBox.Show(T[20] + " " + python, "PuriPuly Heart", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -496,7 +497,7 @@ ko|캐시 지우기|cache 폴더의 내용 삭제: 다운로드한 패키지, �
     static int DeleteDataUserContents(string root)
     {
         int errors = 0;
-        string dir = Path.Combine(root, "data_user");
+        string dir = Path.Combine(root, "var", "data_user");
         try
         {
             if (Directory.Exists(dir))
@@ -535,7 +536,7 @@ ko|캐시 지우기|cache 폴더의 내용 삭제: 다운로드한 패키지, �
     static int DeleteCacheContents(string root)
     {
         int errors = 0;
-        string dir = Path.Combine(root, "cache");
+        string dir = Path.Combine(root, "var", "cache");
         try
         {
             if (Directory.Exists(dir))
@@ -581,7 +582,7 @@ ko|캐시 지우기|cache 폴더의 내용 삭제: 다운로드한 패키지, �
         try
         {
             ProcessStartInfo psi = new ProcessStartInfo();
-            psi.FileName = Path.Combine(root, "python", "python.exe");
+            psi.FileName = Path.Combine(root, "runtime", "python", "python.exe");
             psi.Arguments = "--version";
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;

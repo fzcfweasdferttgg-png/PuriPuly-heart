@@ -32,7 +32,7 @@ MANIFEST_SCHEMA = "puripuly-heart/llama-cpp-runtime-distribution/v1"
 RELEASE_URL = f"https://github.com/ggml-org/llama.cpp/releases/tag/{LLAMA_CPP_BUILD}"
 DOWNLOAD_BASE_URL = f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_CPP_BUILD}"
 PACKAGED_RUNTIME_RELATIVE_DIR = Path("_runtime") / LLAMA_CPP_RUNTIME_DIRNAME
-PROVENANCE_RELATIVE_DIR = Path("third_party") / "llama.cpp"
+PROVENANCE_RELATIVE_DIR = Path("native") / "third_party" / "llama.cpp"
 PROVENANCE_FILENAMES = ("LICENSE", "README.md")
 LICENSE_REQUIRED_MARKERS = (
     "MIT License",
@@ -605,8 +605,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = _build_parser().parse_args(argv)
     if arguments.command == "prepare":
         repo_root = arguments.repo_root.resolve()
-        cache_dir = arguments.cache_dir or repo_root / "build" / "download-cache" / "llama.cpp"
-        output_root = arguments.output_root or repo_root / "build" / LLAMA_CPP_SOURCE_RELATIVE_DIR
+        cache_dir = (
+            arguments.cache_dir or repo_root / "native" / "build" / "download-cache" / "llama.cpp"
+        )
+        output_root = (
+            arguments.output_root or repo_root / "native" / "build" / LLAMA_CPP_SOURCE_RELATIVE_DIR
+        )
         result = prepare_runtime(repo_root, cache_dir, output_root)
     elif arguments.command == "verify-package":
         result = verify_package(arguments.package_root, launch=arguments.launch)

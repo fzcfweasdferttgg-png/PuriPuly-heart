@@ -84,15 +84,18 @@ testpaths = ["tests"]
 addopts = "-q -s"
 asyncio_mode = "auto"
 pythonpath = ["."]
+cache_dir = "var/cache/pytest"
 
 [tool.black]
 line-length = 100
 target-version = ["py314"]
 force-exclude = "build\\.spec"
+cache-dir = "var/cache/black"
 
 [tool.ruff]
 line-length = 100
 target-version = "py314"
+cache-dir = "var/cache/ruff"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

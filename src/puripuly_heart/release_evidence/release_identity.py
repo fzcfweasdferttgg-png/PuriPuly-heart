@@ -39,7 +39,7 @@ PACKAGED_LICENSE_PATHS = (
     "pyyaml-6.0.3.dist-info/licenses/LICENSE",
 )
 SOXR_LICENSE_SOURCE_PARTS = ("src", "puripuly_heart", "data", "licenses", "COPYING.LGPL-2.1.txt")
-SOXR_MANIFEST_PARTS = ("build", "soxr-release-inputs", "manifest.json")
+SOXR_MANIFEST_PARTS = ("native", "build", "soxr-release-inputs", "manifest.json")
 SOXR_COMPLIANCE_PARTS = ("third_party", "soxr")
 SOXR_LICENSE_FILENAME = "COPYING.LGPL-2.1.txt"
 SOXR_BUNDLE_MANIFEST_ENTRY = "manifest.json"

@@ -380,7 +380,7 @@ class DefaultASRWorkerProcessFactory(ASRWorkerProcessFactoryPort):
         root = repo_root or Path(__file__).resolve().parents[4]
         return (
             executable.with_name(ASR_WORKER_EXECUTABLE_NAME),
-            root / "build" / "asr_worker" / ASR_WORKER_EXECUTABLE_NAME,
+            root / "native" / "build" / "asr_worker" / ASR_WORKER_EXECUTABLE_NAME,
         )
 
     @classmethod

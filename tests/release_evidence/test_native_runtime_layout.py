@@ -40,7 +40,7 @@ def test_source_layout_is_independent_of_working_directory(
     assert layout.package_resource("data", "THIRD_PARTY_NOTICES.txt").is_file()
     assert (
         default_llama_runtime_root()
-        == layout.app_resource_root / "build" / "llama.cpp" / LLAMA_CPP_RUNTIME_DIRNAME
+        == layout.app_resource_root / "native" / "build" / "llama.cpp" / LLAMA_CPP_RUNTIME_DIRNAME
     )
     assert layout.user_data_root != unrelated
     assert layout.model_cache_root.parent == layout.user_data_root

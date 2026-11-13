@@ -53,9 +53,9 @@ Copy-Item -LiteralPath 'src/puripuly_heart/data/fonts/NotoSansCJK-Medium.ttc' -D
 cargo test --locked --manifest-path native/overlay/Cargo.toml --target-dir $overlayTarget windows_graphics_ -- --test-threads=1
 
 cargo build --locked --manifest-path native/overlay/Cargo.toml --release --bin PuriPulyHeartOverlay --target-dir $overlayTarget
-New-Item -ItemType Directory -Force -Path build/overlay | Out-Null
-Copy-Item (Join-Path $overlayTarget 'release/PuriPulyHeartOverlay.exe') build/overlay/PuriPulyHeartOverlay.exe -Force
-Copy-Item third_party/openvr/win64/openvr_api.dll build/overlay/openvr_api.dll -Force
+New-Item -ItemType Directory -Force -Path native/build/overlay | Out-Null
+Copy-Item (Join-Path $overlayTarget 'release/PuriPulyHeartOverlay.exe') native/build/overlay/PuriPulyHeartOverlay.exe -Force
+Copy-Item native/third_party/openvr/win64/openvr_api.dll native/build/overlay/openvr_api.dll -Force
 .\build\overlay\PuriPulyHeartOverlay.exe --check-startup-contract
 ```
 

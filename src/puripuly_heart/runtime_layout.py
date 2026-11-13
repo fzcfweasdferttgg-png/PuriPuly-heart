@@ -23,6 +23,8 @@ class RuntimeLayout:
     log_root: Path
 
     def resource(self, *parts: str) -> Path:
+        if self.host_kind == "source" and parts and parts[0] == "prompts":
+            return self.app_resource_root.joinpath("docs", *parts)
         return self.app_resource_root.joinpath(*parts)
 
     def package_resource(self, *parts: str) -> Path:
@@ -90,7 +92,7 @@ def current_runtime_layout() -> RuntimeLayout:
         host_kind: RuntimeHostKind = "native"
     else:
         resource_root = Path(__file__).resolve().parents[2]
-        runtime_root = resource_root / "build"
+        runtime_root = resource_root / "native" / "build"
         host_executable = Path(sys.executable).resolve()
         python_executable = host_executable
         host_kind = "source"

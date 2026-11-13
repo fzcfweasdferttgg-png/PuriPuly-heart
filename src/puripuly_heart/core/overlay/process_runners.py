@@ -131,9 +131,9 @@ class DefaultOverlayProcessRunner:
             return executable, executable
         executable = (sys_executable or Path(sys.executable)).resolve()
         root = repo_root or Path(__file__).resolve().parents[4]
-        return executable.with_name(OVERLAY_EXECUTABLE_NAME), root / "build" / "overlay" / (
+        return executable.with_name(
             OVERLAY_EXECUTABLE_NAME
-        )
+        ), root / "native" / "build" / "overlay" / (OVERLAY_EXECUTABLE_NAME)
 
     @classmethod
     def resolve_default_executable(
@@ -181,7 +181,7 @@ class DefaultOverlayProcessRunner:
         if build_dir.name != "build":
             return None
 
-        repo_root = build_dir.parent
+        repo_root = build_dir.parent.parent
         source_root = repo_root / "native" / "overlay" / "src"
         if not source_root.exists():
             return None
