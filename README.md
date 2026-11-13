@@ -95,7 +95,7 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 
 - A portable launcher and embedded Python runtime, with user data in
   `var/data_user/` and regenerable files in `var/cache/`.
-- CUDA support for local speech recognition.
+- CUDA support and a shared-engine mode for local speech recognition.
 - A generic OpenAI-compatible translation provider with editable presets for
   local or hosted endpoints, plus independent primary and backup configuration.
 - Explicit not-selected states for speech recognition and translation providers.
@@ -105,6 +105,8 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 
 - The broker service, its deployment files and migrations, and app-active-day telemetry.
 - Dedicated cloud STT adapters and the Sherpa/ONNX recognition path.
+- Legacy local STT providers, custom offline/realtime STT, and rolling free-tier STT.
+- The update checker and its UI and runtime integration.
 - Dedicated LLM adapters for Gemini, OpenAI, OpenRouter, DeepSeek, Qwen,
   ChatGPT Plan, and index-translate.
 - Account and managed-account cards in the settings UI.
@@ -123,8 +125,13 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 - Local and hosted translation endpoints are configured through the generic
   OpenAI-compatible provider instead of dedicated hosted adapters.
 - Managed Gemma remains in the code but is not a selectable translation model.
-- OpenRouter and managed-identity modules, native packaging and release-evidence
-  checks remain in the tree. The GitHub Star prompt remains active.
+
+### Retained
+
+- Legacy provider enums and runtime configuration fields, plus OpenRouter and
+  managed-identity modules.
+- Native packaging and installer-related release-evidence checks.
+- The GitHub Star prompt.
 
 ### Work plan
 
