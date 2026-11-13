@@ -85,6 +85,12 @@ this directory or include it in archives, commits, logs, or bug reports.
 `var/cache/` contains only regenerable data and can be removed when the
 application is closed. Both directories are excluded by `.gitignore`.
 
+## TODO
+
+- [ ] Complete runtime model switching when speech recognition work reaches that stage.
+- [ ] Finish the llama.cpp backend integration and evaluate its translation quality.
+- [ ] Continue refining model manager filtering, model details, and localization.
+
 ## License
 
 PuriPuly Heart is distributed under the GNU Affero General Public License,
