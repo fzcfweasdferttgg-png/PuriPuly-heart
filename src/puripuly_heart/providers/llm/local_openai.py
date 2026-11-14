@@ -158,6 +158,7 @@ class HttpxLocalOpenAIClient:
     timeout: httpx.Timeout | float = field(default_factory=_default_timeout)
     _client: httpx.AsyncClient | None = field(init=False, default=None, repr=False)
     _client_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock, repr=False)
+    _active_tasks: set[asyncio.Task[object]] = field(init=False, default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
         self.base_url = _normalize_base_url(self.base_url)
@@ -169,12 +170,11 @@ class HttpxLocalOpenAIClient:
     def _build_http_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=self.timeout, trust_env=False, follow_redirects=False)
 
-    async def _get_http_client(self) -> httpx.AsyncClient:
-        if self._client is not None:
-            return self._client
+    async def _get_http_client(self, operation: asyncio.Task[object]) -> httpx.AsyncClient:
         async with self._client_lock:
             if self._client is None:
                 self._client = self._build_http_client()
+            self._active_tasks.add(operation)
             return self._client
 
     def _headers(self) -> dict[str, str]:
@@ -235,7 +235,9 @@ class HttpxLocalOpenAIClient:
         scene_participant_count: int | None = None,
         max_output_tokens: int | None = None,
     ) -> str:
-        client = await self._get_http_client()
+        operation = asyncio.current_task()
+        assert operation is not None
+        client = await self._get_http_client(operation)
         try:
             request_body = self._build_request_body(
                 text=text,
@@ -261,6 +263,8 @@ class HttpxLocalOpenAIClient:
             raise
         except httpx.HTTPError:
             raise
+        finally:
+            self._active_tasks.discard(operation)
 
         if response.status_code != 200:
             raise LLMResponseError(
@@ -299,9 +303,17 @@ class HttpxLocalOpenAIClient:
         return _extract_message_content(message.get("content"))
 
     async def close(self) -> None:
+        current = asyncio.current_task()
         async with self._client_lock:
             client = self._client
             self._client = None
+            operations = tuple(
+                operation for operation in self._active_tasks if operation is not current
+            )
+        for operation in operations:
+            operation.cancel()
+        if operations:
+            await asyncio.gather(*operations, return_exceptions=True)
         if client is not None:
             await client.aclose()
 

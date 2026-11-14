@@ -51,6 +51,17 @@ ORDER21_TRANSLATION_PROVIDER_SETTINGS_PATHS: Final[tuple[str, ...]] = (
     "intent.local_llm.base_url",
     "intent.local_llm.model",
     "intent.local_llm.extra_body",
+    "intent.openai_compatible.provider_key",
+    "intent.openai_compatible.base_url",
+    "intent.openai_compatible.model",
+    "intent.backup_translation.enabled",
+    "intent.backup_translation.model",
+    "intent.backup_translation.openai_compatible.provider_key",
+    "intent.backup_translation.openai_compatible.base_url",
+    "intent.backup_translation.openai_compatible.model",
+    "intent.backup_translation.local_llm.base_url",
+    "intent.backup_translation.local_llm.model",
+    "intent.backup_translation.local_llm.extra_body",
     "intent.translation.concurrency_limit",
 )
 

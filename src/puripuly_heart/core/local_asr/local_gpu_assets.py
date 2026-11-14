@@ -99,9 +99,12 @@ def local_gpu_model_path(
 
 def _registry_model_path(root: Path, model_id: str | None) -> Path:
     """Resolve a model installed outside the manifest catalog."""
-    from .model_registry import ModelRegistry
+    from .model_registry import ModelRegistry, ModelRegistryError
 
-    record = ModelRegistry(root).get(model_id or "")
+    try:
+        record = ModelRegistry(root).get(model_id or "")
+    except ModelRegistryError as error:
+        raise ValueError(f"unknown local model: {model_id}") from error
     if record is None or not record.files:
         raise ValueError(f"unknown local model: {model_id}")
     return ModelRegistry(root).model_file_path(record)

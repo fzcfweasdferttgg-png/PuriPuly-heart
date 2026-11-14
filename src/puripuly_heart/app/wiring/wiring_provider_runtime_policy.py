@@ -40,6 +40,8 @@ def build_llm_provider_signature(
 ) -> tuple[object, ...]:
     translation = settings.intent.translation
     local_llm = settings.intent.local_llm
+    openai_compatible = settings.intent.openai_compatible
+    backup = settings.intent.backup_translation
     languages = settings.intent.languages
     provider_llm = provider_llm_for_translation(translation.model, translation.connection)
     managed_gemma_selected = translation.model in MANAGED_GEMMA_MODELS
@@ -96,6 +98,41 @@ def build_llm_provider_signature(
                 _canonical_json_signature(local_llm.extra_body),
             )
             if provider_llm == "local_llm"
+            else None
+        ),
+        (
+            (
+                openai_compatible.provider_key,
+                openai_compatible.base_url,
+                openai_compatible.model,
+            )
+            if provider_llm == "openai_compatible"
+            else None
+        ),
+        (
+            (
+                backup.enabled,
+                backup.model if backup.enabled else None,
+                (
+                    (
+                        backup.local_llm.base_url,
+                        backup.local_llm.model,
+                        _canonical_json_signature(backup.local_llm.extra_body),
+                    )
+                    if backup.enabled and backup.model == "local_llm"
+                    else None
+                ),
+                (
+                    (
+                        backup.openai_compatible.provider_key,
+                        backup.openai_compatible.base_url,
+                        backup.openai_compatible.model,
+                    )
+                    if backup.enabled and backup.model == "openai_compatible"
+                    else None
+                ),
+            )
+            if translation.model != "custom_http"
             else None
         ),
         (

@@ -138,7 +138,11 @@ from puripuly_heart.config.translation_values import (
 from puripuly_heart.core.http_extensions import http_extension_secret_key
 from puripuly_heart.core.language import get_stt_compatibility_warning
 from puripuly_heart.core.local_asr.local_stt_assets import LOCAL_STT_MODEL_IDS
-from puripuly_heart.core.local_asr.model_registry import default_model_registry
+from puripuly_heart.core.local_asr.model_registry import (
+    ModelRegistryError,
+    RegistryModelRecord,
+    default_model_registry,
+)
 from puripuly_heart.core.stt.custom import (
     CustomSTTConfigurationError,
     normalize_custom_stt_extra,
@@ -3191,8 +3195,20 @@ class SettingsView(ft.Column):
         self._sync_gpu_device_card()
 
     @staticmethod
+    def _registry_models() -> tuple[RegistryModelRecord, ...]:
+        """Custom model records; an unreadable registry degrades to no custom models."""
+        try:
+            return default_model_registry().load()
+        except ModelRegistryError:
+            logger.warning("[Settings] Model registry is unreadable; custom models hidden")
+            return ()
+
+    @staticmethod
     def _stt_model_label(model_id: str) -> str:
-        record = default_model_registry().get(model_id)
+        record = next(
+            (item for item in SettingsView._registry_models() if item.model_id == model_id),
+            None,
+        )
         if record is not None:
             return record.name
         family, _, quant = model_id.partition("-gguf-")
@@ -3211,7 +3227,7 @@ class SettingsView(ft.Column):
         )
         options.extend(
             OptionItem(value=record.model_id, label=record.name)
-            for record in default_model_registry().load()
+            for record in self._registry_models()
         )
         return options
 
