@@ -76,9 +76,11 @@ async def test_provider_settings_window_mounts_form_and_accept(
         content=content,
         on_accept=lambda: accepted.append("ok"),
         on_close_request=lambda: closed.append("reverted"),
+        height=695,
     )
     await asyncio.sleep(0)
     assert window.is_open
+    assert window._page.window.height == 695
 
     window._on_accept_click(None)
 
@@ -123,6 +125,8 @@ def test_provider_settings_window_configures_resizable_frameless_defaults() -> N
     assert page.window.resizable is True
     assert page.window.width > 0
     assert page.window.height > 0
+    assert page.bgcolor == "transparent"
+    assert page.window.bgcolor == "transparent"
 
 
 def _fake_settings_window() -> types.SimpleNamespace:
@@ -137,8 +141,10 @@ def _fake_settings_window() -> types.SimpleNamespace:
             opened.update(kwargs)
             self.is_open = True
 
-        def replace_content(self, content) -> None:
+        def replace_content(self, content, *, height: int | None = None) -> None:
             opened["content"] = content
+            if height is not None:
+                opened["height"] = height
 
     return types.SimpleNamespace(
         window=_Window(), opened=opened, accepted=accepted, reverted=reverted
@@ -164,6 +170,7 @@ def test_gear_opens_dialog_with_form_and_titles(
         t("settings.translation_variant.openai_compatible"),
     )
     assert fake.opened["content"] is view._openai_form
+    assert fake.opened["height"] == 450
 
     fake2 = _fake_settings_window()
     view.attach_provider_settings_window(
@@ -179,6 +186,27 @@ def test_gear_opens_dialog_with_form_and_titles(
         view._backup_network_group,
         view._backup_local_group,
     ]
+    assert fake2.opened["height"] == 450
+
+
+def test_local_server_dialogs_use_695_pixel_height(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    fake_t = _fake_settings_window()
+    fake_b = _fake_settings_window()
+    view.attach_provider_settings_window(
+        {"translation": fake_t.window, "backup": fake_b.window}, lambda coro: coro
+    )
+
+    view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
+    view._on_local_llm_gear_click(None)
+    assert fake_t.opened["height"] == 695
+
+    view._on_backup_variant_selected(TranslationModel.LOCAL_LLM.value)
+    view._on_backup_gear_click(None)
+    assert fake_b.opened["height"] == 695
 
 
 def test_dialog_accept_applies_staged_edits(
@@ -254,12 +282,20 @@ def test_translation_dialog_follows_live_variant_switch(
         {"translation": fake.window, "backup": fake.window}, lambda coro: coro
     )
     view._on_openai_gear_click(None)
+    assert fake.opened["height"] == 450
 
     view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
 
     assert view._provider_dialog_kinds["translation"] == "translation_local"
     assert fake.opened["content"] is view._local_llm_form
     assert view._local_llm_form.controls[0] is view._local_llm_slots_row
+    assert fake.opened["height"] == 695
+
+    view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
+
+    assert view._provider_dialog_kinds["translation"] == "translation_openai"
+    assert fake.opened["content"] is view._openai_form
+    assert fake.opened["height"] == 450
 
 
 def test_backup_dialog_shows_only_the_selected_variant_form(

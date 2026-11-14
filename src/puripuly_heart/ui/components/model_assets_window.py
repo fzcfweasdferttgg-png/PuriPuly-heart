@@ -154,13 +154,14 @@ class ModelAssetsWindow:
         page.theme_mode = ft.ThemeMode.LIGHT
         register_ui_fonts(page)
         page.theme = get_app_theme(face=typeface_for_language(get_locale()))
-        page.bgcolor = COLOR_BACKGROUND
+        page.bgcolor = ft.Colors.TRANSPARENT
         page.padding = 0
         page.window.frameless = True
         page.window.resizable = True
         page.window.maximizable = True
         page.window.width = MODEL_ASSETS_WINDOW_WIDTH
         page.window.height = MODEL_ASSETS_WINDOW_HEIGHT
+        page.window.bgcolor = ft.Colors.TRANSPARENT
         page.window.icon = str(
             DEFAULT_FOUNDATION_RESOURCES.require_file(FOUNDATION_DESIGN_TOKENS.icon_asset)
         )
@@ -228,9 +229,10 @@ class ModelAssetsWindow:
                 spacing=0,
             ),
             expand=True,
+            bgcolor=COLOR_BACKGROUND,
             border=ft.Border.all(1, COLOR_DIVIDER),
             border_radius=16,
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
         page.add(
             ft.Stack([content, *self._build_resize_grips()], fit=ft.StackFit.EXPAND, expand=True)

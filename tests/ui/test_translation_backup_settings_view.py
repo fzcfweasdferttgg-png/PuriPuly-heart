@@ -425,3 +425,84 @@ def test_backup_provider_selection_commits_backup_edits(
         BackupOpenAICompatibleProviderKeyEdit,
         BackupOpenAICompatibleBaseUrlEdit,
     }
+
+
+def test_local_form_defaults_are_empty_and_errors_can_wrap(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    assert view._local_llm_base_url.value == ""
+    assert view._local_llm_model.value == ""
+    assert view._local_llm_base_url.error_max_lines == 4
+    assert view._backup_local_base_url.error_max_lines == 4
+    assert view._openai_base_url.error_max_lines == 4
+
+
+def test_local_forms_keep_buttons_at_top_and_content_scrollable(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    import flet as ft
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    for form in (view._local_llm_form, view._backup_local_group):
+        assert form.scroll == ft.ScrollMode.AUTO
+        rows = [control for control in form.controls if type(control) is ft.Row]
+        assert len(rows) == 3
+        assert all(row.vertical_alignment == ft.CrossAxisAlignment.START for row in rows[1:])
+
+
+def test_api_key_optional_explanation_is_not_duplicated(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    from puripuly_heart.ui import i18n as i18n_module
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    previous = i18n_module.get_locale()
+    try:
+        i18n_module.set_locale("ru")
+        view.apply_locale()
+        assert view._local_llm_api_key._text_field.label == "API-ключ сервера"
+        assert "необязательно" in view._local_llm_api_key_helper.value.lower()
+    finally:
+        i18n_module.set_locale(previous)
+
+
+def test_url_validation_message_is_short(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    from puripuly_heart.ui import i18n as i18n_module
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    previous = i18n_module.get_locale()
+    try:
+        i18n_module.set_locale("ru")
+        view.apply_locale()
+        view._local_llm_base_url.value = "not-a-url"
+        view._on_local_llm_base_url_change_end(None)
+        assert view._local_llm_base_url.error == "Введите URL"
+    finally:
+        i18n_module.set_locale(previous)
+
+
+def test_action_buttons_are_centered_in_fixed_height_containers(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    import flet as ft
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    for form in (view._local_llm_form, view._backup_local_group):
+        rows = [control for control in form.controls if type(control) is ft.Row]
+        assert len(rows) == 3
+        for row in rows[1:]:
+            action = row.controls[1]
+            assert isinstance(action, ft.Container)
+            assert action.height == 64
+            assert action.alignment == ft.Alignment.CENTER

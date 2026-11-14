@@ -36,7 +36,8 @@ def update_control_if_mounted(control: object) -> bool:
     try:
         update()
     except (AssertionError, RuntimeError) as exc:
-        if "Control must be added" not in str(exc):
+        message = str(exc)
+        if "Control must be added" not in message and "An attempt to fetch destroyed session" not in message:
             raise
         return False
     return True

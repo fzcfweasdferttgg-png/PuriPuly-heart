@@ -30,7 +30,8 @@ from puripuly_heart.ui.theme import (
 )
 
 PROVIDER_WINDOW_WIDTH = 680
-PROVIDER_WINDOW_HEIGHT = 680
+PROVIDER_WINDOW_HEIGHT = 450
+LOCAL_PROVIDER_WINDOW_HEIGHT = 695
 PROVIDER_CONTENT_PADDING = FOUNDATION_DESIGN_TOKENS.spacing.page
 RESIZE_GRIP_SIZE = 6
 RESIZE_CORNER_SIZE = 16
@@ -106,6 +107,7 @@ class ProviderSettingsWindow:
         self._task: Any | None = None
         self._title: str = ""
         self._content: Any | None = None
+        self._height = PROVIDER_WINDOW_HEIGHT
         self._on_accept: Callable[[], None] | None = None
         self._on_close_request: Callable[[], None] | None = None
         self._accepted = False
@@ -122,6 +124,7 @@ class ProviderSettingsWindow:
         content: Any,
         on_accept: Callable[[], None],
         on_close_request: Callable[[], None],
+        height: int = PROVIDER_WINDOW_HEIGHT,
     ) -> None:
         """Open the settings window, or bring the existing one to the front."""
         if self.is_open:
@@ -129,16 +132,20 @@ class ProviderSettingsWindow:
             return
         self._title = title
         self._content = content
+        self._height = height
         self._on_accept = on_accept
         self._on_close_request = on_close_request
         self._accepted = False
         self._task = schedule(self._run)
 
-    def replace_content(self, content) -> None:
+    def replace_content(self, content, *, height: int | None = None) -> None:
         """Swap the window body in place (card variant switched live)."""
         self._content = content
-        if self._page is not None:
+        if height is not None:
+            self._height = height
+        if self._page is not None and self.is_open:
             with contextlib.suppress(Exception):
+                self._page.window.height = self._height
                 self._page.update()
 
     async def close(self) -> None:
@@ -164,13 +171,14 @@ class ProviderSettingsWindow:
         page.theme_mode = ft.ThemeMode.LIGHT
         register_ui_fonts(page)
         page.theme = get_app_theme(face=typeface_for_language(get_locale()))
-        page.bgcolor = COLOR_BACKGROUND
+        page.bgcolor = ft.Colors.TRANSPARENT
         page.padding = 0
         page.window.frameless = True
         page.window.resizable = True
         page.window.maximizable = True
         page.window.width = PROVIDER_WINDOW_WIDTH
-        page.window.height = PROVIDER_WINDOW_HEIGHT
+        page.window.height = self._height
+        page.window.bgcolor = ft.Colors.TRANSPARENT
         page.window.icon = str(
             DEFAULT_FOUNDATION_RESOURCES.require_file(FOUNDATION_DESIGN_TOKENS.icon_asset)
         )
@@ -277,9 +285,10 @@ class ProviderSettingsWindow:
             spacing=0,
             ),
             expand=True,
+            bgcolor=COLOR_BACKGROUND,
             border=ft.Border.all(1, COLOR_DIVIDER),
             border_radius=16,
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
         page.add(ft.Stack([content, *self._build_resize_grips()], fit=ft.StackFit.EXPAND, expand=True))
         page.window.visible = True

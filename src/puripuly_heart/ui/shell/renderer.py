@@ -3,6 +3,7 @@ from __future__ import annotations
 import flet as ft
 
 from puripuly_heart.ui.shell.contract import AppShellRegions, AppShellSlots
+from puripuly_heart.ui.theme import COLOR_BACKGROUND, COLOR_DIVIDER
 
 APP_SHELL_LAYOUT_SPACING = 0
 APP_SHELL_ROOT_PADDING = 0
@@ -23,7 +24,15 @@ def compose_app_shell(slots: AppShellSlots) -> AppShellRegions:
         expand=True,
         spacing=APP_SHELL_LAYOUT_SPACING,
     )
-    root_content = ft.Container(content=layout, expand=True, padding=APP_SHELL_ROOT_PADDING)
+    root_content = ft.Container(
+        content=layout,
+        expand=True,
+        padding=APP_SHELL_ROOT_PADDING,
+        bgcolor=COLOR_BACKGROUND,
+        border=ft.Border.all(1, COLOR_DIVIDER),
+        border_radius=16,
+        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+    )
 
     if slots.debug_panel is None:
         return AppShellRegions(
@@ -43,6 +52,10 @@ def compose_app_shell(slots: AppShellSlots) -> AppShellRegions:
             content=debug_stack,
             expand=True,
             padding=APP_SHELL_ROOT_PADDING,
+            bgcolor=COLOR_BACKGROUND,
+            border=ft.Border.all(1, COLOR_DIVIDER),
+            border_radius=16,
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         ),
         layout=layout,
         content_area=content_area,

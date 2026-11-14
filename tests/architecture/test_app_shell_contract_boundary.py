@@ -60,6 +60,9 @@ def test_compose_app_shell_keeps_the_accepted_ordering_and_geometry() -> None:
     assert regions.root.content is regions.layout
     assert regions.root.padding == APP_SHELL_ROOT_PADDING
     assert regions.root.expand is True
+    assert regions.root.bgcolor == shell_renderer.COLOR_BACKGROUND
+    assert regions.root.border_radius == 16
+    assert regions.root.clip_behavior is ft.ClipBehavior.ANTI_ALIAS
     assert regions.debug_stack is None
 
 
@@ -71,6 +74,9 @@ def test_compose_app_shell_mounts_the_debug_panel_only_when_supplied() -> None:
     assert regions.debug_stack.controls[1] is panel
     assert regions.debug_stack.fit == ft.StackFit.EXPAND
     assert regions.root.content is regions.debug_stack
+    assert regions.root.bgcolor == shell_renderer.COLOR_BACKGROUND
+    assert regions.root.border_radius == 16
+    assert regions.root.clip_behavior is ft.ClipBehavior.ANTI_ALIAS
 
     root_content = regions.debug_stack.controls[0]
     assert isinstance(root_content, ft.Container)

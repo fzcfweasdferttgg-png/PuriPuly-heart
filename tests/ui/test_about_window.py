@@ -60,6 +60,8 @@ def test_about_window_configures_default_size_and_resize() -> None:
     assert page.window.height == 540
     assert page.window.resizable is True
     assert page.window.frameless is True
+    assert page.bgcolor == "transparent"
+    assert page.window.bgcolor == "transparent"
 
 
 async def test_about_window_open_is_single_instance() -> None:
@@ -86,6 +88,10 @@ async def test_about_window_open_is_single_instance() -> None:
 
     assert len(scheduled) == 1
     assert window.is_open is True
+    root = window._page.added[0].controls[0]
+    assert root.bgcolor == "#FDF9F8"
+    assert root.border_radius == 16
+    assert root.clip_behavior.value == "antiAlias"
 
     release.set()
     await scheduled[0]

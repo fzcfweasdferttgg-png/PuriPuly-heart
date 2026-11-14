@@ -167,6 +167,10 @@ from puripuly_heart.ui.components.settings.stt_engine_modal import (
     SttEngineModal,
     build_backend_toggle,
 )
+from puripuly_heart.ui.components.provider_settings_window import (
+    LOCAL_PROVIDER_WINDOW_HEIGHT,
+    PROVIDER_WINDOW_HEIGHT,
+)
 from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
 from puripuly_heart.ui.components.subtab_shell import TextSubtab, TextSubtabShell
 from puripuly_heart.ui.flet_runtime import (
@@ -705,12 +709,19 @@ class SettingsView(ft.Column):
             [
                 ft.Container(height=4),
                 provider,
-                ft.Row([model, fetch_btn], spacing=4),
+                ft.Row(
+                    [
+                        model,
+                        ft.Container(content=fetch_btn, height=64, alignment=ft.Alignment.CENTER),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
                 api_key,
                 test_btn,
             ]
         )
-        return ft.Column(items, spacing=8)
+        return ft.Column(items, spacing=8, scroll=ft.ScrollMode.AUTO)
 
     def _compose_local_form(
         self,
@@ -735,8 +746,22 @@ class SettingsView(ft.Column):
         items.extend(
             [
                 ft.Container(height=4),
-                ft.Row([base_url, test_btn], spacing=4),
-                ft.Row([model, fetch_btn], spacing=4),
+                ft.Row(
+                    [
+                        base_url,
+                        ft.Container(content=test_btn, height=64, alignment=ft.Alignment.CENTER),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+                ft.Row(
+                    [
+                        model,
+                        ft.Container(content=fetch_btn, height=64, alignment=ft.Alignment.CENTER),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
                 api_key,
                 api_key_helper,
                 extra_body,
@@ -744,7 +769,7 @@ class SettingsView(ft.Column):
                 extra_body_error,
             ]
         )
-        return ft.Column(items, spacing=8)
+        return ft.Column(items, spacing=8, scroll=ft.ScrollMode.AUTO)
 
     def _build_openai_form_controls(self) -> None:
         """Create the translation OpenAI-compatible form controls."""
@@ -765,6 +790,7 @@ class SettingsView(ft.Column):
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            error_max_lines=4,
             visible=False,
             on_blur=self._on_openai_base_url_change_end,
             on_submit=self._on_openai_base_url_change_end,
@@ -814,7 +840,7 @@ class SettingsView(ft.Column):
         )
         self._local_llm_base_url = ft.TextField(
             label=t("settings.local_llm.base_url"),
-            value="http://127.0.0.1:11434/v1",
+            value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -822,13 +848,14 @@ class SettingsView(ft.Column):
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            error_max_lines=4,
             on_change=self._on_local_llm_field_change,
             on_blur=self._on_local_llm_base_url_change_end,
             on_submit=self._on_local_llm_base_url_change_end,
         )
         self._local_llm_model = ft.TextField(
             label=t("settings.local_llm.model"),
-            value="llama3.1:8b",
+            value="",
             border_radius=12,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
@@ -978,6 +1005,7 @@ class SettingsView(ft.Column):
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            error_max_lines=4,
             on_change=self._on_backup_local_field_change,
             on_blur=self._on_backup_local_base_url_change_end,
             on_submit=self._on_backup_local_base_url_change_end,
@@ -1123,6 +1151,7 @@ class SettingsView(ft.Column):
         self._provider_dialog_kinds[card] = kind
         self._provider_dialog_edits_before[card] = dict(self._provider_edits)
         self._provider_dialog_draft_before[card] = self._provider_draft
+        window_height = PROVIDER_WINDOW_HEIGHT
         if kind == "translation_openai":
             self._build_openai_form_controls()
             self._openai_form = self._compose_openai_form(
@@ -1180,17 +1209,24 @@ class SettingsView(ft.Column):
             )
             title = f"{title}: {variant_label}"
         self._sync_translation_selection_controls(display)
-        self._local_llm_base_url.value = display.local_llm_base_url
-        self._local_llm_model.value = display.local_llm_model
+        self._local_llm_base_url.value = (
+            "" if display.local_llm_base_url == "http://127.0.0.1:11434/v1" else display.local_llm_base_url
+        )
+        self._local_llm_model.value = "" if display.local_llm_model == "llama3.1:8b" else display.local_llm_model
         self._local_llm_extra_body.value = display.local_llm_extra_body_json
         self._clear_local_llm_extra_body_error()
         self._clear_backup_local_extra_body_error()
+        if kind == "translation_local" or (
+            kind == "backup" and backup_variant == TranslationModel.LOCAL_LLM
+        ):
+            window_height = LOCAL_PROVIDER_WINDOW_HEIGHT
         window.open(
             schedule,
             title=title,
             content=content,
             on_accept=lambda card=card: self._accept_provider_settings_dialog(card),
             on_close_request=lambda card=card: self._revert_provider_settings_dialog(card),
+            height=window_height,
         )
 
     def _commit_openai_fields_from_controls(self) -> None:
@@ -1315,7 +1351,14 @@ class SettingsView(ft.Column):
             )
             content = self._openai_form
         self._fill_card_form_fields("translation", display)
-        window.replace_content(content)
+        window.replace_content(
+            content,
+            height=(
+                LOCAL_PROVIDER_WINDOW_HEIGHT
+                if kind == "translation_local"
+                else PROVIDER_WINDOW_HEIGHT
+            ),
+        )
 
     def _fill_card_form_fields(self, card: str, display) -> None:
         """Fill one card's form fields from the current settings display."""
@@ -1336,8 +1379,10 @@ class SettingsView(ft.Column):
                 display.openai_compatible_provider_key,
                 display.openai_compatible_base_url,
             )
-            self._local_llm_base_url.value = display.local_llm_base_url
-            self._local_llm_model.value = display.local_llm_model
+            self._local_llm_base_url.value = (
+            "" if display.local_llm_base_url == "http://127.0.0.1:11434/v1" else display.local_llm_base_url
+        )
+            self._local_llm_model.value = "" if display.local_llm_model == "llama3.1:8b" else display.local_llm_model
             self._local_llm_extra_body.value = display.local_llm_extra_body_json
             self._clear_local_llm_extra_body_error()
 
@@ -4134,9 +4179,11 @@ class SettingsView(ft.Column):
             self._backup_translation_text,
             self._backup_display_label(display_provider),
         )
-        self._local_llm_base_url.value = display_provider.local_llm_base_url
+        self._local_llm_base_url.value = (
+            "" if display_provider.local_llm_base_url == "http://127.0.0.1:11434/v1" else display_provider.local_llm_base_url
+        )
         self._local_llm_base_url.error = None
-        self._local_llm_model.value = display_provider.local_llm_model
+        self._local_llm_model.value = "" if display_provider.local_llm_model == "llama3.1:8b" else display_provider.local_llm_model
         self._local_llm_model.error = None
         self._local_llm_extra_body.value = display_provider.local_llm_extra_body_json
         self._clear_local_llm_extra_body_error()

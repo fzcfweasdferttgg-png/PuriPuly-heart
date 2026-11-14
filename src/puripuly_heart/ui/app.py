@@ -406,8 +406,9 @@ class TranslatorApp:
         self.page.theme_mode = ft.ThemeMode.LIGHT
         register_ui_fonts(self.page)
         self.page.theme = get_app_theme(face=typeface_for_language(get_locale()))
-        self.page.bgcolor = COLOR_BACKGROUND
+        self.page.bgcolor = ft.Colors.TRANSPARENT
         self.page.padding = 0
+        self.page.window.bgcolor = ft.Colors.TRANSPARENT
         self.page.window.frameless = FOUNDATION_DESIGN_TOKENS.window.frameless
         self.page.window.resizable = FOUNDATION_DESIGN_TOKENS.window.resizable
         self.page.window.maximizable = FOUNDATION_DESIGN_TOKENS.window.maximizable
@@ -751,7 +752,15 @@ class TranslatorApp:
         if getattr(self, "_shutting_down", False):
             return
         settings_queue = self._ensure_settings_queue()
-        if settings_queue.submit(intent, resubmit=resubmit):
+        if not settings_queue.submit(intent, resubmit=resubmit):
+            return
+        if isinstance(intent, ProviderApplyIntent):
+            async def drain_after_settle() -> None:
+                await asyncio.sleep(0.15)
+                await settings_queue.drain()
+
+            self._queue_settings_mutation_task(drain_after_settle)
+        else:
             self._queue_settings_mutation_task(settings_queue.drain)
 
     def _on_settings_committed(self, intent: object) -> None:
