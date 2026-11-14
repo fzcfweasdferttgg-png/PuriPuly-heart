@@ -141,8 +141,12 @@ def _fake_settings_window() -> types.SimpleNamespace:
             opened.update(kwargs)
             self.is_open = True
 
-        def replace_content(self, content, *, height: int | None = None) -> None:
+        def replace_content(
+            self, content, *, title: str | None = None, height: int | None = None
+        ) -> None:
             opened["content"] = content
+            if title is not None:
+                opened["title"] = title
             if height is not None:
                 opened["height"] = height
 
@@ -353,3 +357,75 @@ def test_gear_cards_visible_follow_variant_selection(
     view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
     assert view._local_llm_connection_card.visible is True
     assert view._openai_compatible_card.visible is False
+
+
+async def test_replace_content_updates_the_mounted_window_state() -> None:
+    window = ProviderSettingsWindow(app_runner=_hanging_app_runner)
+    first_content = object()
+    window.open(
+        lambda coro: asyncio.get_running_loop().create_task(coro()),
+        title="OpenAI-compatible",
+        content=first_content,
+        on_accept=lambda: None,
+        on_close_request=lambda: None,
+        height=450,
+    )
+    await asyncio.sleep(0)
+    assert window._form_host.content is first_content
+
+    for index in range(12):
+        content = object()
+        title = f"Variant {index}"
+        height = 695 if index % 2 else 450
+        window.replace_content(content, title=title, height=height)
+
+        assert window._form_host.content is content
+        assert window._title == title
+        assert window._title_bar._about_label.value == title
+        assert window._page.title == title
+        assert window._page.window.height == height
+
+    await window.close()
+
+
+async def test_live_variant_switches_update_the_real_mounted_form(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    from puripuly_heart.ui.i18n import t
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    window = ProviderSettingsWindow(app_runner=_hanging_app_runner)
+    backup = _fake_settings_window()
+    view.attach_provider_settings_window(
+        {"translation": window, "backup": backup.window},
+        lambda coro: asyncio.get_running_loop().create_task(coro()),
+    )
+    view._on_openai_gear_click(None)
+    await asyncio.sleep(0)
+
+    variants = (
+        TranslationModel.LOCAL_LLM,
+        TranslationModel.OPENAI_COMPATIBLE,
+        TranslationModel.LOCAL_LLM,
+        TranslationModel.OPENAI_COMPATIBLE,
+    )
+    for variant in variants:
+        view._on_llm_selected(variant.value)
+        is_local = variant == TranslationModel.LOCAL_LLM
+        expected_form = view._local_llm_form if is_local else view._openai_form
+        expected_title = "{}: {}".format(
+            t("settings.translation.config_title"),
+            t(
+                "settings.translation_variant.local_llm"
+                if is_local
+                else "settings.translation_variant.openai_compatible"
+            ),
+        )
+
+        assert window._form_host.content is expected_form
+        assert window._page.title == expected_title
+        assert window._title_bar._about_label.value == expected_title
+        assert window._page.window.height == (695 if is_local else 450)
+
+    await window.close()

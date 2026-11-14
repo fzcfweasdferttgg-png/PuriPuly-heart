@@ -1351,8 +1351,17 @@ class SettingsView(ft.Column):
             )
             content = self._openai_form
         self._fill_card_form_fields("translation", display)
+        title = "{}: {}".format(
+            t("settings.translation.config_title"),
+            t(
+                "settings.translation_variant.local_llm"
+                if kind == "translation_local"
+                else "settings.translation_variant.openai_compatible"
+            ),
+        )
         window.replace_content(
             content,
+            title=title,
             height=(
                 LOCAL_PROVIDER_WINDOW_HEIGHT
                 if kind == "translation_local"

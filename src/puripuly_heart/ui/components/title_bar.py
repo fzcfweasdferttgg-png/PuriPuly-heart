@@ -114,6 +114,10 @@ class TitleBar(ft.Container):
             border=ft.Border.only(bottom=ft.BorderSide(1, COLOR_DIVIDER)),
         )
 
+    def set_title(self, title: str) -> None:
+        self._title_text = title
+        self._about_label.value = title
+
     def apply_locale(self) -> None:
         """Refresh the About label when the locale changes."""
         self._about_label.value = (

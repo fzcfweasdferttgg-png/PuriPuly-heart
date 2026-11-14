@@ -104,6 +104,7 @@ class ProviderSettingsWindow:
         self._app_runner = app_runner
         self._page: Any | None = None
         self._title_bar: Any | None = None
+        self._form_host: Any | None = None
         self._task: Any | None = None
         self._title: str = ""
         self._content: Any | None = None
@@ -138,13 +139,26 @@ class ProviderSettingsWindow:
         self._accepted = False
         self._task = schedule(self._run)
 
-    def replace_content(self, content, *, height: int | None = None) -> None:
-        """Swap the window body in place (card variant switched live)."""
+    def replace_content(
+        self,
+        content,
+        *,
+        title: str | None = None,
+        height: int | None = None,
+    ) -> None:
+        """Swap the mounted form, title, and height as one window-state update."""
         self._content = content
+        if title is not None:
+            self._title = title
         if height is not None:
             self._height = height
         if self._page is not None and self.is_open:
             with contextlib.suppress(Exception):
+                if self._form_host is not None:
+                    self._form_host.content = self._content
+                if self._title_bar is not None:
+                    self._title_bar.set_title(self._title)
+                self._page.title = self._title
                 self._page.window.height = self._height
                 self._page.update()
 
@@ -153,6 +167,7 @@ class ProviderSettingsWindow:
         page, task = self._page, self._task
         self._page = None
         self._title_bar = None
+        self._form_host = None
         self._content = None
         self._task = None
         if page is not None:
@@ -259,6 +274,7 @@ class ProviderSettingsWindow:
             show_minimize=False,
             title_text=self._title,
         )
+        self._form_host = ft.Container(content=self._content)
         content = ft.Container(
             content=ft.Column(
             controls=[
@@ -266,7 +282,7 @@ class ProviderSettingsWindow:
                 ft.Container(
                     content=ft.Column(
                         [
-                            self._content,
+                            self._form_host,
                             ft.Container(height=16),
                             ft.Row(
                                 [ft.Container(expand=True), self._build_accept_button()],
@@ -305,6 +321,7 @@ class ProviderSettingsWindow:
         finally:
             self._page = None
             self._title_bar = None
+            self._form_host = None
             self._content = None
             close_request = self._on_close_request
             self._on_accept = None
