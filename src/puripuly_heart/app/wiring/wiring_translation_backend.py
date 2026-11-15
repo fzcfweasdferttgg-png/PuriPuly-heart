@@ -23,7 +23,11 @@ from puripuly_heart.core.http_extensions import (
 from puripuly_heart.core.local_translation.runtime import ManagedGemmaRuntimeOwner
 from puripuly_heart.core.observability import ProviderObservationPort
 from puripuly_heart.core.storage.secrets import SecretStore
-from puripuly_heart.core.translation_backend import LlmTranslationBackend, TranslationBackend
+from puripuly_heart.core.translation_backend import (
+    LlmTranslationBackend,
+    TranslationBackend,
+    TranslationVariantConfigurationError,
+)
 from puripuly_heart.providers.extensions.http_extension_backend import (
     HttpExtensionTranslationBackend,
 )
@@ -58,7 +62,9 @@ def create_translation_backend(
                 secrets=secrets,
             )
             if base is None:
-                raise ValueError("translation variant needs an address and a model")
+                raise TranslationVariantConfigurationError(
+                    "translation variant needs an address and a model"
+                )
         else:
             base = create_llm_provider(
                 runtime_input,

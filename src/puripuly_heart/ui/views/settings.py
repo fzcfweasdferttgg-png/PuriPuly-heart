@@ -120,6 +120,10 @@ from puripuly_heart.config.provider_values import (
     normalize_local_llm_base_url,
     parse_openrouter_llm_model,
 )
+from puripuly_heart.config.runtime_resolution import (
+    LOCAL_LLM_DEFAULT_BASE_URL,
+    LOCAL_LLM_DEFAULT_MODEL,
+)
 from puripuly_heart.config.resolved import (
     OVERLAY_TARGET_DESKTOP,
     OVERLAY_TARGET_STEAMVR,
@@ -1210,9 +1214,13 @@ class SettingsView(ft.Column):
             title = f"{title}: {variant_label}"
         self._sync_translation_selection_controls(display)
         self._local_llm_base_url.value = (
-            "" if display.local_llm_base_url == "http://127.0.0.1:11434/v1" else display.local_llm_base_url
+            ""
+            if display.local_llm_base_url == LOCAL_LLM_DEFAULT_BASE_URL
+            else display.local_llm_base_url
         )
-        self._local_llm_model.value = "" if display.local_llm_model == "llama3.1:8b" else display.local_llm_model
+        self._local_llm_model.value = (
+            "" if display.local_llm_model == LOCAL_LLM_DEFAULT_MODEL else display.local_llm_model
+        )
         self._local_llm_extra_body.value = display.local_llm_extra_body_json
         self._clear_local_llm_extra_body_error()
         self._clear_backup_local_extra_body_error()
@@ -1389,9 +1397,15 @@ class SettingsView(ft.Column):
                 display.openai_compatible_base_url,
             )
             self._local_llm_base_url.value = (
-            "" if display.local_llm_base_url == "http://127.0.0.1:11434/v1" else display.local_llm_base_url
-        )
-            self._local_llm_model.value = "" if display.local_llm_model == "llama3.1:8b" else display.local_llm_model
+                ""
+                if display.local_llm_base_url == LOCAL_LLM_DEFAULT_BASE_URL
+                else display.local_llm_base_url
+            )
+            self._local_llm_model.value = (
+                ""
+                if display.local_llm_model == LOCAL_LLM_DEFAULT_MODEL
+                else display.local_llm_model
+            )
             self._local_llm_extra_body.value = display.local_llm_extra_body_json
             self._clear_local_llm_extra_body_error()
 
@@ -3879,16 +3893,22 @@ class SettingsView(ft.Column):
         _ = e
         if self._provider_snapshot is None:
             return
-        raw_value = self._local_llm_base_url.value or ""
-        try:
-            normalized = normalize_local_llm_base_url(raw_value)
-        except ValueError:
-            self._local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
-            _update_control_if_mounted(self._local_llm_base_url)
-            return
+        raw_value = (self._local_llm_base_url.value or "").strip()
+        if not raw_value:
+            # Masked display: an empty field means the default local endpoint.
+            normalized = LOCAL_LLM_DEFAULT_BASE_URL
+        else:
+            try:
+                normalized = normalize_local_llm_base_url(raw_value)
+            except ValueError:
+                self._local_llm_base_url.error = t("settings.local_llm.base_url.invalid")
+                _update_control_if_mounted(self._local_llm_base_url)
+                return
 
         self._local_llm_base_url.error = None
-        self._local_llm_base_url.value = normalized
+        self._local_llm_base_url.value = (
+            "" if normalized == LOCAL_LLM_DEFAULT_BASE_URL else normalized
+        )
         current = self._provider_draft or self._provider_snapshot
         if current.local_llm_base_url != normalized:
             draft = self._ensure_provider_settings_draft()
@@ -3903,12 +3923,11 @@ class SettingsView(ft.Column):
             return
         model = (self._local_llm_model.value or "").strip()
         if not model:
-            self._local_llm_model.error = t("settings.local_llm.model.required")
-            _update_control_if_mounted(self._local_llm_model)
-            return
+            # Masked display: an empty field means the default local model.
+            model = LOCAL_LLM_DEFAULT_MODEL
 
         self._local_llm_model.error = None
-        self._local_llm_model.value = model
+        self._local_llm_model.value = "" if model == LOCAL_LLM_DEFAULT_MODEL else model
         current = self._provider_draft or self._provider_snapshot
         if current.local_llm_model != model:
             draft = self._ensure_provider_settings_draft()
@@ -4189,10 +4208,16 @@ class SettingsView(ft.Column):
             self._backup_display_label(display_provider),
         )
         self._local_llm_base_url.value = (
-            "" if display_provider.local_llm_base_url == "http://127.0.0.1:11434/v1" else display_provider.local_llm_base_url
+            ""
+            if display_provider.local_llm_base_url == LOCAL_LLM_DEFAULT_BASE_URL
+            else display_provider.local_llm_base_url
         )
         self._local_llm_base_url.error = None
-        self._local_llm_model.value = "" if display_provider.local_llm_model == "llama3.1:8b" else display_provider.local_llm_model
+        self._local_llm_model.value = (
+            ""
+            if display_provider.local_llm_model == LOCAL_LLM_DEFAULT_MODEL
+            else display_provider.local_llm_model
+        )
         self._local_llm_model.error = None
         self._local_llm_extra_body.value = display_provider.local_llm_extra_body_json
         self._clear_local_llm_extra_body_error()
@@ -5472,7 +5497,7 @@ class SettingsView(ft.Column):
 
     async def _on_fetch_local_llm_models(self, e) -> None:
         await self._do_fetch_models(
-            base_url=(self._local_llm_base_url.value or "").strip(),
+            base_url=(self._local_llm_base_url.value or "").strip() or LOCAL_LLM_DEFAULT_BASE_URL,
             api_key=(self._local_llm_api_key.value or "").strip(),
             on_model_picked=self._pick_local_llm_model,
         )
@@ -5487,7 +5512,7 @@ class SettingsView(ft.Column):
 
     async def _on_test_local_llm_connection(self, e) -> None:
         await self._do_test_connection(
-            base_url=(self._local_llm_base_url.value or "").strip(),
+            base_url=(self._local_llm_base_url.value or "").strip() or LOCAL_LLM_DEFAULT_BASE_URL,
             api_key=(self._local_llm_api_key.value or "").strip(),
         )
 

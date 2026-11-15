@@ -30,6 +30,7 @@ from puripuly_heart.core.runtime.logging import (
     LIVE_AUDIENCE_RECORD_ATTRIBUTE,
 )
 from puripuly_heart.core.runtime.provider_rebuild import ProviderRuntimeRebuildService
+from puripuly_heart.core.translation_backend import TranslationVariantConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -152,11 +153,14 @@ class LlmProviderRebuildOwner:
             self.retry_sink()
             raise
         provider = outcome.provider
+        expected_unconfigured = isinstance(outcome.error, TranslationVariantConfigurationError)
         if provider is None:
             self.retry_sink()
         else:
             self.signature_sink(context.settings)
-        self.availability_sink(provider is None and context.requires_secret)
+        self.availability_sink(
+            provider is None and (context.requires_secret or expected_unconfigured)
+        )
         if provider is not None and (
             context.selection is None or context.selection != context.previous_selection
         ):
@@ -180,10 +184,10 @@ class LlmProviderRebuildOwner:
         try:
             await self.usage_refresh()
         except Exception:
-            if propagate_failure and outcome.error is not None:
+            if propagate_failure and outcome.error is not None and not expected_unconfigured:
                 raise outcome.error
             raise
-        if propagate_failure and outcome.error is not None:
+        if propagate_failure and outcome.error is not None and not expected_unconfigured:
             raise outcome.error
         if provider is None:
             self.failure_sink(f"{context.resource_label} not available")

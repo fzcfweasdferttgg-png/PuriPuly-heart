@@ -75,5 +75,13 @@ class SequentialFallbackLLMProvider(LLMProvider):
         return await self.fallback.translate(**params)
 
     async def close(self) -> None:
-        await self.primary.close()
-        await self.fallback.close()
+        failures: list[BaseException] = []
+        for provider in (self.primary, self.fallback):
+            try:
+                await provider.close()
+            except BaseException as exc:
+                failures.append(exc)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("translation provider close failed", failures)

@@ -49,6 +49,14 @@ class TranslationSecretResolver(Protocol):
     def get(self, key: str) -> str | None: ...
 
 
+class TranslationVariantConfigurationError(ValueError):
+    """A user translation variant is selected but not configured yet.
+
+    Expected settings state (missing endpoint address or model), not a crash:
+    rebuild owners treat it as graceful provider unavailability.
+    """
+
+
 class TranslationBackend(ABC):
     @abstractmethod
     async def translate(self, request: TranslationBackendRequest) -> Translation: ...
@@ -85,4 +93,5 @@ __all__ = [
     "TranslationBackend",
     "TranslationBackendRequest",
     "TranslationSecretResolver",
+    "TranslationVariantConfigurationError",
 ]
