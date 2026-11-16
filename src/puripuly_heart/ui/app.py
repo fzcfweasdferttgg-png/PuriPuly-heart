@@ -752,9 +752,16 @@ class TranslatorApp:
         if not settings_queue.submit(intent, resubmit=resubmit):
             return
         if isinstance(intent, ProviderApplyIntent):
+            if getattr(self, "_provider_apply_settle_queued", False):
+                return
+            self._provider_apply_settle_queued = True
+
             async def drain_after_settle() -> None:
-                await asyncio.sleep(0.15)
-                await settings_queue.drain()
+                try:
+                    await asyncio.sleep(0.15)
+                    await settings_queue.drain()
+                finally:
+                    self._provider_apply_settle_queued = False
 
             self._queue_settings_mutation_task(drain_after_settle)
         else:

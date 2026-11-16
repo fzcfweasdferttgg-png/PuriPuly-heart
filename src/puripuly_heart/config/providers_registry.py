@@ -50,12 +50,26 @@ def ensure_providers_file() -> Path:
     return dest
 
 
+_PROVIDER_PRESETS_CACHE: tuple[Path, int, int, dict[str, ProviderPreset]] | None = None
+
+
 def load_provider_presets() -> dict[str, ProviderPreset]:
+    global _PROVIDER_PRESETS_CACHE
+
     path = ensure_providers_file()
     if not path.exists():
         logger.warning("[Providers] providers.json not found, returning empty")
         return {}
     try:
+        stat = path.stat()
+        cached = _PROVIDER_PRESETS_CACHE
+        if (
+            cached is not None
+            and cached[0] == path
+            and cached[1] == stat.st_mtime_ns
+            and cached[2] == stat.st_size
+        ):
+            return dict(cached[3])
         data = json.loads(path.read_text(encoding="utf-8"))
         raw = data.get("providers", {})
     except (json.JSONDecodeError, OSError) as exc:
@@ -72,4 +86,5 @@ def load_provider_presets() -> dict[str, ProviderPreset]:
         if not base_url:
             continue
         presets[key] = ProviderPreset(key=key, label=label, base_url=base_url)
-    return presets
+    _PROVIDER_PRESETS_CACHE = (path, stat.st_mtime_ns, stat.st_size, presets)
+    return dict(presets)

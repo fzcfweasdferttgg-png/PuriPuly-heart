@@ -120,6 +120,7 @@ class ProviderSettingsWindow:
         self._on_accept: Callable[[], None] | None = None
         self._on_close_request: Callable[[], None] | None = None
         self._accepted = False
+        self._generation = 0
 
     @property
     def is_open(self) -> bool:
@@ -145,7 +146,9 @@ class ProviderSettingsWindow:
         self._on_accept = on_accept
         self._on_close_request = on_close_request
         self._accepted = False
-        self._task = schedule(self._run)
+        self._generation += 1
+        generation = self._generation
+        self._task = schedule(lambda: self._run(generation))
 
     def replace_content(
         self,
@@ -173,11 +176,16 @@ class ProviderSettingsWindow:
     async def close(self) -> None:
         """Close the settings window and finish its session."""
         page, task = self._page, self._task
+        close_request = self._on_close_request
+        accepted = self._accepted
+        self._generation += 1
         self._page = None
         self._title_bar = None
         self._form_host = None
         self._content = None
         self._task = None
+        self._on_accept = None
+        self._on_close_request = None
         if page is not None:
             with contextlib.suppress(Exception):
                 await invoke_control_method(page.window, "close")
@@ -187,6 +195,9 @@ class ProviderSettingsWindow:
             if inspect.isawaitable(task):
                 with contextlib.suppress(BaseException):
                     await task
+        if not accepted and close_request is not None:
+            with contextlib.suppress(Exception):
+                close_request()
 
     def configure_page(self, page: Any) -> None:
         """Apply window defaults: compact size, resizable, main-window style."""
@@ -318,25 +329,32 @@ class ProviderSettingsWindow:
         page.window.visible = True
         page.update()
 
-    async def _run(self) -> None:
+    async def _run(self, generation: int) -> None:
+        if generation != self._generation:
+            return
         runner = self._app_runner or _default_provider_app_runner
 
         async def target(page: Any) -> None:
+            if generation != self._generation:
+                with contextlib.suppress(Exception):
+                    await invoke_control_method(page.window, "close")
+                return
             self._mount(page)
 
         try:
             await runner(target)
         finally:
-            self._page = None
-            self._title_bar = None
-            self._form_host = None
-            self._content = None
-            close_request = self._on_close_request
-            self._on_accept = None
-            self._on_close_request = None
-            if not self._accepted and close_request is not None:
-                with contextlib.suppress(Exception):
-                    close_request()
+            if generation == self._generation:
+                self._page = None
+                self._title_bar = None
+                self._form_host = None
+                self._content = None
+                close_request = self._on_close_request
+                self._on_accept = None
+                self._on_close_request = None
+                if not self._accepted and close_request is not None:
+                    with contextlib.suppress(Exception):
+                        close_request()
 
 
 def create_provider_settings_windows() -> dict[str, ProviderSettingsWindow]:

@@ -34,3 +34,33 @@ async def test_provider_apply_waits_for_slot_switching_to_settle() -> None:
         __import__("asyncio").sleep = original_sleep
 
     assert delays == [0.15]
+
+
+@pytest.mark.asyncio
+async def test_rapid_provider_applies_share_one_settle_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    app = TranslatorApp.__new__(TranslatorApp)
+    app._settings_queue = SettingsQueue(_apply_success, lambda _intent: None)
+    tasks = []
+    app._queue_settings_mutation_task = tasks.append
+
+    for _ in range(12):
+        app._queue_settings_apply(ProviderApplyIntent(()))
+
+    assert len(tasks) == 1
+    delays = []
+
+    async def instant_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", instant_sleep)
+    await tasks.pop(0)()
+
+    assert delays == [0.15]
+    assert app._provider_apply_settle_queued is False
+
+    app._queue_settings_apply(ProviderApplyIntent(()))
+    assert len(tasks) == 1

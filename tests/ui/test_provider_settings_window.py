@@ -528,3 +528,118 @@ def test_window_factory_creates_all_six_independent_native_window_owners() -> No
         "backup_local",
     }
     assert len({id(window) for window in windows.values()}) == 6
+
+
+def test_slot_row_registry_stays_bounded_across_form_rebuilds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _view(monkeypatch)
+    expected_keys = {
+        "translation_openai",
+        "translation_anthropic",
+        "translation_local",
+        "translation_quick",
+        "backup_openai",
+        "backup_anthropic",
+        "backup_local",
+        "backup_quick",
+    }
+    assert set(view._slot_rows) == expected_keys
+
+    for _ in range(25):
+        view._build_openai_form_controls()
+        view._build_anthropic_form_controls()
+        view._build_local_form_controls()
+        view._build_backup_form_controls()
+
+    assert len(view._slot_rows) == len(expected_keys)
+    assert set(view._slot_rows) == expected_keys
+
+
+def test_backup_form_builds_only_the_requested_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _view(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        view,
+        "_build_provider_dropdown",
+        lambda _on_select: pytest.fail("network form must not be rebuilt"),
+    )
+    monkeypatch.setattr(
+        view,
+        "_build_backup_anthropic_controls",
+        lambda: calls.append("anthropic"),
+    )
+    monkeypatch.setattr(
+        view,
+        "_build_backup_local_controls",
+        lambda: calls.append("local"),
+    )
+
+    view._build_backup_form_controls("backup_anthropic")
+    view._build_backup_form_controls("backup_local")
+
+    assert calls == ["anthropic", "local"]
+
+
+async def test_stale_session_finish_does_not_clear_the_replacement_page() -> None:
+    release_old_close = asyncio.Event()
+    pages = []
+    closed = []
+
+    class SlowCloseWindow(FakeWindow):
+        async def close(self):
+            await release_old_close.wait()
+            self.closed = True
+
+    async def runner(target) -> None:
+        page = FakePage()
+        if not pages:
+            page.window = SlowCloseWindow()
+        pages.append(page)
+        await target(page)
+        await asyncio.Event().wait()
+
+    async def wait_for_pages(count: int) -> None:
+        for _ in range(20):
+            if len(pages) >= count:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError(f"only {len(pages)} pages mounted")
+
+    window = ProviderSettingsWindow(app_runner=runner)
+
+    def schedule(coro):
+        return asyncio.get_running_loop().create_task(coro())
+
+    window.open(
+        schedule,
+        title="old",
+        content=object(),
+        on_accept=lambda: None,
+        on_close_request=lambda: closed.append("old"),
+    )
+    await wait_for_pages(1)
+
+    close_task = asyncio.create_task(window.close())
+    await asyncio.sleep(0)
+    window.open(
+        schedule,
+        title="new",
+        content=object(),
+        on_accept=lambda: None,
+        on_close_request=lambda: closed.append("new"),
+    )
+    await wait_for_pages(2)
+    replacement_page = pages[1]
+
+    release_old_close.set()
+    await close_task
+
+    assert closed == ["old"]
+    assert window._page is replacement_page
+    assert window._form_host is not None
+
+    await window.close()
+    assert closed == ["old", "new"]

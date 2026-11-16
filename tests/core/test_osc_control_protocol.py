@@ -74,6 +74,19 @@ def test_index_osc_selection_uses_append_only_public_api_id() -> None:
     )
 
 
+def test_anthropic_osc_selection_uses_append_only_id() -> None:
+    message = decode_control_message("/avatar/parameters/PuriPuly_Translator", 18)
+
+    assert message.value == 18
+    assert TRANSLATION_MODEL_IDS[message.value] == "anthropic"
+    assert TRANSLATION_MODEL_ID_BY_VALUE["anthropic"] == 18
+    assert translation_model_id_for_selection("anthropic", "ollama") == 18
+    assert encode_control_message(message.name, message.value) == (
+        "/avatar/parameters/PuriPuly_Translator",
+        18,
+    )
+
+
 def test_codec_validates_absolute_boolean_and_integer_controls() -> None:
     bool_message = decode_control_message("/avatar/parameters/PuriPuly_Talk", True)
     integer_message = decode_control_message("/avatar/parameters/PuriPuly_SelfASR", 5)
@@ -219,6 +232,7 @@ def test_osc_public_abi_snapshot_is_append_only_and_exact() -> None:
         15: "managed_gemma_26b",
         16: "index_translate_35b",
         17: "openai_compatible",
+        18: "anthropic",
     }
     assert dict(TRANSLATION_CONNECTION_BY_MODEL_ID) == {
         10: "cpu",

@@ -477,7 +477,7 @@ class SettingsView(ft.Column):
         self._provider_snapshot: ProviderSettingsSnapshot | None = None
         self._provider_draft: ProviderSettingsSnapshot | None = None
         self._provider_edits: dict[type, ProviderSettingsEdit] = {}
-        self._slot_rows: list = []
+        self._slot_rows: dict[str, tuple[str, ft.Row]] = {}
         self._provider_slots_state: dict[str, object] = {}
         self._provider_slots_loaded_for: object = None
         self._provider_dialog_kinds: dict = {}
@@ -873,7 +873,9 @@ class SettingsView(ft.Column):
             content=ft.Text(t("settings.openai_compatible.test_connection")),
             on_click=self._on_test_openai_connection,
         )
-        self._openai_slots_row = self._build_slot_row("translation")
+        self._openai_slots_row = self._build_slot_row(
+            "translation", slot_key="translation_openai"
+        )
 
     def _build_anthropic_form_controls(self) -> None:
         self._anthropic_base_url = ft.TextField(
@@ -924,7 +926,9 @@ class SettingsView(ft.Column):
             content=ft.Text(t("settings.openai_compatible.test_connection")),
             on_click=self._on_test_anthropic_connection,
         )
-        self._anthropic_slots_row = self._build_slot_row("translation")
+        self._anthropic_slots_row = self._build_slot_row(
+            "translation", slot_key="translation_anthropic"
+        )
         self._anthropic_form = self._compose_anthropic_form(
             slots_row=self._anthropic_slots_row,
             base_url=self._anthropic_base_url,
@@ -996,7 +1000,9 @@ class SettingsView(ft.Column):
             content=ft.Text(t("settings.openai_compatible.test_connection")),
             on_click=self._on_test_local_llm_connection,
         )
-        self._local_llm_slots_row = self._build_slot_row("translation")
+        self._local_llm_slots_row = self._build_slot_row(
+            "translation", slot_key="translation_local"
+        )
         self._local_llm_extra_body = ft.TextField(
             label=t("settings.local_llm.extra_body"),
             value=json.dumps(
@@ -1032,74 +1038,10 @@ class SettingsView(ft.Column):
         self._local_llm_extra_body_error_key = ""
         self._local_llm_extra_body_error_kwargs: dict[str, object] = {}
 
-    def _build_backup_form_controls(self) -> None:
-        """Create the backup translation form controls (both variants)."""
-        self._backup_config_title = ft.Text(
-            t("settings.backup_translation.config_title"),
-            size=24,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_SECONDARY,
+    def _build_backup_anthropic_controls(self) -> None:
+        self._backup_anthropic_slots_row = self._build_slot_row(
+            "backup", slot_key="backup_anthropic"
         )
-        self._backup_provider = self._build_provider_dropdown(self._on_backup_provider_change)
-        self._backup_base_url = ft.TextField(
-            label=t("settings.openai_compatible.base_url"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            visible=False,
-            on_blur=self._on_backup_base_url_change_end,
-            on_submit=self._on_backup_base_url_change_end,
-        )
-        self._backup_model = ft.TextField(
-            label=t("settings.openai_compatible.model"),
-            hint_text=t("settings.openai_compatible.model_hint"),
-            value="",
-            border_radius=12,
-            border_color=COLOR_DIVIDER,
-            focused_border_color=COLOR_PRIMARY,
-            expand=True,
-            text_size=24,
-            color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            on_blur=self._on_backup_model_change_end,
-            on_submit=self._on_backup_model_change_end,
-        )
-        self._backup_api_key = ApiKeyField(
-            "settings.openai_compatible.api_key",
-            "backup_api_key",
-            "backup",
-            on_save=self._on_backup_secret_change,
-            show_snackbar=lambda msg, bg: (
-                self.show_snackbar(msg, bg) if self.show_snackbar else None
-            ),
-            show_status=False,
-        )
-        self._backup_fetch_btn = ft.IconButton(
-            icon=ft.Icons.REFRESH_ROUNDED,
-            tooltip=t("settings.openai_compatible.fetch_models"),
-            on_click=self._on_fetch_backup_models,
-        )
-        self._backup_test_btn = ft.TextButton(
-            content=ft.Text(t("settings.openai_compatible.test_connection")),
-            on_click=self._on_test_backup_connection,
-        )
-        self._backup_slots_row = self._build_slot_row("backup")
-        self._backup_local_slots_row = self._build_slot_row("backup")
-        self._backup_network_group = self._compose_openai_form(
-            title=None,
-            slots_row=self._backup_slots_row,
-            provider=self._backup_provider,
-            model=self._backup_model,
-            fetch_btn=self._backup_fetch_btn,
-            api_key=self._backup_api_key,
-            test_btn=self._backup_test_btn,
-        )
-        self._backup_anthropic_slots_row = self._build_slot_row("backup")
         self._backup_anthropic_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url"),
             hint_text="https://api.anthropic.com",
@@ -1156,6 +1098,8 @@ class SettingsView(ft.Column):
             api_key=self._backup_anthropic_api_key,
             test_btn=self._backup_anthropic_test_btn,
         )
+
+    def _build_backup_local_controls(self) -> None:
         self._backup_local_base_url = ft.TextField(
             label=t("settings.local_llm.base_url"),
             value="",
@@ -1252,6 +1196,84 @@ class SettingsView(ft.Column):
             extra_body_helper=self._backup_local_extra_body_helper,
             extra_body_error=self._backup_local_extra_body_error,
         )
+
+    def _build_backup_form_controls(self, kind: str | None = None) -> None:
+        """Create the backup translation form controls for the requested variant."""
+        if kind == "backup_anthropic":
+            self._build_backup_anthropic_controls()
+            return
+        if kind == "backup_local":
+            self._build_backup_local_controls()
+            return
+        self._backup_config_title = ft.Text(
+            t("settings.backup_translation.config_title"),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_SECONDARY,
+        )
+        self._backup_provider = self._build_provider_dropdown(self._on_backup_provider_change)
+        self._backup_base_url = ft.TextField(
+            label=t("settings.openai_compatible.base_url"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            visible=False,
+            on_blur=self._on_backup_base_url_change_end,
+            on_submit=self._on_backup_base_url_change_end,
+        )
+        self._backup_model = ft.TextField(
+            label=t("settings.openai_compatible.model"),
+            hint_text=t("settings.openai_compatible.model_hint"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_backup_model_change_end,
+            on_submit=self._on_backup_model_change_end,
+        )
+        self._backup_api_key = ApiKeyField(
+            "settings.openai_compatible.api_key",
+            "backup_api_key",
+            "backup",
+            on_save=self._on_backup_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._backup_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_backup_models,
+        )
+        self._backup_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_backup_connection,
+        )
+        self._backup_slots_row = self._build_slot_row("backup", slot_key="backup_openai")
+        self._backup_local_slots_row = self._build_slot_row("backup", slot_key="backup_local")
+        self._backup_network_group = self._compose_openai_form(
+            title=None,
+            slots_row=self._backup_slots_row,
+            provider=self._backup_provider,
+            model=self._backup_model,
+            fetch_btn=self._backup_fetch_btn,
+            api_key=self._backup_api_key,
+            test_btn=self._backup_test_btn,
+        )
+        if kind == "backup_openai":
+            return
+        self._build_backup_anthropic_controls()
+        self._build_backup_local_controls()
 
     def _build_provider_settings_gear(self, on_click) -> ft.Container:
         """Framed gear button shown where the inline form used to clutter the card."""
@@ -1388,7 +1410,7 @@ class SettingsView(ft.Column):
                 t("settings.translation_variant.anthropic"),
             )
         elif kind in {"backup_openai", "backup_anthropic", "backup_local"}:
-            self._build_backup_form_controls()
+            self._build_backup_form_controls(kind)
             variant = {
                 "backup_openai": TranslationModel.OPENAI_COMPATIBLE,
                 "backup_anthropic": TranslationModel.ANTHROPIC,
@@ -1482,7 +1504,6 @@ class SettingsView(ft.Column):
         self._provider_dialog_edits_before.pop(card, None)
         self._provider_dialog_draft_before.pop(card, None)
         self._provider_dialog_kinds.pop(card, None)
-        self._rebuild_provider_form_controls(card)
         on_providers_changed = getattr(self, "on_providers_changed", None)
         if on_providers_changed is not None:
             on_providers_changed()
@@ -1502,79 +1523,8 @@ class SettingsView(ft.Column):
             self.has_provider_changes = any(
                 edit_type is not SystemPromptEdit for edit_type in self._provider_edits
             )
-        self._rebuild_provider_form_controls(card)
 
-    def _rebuild_provider_form_controls(self, card: str = "translation") -> None:
-        """Recreate unmounted form controls so nothing touches a dead dialog session."""
-        if card == "backup":
-            self._build_backup_form_controls()
-        else:
-            self._build_openai_form_controls()
-            self._openai_form = self._compose_openai_form(
-                title=None,
-                slots_row=self._openai_slots_row,
-                provider=self._openai_provider,
-                model=self._openai_model,
-                fetch_btn=self._openai_fetch_btn,
-                api_key=self._openai_api_key,
-                test_btn=self._openai_test_btn,
-            )
-            self._build_anthropic_form_controls()
-            self._build_local_form_controls()
-            self._local_llm_form = self._compose_local_form(
-                title=None,
-                slots_row=self._local_llm_slots_row,
-                base_url=self._local_llm_base_url,
-                test_btn=self._local_llm_test_btn,
-                model=self._local_llm_model,
-                fetch_btn=self._local_llm_fetch_btn,
-                api_key=self._local_llm_api_key,
-                api_key_helper=self._local_llm_api_key_helper,
-                extra_body=self._local_llm_extra_body,
-                extra_body_helper=self._local_llm_extra_body_helper,
-                extra_body_error=self._local_llm_extra_body_error,
-            )
-        display = self._provider_draft or self._provider_snapshot
-        if display is not None:
-            self._fill_card_form_fields(card, display)
-
-    def _fill_card_form_fields(self, card: str, display) -> None:
-        """Fill one card's form fields from the current settings display."""
-        if card == "backup":
-            self._backup_base_url.value = display.backup_base_url
-            self._backup_model.value = display.backup_model
-            self._backup_provider.value = self._provider_dropdown_value(
-                display.backup_provider_key, display.backup_base_url
-            )
-            self._backup_anthropic_base_url.value = display.backup_anthropic_base_url
-            self._backup_anthropic_model.value = display.backup_anthropic_model
-            self._backup_local_base_url.value = display.backup_local_base_url
-            self._backup_local_model.value = display.backup_local_model
-            self._backup_local_extra_body.value = display.backup_local_extra_body_json
-            self._clear_backup_local_extra_body_error()
-        else:
-            self._openai_base_url.value = display.openai_compatible_base_url
-            self._openai_model.value = display.openai_compatible_model
-            self._openai_provider.value = self._provider_dropdown_value(
-                display.openai_compatible_provider_key,
-                display.openai_compatible_base_url,
-            )
-            self._anthropic_base_url.value = display.anthropic_base_url
-            self._anthropic_model.value = display.anthropic_model
-            self._local_llm_base_url.value = (
-                ""
-                if display.local_llm_base_url == LOCAL_LLM_DEFAULT_BASE_URL
-                else display.local_llm_base_url
-            )
-            self._local_llm_model.value = (
-                ""
-                if display.local_llm_model == LOCAL_LLM_DEFAULT_MODEL
-                else display.local_llm_model
-            )
-            self._local_llm_extra_body.value = display.local_llm_extra_body_json
-            self._clear_local_llm_extra_body_error()
-
-    def _build_slot_row(self, card: str, *, quick: bool = False) -> ft.Row:
+    def _build_slot_row(self, card: str, *, slot_key: str, quick: bool = False) -> ft.Row:
         """Build the 1-3 slot buttons for a card (form row or quick-switch row)."""
         from puripuly_heart.ui.theme import COLOR_SURFACE
 
@@ -1582,17 +1532,14 @@ class SettingsView(ft.Column):
         for index in (1, 2, 3):
             label = ft.Text(str(index), size=14, weight=ft.FontWeight.BOLD)
             if quick:
-                on_click = (
-                    lambda _e, card=card, index=index: self._on_quick_slot_selected(
-                        card, index
-                    )
-                )
+
+                def on_click(_e, card=card, index=index):
+                    self._on_quick_slot_selected(card, index)
+
             else:
-                on_click = (
-                    lambda _e, card=card, index=index: self._on_form_slot_selected(
-                        card, index
-                    )
-                )
+
+                def on_click(_e, card=card, index=index):
+                    self._on_form_slot_selected(card, index)
             buttons.append(
                 ft.Container(
                     content=label,
@@ -1606,7 +1553,7 @@ class SettingsView(ft.Column):
                 )
             )
         row = ft.Row(buttons, spacing=6)
-        self._slot_rows.append((card, row))
+        self._slot_rows[slot_key] = (card, row)
         self._sync_slot_row(row, card)
         return row
 
@@ -1621,7 +1568,7 @@ class SettingsView(ft.Column):
             button.content.color = COLOR_PRIMARY if is_active else COLOR_NEUTRAL_DARK
 
     def _sync_slot_rows(self) -> None:
-        for card, row in self._slot_rows:
+        for card, row in self._slot_rows.values():
             self._sync_slot_row(row, card)
             _update_control_if_mounted(row)
 
@@ -2959,8 +2906,12 @@ class SettingsView(ft.Column):
         )
         self._backup_gear = self._backup_config_card
         self._backup_config_card.visible = False
-        self._translation_card_slots_row = self._build_slot_row("translation", quick=True)
-        self._backup_card_slots_row = self._build_slot_row("backup", quick=True)
+        self._translation_card_slots_row = self._build_slot_row(
+            "translation", slot_key="translation_quick", quick=True
+        )
+        self._backup_card_slots_row = self._build_slot_row(
+            "backup", slot_key="backup_quick", quick=True
+        )
         translation_unit_controls = self._translation_provider_card.content.content.controls
         translation_unit_controls.append(ft.Container(height=12))
         self._translation_card_row = ft.Row(
