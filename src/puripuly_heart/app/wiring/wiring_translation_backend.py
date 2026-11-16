@@ -59,6 +59,7 @@ def create_translation_backend(
                 model,
                 local_llm=user.local_llm,
                 openai_compatible=user.openai_compatible,
+                anthropic=user.anthropic,
                 secrets=secrets,
             )
             if base is None:

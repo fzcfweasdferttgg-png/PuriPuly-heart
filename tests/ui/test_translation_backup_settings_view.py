@@ -202,6 +202,7 @@ def test_translation_picker_options_are_flat_and_distinct(
     assert [option.value for option in options] == [
         TranslationModel.NONE.value,
         TranslationModel.OPENAI_COMPATIBLE.value,
+        TranslationModel.ANTHROPIC.value,
         TranslationModel.LOCAL_LLM.value,
     ]
     assert all(not option.section for option in options)
@@ -221,6 +222,7 @@ def test_backup_picker_options_are_flat_and_distinct(
     assert [option.value for option in options] == [
         "off",
         TranslationModel.OPENAI_COMPATIBLE.value,
+        TranslationModel.ANTHROPIC.value,
         TranslationModel.LOCAL_LLM.value,
     ]
     assert all(not option.section for option in options)

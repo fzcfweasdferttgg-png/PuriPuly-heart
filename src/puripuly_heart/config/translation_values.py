@@ -17,6 +17,7 @@ class TranslationModel(str, Enum):
     LOCAL_LLM = "local_llm"
     CUSTOM_HTTP = "custom_http"
     OPENAI_COMPATIBLE = "openai_compatible"
+    ANTHROPIC = "anthropic"
 
 
 #: Translation models that remain selectable in the GUI.
@@ -24,6 +25,7 @@ LIVE_TRANSLATION_MODELS: tuple[TranslationModel, ...] = (
     TranslationModel.LOCAL_LLM,
     TranslationModel.CUSTOM_HTTP,
     TranslationModel.OPENAI_COMPATIBLE,
+    TranslationModel.ANTHROPIC,
 )
 
 MANAGED_GEMMA_MODELS = (TranslationModel.MANAGED_GEMMA, TranslationModel.MANAGED_GEMMA_26B)
@@ -85,6 +87,7 @@ TRANSLATION_CONNECTIONS_BY_MODEL: dict[
     TranslationModel.LOCAL_LLM: (TranslationConnection.OLLAMA,),
     TranslationModel.CUSTOM_HTTP: (TranslationConnection.CUSTOM_HTTP,),
     TranslationModel.OPENAI_COMPATIBLE: (TranslationConnection.OLLAMA,),
+    TranslationModel.ANTHROPIC: (TranslationConnection.OLLAMA,),
 }
 
 TRANSLATION_CONNECTION_PRIORITY: tuple[TranslationConnection, ...] = (
@@ -140,6 +143,8 @@ def provider_llm_for_translation(model: str, connection: str) -> str:
         return "local_llm"
     if model == "openai_compatible":
         return "openai_compatible"
+    if model == "anthropic":
+        return "anthropic"
     if model == "deepseek_v4_flash_41" and connection == "official_byok":
         return "deepseek"
     if model == "gpt_6_luna" and connection == "official_byok":

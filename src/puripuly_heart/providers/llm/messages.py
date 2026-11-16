@@ -1,6 +1,16 @@
 from __future__ import annotations
 
 
+def format_translation_system_prompt(
+    *, system_prompt: str, source_language: str, target_language: str
+) -> str:
+    return (
+        system_prompt.format(source_language=source_language, target_language=target_language)
+        if "{source_language}" in system_prompt
+        else system_prompt
+    )
+
+
 def build_translation_user_message(
     *, text: str, context: str, scene_participant_count: int | None = None
 ) -> str:

@@ -979,6 +979,12 @@ class UserOpenAICompatibleRuntimeIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class UserAnthropicRuntimeIntent:
+    base_url: str = ""
+    model: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class UserLocalLLMRuntimeIntent:
     base_url: str = ""
     model: str = ""
@@ -992,6 +998,7 @@ class UserBackupTranslationRuntimeIntent:
     openai_compatible: UserOpenAICompatibleRuntimeIntent = field(
         default_factory=UserOpenAICompatibleRuntimeIntent
     )
+    anthropic: UserAnthropicRuntimeIntent = field(default_factory=UserAnthropicRuntimeIntent)
     local_llm: UserLocalLLMRuntimeIntent = field(default_factory=UserLocalLLMRuntimeIntent)
 
 
@@ -1000,6 +1007,7 @@ class UserTranslationRuntimeIntent:
     openai_compatible: UserOpenAICompatibleRuntimeIntent = field(
         default_factory=UserOpenAICompatibleRuntimeIntent
     )
+    anthropic: UserAnthropicRuntimeIntent = field(default_factory=UserAnthropicRuntimeIntent)
     local_llm: UserLocalLLMRuntimeIntent = field(default_factory=UserLocalLLMRuntimeIntent)
     backup: UserBackupTranslationRuntimeIntent = field(
         default_factory=UserBackupTranslationRuntimeIntent

@@ -75,6 +75,10 @@ from puripuly_heart.app.ports.settings_view import (
     OpenAICompatibleProviderKeyEdit,
     OpenAICompatibleBaseUrlEdit,
     OpenAICompatibleModelEdit,
+    AnthropicBaseUrlEdit,
+    AnthropicModelEdit,
+    BackupAnthropicBaseUrlEdit,
+    BackupAnthropicModelEdit,
     BackupTranslationEnabledEdit,
     BackupVariantEdit,
     BackupOpenAICompatibleProviderKeyEdit,
@@ -163,7 +167,9 @@ from puripuly_heart.ui.components.settings import (
     SettingsUnitCard,
 )
 from puripuly_heart.core.llm.model_discovery import (
+    fetch_anthropic_models as _fetch_anthropic_models_default,
     fetch_models as _fetch_models_default,
+    test_anthropic_connection as _test_anthropic_connection_default,
     test_connection as _test_connection_default,
 )
 from puripuly_heart.ui.components.settings.stt_engine_modal import (
@@ -295,10 +301,12 @@ _TRANSLATION_MODEL_LABEL_KEYS = {
     TranslationModel.LOCAL_LLM: "settings.translation_variant.local_llm",
     TranslationModel.CUSTOM_HTTP: "provider.custom_http",
     TranslationModel.OPENAI_COMPATIBLE: "settings.translation_variant.openai_compatible",
+    TranslationModel.ANTHROPIC: "settings.translation_variant.anthropic",
 }
 _TRANSLATION_MODEL_DESCRIPTION_KEYS = {
     TranslationModel.LOCAL_LLM: "settings.translation_variant.local_llm.description",
     TranslationModel.OPENAI_COMPATIBLE: "settings.translation_variant.openai_compatible.description",
+    TranslationModel.ANTHROPIC: "settings.translation_variant.anthropic.description",
 }
 _LOCAL_STT_PROVIDERS = frozenset(
     {
@@ -424,6 +432,8 @@ class SettingsView(ft.Column):
         self.on_local_llm_secret_changed: Callable[[], None] | None = None
         self.on_fetch_models = None
         self.on_test_connection = None
+        self.on_fetch_anthropic_models = _fetch_anthropic_models_default
+        self.on_test_anthropic_connection = _test_anthropic_connection_default
         self.on_verify_api_key: Callable[[str, str], object] | None = None
         self.on_provider_secret_change: Callable[[str, str], object] | None = None
         self.on_secret_cleared: Callable[[str], None] | None = None  # key name
@@ -727,6 +737,37 @@ class SettingsView(ft.Column):
         )
         return ft.Column(items, spacing=8, scroll=ft.ScrollMode.AUTO)
 
+    def _compose_anthropic_form(
+        self,
+        *,
+        base_url,
+        model,
+        fetch_btn,
+        api_key,
+        test_btn,
+        slots_row=None,
+    ) -> ft.Column:
+        items: list[ft.Control] = []
+        if slots_row is not None:
+            items.append(slots_row)
+        items.extend(
+            [
+                ft.Container(height=4),
+                base_url,
+                ft.Row(
+                    [
+                        model,
+                        ft.Container(content=fetch_btn, height=64, alignment=ft.Alignment.CENTER),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+                api_key,
+                test_btn,
+            ]
+        )
+        return ft.Column(items, spacing=8, scroll=ft.ScrollMode.AUTO)
+
     def _compose_local_form(
         self,
         *,
@@ -833,6 +874,65 @@ class SettingsView(ft.Column):
             on_click=self._on_test_openai_connection,
         )
         self._openai_slots_row = self._build_slot_row("translation")
+
+    def _build_anthropic_form_controls(self) -> None:
+        self._anthropic_base_url = ft.TextField(
+            label=t("settings.openai_compatible.base_url"),
+            hint_text="https://api.anthropic.com",
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            error_max_lines=4,
+            on_blur=self._on_anthropic_base_url_change_end,
+            on_submit=self._on_anthropic_base_url_change_end,
+        )
+        self._anthropic_model = ft.TextField(
+            label=t("settings.openai_compatible.model"),
+            hint_text=t("settings.openai_compatible.model_hint"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_anthropic_model_change_end,
+            on_submit=self._on_anthropic_model_change_end,
+        )
+        self._anthropic_api_key = ApiKeyField(
+            "settings.openai_compatible.api_key",
+            "anthropic_api_key",
+            "anthropic",
+            on_save=self._on_anthropic_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._anthropic_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_anthropic_models,
+        )
+        self._anthropic_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_anthropic_connection,
+        )
+        self._anthropic_slots_row = self._build_slot_row("translation")
+        self._anthropic_form = self._compose_anthropic_form(
+            slots_row=self._anthropic_slots_row,
+            base_url=self._anthropic_base_url,
+            model=self._anthropic_model,
+            fetch_btn=self._anthropic_fetch_btn,
+            api_key=self._anthropic_api_key,
+            test_btn=self._anthropic_test_btn,
+        )
 
     def _build_local_form_controls(self) -> None:
         """Create the translation custom-server form controls."""
@@ -999,6 +1099,63 @@ class SettingsView(ft.Column):
             api_key=self._backup_api_key,
             test_btn=self._backup_test_btn,
         )
+        self._backup_anthropic_slots_row = self._build_slot_row("backup")
+        self._backup_anthropic_base_url = ft.TextField(
+            label=t("settings.openai_compatible.base_url"),
+            hint_text="https://api.anthropic.com",
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            error_max_lines=4,
+            on_blur=self._on_backup_anthropic_base_url_change_end,
+            on_submit=self._on_backup_anthropic_base_url_change_end,
+        )
+        self._backup_anthropic_model = ft.TextField(
+            label=t("settings.openai_compatible.model"),
+            hint_text=t("settings.openai_compatible.model_hint"),
+            value="",
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            expand=True,
+            text_size=24,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            on_blur=self._on_backup_anthropic_model_change_end,
+            on_submit=self._on_backup_anthropic_model_change_end,
+        )
+        self._backup_anthropic_api_key = ApiKeyField(
+            "settings.openai_compatible.api_key",
+            "backup_anthropic_api_key",
+            "backup_anthropic",
+            on_save=self._on_backup_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+            show_status=False,
+        )
+        self._backup_anthropic_fetch_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH_ROUNDED,
+            tooltip=t("settings.openai_compatible.fetch_models"),
+            on_click=self._on_fetch_backup_anthropic_models,
+        )
+        self._backup_anthropic_test_btn = ft.TextButton(
+            content=ft.Text(t("settings.openai_compatible.test_connection")),
+            on_click=self._on_test_backup_anthropic_connection,
+        )
+        self._backup_anthropic_group = self._compose_anthropic_form(
+            slots_row=self._backup_anthropic_slots_row,
+            base_url=self._backup_anthropic_base_url,
+            model=self._backup_anthropic_model,
+            fetch_btn=self._backup_anthropic_fetch_btn,
+            api_key=self._backup_anthropic_api_key,
+            test_btn=self._backup_anthropic_test_btn,
+        )
         self._backup_local_base_url = ft.TextField(
             label=t("settings.local_llm.base_url"),
             value="",
@@ -1123,24 +1280,50 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(container)
 
     def attach_provider_settings_window(self, windows, schedule) -> None:
-        """Attach floating provider settings windows (one per card) and their scheduler."""
+        """Attach one floating settings window per card and provider variant."""
         self._provider_settings_windows = dict(windows)
         self._provider_settings_schedule = schedule
 
     def _on_openai_gear_click(self, _e) -> None:
         self._open_provider_settings_dialog("translation_openai")
 
+    def _on_anthropic_gear_click(self, _e) -> None:
+        self._open_provider_settings_dialog("translation_anthropic")
+
     def _on_local_llm_gear_click(self, _e) -> None:
         self._open_provider_settings_dialog("translation_local")
 
     def _on_backup_gear_click(self, _e) -> None:
-        self._open_provider_settings_dialog("backup")
+        display = self._provider_draft or self._provider_snapshot
+        if display is None:
+            return
+        kind = {
+            TranslationModel.OPENAI_COMPATIBLE: "backup_openai",
+            TranslationModel.ANTHROPIC: "backup_anthropic",
+            TranslationModel.LOCAL_LLM: "backup_local",
+        }.get(normalize_translation_model(display.backup_variant))
+        if kind is not None:
+            self._open_provider_settings_dialog(kind)
+
+    def _close_other_provider_settings_windows(self, card: str, kind: str, schedule) -> None:
+        windows = getattr(self, "_provider_settings_windows", None) or {}
+        for other_kind, other_window in windows.items():
+            if (
+                other_kind == kind
+                or not other_kind.startswith(f"{card}_")
+                or not other_window.is_open
+            ):
+                continue
+            self._provider_dialog_kinds.pop(card, None)
+            self._provider_dialog_edits_before.pop(card, None)
+            self._provider_dialog_draft_before.pop(card, None)
+            schedule(other_window.close)
 
     def _open_provider_settings_dialog(self, kind: str) -> None:
         windows = getattr(self, "_provider_settings_windows", None) or {}
         schedule = getattr(self, "_provider_settings_schedule", None)
-        card = "backup" if kind == "backup" else "translation"
-        window = windows.get(card)
+        card = "backup" if kind.startswith("backup_") else "translation"
+        window = windows.get(kind)
         if window is None or schedule is None or self._provider_snapshot is None:
             return
         if window.is_open:
@@ -1148,10 +1331,15 @@ class SettingsView(ft.Column):
                 schedule,
                 title="",
                 content=None,
-                on_accept=lambda card=card: self._accept_provider_settings_dialog(card),
-                on_close_request=lambda card=card: self._revert_provider_settings_dialog(card),
+                on_accept=lambda card=card, kind=kind: self._accept_provider_settings_dialog(
+                    card, kind
+                ),
+                on_close_request=lambda card=card, kind=kind: self._revert_provider_settings_dialog(
+                    card, kind
+                ),
             )
             return
+        self._close_other_provider_settings_windows(card, kind, schedule)
         self._provider_dialog_kinds[card] = kind
         self._provider_dialog_edits_before[card] = dict(self._provider_edits)
         self._provider_dialog_draft_before[card] = self._provider_draft
@@ -1192,26 +1380,38 @@ class SettingsView(ft.Column):
                 t("settings.translation.config_title"),
                 t("settings.translation_variant.local_llm"),
             )
-        else:
+        elif kind == "translation_anthropic":
+            self._build_anthropic_form_controls()
+            content = self._anthropic_form
+            title = "{}: {}".format(
+                t("settings.translation.config_title"),
+                t("settings.translation_variant.anthropic"),
+            )
+        elif kind in {"backup_openai", "backup_anthropic", "backup_local"}:
             self._build_backup_form_controls()
-            content = ft.Column(
-                [self._backup_network_group, self._backup_local_group],
-                spacing=8,
+            variant = {
+                "backup_openai": TranslationModel.OPENAI_COMPATIBLE,
+                "backup_anthropic": TranslationModel.ANTHROPIC,
+                "backup_local": TranslationModel.LOCAL_LLM,
+            }[kind]
+            self._backup_network_group.visible = kind == "backup_openai"
+            self._backup_anthropic_group.visible = kind == "backup_anthropic"
+            self._backup_local_group.visible = kind == "backup_local"
+            content = {
+                "backup_openai": self._backup_network_group,
+                "backup_anthropic": self._backup_anthropic_group,
+                "backup_local": self._backup_local_group,
+            }[kind]
+            title = "{}: {}".format(
+                t("settings.backup_translation.config_title"),
+                t(_TRANSLATION_MODEL_LABEL_KEYS[variant]),
             )
-            title = t("settings.backup_translation.config_title")
+        else:
+            self._provider_dialog_kinds.pop(card, None)
+            self._provider_dialog_edits_before.pop(card, None)
+            self._provider_dialog_draft_before.pop(card, None)
+            return
         display = self._provider_draft or self._provider_snapshot
-        if kind == "backup":
-            backup_variant = normalize_translation_model(display.backup_variant)
-            self._backup_network_group.visible = (
-                backup_variant == TranslationModel.OPENAI_COMPATIBLE
-            )
-            self._backup_local_group.visible = backup_variant == TranslationModel.LOCAL_LLM
-            variant_label = t(
-                "settings.translation_variant.local_llm"
-                if backup_variant == TranslationModel.LOCAL_LLM
-                else "settings.translation_variant.openai_compatible"
-            )
-            title = f"{title}: {variant_label}"
         self._sync_translation_selection_controls(display)
         self._local_llm_base_url.value = (
             ""
@@ -1221,19 +1421,25 @@ class SettingsView(ft.Column):
         self._local_llm_model.value = (
             "" if display.local_llm_model == LOCAL_LLM_DEFAULT_MODEL else display.local_llm_model
         )
+        self._anthropic_base_url.value = display.anthropic_base_url
+        self._anthropic_model.value = display.anthropic_model
+        self._backup_anthropic_base_url.value = display.backup_anthropic_base_url
+        self._backup_anthropic_model.value = display.backup_anthropic_model
         self._local_llm_extra_body.value = display.local_llm_extra_body_json
         self._clear_local_llm_extra_body_error()
         self._clear_backup_local_extra_body_error()
-        if kind == "translation_local" or (
-            kind == "backup" and backup_variant == TranslationModel.LOCAL_LLM
-        ):
+        if kind in {"translation_local", "backup_local"}:
             window_height = LOCAL_PROVIDER_WINDOW_HEIGHT
         window.open(
             schedule,
             title=title,
             content=content,
-            on_accept=lambda card=card: self._accept_provider_settings_dialog(card),
-            on_close_request=lambda card=card: self._revert_provider_settings_dialog(card),
+            on_accept=lambda card=card, kind=kind: self._accept_provider_settings_dialog(
+                card, kind
+            ),
+            on_close_request=lambda card=card, kind=kind: self._revert_provider_settings_dialog(
+                card, kind
+            ),
             height=window_height,
         )
 
@@ -1243,30 +1449,51 @@ class SettingsView(ft.Column):
         self._commit_openai_field("base_url", self._openai_base_url.value or "")
         self._commit_openai_field("model", self._openai_model.value or "")
 
+    def _commit_anthropic_fields_from_controls(self) -> None:
+        if self._provider_snapshot is None:
+            return
+        self._commit_anthropic_field("base_url", self._anthropic_base_url.value or "")
+        self._commit_anthropic_field("model", self._anthropic_model.value or "")
+
     def _commit_backup_fields_from_controls(self) -> None:
         if self._provider_snapshot is None:
             return
         self._commit_backup_field("base_url", self._backup_base_url.value or "")
         self._commit_backup_field("model", self._backup_model.value or "")
+        self._commit_backup_anthropic_field(
+            "base_url", self._backup_anthropic_base_url.value or ""
+        )
+        self._commit_backup_anthropic_field("model", self._backup_anthropic_model.value or "")
 
-    def _accept_provider_settings_dialog(self, card: str = "translation") -> None:
+    def _accept_provider_settings_dialog(
+        self, card: str = "translation", kind: str | None = None
+    ) -> None:
         """Accept button: save the slot, commit staged form values and apply them."""
+        if kind is not None and self._provider_dialog_kinds.get(card) != kind:
+            return
         self._save_dialog_slot(card)
         if card == "backup":
             self._commit_backup_fields_from_controls()
             self._commit_backup_local_fields_from_controls()
         else:
             self._commit_openai_fields_from_controls()
+            self._commit_anthropic_fields_from_controls()
             self._commit_local_llm_fields_from_controls()
-        self._provider_dialog_edits_before.clear()
-        self._provider_dialog_draft_before.clear()
+        self._provider_dialog_edits_before.pop(card, None)
+        self._provider_dialog_draft_before.pop(card, None)
+        self._provider_dialog_kinds.pop(card, None)
         self._rebuild_provider_form_controls(card)
         on_providers_changed = getattr(self, "on_providers_changed", None)
         if on_providers_changed is not None:
             on_providers_changed()
 
-    def _revert_provider_settings_dialog(self, card: str = "translation") -> None:
+    def _revert_provider_settings_dialog(
+        self, card: str = "translation", kind: str | None = None
+    ) -> None:
         """Window closed without Accept: discard edits staged inside the dialog."""
+        if kind is not None and self._provider_dialog_kinds.get(card) != kind:
+            return
+        self._provider_dialog_kinds.pop(card, None)
         if card in self._provider_dialog_edits_before:
             self._provider_edits = self._provider_dialog_edits_before.pop(card)
             self._provider_draft = self._provider_dialog_draft_before.pop(
@@ -1292,6 +1519,7 @@ class SettingsView(ft.Column):
                 api_key=self._openai_api_key,
                 test_btn=self._openai_test_btn,
             )
+            self._build_anthropic_form_controls()
             self._build_local_form_controls()
             self._local_llm_form = self._compose_local_form(
                 title=None,
@@ -1310,73 +1538,6 @@ class SettingsView(ft.Column):
         if display is not None:
             self._fill_card_form_fields(card, display)
 
-    def _sync_open_translation_dialog(self) -> None:
-        """Follow a live variant switch while the translation dialog is open."""
-        windows = getattr(self, "_provider_settings_windows", None) or {}
-        window = windows.get("translation")
-        if window is None or not window.is_open:
-            return
-        display = self._provider_draft or self._provider_snapshot
-        if display is None:
-            return
-        variant = normalize_translation_model(display.translation.model)
-        if variant not in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM):
-            return
-        kind = (
-            "translation_local"
-            if variant == TranslationModel.LOCAL_LLM
-            else "translation_openai"
-        )
-        if self._provider_dialog_kinds.get("translation") == kind:
-            return
-        self._provider_dialog_kinds["translation"] = kind
-        if kind == "translation_local":
-            self._build_local_form_controls()
-            self._local_llm_form = self._compose_local_form(
-                title=None,
-                slots_row=self._local_llm_slots_row,
-                base_url=self._local_llm_base_url,
-                test_btn=self._local_llm_test_btn,
-                model=self._local_llm_model,
-                fetch_btn=self._local_llm_fetch_btn,
-                api_key=self._local_llm_api_key,
-                api_key_helper=self._local_llm_api_key_helper,
-                extra_body=self._local_llm_extra_body,
-                extra_body_helper=self._local_llm_extra_body_helper,
-                extra_body_error=self._local_llm_extra_body_error,
-            )
-            content = self._local_llm_form
-        else:
-            self._build_openai_form_controls()
-            self._openai_form = self._compose_openai_form(
-                title=None,
-                slots_row=self._openai_slots_row,
-                provider=self._openai_provider,
-                model=self._openai_model,
-                fetch_btn=self._openai_fetch_btn,
-                api_key=self._openai_api_key,
-                test_btn=self._openai_test_btn,
-            )
-            content = self._openai_form
-        self._fill_card_form_fields("translation", display)
-        title = "{}: {}".format(
-            t("settings.translation.config_title"),
-            t(
-                "settings.translation_variant.local_llm"
-                if kind == "translation_local"
-                else "settings.translation_variant.openai_compatible"
-            ),
-        )
-        window.replace_content(
-            content,
-            title=title,
-            height=(
-                LOCAL_PROVIDER_WINDOW_HEIGHT
-                if kind == "translation_local"
-                else PROVIDER_WINDOW_HEIGHT
-            ),
-        )
-
     def _fill_card_form_fields(self, card: str, display) -> None:
         """Fill one card's form fields from the current settings display."""
         if card == "backup":
@@ -1385,6 +1546,8 @@ class SettingsView(ft.Column):
             self._backup_provider.value = self._provider_dropdown_value(
                 display.backup_provider_key, display.backup_base_url
             )
+            self._backup_anthropic_base_url.value = display.backup_anthropic_base_url
+            self._backup_anthropic_model.value = display.backup_anthropic_model
             self._backup_local_base_url.value = display.backup_local_base_url
             self._backup_local_model.value = display.backup_local_model
             self._backup_local_extra_body.value = display.backup_local_extra_body_json
@@ -1396,6 +1559,8 @@ class SettingsView(ft.Column):
                 display.openai_compatible_provider_key,
                 display.openai_compatible_base_url,
             )
+            self._anthropic_base_url.value = display.anthropic_base_url
+            self._anthropic_model.value = display.anthropic_model
             self._local_llm_base_url.value = (
                 ""
                 if display.local_llm_base_url == LOCAL_LLM_DEFAULT_BASE_URL
@@ -1520,6 +1685,11 @@ class SettingsView(ft.Column):
             base.value = config.base_url
             model.value = config.model
             extra.value = config.extra_body_json
+        elif config.variant == TranslationModel.ANTHROPIC.value:
+            base = self._backup_anthropic_base_url if is_backup else self._anthropic_base_url
+            model = self._backup_anthropic_model if is_backup else self._anthropic_model
+            base.value = config.base_url
+            model.value = config.model
         else:
             provider = self._backup_provider if is_backup else self._openai_provider
             base_url = self._backup_base_url if is_backup else self._openai_base_url
@@ -1536,6 +1706,9 @@ class SettingsView(ft.Column):
                 self._on_backup_local_base_url_change_end(None)
                 self._on_backup_local_model_change_end(None)
                 self._on_backup_local_extra_body_change_end(None)
+            elif config.variant == TranslationModel.ANTHROPIC.value:
+                self._commit_backup_anthropic_field("base_url", config.base_url)
+                self._commit_backup_anthropic_field("model", config.model)
             else:
                 self._commit_backup_field("provider_key", config.provider_key)
                 self._commit_backup_field("base_url", config.base_url)
@@ -1546,6 +1719,9 @@ class SettingsView(ft.Column):
                 self._on_local_llm_base_url_change_end(None)
                 self._on_local_llm_model_change_end(None)
                 self._on_local_llm_extra_body_change_end(None)
+            elif config.variant == TranslationModel.ANTHROPIC.value:
+                self._commit_anthropic_field("base_url", config.base_url)
+                self._commit_anthropic_field("model", config.model)
             else:
                 self._commit_openai_field("provider_key", config.provider_key)
                 self._commit_openai_field("base_url", config.base_url)
@@ -1567,13 +1743,23 @@ class SettingsView(ft.Column):
             variant = TranslationModel.LOCAL_LLM.value
         elif kind == "translation_openai":
             variant = TranslationModel.OPENAI_COMPATIBLE.value
+        elif kind == "translation_anthropic":
+            variant = TranslationModel.ANTHROPIC.value
         else:
             display = self._provider_draft or self._provider_snapshot
             if display is None:
                 return
             variant = normalize_translation_model(display.backup_variant).value
         is_backup = card == "backup"
-        if variant == TranslationModel.LOCAL_LLM.value:
+        if variant == TranslationModel.ANTHROPIC.value:
+            base = self._backup_anthropic_base_url if is_backup else self._anthropic_base_url
+            model = self._backup_anthropic_model if is_backup else self._anthropic_model
+            config = ProviderSlotConfig(
+                variant=variant,
+                base_url=(base.value or "").strip(),
+                model=(model.value or "").strip(),
+            )
+        elif variant == TranslationModel.LOCAL_LLM.value:
             base = self._backup_local_base_url if is_backup else self._local_llm_base_url
             model = self._backup_local_model if is_backup else self._local_llm_model
             extra = (
@@ -2761,6 +2947,11 @@ class SettingsView(ft.Column):
         )
         self._openai_gear = self._openai_compatible_card
         self._openai_compatible_card.visible = False
+        self._build_anthropic_form_controls()
+        self._anthropic_compatible_card = self._build_provider_settings_gear(
+            self._on_anthropic_gear_click
+        )
+        self._anthropic_compatible_card.visible = False
 
         self._build_backup_form_controls()
         self._backup_config_card = self._build_provider_settings_gear(
@@ -2773,7 +2964,11 @@ class SettingsView(ft.Column):
         translation_unit_controls = self._translation_provider_card.content.content.controls
         translation_unit_controls.append(ft.Container(height=12))
         self._translation_card_row = ft.Row(
-            [self._openai_compatible_card, self._local_llm_connection_card]
+            [
+                self._openai_compatible_card,
+                self._anthropic_compatible_card,
+                self._local_llm_connection_card,
+            ]
             + list(self._translation_card_slots_row.controls),
             spacing=8,
         )
@@ -4522,19 +4717,26 @@ class SettingsView(ft.Column):
         self._openai_compatible_card.visible = (
             translation_model == TranslationModel.OPENAI_COMPATIBLE
         )
+        self._anthropic_compatible_card.visible = translation_model == TranslationModel.ANTHROPIC
         self._backup_config_card.visible = settings.backup_enabled
         backup_variant = normalize_translation_model(settings.backup_variant)
         self._backup_network_group.visible = (
             backup_variant == TranslationModel.OPENAI_COMPATIBLE
         )
+        self._backup_anthropic_group.visible = backup_variant == TranslationModel.ANTHROPIC
         self._backup_local_group.visible = backup_variant == TranslationModel.LOCAL_LLM
         self._translation_card_row.visible = translation_model in (
             TranslationModel.OPENAI_COMPATIBLE,
             TranslationModel.LOCAL_LLM,
+            TranslationModel.ANTHROPIC,
         )
         self._backup_card_row.visible = settings.backup_enabled and (
             backup_variant
-            in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM)
+            in (
+                TranslationModel.OPENAI_COMPATIBLE,
+                TranslationModel.LOCAL_LLM,
+                TranslationModel.ANTHROPIC,
+            )
         )
         self._sync_http_extension_card(settings)
         if is_control_mounted(self):
@@ -4824,7 +5026,11 @@ class SettingsView(ft.Column):
                 label=t("settings.not_selected"),
             )
         ]
-        for model in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM):
+        for model in (
+            TranslationModel.OPENAI_COMPATIBLE,
+            TranslationModel.ANTHROPIC,
+            TranslationModel.LOCAL_LLM,
+        ):
             options.append(
                 OptionItem(
                     value=model.value,
@@ -4838,7 +5044,11 @@ class SettingsView(ft.Column):
         options: list[OptionItem] = [
             OptionItem(value="off", label=t("settings.not_selected")),
         ]
-        for model in (TranslationModel.OPENAI_COMPATIBLE, TranslationModel.LOCAL_LLM):
+        for model in (
+            TranslationModel.OPENAI_COMPATIBLE,
+            TranslationModel.ANTHROPIC,
+            TranslationModel.LOCAL_LLM,
+        ):
             options.append(
                 OptionItem(
                     value=model.value,
@@ -5018,7 +5228,6 @@ class SettingsView(ft.Column):
 
         if is_control_mounted(self):
             self.update()
-        self._sync_open_translation_dialog()
 
     def _on_llm_selected(self, value: str) -> None:
         """Handle translation model selection from modal."""
@@ -5195,6 +5404,50 @@ class SettingsView(ft.Column):
     def _on_backup_model_change_end(self, e) -> None:
         self._commit_backup_field("model", getattr(e.control, "value", ""))
 
+    def _commit_anthropic_field(self, field: str, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        normalized = value.strip()
+        draft = self._ensure_provider_settings_draft()
+        attr = f"anthropic_{field}"
+        if getattr(draft, attr) == normalized:
+            return
+        self._provider_draft = replace(draft, **{attr: normalized})
+        edit_type = {
+            "base_url": AnthropicBaseUrlEdit,
+            "model": AnthropicModelEdit,
+        }[field]
+        self._record_provider_edit(edit_type(normalized))
+        self.has_provider_changes = True
+
+    def _commit_backup_anthropic_field(self, field: str, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        normalized = value.strip()
+        draft = self._ensure_provider_settings_draft()
+        attr = f"backup_anthropic_{field}"
+        if getattr(draft, attr) == normalized:
+            return
+        self._provider_draft = replace(draft, **{attr: normalized})
+        edit_type = {
+            "base_url": BackupAnthropicBaseUrlEdit,
+            "model": BackupAnthropicModelEdit,
+        }[field]
+        self._record_provider_edit(edit_type(normalized))
+        self.has_provider_changes = True
+
+    def _on_anthropic_base_url_change_end(self, e) -> None:
+        self._commit_anthropic_field("base_url", getattr(e.control, "value", ""))
+
+    def _on_anthropic_model_change_end(self, e) -> None:
+        self._commit_anthropic_field("model", getattr(e.control, "value", ""))
+
+    def _on_backup_anthropic_base_url_change_end(self, e) -> None:
+        self._commit_backup_anthropic_field("base_url", getattr(e.control, "value", ""))
+
+    def _on_backup_anthropic_model_change_end(self, e) -> None:
+        self._commit_backup_anthropic_field("model", getattr(e.control, "value", ""))
+
     def _on_backup_local_base_url_change_end(self, e) -> None:
         _ = e
         if self._provider_snapshot is None:
@@ -5319,6 +5572,18 @@ class SettingsView(ft.Column):
         self._on_backup_local_model_change_end(None)
         self._on_backup_local_extra_body_change_end(None)
 
+    def _on_anthropic_secret_change(self, key: str, value: str) -> None:
+        if key != "anthropic_api_key":
+            return
+        stripped = value.strip()
+        if not self._write_secret_value(key, stripped):
+            if self.show_snackbar:
+                self.show_snackbar(t("settings.openai_compatible.save_failed"), COLOR_ERROR)
+            return
+        self._anthropic_api_key.value = stripped
+        if self.on_local_llm_secret_changed:
+            self.on_local_llm_secret_changed()
+
     def _on_openai_secret_change(self, key: str, value: str) -> None:
         if key != "openai_compatible_api_key":
             return
@@ -5332,7 +5597,11 @@ class SettingsView(ft.Column):
             self.on_local_llm_secret_changed()
 
     def _on_backup_secret_change(self, key: str, value: str) -> None:
-        if key not in {"backup_api_key", "fallback_local_llm_api_key"}:
+        if key not in {
+            "backup_api_key",
+            "fallback_local_llm_api_key",
+            "backup_anthropic_api_key",
+        }:
             return
         stripped = value.strip()
         if not self._write_secret_value(key, stripped):
@@ -5341,6 +5610,8 @@ class SettingsView(ft.Column):
             return
         if key == "backup_api_key":
             self._backup_api_key.value = stripped
+        elif key == "backup_anthropic_api_key":
+            self._backup_anthropic_api_key.value = stripped
         else:
             self._backup_local_api_key.value = stripped
         if self.on_local_llm_secret_changed:
@@ -5407,11 +5678,16 @@ class SettingsView(ft.Column):
         self._backup_provider.value = value
         _update_control_if_mounted(self._backup_provider)
 
-    async def _do_fetch_models(self, *, base_url: str, api_key: str, on_model_picked) -> None:
-        if self.on_fetch_models is None or not base_url:
+    async def _do_fetch_models(
+        self, *, base_url: str, api_key: str, on_model_picked, protocol: str = "openai"
+    ) -> None:
+        fetch = (
+            self.on_fetch_anthropic_models if protocol == "anthropic" else self.on_fetch_models
+        )
+        if fetch is None or not base_url:
             return
         try:
-            model_ids = await self.on_fetch_models(base_url, api_key)
+            model_ids = await fetch(base_url, api_key)
         except Exception:
             model_ids = []
         if not model_ids:
@@ -5431,10 +5707,15 @@ class SettingsView(ft.Column):
             search_hint=t("settings.filter"),
         ).open("")
 
-    async def _do_test_connection(self, *, base_url: str, api_key: str) -> None:
-        if self.on_test_connection is None or not base_url:
+    async def _do_test_connection(
+        self, *, base_url: str, api_key: str, protocol: str = "openai"
+    ) -> None:
+        test = (
+            self.on_test_anthropic_connection if protocol == "anthropic" else self.on_test_connection
+        )
+        if test is None or not base_url:
             return
-        status, _body = await self.on_test_connection(base_url, api_key)
+        status, _body = await test(base_url, api_key)
         if self.show_snackbar:
             if status == 200:
                 self.show_snackbar(t("settings.openai_compatible.test_ok"), COLOR_SECONDARY)
@@ -5457,6 +5738,50 @@ class SettingsView(ft.Column):
         await self._do_test_connection(
             base_url=(self._openai_base_url.value or "").strip(),
             api_key=(self._openai_api_key.value or "").strip(),
+        )
+
+    async def _on_fetch_anthropic_models(self, e) -> None:
+        await self._do_fetch_models(
+            base_url=(self._anthropic_base_url.value or "").strip()
+            or "https://api.anthropic.com",
+            api_key=(self._anthropic_api_key.value or "").strip(),
+            on_model_picked=self._pick_anthropic_model,
+            protocol="anthropic",
+        )
+
+    def _pick_anthropic_model(self, value: str) -> None:
+        self._anthropic_model.value = value
+        self._commit_anthropic_field("model", value)
+        _update_control_if_mounted(self._anthropic_model)
+
+    async def _on_test_anthropic_connection(self, e) -> None:
+        await self._do_test_connection(
+            base_url=(self._anthropic_base_url.value or "").strip()
+            or "https://api.anthropic.com",
+            api_key=(self._anthropic_api_key.value or "").strip(),
+            protocol="anthropic",
+        )
+
+    async def _on_fetch_backup_anthropic_models(self, e) -> None:
+        await self._do_fetch_models(
+            base_url=(self._backup_anthropic_base_url.value or "").strip()
+            or "https://api.anthropic.com",
+            api_key=(self._backup_anthropic_api_key.value or "").strip(),
+            on_model_picked=self._pick_backup_anthropic_model,
+            protocol="anthropic",
+        )
+
+    def _pick_backup_anthropic_model(self, value: str) -> None:
+        self._backup_anthropic_model.value = value
+        self._commit_backup_anthropic_field("model", value)
+        _update_control_if_mounted(self._backup_anthropic_model)
+
+    async def _on_test_backup_anthropic_connection(self, e) -> None:
+        await self._do_test_connection(
+            base_url=(self._backup_anthropic_base_url.value or "").strip()
+            or "https://api.anthropic.com",
+            api_key=(self._backup_anthropic_api_key.value or "").strip(),
+            protocol="anthropic",
         )
 
     async def _on_fetch_backup_models(self, e) -> None:
@@ -6777,6 +7102,20 @@ class SettingsView(ft.Column):
         self._openai_api_key.apply_locale()
         self._openai_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
         self._openai_test_btn.content.value = t("settings.openai_compatible.test_connection")
+        self._anthropic_base_url.label = t("settings.openai_compatible.base_url")
+        self._anthropic_model.label = t("settings.openai_compatible.model")
+        self._anthropic_model.hint_text = t("settings.openai_compatible.model_hint")
+        self._anthropic_api_key.apply_locale()
+        self._anthropic_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
+        self._anthropic_test_btn.content.value = t("settings.openai_compatible.test_connection")
+        self._backup_anthropic_base_url.label = t("settings.openai_compatible.base_url")
+        self._backup_anthropic_model.label = t("settings.openai_compatible.model")
+        self._backup_anthropic_model.hint_text = t("settings.openai_compatible.model_hint")
+        self._backup_anthropic_api_key.apply_locale()
+        self._backup_anthropic_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
+        self._backup_anthropic_test_btn.content.value = t(
+            "settings.openai_compatible.test_connection"
+        )
         self._backup_provider.label = t("settings.openai_compatible.provider")
         self._backup_base_url.label = t("settings.openai_compatible.base_url")
         self._backup_model.label = t("settings.openai_compatible.model")

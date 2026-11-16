@@ -14,7 +14,7 @@ Dependencies: none.
 
 `python/`: CPython 3.14.7 with all program dependencies installed inside,
 pip package manager, `python/INSTALLED_PACKAGES.txt` manifest.
-Dependencies: bundled set of 62 packages.
+Dependencies: bundled set of 67 packages.
 
 ## User data folder
 

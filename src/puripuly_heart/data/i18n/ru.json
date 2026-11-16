@@ -390,6 +390,8 @@
   "provider.openai_compatible": "OpenAI-совместимый",
   "settings.translation_variant.openai_compatible": "OpenAI-совместимые провайдеры",
   "settings.translation_variant.openai_compatible.description": "OpenAI-совместимый API: выбор провайдера, ключ, список моделей",
+  "settings.translation_variant.anthropic": "Anthropic-совместимые провайдеры",
+  "settings.translation_variant.anthropic.description": "Нативный Anthropic Messages API: ключ и выбор модели",
   "settings.translation_variant.local_llm": "Свой сервер",
   "settings.translation_variant.local_llm.description": "Любой OpenAI-совместимый адрес: ключ, список моделей",
   "settings.backup_translation.title": "Резервный перевод",

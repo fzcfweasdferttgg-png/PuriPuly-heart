@@ -126,11 +126,15 @@ class ProviderSettingsSnapshot:
     openai_compatible_provider_key: str = ""
     openai_compatible_base_url: str = ""
     openai_compatible_model: str = ""
+    anthropic_base_url: str = ""
+    anthropic_model: str = ""
     backup_enabled: bool = False
     backup_variant: str = ""
     backup_provider_key: str = ""
     backup_base_url: str = ""
     backup_model: str = ""
+    backup_anthropic_base_url: str = ""
+    backup_anthropic_model: str = ""
     backup_local_base_url: str = ""
     backup_local_model: str = ""
     backup_local_extra_body_json: str = ""
@@ -468,6 +472,16 @@ class OpenAICompatibleModelEdit:
 
 
 @dataclass(frozen=True, slots=True)
+class AnthropicBaseUrlEdit:
+    base_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnthropicModelEdit:
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
 class BackupTranslationEnabledEdit:
     enabled: bool
 
@@ -489,6 +503,16 @@ class BackupOpenAICompatibleBaseUrlEdit:
 
 @dataclass(frozen=True, slots=True)
 class BackupOpenAICompatibleModelEdit:
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupAnthropicBaseUrlEdit:
+    base_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupAnthropicModelEdit:
     model: str
 
 
@@ -533,11 +557,15 @@ ProviderSettingsEdit: TypeAlias = (
     | OpenAICompatibleProviderKeyEdit
     | OpenAICompatibleBaseUrlEdit
     | OpenAICompatibleModelEdit
+    | AnthropicBaseUrlEdit
+    | AnthropicModelEdit
     | BackupTranslationEnabledEdit
     | BackupVariantEdit
     | BackupOpenAICompatibleProviderKeyEdit
     | BackupOpenAICompatibleBaseUrlEdit
     | BackupOpenAICompatibleModelEdit
+    | BackupAnthropicBaseUrlEdit
+    | BackupAnthropicModelEdit
     | BackupLocalLlmBaseUrlEdit
     | BackupLocalLlmModelEdit
     | BackupLocalLlmExtraBodyEdit
@@ -609,11 +637,15 @@ __all__ = [
     "OpenAICompatibleProviderKeyEdit",
     "OpenAICompatibleBaseUrlEdit",
     "OpenAICompatibleModelEdit",
+    "AnthropicBaseUrlEdit",
+    "AnthropicModelEdit",
     "BackupTranslationEnabledEdit",
     "BackupVariantEdit",
     "BackupOpenAICompatibleProviderKeyEdit",
     "BackupOpenAICompatibleBaseUrlEdit",
     "BackupOpenAICompatibleModelEdit",
+    "BackupAnthropicBaseUrlEdit",
+    "BackupAnthropicModelEdit",
     "BackupLocalLlmBaseUrlEdit",
     "BackupLocalLlmModelEdit",
     "BackupLocalLlmExtraBodyEdit",

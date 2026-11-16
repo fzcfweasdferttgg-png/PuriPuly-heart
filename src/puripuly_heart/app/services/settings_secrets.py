@@ -112,6 +112,10 @@ class SettingsSecretsOwner:
             )
             snapshot = replace(
                 snapshot,
+                anthropic_api_key=store.get("anthropic_api_key") or "",
+            )
+            snapshot = replace(
+                snapshot,
                 custom_stt_api_key=store.get("custom_stt_api_key") or "",
             )
             snapshot = replace(

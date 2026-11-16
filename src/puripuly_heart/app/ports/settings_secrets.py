@@ -17,6 +17,8 @@ class SettingsSecretKey(StrEnum):
     ELEVENLABS_SCRIBE_API_KEY = "elevenlabs_scribe_api_key"
     SONIOX_API_KEY = "soniox_api_key"
     LOCAL_LLM_API_KEY = "local_llm_api_key"
+    ANTHROPIC_API_KEY = "anthropic_api_key"
+    BACKUP_ANTHROPIC_API_KEY = "backup_anthropic_api_key"
     CUSTOM_STT_API_KEY = "custom_stt_api_key"
     ALIBABA_API_KEY_BEIJING = "alibaba_api_key_beijing"
     ALIBABA_API_KEY_SINGAPORE = "alibaba_api_key_singapore"
@@ -33,6 +35,7 @@ class SettingsSecretSnapshot:
     elevenlabs_scribe_api_key: str | None = None
     soniox_api_key: str | None = None
     local_llm_api_key: str | None = None
+    anthropic_api_key: str | None = None
     custom_stt_api_key: str | None = None
     alibaba_api_key_beijing: str | None = None
     alibaba_api_key_singapore: str | None = None

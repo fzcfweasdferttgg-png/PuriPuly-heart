@@ -41,6 +41,7 @@ def build_llm_provider_signature(
     translation = settings.intent.translation
     local_llm = settings.intent.local_llm
     openai_compatible = settings.intent.openai_compatible
+    anthropic = settings.intent.anthropic
     backup = settings.intent.backup_translation
     languages = settings.intent.languages
     provider_llm = provider_llm_for_translation(translation.model, translation.connection)
@@ -110,6 +111,11 @@ def build_llm_provider_signature(
             else None
         ),
         (
+            (anthropic.base_url, anthropic.model)
+            if provider_llm == "anthropic"
+            else None
+        ),
+        (
             (
                 backup.enabled,
                 backup.model if backup.enabled else None,
@@ -129,6 +135,11 @@ def build_llm_provider_signature(
                         backup.openai_compatible.model,
                     )
                     if backup.enabled and backup.model == "openai_compatible"
+                    else None
+                ),
+                (
+                    (backup.anthropic.base_url, backup.anthropic.model)
+                    if backup.enabled and backup.model == "anthropic"
                     else None
                 ),
             )

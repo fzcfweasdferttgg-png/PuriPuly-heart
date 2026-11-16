@@ -122,7 +122,7 @@ def test_accept_saves_current_form_to_active_slot(
     monkeypatch.setattr(view, "on_providers_changed", lambda: None)
     window = type("W", (), {"is_open": False, "open": lambda self, schedule, **kw: None})()
     view.attach_provider_settings_window(
-        {"translation": window, "backup": window}, lambda coro: coro
+        {"translation_openai": window, "backup_openai": window}, lambda coro: coro
     )
 
     view._on_form_slot_selected("translation", 3)
@@ -147,7 +147,7 @@ def test_translation_and_backup_slots_are_independent(
     monkeypatch.setattr(view, "on_providers_changed", lambda: None)
     window = type("W", (), {"is_open": False, "open": lambda self, schedule, **kw: None})()
     view.attach_provider_settings_window(
-        {"translation": window, "backup": window}, lambda coro: coro
+        {"translation_openai": window, "backup_openai": window}, lambda coro: coro
     )
 
     view._on_form_slot_selected("translation", 1)

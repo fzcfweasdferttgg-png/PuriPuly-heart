@@ -347,10 +347,23 @@ class OpenAICompatibleIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class AnthropicIntent:
+    base_url: str = ""
+    model: str = ""
+
+    def __post_init__(self) -> None:
+        base_url = self.base_url if isinstance(self.base_url, str) else ""
+        object.__setattr__(self, "base_url", base_url.strip())
+        model = self.model if isinstance(self.model, str) else ""
+        object.__setattr__(self, "model", model.strip())
+
+
+@dataclass(frozen=True, slots=True)
 class BackupTranslationIntent:
     enabled: bool = False
     model: str = ""
     openai_compatible: OpenAICompatibleIntent = field(default_factory=OpenAICompatibleIntent)
+    anthropic: AnthropicIntent = field(default_factory=AnthropicIntent)
     local_llm: LocalLLMIntent = field(
         default_factory=lambda: LocalLLMIntent(base_url="", model="")
     )
@@ -804,6 +817,7 @@ class UserIntentSettings:
     translation: TranslationIntent = field(default_factory=TranslationIntent)
     local_llm: LocalLLMIntent = field(default_factory=LocalLLMIntent)
     openai_compatible: OpenAICompatibleIntent = field(default_factory=OpenAICompatibleIntent)
+    anthropic: AnthropicIntent = field(default_factory=AnthropicIntent)
     backup_translation: BackupTranslationIntent = field(default_factory=BackupTranslationIntent)
     stt: STTIntent = field(default_factory=STTIntent)
     peer_stt: PeerSTTIntent = field(default_factory=PeerSTTIntent)

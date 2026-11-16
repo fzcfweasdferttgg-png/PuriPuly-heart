@@ -19,6 +19,8 @@ Runtime/bundled notice-sensitive components:
 - huggingface-hub 2.3.0: Apache-2.0.
 - hf-xet 1.7.0 and its Windows native extension: Apache-2.0.
 - httpx2 2.16.0 and httpcore2 2.16.0: BSD-3-Clause. Their upstream license payloads remain in the packaged distribution metadata.
+- openai 3.51.0, anthropic 2.8.0, and opentelemetry-api 1.45.2: Apache-2.0. Their upstream license payloads remain in the packaged distribution metadata.
+- docstring-parser 0.18.0 and jiter 0.19.0: MIT. Their upstream license payloads remain in the packaged distribution metadata.
 - Flet 1.0.5 and serious_python 5.0.0: Apache-2.0. Native Windows releases retain Flutter's generated dependency notices under data\flutter_assets\NOTICES.Z; the locked Python Flet wheel retains its upstream license metadata.
 - dart-bridge 1.10.0: MIT. The unmodified upstream license is packaged under puripuly_heart\data\licenses\DART-BRIDGE-1.10.0-LICENSE.txt. Source: https://github.com/flet-dev/dart-bridge/tree/v1.10.0 .
 - soxr / libsoxr: LGPL-2.1-or-later. Windows releases include the LGPL compliance bundle described below. The source-tree license text is `src/puripuly_heart/data/licenses/COPYING.LGPL-2.1.txt`; installed releases stage it under the soxr compliance bundle.

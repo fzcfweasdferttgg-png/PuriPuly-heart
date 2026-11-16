@@ -65,11 +65,15 @@ from puripuly_heart.app.ports.settings_view import (
     OpenAICompatibleProviderKeyEdit,
     OpenAICompatibleBaseUrlEdit,
     OpenAICompatibleModelEdit,
+    AnthropicBaseUrlEdit,
+    AnthropicModelEdit,
     BackupTranslationEnabledEdit,
     BackupVariantEdit,
     BackupOpenAICompatibleProviderKeyEdit,
     BackupOpenAICompatibleBaseUrlEdit,
     BackupOpenAICompatibleModelEdit,
+    BackupAnthropicBaseUrlEdit,
+    BackupAnthropicModelEdit,
     BackupLocalLlmBaseUrlEdit,
     BackupLocalLlmModelEdit,
     BackupLocalLlmExtraBodyEdit,
@@ -286,11 +290,15 @@ def settings_view_surface_snapshots(
         openai_compatible_provider_key=intent.openai_compatible.provider_key,
         openai_compatible_base_url=intent.openai_compatible.base_url,
         openai_compatible_model=intent.openai_compatible.model,
+        anthropic_base_url=intent.anthropic.base_url,
+        anthropic_model=intent.anthropic.model,
         backup_enabled=intent.backup_translation.enabled,
         backup_variant=intent.backup_translation.model,
         backup_provider_key=intent.backup_translation.openai_compatible.provider_key,
         backup_base_url=intent.backup_translation.openai_compatible.base_url,
         backup_model=intent.backup_translation.openai_compatible.model,
+        backup_anthropic_base_url=intent.backup_translation.anthropic.base_url,
+        backup_anthropic_model=intent.backup_translation.anthropic.model,
         backup_local_base_url=intent.backup_translation.local_llm.base_url,
         backup_local_model=intent.backup_translation.local_llm.model,
         backup_local_extra_body_json=json.dumps(
@@ -803,6 +811,16 @@ def materialize_provider_apply_intent(
                 updated,
                 openai_compatible=replace(updated.intent.openai_compatible, model=edit.model),
             )
+        elif isinstance(edit, AnthropicBaseUrlEdit):
+            updated = _with_intent(
+                updated,
+                anthropic=replace(updated.intent.anthropic, base_url=edit.base_url),
+            )
+        elif isinstance(edit, AnthropicModelEdit):
+            updated = _with_intent(
+                updated,
+                anthropic=replace(updated.intent.anthropic, model=edit.model),
+            )
         elif isinstance(edit, BackupTranslationEnabledEdit):
             updated = _with_intent(
                 updated,
@@ -844,6 +862,28 @@ def materialize_provider_apply_intent(
                     updated.intent.backup_translation,
                     openai_compatible=replace(
                         updated.intent.backup_translation.openai_compatible,
+                        model=edit.model,
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupAnthropicBaseUrlEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    anthropic=replace(
+                        updated.intent.backup_translation.anthropic,
+                        base_url=edit.base_url,
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupAnthropicModelEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    anthropic=replace(
+                        updated.intent.backup_translation.anthropic,
                         model=edit.model,
                     ),
                 ),

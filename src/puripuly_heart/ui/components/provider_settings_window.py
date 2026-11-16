@@ -35,6 +35,14 @@ LOCAL_PROVIDER_WINDOW_HEIGHT = 695
 PROVIDER_CONTENT_PADDING = FOUNDATION_DESIGN_TOKENS.spacing.page
 RESIZE_GRIP_SIZE = 6
 RESIZE_CORNER_SIZE = 16
+PROVIDER_SETTINGS_WINDOW_KINDS = (
+    "translation_openai",
+    "translation_anthropic",
+    "translation_local",
+    "backup_openai",
+    "backup_anthropic",
+    "backup_local",
+)
 
 
 def _resize_zones() -> tuple[tuple[ft.WindowResizeEdge, dict[str, int]], ...]:
@@ -329,3 +337,7 @@ class ProviderSettingsWindow:
             if not self._accepted and close_request is not None:
                 with contextlib.suppress(Exception):
                     close_request()
+
+
+def create_provider_settings_windows() -> dict[str, ProviderSettingsWindow]:
+    return {kind: ProviderSettingsWindow() for kind in PROVIDER_SETTINGS_WINDOW_KINDS}

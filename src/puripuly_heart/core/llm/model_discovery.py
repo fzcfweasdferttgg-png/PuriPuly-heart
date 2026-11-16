@@ -49,3 +49,42 @@ async def test_connection(base_url: str, api_key: str = "") -> tuple[int, str]:
             return resp.status_code, resp.text[:200]
     except Exception as exc:
         return 0, str(exc)
+
+
+def _anthropic_client(base_url: str, api_key: str):
+    from anthropic import AsyncAnthropic
+
+    return AsyncAnthropic(
+        api_key=api_key.strip() or "not-configured",
+        base_url=base_url.strip() or "https://api.anthropic.com",
+        max_retries=0,
+        timeout=_FETCH_TIMEOUT_S,
+    )
+
+
+async def fetch_anthropic_models(base_url: str, api_key: str = "") -> list[str]:
+    client = _anthropic_client(base_url, api_key)
+    try:
+        model_ids: set[str] = set()
+        async for model in client.models.list(limit=1000):
+            model_id = getattr(model, "id", None)
+            if model_id and getattr(model, "lifecycle", "active") != "retired":
+                model_ids.add(str(model_id))
+        return sorted(model_ids)
+    except Exception as exc:
+        logger.warning("[ModelDiscovery] Failed to fetch Anthropic models from %s: %s", base_url, exc)
+        return []
+    finally:
+        await client.close()
+
+
+async def test_anthropic_connection(base_url: str, api_key: str = "") -> tuple[int, str]:
+    client = _anthropic_client(base_url, api_key)
+    try:
+        async for _ in client.models.list(limit=1):
+            break
+        return 200, "ok"
+    except Exception as exc:
+        return getattr(exc, "status_code", 0) or 0, str(exc)[:200]
+    finally:
+        await client.close()

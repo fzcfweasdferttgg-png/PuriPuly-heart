@@ -12,7 +12,7 @@
 
 `python/`: 프로그램의 모든 의존성이 포함된 CPython 3.14.7, 패키지 관리자
 pip, `python/INSTALLED_PACKAGES.txt` 목록.
-의존성: 62개 패키지 세트.
+의존성: 67개 패키지 세트.
 
 ## 사용자 데이터 폴더
 

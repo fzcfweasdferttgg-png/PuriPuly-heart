@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 
 from puripuly_heart.config.runtime_resolution import (
+    UserAnthropicRuntimeIntent,
     UserBackupTranslationRuntimeIntent,
     UserLocalLLMRuntimeIntent,
     UserOpenAICompatibleRuntimeIntent,
@@ -22,21 +23,30 @@ from puripuly_heart.core.llm.fallback_chain import (
 )
 from puripuly_heart.core.llm.provider import LLMProvider
 from puripuly_heart.core.storage.secrets import SecretStore
+from puripuly_heart.providers.llm.anthropic import AnthropicLLMProvider
 from puripuly_heart.providers.llm.local_openai import LocalOpenAICompatibleLLMProvider
+from puripuly_heart.providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 
 logger = logging.getLogger(__name__)
 
 USER_VARIANT_LOCAL_LLM = "local_llm"
 USER_VARIANT_OPENAI_COMPATIBLE = "openai_compatible"
+USER_VARIANT_ANTHROPIC = "anthropic"
 
 SECRET_LOCAL_LLM_API_KEY = "local_llm_api_key"
 SECRET_OPENAI_COMPATIBLE_API_KEY = "openai_compatible_api_key"
+SECRET_ANTHROPIC_API_KEY = "anthropic_api_key"
 SECRET_BACKUP_LOCAL_LLM_API_KEY = "fallback_local_llm_api_key"
 SECRET_BACKUP_OPENAI_COMPATIBLE_API_KEY = "backup_api_key"
+SECRET_BACKUP_ANTHROPIC_API_KEY = "backup_anthropic_api_key"
 
 
 def is_user_variant(model: str) -> bool:
-    return model in (USER_VARIANT_LOCAL_LLM, USER_VARIANT_OPENAI_COMPATIBLE)
+    return model in (
+        USER_VARIANT_LOCAL_LLM,
+        USER_VARIANT_OPENAI_COMPATIBLE,
+        USER_VARIANT_ANTHROPIC,
+    )
 
 
 def _api_key(secrets: SecretStore, slot: str, fallback_slot: str | None = None) -> str:
@@ -61,10 +71,13 @@ def build_variant_provider(
     *,
     local_llm: UserLocalLLMRuntimeIntent,
     openai_compatible: UserOpenAICompatibleRuntimeIntent,
+    anthropic: UserAnthropicRuntimeIntent = UserAnthropicRuntimeIntent(),
     secrets: SecretStore,
     local_key_slot: str = SECRET_LOCAL_LLM_API_KEY,
     openai_key_slot: str = SECRET_OPENAI_COMPATIBLE_API_KEY,
+    anthropic_key_slot: str = SECRET_ANTHROPIC_API_KEY,
     openai_key_fallback_slot: str | None = None,
+    anthropic_key_fallback_slot: str | None = None,
 ) -> LLMProvider | None:
     if variant == USER_VARIANT_LOCAL_LLM:
         if not local_llm.base_url.strip() or not local_llm.model.strip():
@@ -87,15 +100,27 @@ def build_variant_provider(
         if not base_url or not openai_compatible.model.strip():
             return None
         logger.info(
-            "[LLM] Building network translation provider: base_url=%s model=%s",
+            "[LLM] Building OpenAI-compatible provider: base_url=%s model=%s",
             base_url,
             openai_compatible.model,
         )
-        return LocalOpenAICompatibleLLMProvider(
+        return OpenAICompatibleLLMProvider(
             base_url=base_url,
             model=openai_compatible.model,
             api_key=_api_key(secrets, openai_key_slot, openai_key_fallback_slot),
-            extra_body={},
+        )
+    if variant == USER_VARIANT_ANTHROPIC:
+        if not anthropic.model.strip():
+            return None
+        logger.info(
+            "[LLM] Building Anthropic provider: base_url=%s model=%s",
+            anthropic.base_url or "https://api.anthropic.com",
+            anthropic.model,
+        )
+        return AnthropicLLMProvider(
+            base_url=anthropic.base_url,
+            model=anthropic.model,
+            api_key=_api_key(secrets, anthropic_key_slot, anthropic_key_fallback_slot),
         )
     return None
 
@@ -119,10 +144,16 @@ def build_backup_provider(
             base_url=backup.openai_compatible.base_url,
             model=backup.openai_compatible.model,
         ),
+        anthropic=UserAnthropicRuntimeIntent(
+            base_url=backup.anthropic.base_url,
+            model=backup.anthropic.model,
+        ),
         secrets=secrets,
         local_key_slot=SECRET_BACKUP_LOCAL_LLM_API_KEY,
         openai_key_slot=SECRET_BACKUP_OPENAI_COMPATIBLE_API_KEY,
+        anthropic_key_slot=SECRET_BACKUP_ANTHROPIC_API_KEY,
         openai_key_fallback_slot=SECRET_OPENAI_COMPATIBLE_API_KEY,
+        anthropic_key_fallback_slot=SECRET_ANTHROPIC_API_KEY,
     )
     if provider is None:
         logger.warning("[LLM] Backup translation enabled but not configured")

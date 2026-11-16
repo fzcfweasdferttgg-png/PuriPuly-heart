@@ -389,6 +389,7 @@ def _copy_provider_prompt_apply_fields(
             translation=copy.deepcopy(source.intent.translation),
             local_llm=copy.deepcopy(source.intent.local_llm),
             openai_compatible=copy.deepcopy(source.intent.openai_compatible),
+            anthropic=copy.deepcopy(source.intent.anthropic),
             backup_translation=copy.deepcopy(source.intent.backup_translation),
             prompts=replace(
                 target.intent.prompts,

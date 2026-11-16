@@ -52,6 +52,20 @@ instructions, see the [portable guide](docs/portable.md).
 
 Prompt templates used by the application are located in `docs/prompts/`.
 
+## Translation providers
+
+The primary and backup pickers currently offer **OpenAI-compatible server**,
+**Anthropic-compatible providers**, and **Own server**, with independent settings
+and three configuration slots per form. The OpenAI-compatible variant uses the
+official `openai` SDK; Anthropic uses the official `anthropic` SDK; Own server
+uses `httpx` directly. All three currently send non-streaming requests.
+
+The Custom HTTP backend exists in the runtime, but is not exposed in these
+pickers. Each card and provider variant has an independent settings window, six
+instances in total. See
+[Translation providers](docs/translation-providers.md) for the current behavior,
+protocol boundaries, and the evaluated LLM-lib expansion candidate.
+
 ## Development
 
 The project requires Python 3.14 and uses `pyproject.toml` and `uv.lock` for
@@ -98,6 +112,8 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 - CUDA support and a shared-engine mode for local speech recognition.
 - A generic OpenAI-compatible translation provider with editable presets for
   local or hosted endpoints, plus independent primary and backup configuration.
+- Native Anthropic Messages API support with custom endpoints, SDK model discovery,
+  and independent primary and backup picker, form, slot, and window integration.
 - Explicit not-selected states for speech recognition and translation providers.
 - Portable documentation in English, Russian, and Korean.
 
@@ -136,7 +152,9 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 ### Work plan
 
 - [ ] Stabilize and refine the model manager, OpenAI-compatible server, and local server concepts.
-- [ ] Add native Anthropic Messages API support, provider addresses, and required dependencies.
+- [x] Add the native Anthropic Messages API runtime adapter, provider addresses, and required dependencies.
+- [x] Add Anthropic entries to the primary and backup picker lists and connect their forms, gears, slots, and independent windows.
+- [ ] Decide on and implement broader local server connectivity; LLM-lib is the current evaluated candidate, not an integrated dependency.
 - [ ] Add configurable workload-to-backend assignment for self and peer speech recognition, allowing each channel to run on CPU, Vulkan, or CUDA and either share one model instance or use separate model instances.
 - [ ] ... ???
 

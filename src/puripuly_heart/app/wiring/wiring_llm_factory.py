@@ -103,6 +103,7 @@ def prepare_llm_factory_extras(
 
 def user_translation_intent_from_vnext(settings: AppSettingsVNext):
     from puripuly_heart.config.runtime_resolution import (
+        UserAnthropicRuntimeIntent,
         UserBackupTranslationRuntimeIntent,
         UserLocalLLMRuntimeIntent,
         UserOpenAICompatibleRuntimeIntent,
@@ -111,12 +112,17 @@ def user_translation_intent_from_vnext(settings: AppSettingsVNext):
 
     backup = settings.intent.backup_translation
     openai_compatible = settings.intent.openai_compatible
+    anthropic = settings.intent.anthropic
     local_llm = settings.intent.local_llm
     return UserTranslationRuntimeIntent(
         openai_compatible=UserOpenAICompatibleRuntimeIntent(
             provider_key=openai_compatible.provider_key,
             base_url=openai_compatible.base_url,
             model=openai_compatible.model,
+        ),
+        anthropic=UserAnthropicRuntimeIntent(
+            base_url=anthropic.base_url,
+            model=anthropic.model,
         ),
         local_llm=UserLocalLLMRuntimeIntent(
             base_url=local_llm.base_url,
@@ -130,6 +136,10 @@ def user_translation_intent_from_vnext(settings: AppSettingsVNext):
                 provider_key=backup.openai_compatible.provider_key,
                 base_url=backup.openai_compatible.base_url,
                 model=backup.openai_compatible.model,
+            ),
+            anthropic=UserAnthropicRuntimeIntent(
+                base_url=backup.anthropic.base_url,
+                model=backup.anthropic.model,
             ),
             local_llm=UserLocalLLMRuntimeIntent(
                 base_url=backup.local_llm.base_url,

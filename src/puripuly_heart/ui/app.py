@@ -39,7 +39,7 @@ from puripuly_heart.core.lifecycle import (
 )
 from puripuly_heart.core.messages import ErrorDiagnostics
 from puripuly_heart.ui.components.about_window import AboutWindow
-from puripuly_heart.ui.components.provider_settings_window import ProviderSettingsWindow
+from puripuly_heart.ui.components.provider_settings_window import create_provider_settings_windows
 from puripuly_heart.ui.components.audio_test_dialog import AudioTestDialog
 from puripuly_heart.ui.components.bottom_nav import BottomNavBar
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
@@ -434,10 +434,7 @@ class TranslatorApp:
         self.view_logs = LogsView()
         self.about_window = AboutWindow()
         self.model_assets_window = ModelAssetsWindow(self.application)
-        self.provider_settings_windows = {
-            "translation": ProviderSettingsWindow(),
-            "backup": ProviderSettingsWindow(),
-        }
+        self.provider_settings_windows = create_provider_settings_windows()
         self.view_settings.attach_provider_settings_window(
             self.provider_settings_windows, self._run_page_task
         )
