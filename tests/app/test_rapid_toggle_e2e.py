@@ -256,7 +256,7 @@ async def test_queue_coalesces_rapid_toggles_and_keeps_fields_on_disable(
     for intent in _TOGGLE_SEQUENCE:
         expected = _production_merge(_materialize(intent, expected), expected)
     assert _backup_snapshot(final) == _backup_snapshot(expected)
-    assert _openai_snapshot(final) == ("", "", "")
+    assert _openai_snapshot(final) == _openai_snapshot(AppSettingsVNext())
     # disabling keeps configured endpoint fields; re-enable restores them
     assert final.intent.backup_translation.enabled is False
     assert final.intent.backup_translation.local_llm.model == "backup-model"

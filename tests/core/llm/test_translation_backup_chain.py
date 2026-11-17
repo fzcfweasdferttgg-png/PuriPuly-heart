@@ -231,3 +231,26 @@ def test_backup_provider_disabled_or_incomplete_returns_none() -> None:
         )
         is None
     )
+
+
+def test_direct_local_factory_blank_url_matches_selected_backend() -> None:
+    from puripuly_heart.app.wiring.wiring_llm_factory import _provider_from_resolved_target
+    from puripuly_heart.config.resolved import ResolvedLLMTarget
+    from puripuly_heart.config.runtime_resolution import LOCAL_LLM_DEFAULT_BASE_URL
+
+    for backend, expected_url in (
+        ("koboldcpp", LOCAL_LLM_DEFAULT_BASE_URL),
+        ("ollama", "http://127.0.0.1:11434"),
+    ):
+        target = ResolvedLLMTarget(
+            provider="local_llm",
+            model="some-model",
+            base_url="",
+            provider_options={"backend": backend, "extra_body": {}},
+        )
+
+        provider = _provider_from_resolved_target(target, secrets=InMemorySecretStore())
+
+        assert provider is not None
+        assert provider.backend == backend
+        assert provider.base_url == expected_url

@@ -267,3 +267,45 @@ def test_concurrent_registry_adds_lose_no_entries(
 
     assert not errors, f"concurrent adds raised: {errors}"
     assert len(presets) == 8, f"lost updates: only {len(presets)}/8 entries saved"
+
+
+def test_provider_preset_cache_is_independent_per_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = {
+        protocol: tmp_path / f"{protocol}.json" for protocol in ("openai", "anthropic", "local")
+    }
+    for protocol, path in paths.items():
+        path.write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "providers": {
+                        "preset": {"label": "Preset", "base_url": "http://127.0.0.1:8000/v1"}
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        providers_registry,
+        "ensure_providers_file",
+        lambda protocol="openai": paths[protocol],
+    )
+    monkeypatch.setattr(providers_registry, "_PROVIDER_PRESETS_CACHE", None)
+    reads = []
+    original_read_text = Path.read_text
+
+    def counted_read_text(self: Path, *args, **kwargs):
+        if self in paths.values():
+            reads.append(self)
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counted_read_text)
+
+    for _ in range(2):
+        for protocol in ("openai", "anthropic", "local"):
+            assert set(providers_registry.load_provider_presets(protocol)) == {"preset"}
+
+    assert reads == list(paths.values())

@@ -16,6 +16,8 @@ from typing import Awaitable
 from puripuly_heart.config.alibaba_connection import resolve_alibaba_connection
 from puripuly_heart.config.resolved import ResolvedLLMConfig, ResolvedLLMTarget
 from puripuly_heart.config.runtime_resolution import (
+    LOCAL_LLM_DEFAULT_BACKEND,
+    LOCAL_LLM_DEFAULT_BASE_URL,
     MANAGED_GEMMA_26B_MODEL,
     MANAGED_GEMMA_MODEL,
     PROVIDER_LOCAL_LLM,
@@ -305,10 +307,13 @@ def _provider_from_resolved_target(
 
     if target.provider == PROVIDER_LOCAL_LLM:
         api_key = (secrets.get("local_llm_api_key") or "").strip()
-        backend = str(target.provider_options.get("backend") or "koboldcpp")
+        backend = str(target.provider_options.get("backend") or LOCAL_LLM_DEFAULT_BACKEND)
+        default_base_url = (
+            "http://127.0.0.1:11434" if backend == "ollama" else LOCAL_LLM_DEFAULT_BASE_URL
+        )
         return LLMLibLocalLLMProvider(
             backend=backend,
-            base_url=target.base_url or "http://127.0.0.1:11434",
+            base_url=target.base_url or default_base_url,
             model=target.model,
             extra_body=_resolved_option_mapping(target.provider_options, "extra_body"),
             api_key=api_key,

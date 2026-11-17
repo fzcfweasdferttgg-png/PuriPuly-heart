@@ -57,3 +57,53 @@ def test_legacy_settings_gain_disabled_backup() -> None:
 
     assert loaded.intent.backup_translation.enabled is False
     assert loaded.intent.openai_compatible.base_url == "https://api.openai.com/v1"
+
+
+def _legacy_provider_settings() -> dict:
+    raw = to_dict(AppSettingsVNext())
+    sections = (
+        raw["intent"]["local_llm"],
+        raw["intent"]["openai_compatible"],
+        raw["intent"]["anthropic"],
+        raw["intent"]["backup_translation"]["local_llm"],
+        raw["intent"]["backup_translation"]["openai_compatible"],
+        raw["intent"]["backup_translation"]["anthropic"],
+    )
+    for section in sections:
+        section.pop("provider_key", None)
+    raw["intent"]["local_llm"].update(
+        backend="lmstudio", base_url="http://127.0.0.1:1234/v1", model="local-model"
+    )
+    raw["intent"]["openai_compatible"].update(
+        base_url="https://openrouter.ai/api/v1", model="openai-model"
+    )
+    raw["intent"]["anthropic"].update(
+        base_url="https://openrouter.ai/api/anthropic", model="anthropic-model"
+    )
+    raw["intent"]["backup_translation"]["local_llm"].update(
+        backend="ollama", base_url="http://127.0.0.1:11434", model="backup-model"
+    )
+    return raw
+
+
+def test_legacy_provider_sections_resolve_keys_from_saved_addresses() -> None:
+    loaded = from_dict(_legacy_provider_settings())
+
+    assert loaded.intent.local_llm.provider_key == "lmstudio"
+    assert loaded.intent.local_llm.base_url == "http://127.0.0.1:1234/v1"
+    assert loaded.intent.openai_compatible.provider_key == "openrouter"
+    assert loaded.intent.openai_compatible.base_url == "https://openrouter.ai/api/v1"
+    assert loaded.intent.anthropic.provider_key == "openrouter"
+    assert loaded.intent.anthropic.base_url == "https://openrouter.ai/api/anthropic"
+    assert loaded.intent.backup_translation.local_llm.provider_key == "ollama"
+    assert loaded.intent.backup_translation.local_llm.base_url == "http://127.0.0.1:11434"
+
+
+def test_legacy_custom_address_does_not_gain_default_provider_key() -> None:
+    raw = _legacy_provider_settings()
+    raw["intent"]["local_llm"]["base_url"] = "http://127.0.0.1:9999/v1"
+
+    loaded = from_dict(raw)
+
+    assert loaded.intent.local_llm.provider_key == ""
+    assert loaded.intent.local_llm.base_url == "http://127.0.0.1:9999/v1"

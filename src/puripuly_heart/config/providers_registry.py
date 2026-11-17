@@ -101,7 +101,7 @@ def ensure_providers_file(protocol: str = "openai") -> Path:
     return dest
 
 
-_PROVIDER_PRESETS_CACHE: tuple[Path, int, int, dict[str, ProviderPreset]] | None = None
+_PROVIDER_PRESETS_CACHE: dict[str, tuple[Path, int, int, dict[str, ProviderPreset]]] | None = None
 
 
 def _loaded_backend(key: str, info: dict, protocol: str) -> str:
@@ -122,7 +122,8 @@ def load_provider_presets(protocol: str = "openai") -> dict[str, ProviderPreset]
         return {}
     try:
         stat = path.stat()
-        cached = _PROVIDER_PRESETS_CACHE
+        cache = _PROVIDER_PRESETS_CACHE
+        cached = cache.get(protocol) if cache else None
         if (
             cached is not None
             and cached[0] == path
@@ -151,8 +152,36 @@ def load_provider_presets(protocol: str = "openai") -> dict[str, ProviderPreset]
             base_url=base_url,
             backend=_loaded_backend(key, info, protocol),
         )
-    _PROVIDER_PRESETS_CACHE = (path, stat.st_mtime_ns, stat.st_size, presets)
+    if _PROVIDER_PRESETS_CACHE is None:
+        _PROVIDER_PRESETS_CACHE = {}
+    _PROVIDER_PRESETS_CACHE[protocol] = (path, stat.st_mtime_ns, stat.st_size, presets)
     return dict(presets)
+
+
+def is_placeholder_base_url(base_url: str, protocol: str = "openai") -> bool:
+    """True when the address is a placeholder that must follow the provider key.
+
+    Placeholders are the empty address, any registry preset address, and the
+    schema default address. A custom address (none of these) is user intent
+    and wins over the provider key.
+    """
+    stored = (base_url or "").strip()
+    if not stored:
+        return True
+    from puripuly_heart.config.settings_vnext.schema import (
+        AnthropicIntent,
+        LocalLLMIntent,
+        OpenAICompatibleIntent,
+    )
+
+    schema_default = {
+        "openai": OpenAICompatibleIntent().base_url,
+        "anthropic": AnthropicIntent().base_url,
+        "local": LocalLLMIntent().base_url,
+    }.get(protocol, "")
+    if stored == schema_default:
+        return True
+    return any(preset.base_url == stored for preset in load_provider_presets(protocol).values())
 
 
 def _provider_document_for_write(protocol: str = "openai") -> tuple[Path, dict, dict]:

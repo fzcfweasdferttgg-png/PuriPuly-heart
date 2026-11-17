@@ -91,7 +91,11 @@ clears the preset selection instead of displaying a misleading server name. Lega
 are normalized to the native API root by the runtime adapter. Cross-variant
 Accept switches only after an explicit slot pick. Invalid `extra_body` JSON is
 rejected without saving or applying it. First-use registry creation and later
-writes use process-wide locking and unique temporary files.
+writes use process-wide locking and unique temporary files. Legacy provider
+sections without a `provider_key` resolve it from the saved address during
+loading; an unmatched address remains custom. Key-only apply batches fill the
+preset URL and local backend only for empty or other preset addresses, while a
+custom address is preserved.
 
 ## Integrated dependency
 

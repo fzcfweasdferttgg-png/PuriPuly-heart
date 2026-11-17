@@ -19,6 +19,11 @@ from puripuly_heart.config.settings_vnext.schema import (
 )
 
 CANONICAL_TOP_LEVEL_KEYS: Final = frozenset({"settings_version", "intent", "state"})
+_TRANSLATION_PROVIDER_KEY_SECTIONS: Final = (
+    ("openai_compatible", "openai"),
+    ("anthropic", "anthropic"),
+    ("local_llm", "local"),
+)
 _PROVIDER_VERIFICATION_FIELDS: Final = (
     "deepgram",
     "gemini_transcribe",
@@ -99,7 +104,9 @@ def from_dict(data: Mapping[str, Any]) -> AppSettingsVNext:
     compatible_data = _with_current_settings_version(
         _normalize_local_engine_fields(
             _normalize_legacy_openrouter_model_fields(
-                _downgrade_unbound_provider_verification_entries(data)
+                _normalize_legacy_provider_keys(
+                    _downgrade_unbound_provider_verification_entries(data)
+                )
             )
         )
     )
@@ -258,6 +265,65 @@ def _with_current_settings_version(data: Mapping[str, Any]) -> Mapping[str, Any]
     compatible = copy.deepcopy(dict(data))
     compatible["settings_version"] = VNEXT_SETTINGS_SCHEMA_VERSION
     return compatible
+
+
+def _normalize_legacy_provider_keys(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Backfill ``provider_key`` for settings written before the field existed.
+
+    Older builds persisted provider sections (``local_llm`` / ``anthropic`` and
+    their backup copies) with a base_url but no ``provider_key``. Filling the
+    current schema default ("openai" / "anthropic" / "koboldcpp") there would
+    silently re-route the saved endpoint at runtime, so resolve the key from
+    the saved address instead (empty when the address matches no preset).
+    """
+    intent = data.get("intent")
+    if not isinstance(intent, Mapping):
+        return data
+
+    from puripuly_heart.config.providers_registry import load_provider_presets
+
+    def _resolved_key(section: Mapping[str, Any], protocol: str) -> str:
+        base_url = str(section.get("base_url") or "").strip()
+        if not base_url:
+            return ""
+        for candidate, preset in load_provider_presets(protocol).items():
+            if preset.base_url == base_url:
+                return candidate
+        return ""
+
+    def _fixed_section(section: object, protocol: str) -> object:
+        if not isinstance(section, Mapping) or "provider_key" in section:
+            return section
+        updated = dict(section)
+        updated["provider_key"] = _resolved_key(section, protocol)
+        return updated
+
+    new_intent = dict(intent)
+    changed = False
+    for name, protocol in _TRANSLATION_PROVIDER_KEY_SECTIONS:
+        original = intent.get(name)
+        fixed = _fixed_section(original, protocol)
+        if fixed is not original:
+            new_intent[name] = fixed
+            changed = True
+    backup = intent.get("backup_translation")
+    if isinstance(backup, Mapping):
+        new_backup = dict(backup)
+        backup_changed = False
+        for name, protocol in _TRANSLATION_PROVIDER_KEY_SECTIONS:
+            original = backup.get(name)
+            fixed = _fixed_section(original, protocol)
+            if fixed is not original:
+                new_backup[name] = fixed
+                backup_changed = True
+        if backup_changed:
+            new_intent["backup_translation"] = new_backup
+            changed = True
+    if not changed:
+        return data
+    normalized = copy.deepcopy(dict(data))
+    normalized["intent"] = new_intent
+    return normalized
 
 
 def _normalize_legacy_openrouter_model_fields(data: Mapping[str, Any]) -> Mapping[str, Any]:

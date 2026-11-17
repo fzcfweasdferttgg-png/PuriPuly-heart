@@ -731,6 +731,32 @@ def materialize_prompt_apply_intent(
     )
 
 
+def _preset_edit_fields(protocol: str, provider_key: str, current_base_url: str) -> dict[str, str]:
+    """Preset fields carried along with a provider-key edit.
+
+    Selecting a preset in the UI writes its URL (and backend for local servers)
+    together with the key. A key-only apply batch must do the same, but only
+    while the stored address is still a placeholder (empty, a preset address,
+    or the schema default): a custom address is user intent and survives
+    preset selection.
+    """
+    from puripuly_heart.config.providers_registry import (
+        is_placeholder_base_url,
+        load_provider_presets,
+    )
+
+    key = (provider_key or "").strip()
+    if not key or not is_placeholder_base_url(current_base_url, protocol):
+        return {}
+    preset = load_provider_presets(protocol).get(key)
+    if preset is None:
+        return {}
+    fields = {"base_url": preset.base_url}
+    if preset.backend:
+        fields["backend"] = preset.backend
+    return fields
+
+
 def materialize_provider_apply_intent(
     current: object,
     intent: ProviderApplyIntent,
@@ -808,7 +834,11 @@ def materialize_provider_apply_intent(
             updated = _with_intent(
                 updated,
                 openai_compatible=replace(
-                    updated.intent.openai_compatible, provider_key=edit.provider_key
+                    updated.intent.openai_compatible,
+                    provider_key=edit.provider_key,
+                    **_preset_edit_fields(
+                        "openai", edit.provider_key, updated.intent.openai_compatible.base_url
+                    ),
                 ),
             )
         elif isinstance(edit, OpenAICompatibleBaseUrlEdit):
@@ -826,7 +856,13 @@ def materialize_provider_apply_intent(
         elif isinstance(edit, AnthropicProviderKeyEdit):
             updated = _with_intent(
                 updated,
-                anthropic=replace(updated.intent.anthropic, provider_key=edit.provider_key),
+                anthropic=replace(
+                    updated.intent.anthropic,
+                    provider_key=edit.provider_key,
+                    **_preset_edit_fields(
+                        "anthropic", edit.provider_key, updated.intent.anthropic.base_url
+                    ),
+                ),
             )
         elif isinstance(edit, AnthropicBaseUrlEdit):
             updated = _with_intent(
@@ -858,6 +894,11 @@ def materialize_provider_apply_intent(
                     openai_compatible=replace(
                         updated.intent.backup_translation.openai_compatible,
                         provider_key=edit.provider_key,
+                        **_preset_edit_fields(
+                            "openai",
+                            edit.provider_key,
+                            updated.intent.backup_translation.openai_compatible.base_url,
+                        ),
                     ),
                 ),
             )
@@ -891,6 +932,11 @@ def materialize_provider_apply_intent(
                     anthropic=replace(
                         updated.intent.backup_translation.anthropic,
                         provider_key=edit.provider_key,
+                        **_preset_edit_fields(
+                            "anthropic",
+                            edit.provider_key,
+                            updated.intent.backup_translation.anthropic.base_url,
+                        ),
                     ),
                 ),
             )
@@ -935,6 +981,11 @@ def materialize_provider_apply_intent(
                     local_llm=replace(
                         updated.intent.backup_translation.local_llm,
                         provider_key=edit.provider_key,
+                        **_preset_edit_fields(
+                            "local",
+                            edit.provider_key,
+                            updated.intent.backup_translation.local_llm.base_url,
+                        ),
                     ),
                 ),
             )
@@ -1033,7 +1084,13 @@ def materialize_provider_apply_intent(
         elif isinstance(edit, LocalLlmProviderKeyEdit):
             updated = _with_intent(
                 updated,
-                local_llm=replace(updated.intent.local_llm, provider_key=edit.provider_key),
+                local_llm=replace(
+                    updated.intent.local_llm,
+                    provider_key=edit.provider_key,
+                    **_preset_edit_fields(
+                        "local", edit.provider_key, updated.intent.local_llm.base_url
+                    ),
+                ),
             )
         elif isinstance(edit, LocalLlmBaseUrlEdit):
             updated = _with_intent(

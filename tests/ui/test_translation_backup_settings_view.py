@@ -562,7 +562,7 @@ def test_other_servers_variant_uses_renamed_picker_label(
     assert t_for_locale("ru", "settings.translation_variant.local_llm") == "Иные сервера"
     assert t_for_locale("en", "settings.translation_variant.local_llm") == "Other servers"
     assert t_for_locale("ru", "settings.translation_variant.local_llm.description") == (
-        "Поддерживаемый серверный API: адрес, ключ, список моделей"
+        "Доступ к поставщикам с альтернативными API"
     )
 
 
