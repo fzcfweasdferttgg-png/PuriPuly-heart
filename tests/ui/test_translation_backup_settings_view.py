@@ -376,6 +376,7 @@ def test_backup_local_form_commits_extra_body(
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
     view._on_backup_variant_selected("local_llm")
+    view._pick_backup_local_model("backup-model")
 
     view._backup_local_extra_body.value = '{"temperature": 0.2}'
     view._on_backup_local_extra_body_change_end(None)

@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Final, Literal, TypeAlias
 
 import httpx
+import httpx2
 from requests import exceptions as requests_errors
 from urllib3 import exceptions as urllib3_errors
 
@@ -130,6 +131,7 @@ def classify_transport_error(exc: BaseException) -> TransportErrorKind | None:
             (
                 TimeoutError,
                 httpx.TimeoutException,
+                httpx2.TimeoutException,
                 requests_errors.Timeout,
                 urllib3_errors.TimeoutError,
             ),
@@ -137,7 +139,14 @@ def classify_transport_error(exc: BaseException) -> TransportErrorKind | None:
             if fallback != "proxy":
                 fallback = "timeout"
         elif isinstance(
-            item, (httpx.TransportError, ConnectionError, OSError, urllib3_errors.ProtocolError)
+            item,
+            (
+                httpx.TransportError,
+                httpx2.TransportError,
+                ConnectionError,
+                OSError,
+                urllib3_errors.ProtocolError,
+            ),
         ):
             if fallback is None:
                 fallback = "network"

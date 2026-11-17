@@ -45,6 +45,7 @@ class OpenAICompatibleLLMProvider:
     _client_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock, repr=False)
     _active_tasks: set[asyncio.Task[object]] = field(init=False, default_factory=set, repr=False)
     _external_client_closed: bool = field(init=False, default=False, repr=False)
+    _closed: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.strip().rstrip("/")
@@ -82,10 +83,12 @@ class OpenAICompatibleLLMProvider:
         scene_participant_count: int | None = None,
         max_output_tokens: int | None = None,
     ) -> Translation:
-        client = self._client_for_call()
         operation = asyncio.current_task()
-        if operation is not None:
-            async with self._client_lock:
+        async with self._client_lock:
+            if self._closed:
+                raise asyncio.CancelledError
+            client = self._client_for_call()
+            if operation is not None:
                 self._active_tasks.add(operation)
         observation = current_attempt()
         try:
@@ -155,6 +158,7 @@ class OpenAICompatibleLLMProvider:
     async def close(self) -> None:
         current = asyncio.current_task()
         async with self._client_lock:
+            self._closed = True
             operations = tuple(task for task in self._active_tasks if task is not current)
             self._active_tasks.clear()
         for operation in operations:

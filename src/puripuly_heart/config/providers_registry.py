@@ -94,7 +94,9 @@ def ensure_providers_file(protocol: str = "openai") -> Path:
         logger.warning("[Providers] Bundled providers.json not found at %s", src)
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    temporary = dest.with_name(f"{dest.name}.{uuid4().hex}.tmp")
+    shutil.copy2(src, temporary)
+    temporary.replace(dest)
     logger.info("[Providers] Copied default providers.json to %s", dest)
     return dest
 
@@ -253,7 +255,7 @@ def _validated_backend(
 
 @contextmanager
 def _provider_write_transaction(protocol: str):
-    path = ensure_providers_file(protocol)
+    path = user_providers_path(protocol)
     with FileLock(str(path) + ".lock"):
         yield _provider_document_for_write(protocol)
 

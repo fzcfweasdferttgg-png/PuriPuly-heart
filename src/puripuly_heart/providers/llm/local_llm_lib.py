@@ -59,6 +59,8 @@ def _settings_options(
     for name in _SAMPLING_FIELDS:
         if name in extra:
             options[name] = extra.pop(name)
+    extra.pop("seed", None)
+    extra.pop("stop", None)
     if "reasoning_effort" in extra:
         options["effort"] = str(extra.pop("reasoning_effort"))
     if "num_ctx" in extra:
@@ -68,6 +70,15 @@ def _settings_options(
     if backend == "ollama" and options.get("effort") == "none":
         options["no_think"] = True
     options["extra"] = extra
+    return options
+
+
+def _request_options(extra_body: Mapping[str, object]) -> dict[str, object]:
+    options: dict[str, object] = {}
+    if "seed" in extra_body:
+        options["seed"] = extra_body["seed"]
+    if "stop" in extra_body:
+        options["stop"] = extra_body["stop"]
     return options
 
 
@@ -207,7 +218,10 @@ class LLMLibLocalLLMProvider:
                 if observation is not None and event.type == "content" and event.text:
                     observation.mark_first_text()
 
-            params: dict[str, object] = {"on_event": on_event}
+            params: dict[str, object] = {
+                "on_event": on_event,
+                **_request_options(self.extra_body),
+            }
             if max_output_tokens is not None:
                 params["max_tokens"] = max_output_tokens
             completion = await client.achat(messages, **params)

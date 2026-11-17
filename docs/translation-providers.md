@@ -73,11 +73,17 @@ workflow, custom names, URL validation, and 50-entry limit. Custom entries also
 allow selecting the LLM-lib backend, including native Ollama or generic
 OpenAI-compatible transport. The selected `provider_key` and `backend` are
 persisted in settings, slots, runtime signatures, and provider construction.
-Changing the selected server, backend, or URL clears the model; renaming a
-preset without changing either preserves it. A manually entered address that no
-longer matches the selected preset clears the preset selection instead of
-displaying a misleading server name. Legacy Ollama addresses ending in `/v1`
-are normalized to the native API root by the runtime adapter.
+Changing the selected server, backend, or URL resets the primary model to its
+built-in default and clears the backup model. A backup with an empty model is
+not applied until a replacement is entered. Slot restoration preserves the
+slot's saved model and backend. Renaming a preset or reselecting it without
+changing its backend or URL preserves the model. A manually entered address
+that no longer matches the selected preset clears the preset selection instead
+of displaying a misleading server name. Legacy Ollama addresses ending in `/v1`
+are normalized to the native API root by the runtime adapter. Cross-variant
+Accept switches only after an explicit slot pick. Invalid `extra_body` JSON is
+rejected without saving or applying it. First-use registry creation and later
+writes use process-wide locking and unique temporary files.
 
 ## Integrated dependency
 

@@ -255,11 +255,14 @@ class ProviderSettingsWindow:
             run_control_method(self._page.window, "close")
 
     def _on_accept_click(self, _e) -> None:
-        self._accepted = True
         accept = self._on_accept
+        result = None
         if accept is not None:
             with contextlib.suppress(Exception):
-                accept()
+                result = accept()
+        if result is False:
+            return
+        self._accepted = True
         self._on_close_requested()
 
     def _build_accept_button(self) -> ft.Control:
