@@ -125,6 +125,12 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
   local or hosted endpoints, plus independent primary and backup configuration.
 - Native Anthropic Messages API support with custom endpoints, SDK model discovery,
   and independent primary and backup picker, form, slot, and window integration.
+- Independent editable registries for OpenAI-compatible, Anthropic-compatible,
+  and Other servers, each supporting up to 50 custom entries.
+- Other servers through commit-pinned LLM-lib, with twelve local presets,
+  backend selection, and native Ollama `/api/chat` and `/api/tags` support.
+- Explicit-only API key handling, active-request cancellation, and no queued
+  requests after provider closure.
 - Explicit not-selected states for speech recognition and translation providers.
 - Portable documentation in English, Russian, and Korean.
 
@@ -166,6 +172,7 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 - [x] Add the native Anthropic Messages API runtime adapter, provider addresses, and required dependencies.
 - [x] Add Anthropic entries to the primary and backup picker lists and connect their forms, gears, slots, and independent windows.
 - [x] Integrate commit-pinned LLM-lib only for Other servers, including native Ollama `/api/chat` and per-server backend selection.
+- [x] Harden provider forms, slot restoration, registry writes, accept validation, and provider close behavior.
 - [ ] Add configurable workload-to-backend assignment for self and peer speech recognition, allowing each channel to run on CPU, Vulkan, or CUDA and either share one model instance or use separate model instances.
 
 ## License
