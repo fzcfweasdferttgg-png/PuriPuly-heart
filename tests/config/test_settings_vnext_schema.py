@@ -72,6 +72,31 @@ def test_vnext_schema_defaults_match_current_persisted_settings_defaults() -> No
     )
 
 
+def test_translation_provider_defaults_use_official_endpoints_and_koboldcpp() -> None:
+    schema = _load_schema_module()
+    settings = schema.AppSettingsVNext()
+
+    for config in (
+        settings.intent.openai_compatible,
+        settings.intent.backup_translation.openai_compatible,
+    ):
+        assert config.provider_key == "openai"
+        assert config.base_url == "https://api.openai.com/v1"
+    for config in (
+        settings.intent.anthropic,
+        settings.intent.backup_translation.anthropic,
+    ):
+        assert config.provider_key == "anthropic"
+        assert config.base_url == "https://api.anthropic.com"
+    for config in (
+        settings.intent.local_llm,
+        settings.intent.backup_translation.local_llm,
+    ):
+        assert config.provider_key == "koboldcpp"
+        assert config.backend == "koboldcpp"
+    assert settings.intent.local_llm.base_url == "http://127.0.0.1:5001/v1"
+
+
 def test_ui_settings_persist_only_locale() -> None:
     schema = _load_schema_module()
 

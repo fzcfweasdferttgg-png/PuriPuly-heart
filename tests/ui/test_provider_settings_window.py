@@ -181,7 +181,7 @@ def test_gear_opens_dialog_with_form_and_titles(
         t("settings.translation_variant.openai_compatible"),
     )
     assert fake.opened["content"] is view._openai_form
-    assert fake.opened["height"] == 450
+    assert fake.opened["height"] == 550
 
     fake2 = _fake_settings_window()
     view.attach_provider_settings_window(
@@ -195,7 +195,7 @@ def test_gear_opens_dialog_with_form_and_titles(
         t("settings.translation_variant.openai_compatible"),
     )
     assert fake2.opened["content"] is view._backup_network_group
-    assert fake2.opened["height"] == 450
+    assert fake2.opened["height"] == 550
 
 
 def test_local_server_dialogs_use_765_pixel_height(
@@ -298,7 +298,7 @@ def test_translation_variants_use_distinct_windows_without_live_replacement(
 
     assert view._provider_dialog_kinds["translation"] == "translation_openai"
     assert fake_openai.opened["content"] is original_content
-    assert fake_openai.opened["height"] == 450
+    assert fake_openai.opened["height"] == 550
 
     view._on_local_llm_gear_click(None)
 
@@ -428,7 +428,7 @@ async def test_live_variant_switches_do_not_replace_the_real_mounted_form(
         assert window._form_host.content is expected_form
         assert window._page.title == expected_title
         assert window._title_bar._about_label.value == expected_title
-        assert window._page.window.height == 450
+        assert window._page.window.height == 550
 
     await window.close()
 
@@ -485,8 +485,61 @@ def test_all_six_provider_windows_route_to_independent_instances(
         }[suffix]
         assert fakes[kind].window.is_open is True
         assert fakes[kind].opened["content"] is expected_group
-        expected_height = 765 if suffix == "local" else 550 if suffix == "anthropic" else 450
+        expected_height = 765 if suffix == "local" else 550
         assert fakes[kind].opened["height"] == expected_height
+
+
+def test_first_open_loads_base_urls_for_all_provider_variants(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    from puripuly_heart.config.providers_registry import load_provider_presets
+
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    kinds = (
+        "translation_openai",
+        "translation_anthropic",
+        "translation_local",
+        "backup_openai",
+        "backup_anthropic",
+        "backup_local",
+    )
+    fakes = {kind: _fake_settings_window() for kind in kinds}
+    view.attach_provider_settings_window(
+        {kind: fake.window for kind, fake in fakes.items()}, lambda coro: coro()
+    )
+    cases = (
+        ("translation_openai", "openai", view._openai_provider, view._openai_base_url),
+        (
+            "translation_anthropic",
+            "anthropic",
+            view._anthropic_provider,
+            view._anthropic_base_url,
+        ),
+        ("translation_local", "local", view._local_llm_provider, view._local_llm_base_url),
+        ("backup_openai", "openai", view._backup_provider, view._backup_base_url),
+        (
+            "backup_anthropic",
+            "anthropic",
+            view._backup_anthropic_provider,
+            view._backup_anthropic_base_url,
+        ),
+        ("backup_local", "local", view._backup_local_provider, view._backup_local_base_url),
+    )
+
+    expected_keys = {
+        "translation_openai": "openai",
+        "translation_anthropic": "anthropic",
+        "translation_local": "koboldcpp",
+        "backup_openai": "openai",
+        "backup_anthropic": "anthropic",
+        "backup_local": "koboldcpp",
+    }
+    for kind, protocol, provider, base_url in cases:
+        view._open_provider_settings_dialog(kind)
+        assert provider.value == expected_keys[kind]
+        preset = load_provider_presets(protocol)[expected_keys[kind]]
+        assert base_url.value == preset.base_url
 
 
 def test_stale_window_close_does_not_revert_the_new_variant(

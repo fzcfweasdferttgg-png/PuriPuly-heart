@@ -6,7 +6,7 @@ from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
 from puripuly_heart.config.settings_vnext.serialization import from_dict, to_dict, to_json_text
 
 
-def test_backup_and_openai_compatible_defaults_are_off() -> None:
+def test_backup_is_disabled_and_openai_defaults_use_official_api() -> None:
     settings = AppSettingsVNext()
 
     assert settings.intent.backup_translation.enabled is False
@@ -14,7 +14,8 @@ def test_backup_and_openai_compatible_defaults_are_off() -> None:
     assert settings.intent.backup_translation.openai_compatible.model == ""
     assert settings.intent.backup_translation.local_llm.base_url == ""
     assert settings.intent.backup_translation.local_llm.model == ""
-    assert settings.intent.openai_compatible.provider_key == ""
+    assert settings.intent.openai_compatible.provider_key == "openai"
+    assert settings.intent.openai_compatible.base_url == "https://api.openai.com/v1"
     assert settings.intent.openai_compatible.model == ""
 
 
@@ -55,4 +56,4 @@ def test_legacy_settings_gain_disabled_backup() -> None:
     loaded = from_dict(raw)
 
     assert loaded.intent.backup_translation.enabled is False
-    assert loaded.intent.openai_compatible.base_url == ""
+    assert loaded.intent.openai_compatible.base_url == "https://api.openai.com/v1"

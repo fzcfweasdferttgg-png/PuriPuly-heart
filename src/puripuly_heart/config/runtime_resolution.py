@@ -219,7 +219,8 @@ DEEPSEEK_MODEL_V4_FLASH: Final = "deepseek-flash"
 QWEN_MODEL_35_FLASH: Final = "qwen3.5-flash"
 QWEN_MODEL_38_FLASH: Final = "qwen3.8-flash"
 LOCAL_LLM_BACKEND_OLLAMA: Final = "ollama"
-LOCAL_LLM_DEFAULT_BASE_URL: Final = "http://127.0.0.1:11434"
+LOCAL_LLM_DEFAULT_BACKEND: Final = "koboldcpp"
+LOCAL_LLM_DEFAULT_BASE_URL: Final = "http://127.0.0.1:5001/v1"
 LOCAL_LLM_DEFAULT_MODEL: Final = "llama3.1:8b"
 MANAGED_GEMMA_MODEL: Final = "puripuly-gemma-4-e4b-q4"
 MANAGED_GEMMA_26B_MODEL: Final = "puripuly-gemma-4-26b-a4b-q4"
@@ -706,7 +707,7 @@ class DirectProviderRuntimeIntent:
     qwen_38_flash_model: str = QWEN_MODEL_38_FLASH
     qwen_region: str = QWEN_REGION_BEIJING
     qwen_connection: AlibabaConnection | None = None
-    local_llm_backend: str = LOCAL_LLM_BACKEND_OLLAMA
+    local_llm_backend: str = LOCAL_LLM_DEFAULT_BACKEND
     local_llm_base_url: str = LOCAL_LLM_DEFAULT_BASE_URL
     local_llm_model: str = LOCAL_LLM_DEFAULT_MODEL
     local_llm_extra_body: Mapping[str, ResolvedOptionValue] = field(
@@ -1813,6 +1814,7 @@ __all__ = [
     "GEMINI_MODEL_FLASH",
     "QWEN_MODEL_38_FLASH",
     "LOCAL_LLM_BACKEND_OLLAMA",
+    "LOCAL_LLM_DEFAULT_BACKEND",
     "LOCAL_LLM_DEFAULT_BASE_URL",
     "LOCAL_LLM_DEFAULT_MODEL",
     "MANAGED_GEMMA_MODEL",

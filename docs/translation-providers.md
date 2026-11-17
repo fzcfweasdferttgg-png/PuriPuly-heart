@@ -50,8 +50,9 @@ Requests stream internally and the adapter returns the completed translation.
 ## Provider registry
 
 The OpenAI-compatible dropdown has eight bundled presets: OpenAI, OpenRouter,
-Google Gemini, DeepSeek, Qwen, Groq, Mistral AI, and Together AI. The user copy
-of `providers.json` remains authoritative and is not destructively migrated.
+Google Gemini, DeepSeek, Qwen, Groq, Mistral AI, and Together AI. OpenAI and its
+official `https://api.openai.com/v1` endpoint are the default. The user copy of
+`providers.json` remains authoritative and is not destructively migrated.
 Primary and backup forms provide add, edit, and delete buttons next to the
 provider dropdown. Entries have editable custom names and base URLs; the
 registry accepts at most 50 records. Deleting a selected entry moves the form to
@@ -59,16 +60,18 @@ the first remaining preset, or clears the selection when none remain.
 
 Anthropic-compatible primary and backup forms use the separate
 `anthropic_providers.json` registry with six bundled presets: Anthropic,
-OpenRouter, DeepSeek, Moonshot AI, Zhipu AI, and MiniMax. It has the same CRUD
-controls and 50-entry limit, while its `provider_key` is persisted in settings,
-provider slots, runtime signatures, and provider construction. Deleting a
-selected preset applies the same fallback behavior.
+OpenRouter, DeepSeek, Moonshot AI, Zhipu AI, and MiniMax. Anthropic and its
+official `https://api.anthropic.com` endpoint are the default. It has the same
+CRUD controls and 50-entry limit, while its `provider_key` is persisted in
+settings, provider slots, runtime signatures, and provider construction.
+Deleting a selected preset applies the same fallback behavior.
 
 Other-server primary and backup forms use the independent
-`local_providers.json` registry with twelve bundled presets: colibri, LM Studio,
-llama.cpp, vLLM, SGLang, mlx-lm, KoboldCpp, text-generation-webui, TabbyAPI,
-LocalAI, Jan, and Ollama. Their addresses and backend identifiers follow
-LLM-lib's local-server presets. Both forms provide the same add/edit/delete
+`local_providers.json` registry with twelve bundled presets: KoboldCpp, colibri,
+LM Studio, llama.cpp, vLLM, SGLang, mlx-lm, text-generation-webui, TabbyAPI,
+LocalAI, Jan, and Ollama. KoboldCpp, its `koboldcpp` backend, and
+`http://127.0.0.1:5001/v1` are the default. Their addresses and backend
+identifiers follow LLM-lib's local-server presets. Both forms provide the same add/edit/delete
 workflow, custom names, URL validation, and 50-entry limit. Custom entries also
 allow selecting the LLM-lib backend, including native Ollama or generic
 OpenAI-compatible transport. The selected `provider_key` and `backend` are
@@ -77,9 +80,14 @@ Changing the selected server, backend, or URL resets the primary model to its
 built-in default and clears the backup model. A backup with an empty model is
 not applied until a replacement is entered. Slot restoration preserves the
 slot's saved model and backend. Renaming a preset or reselecting it without
-changing its backend or URL preserves the model. A manually entered address
-that no longer matches the selected preset clears the preset selection instead
-of displaying a misleading server name. Legacy Ollama addresses ending in `/v1`
+changing its backend or URL preserves the model. Across all three registries,
+the Base URL field in the settings form is read-only; custom addresses are
+changed only through Add/Edit server. Opening a form resolves an empty saved URL
+from its selected preset without writing that display value back by itself.
+Selecting a profile inside a form refreshes its controls immediately and stages
+the values for Save all; quick-switching from a settings card applies the slot
+immediately. A restored address that no longer matches the selected preset
+clears the preset selection instead of displaying a misleading server name. Legacy Ollama addresses ending in `/v1`
 are normalized to the native API root by the runtime adapter. Cross-variant
 Accept switches only after an explicit slot pick. Invalid `extra_body` JSON is
 rejected without saving or applying it. First-use registry creation and later

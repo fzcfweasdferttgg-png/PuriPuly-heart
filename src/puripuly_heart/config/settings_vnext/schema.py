@@ -322,11 +322,11 @@ class TranslationIntent:
 
 @dataclass(frozen=True, slots=True)
 class LocalLLMIntent:
-    backend: str = "ollama"
-    base_url: str = "http://127.0.0.1:11434"
+    backend: str = "koboldcpp"
+    base_url: str = "http://127.0.0.1:5001/v1"
     model: str = "llama3.1:8b"
     extra_body: dict[str, object] = field(default_factory=_default_local_llm_extra_body)
-    provider_key: str = ""
+    provider_key: str = "koboldcpp"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "extra_body", _copy_local_llm_extra_body(self.extra_body))
@@ -336,8 +336,8 @@ class LocalLLMIntent:
 
 @dataclass(frozen=True, slots=True)
 class OpenAICompatibleIntent:
-    provider_key: str = ""
-    base_url: str = ""
+    provider_key: str = "openai"
+    base_url: str = "https://api.openai.com/v1"
     model: str = ""
 
     def __post_init__(self) -> None:
@@ -351,8 +351,8 @@ class OpenAICompatibleIntent:
 
 @dataclass(frozen=True, slots=True)
 class AnthropicIntent:
-    provider_key: str = ""
-    base_url: str = ""
+    provider_key: str = "anthropic"
+    base_url: str = "https://api.anthropic.com"
     model: str = ""
 
     def __post_init__(self) -> None:

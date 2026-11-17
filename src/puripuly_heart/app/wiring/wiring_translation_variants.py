@@ -56,14 +56,22 @@ def _api_key(secrets: SecretStore, slot: str, fallback_slot: str | None = None) 
     return value
 
 
-def _preset_base_url(provider_key: str, *, protocol: str = "openai") -> str:
-    key = provider_key.strip()
-    if not key:
-        return ""
+def _preset_base_url(
+    provider_key: str,
+    base_url: str = "",
+    *,
+    protocol: str = "openai",
+) -> str:
     from puripuly_heart.config.providers_registry import load_provider_presets
 
-    preset = load_provider_presets(protocol).get(key)
-    return preset.base_url if preset is not None else ""
+    stored = base_url.strip()
+    presets = load_provider_presets(protocol)
+    selected = presets.get(provider_key.strip())
+    if selected is not None and (
+        not stored or any(preset.base_url == stored for preset in presets.values())
+    ):
+        return selected.base_url
+    return stored
 
 
 def _local_preset_backend(provider_key: str) -> str:
@@ -90,13 +98,13 @@ def build_variant_provider(
     anthropic_key_fallback_slot: str | None = None,
 ) -> LLMProvider | None:
     if variant == USER_VARIANT_LOCAL_LLM:
-        base_url = local_llm.base_url.strip() or _preset_base_url(
-            local_llm.provider_key, protocol="local"
-        )
+        base_url = _preset_base_url(local_llm.provider_key, local_llm.base_url, protocol="local")
         if not base_url or not local_llm.model.strip():
             return None
         backend = (
-            local_llm.backend.strip() or _local_preset_backend(local_llm.provider_key) or "ollama"
+            local_llm.backend.strip()
+            or _local_preset_backend(local_llm.provider_key)
+            or "koboldcpp"
         )
         logger.info(
             "[LLM] Building local translation provider: backend=%s base_url=%s model=%s",
@@ -112,9 +120,7 @@ def build_variant_provider(
             extra_body=local_llm.extra_body,
         )
     if variant == USER_VARIANT_OPENAI_COMPATIBLE:
-        base_url = openai_compatible.base_url.strip() or _preset_base_url(
-            openai_compatible.provider_key
-        )
+        base_url = _preset_base_url(openai_compatible.provider_key, openai_compatible.base_url)
         if not base_url or not openai_compatible.model.strip():
             return None
         logger.info(
@@ -130,8 +136,8 @@ def build_variant_provider(
     if variant == USER_VARIANT_ANTHROPIC:
         if not anthropic.model.strip():
             return None
-        base_url = anthropic.base_url.strip() or _preset_base_url(
-            anthropic.provider_key, protocol="anthropic"
+        base_url = _preset_base_url(
+            anthropic.provider_key, anthropic.base_url, protocol="anthropic"
         )
         logger.info(
             "[LLM] Building Anthropic provider: base_url=%s model=%s",

@@ -1,6 +1,11 @@
 {
   "version": "1.0",
   "providers": {
+    "koboldcpp": {
+      "label": "KoboldCpp",
+      "base_url": "http://127.0.0.1:5001/v1",
+      "backend": "koboldcpp"
+    },
     "colibri": {
       "label": "colibri",
       "base_url": "http://127.0.0.1:8000/v1",
@@ -30,11 +35,6 @@
       "label": "mlx-lm",
       "base_url": "http://127.0.0.1:8080/v1",
       "backend": "mlx"
-    },
-    "koboldcpp": {
-      "label": "KoboldCpp",
-      "base_url": "http://127.0.0.1:5001/v1",
-      "backend": "koboldcpp"
     },
     "textgen": {
       "label": "text-generation-webui",

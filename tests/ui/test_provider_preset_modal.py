@@ -21,6 +21,12 @@ class FakePage:
         self.pop_calls += 1
 
 
+def _action_labels(modal: ProviderPresetModal) -> list[str]:
+    body = modal.dialog.content.content.controls[-1]
+    actions = body.controls[-1]
+    return [button.content.value for button in actions.controls]
+
+
 def test_provider_preset_modal_add_edit_and_delete(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -28,12 +34,22 @@ def test_provider_preset_modal_add_edit_and_delete(
     path = tmp_path / "providers.json"
     monkeypatch.setattr(providers_registry, "ensure_providers_file", lambda protocol="openai": path)
     monkeypatch.setattr(providers_registry, "_PROVIDER_PRESETS_CACHE", None)
+    translations = {
+        "settings.provider_presets.cancel": "Cancel",
+        "settings.provider_presets.save": "Save",
+        "settings.provider_presets.delete": "Delete server",
+    }
+    monkeypatch.setattr(
+        "puripuly_heart.ui.components.provider_preset_modal.t",
+        lambda key, **kwargs: translations.get(key, key),
+    )
     page = FakePage()
     changes = []
     modal = ProviderPresetModal(page, lambda action, key: changes.append((action, key)))
 
     modal.open_add()
     assert page.dialog is not None
+    assert _action_labels(modal) == ["Cancel", "Save"]
     modal.name_field.value = "Custom server"
     modal.url_field.value = "http://127.0.0.1:5000/"
     modal._save(None)
@@ -42,6 +58,7 @@ def test_provider_preset_modal_add_edit_and_delete(
     assert page.pop_calls == 1
 
     modal.open_edit("custom-server")
+    assert _action_labels(modal) == ["Cancel", "Save"]
     modal.name_field.value = "Renamed"
     modal.url_field.value = "https://example.com/v1"
     modal._save(None)
@@ -50,6 +67,7 @@ def test_provider_preset_modal_add_edit_and_delete(
     assert providers_registry.load_provider_presets()["custom-server"].label == "Renamed"
 
     modal.open_delete("custom-server")
+    assert _action_labels(modal) == ["Cancel", "Delete server"]
     modal._delete(None)
 
     assert changes[-1] == ("delete", "custom-server")

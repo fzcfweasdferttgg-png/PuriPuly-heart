@@ -137,8 +137,6 @@ def test_backup_forms_commit_fields(
     pending = view.build_provider_apply_settings()
     assert pending is not None
     assert _edit_types(pending) >= {
-        BackupOpenAICompatibleProviderKeyEdit,
-        BackupOpenAICompatibleBaseUrlEdit,
         BackupOpenAICompatibleModelEdit,
         BackupLocalLlmBaseUrlEdit,
         BackupLocalLlmModelEdit,
@@ -329,18 +327,59 @@ def test_apply_locale_localizes_backup_and_openai_surfaces(
         i18n_module.set_locale(previous)
 
 
-def test_openai_form_layout_is_identical_for_translation_and_backup(
+def test_hosted_form_layout_is_identical_for_translation_and_backup(
     monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
 ) -> None:
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
 
-    primary = view._openai_form.controls
-    backup = view._backup_network_group.controls
-    assert [type(control) for control in primary] == [type(control) for control in backup]
-    assert [type(child) for child in primary[3].controls] == [
-        type(child) for child in backup[3].controls
-    ]
+    forms = (
+        view._openai_form,
+        view._backup_network_group,
+        view._anthropic_form,
+        view._backup_anthropic_group,
+    )
+    primary = forms[0].controls
+    for form in forms[1:]:
+        assert [type(control) for control in form.controls] == [
+            type(control) for control in primary
+        ]
+        for index in (2, 3, 4):
+            assert [type(child) for child in form.controls[index].controls] == [
+                type(child) for child in primary[index].controls
+            ]
+
+    field_rows = (
+        (view._openai_form, view._openai_base_url, view._openai_test_btn),
+        (view._backup_network_group, view._backup_base_url, view._backup_test_btn),
+        (view._anthropic_form, view._anthropic_base_url, view._anthropic_test_btn),
+        (
+            view._backup_anthropic_group,
+            view._backup_anthropic_base_url,
+            view._backup_anthropic_test_btn,
+        ),
+    )
+    for form, base_url, test_button in field_rows:
+        assert form.controls[3].controls[0] is base_url
+        assert form.controls[3].controls[1].content is test_button
+
+
+def test_registry_base_urls_are_visible_read_only_in_every_form(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+
+    fields = (
+        view._openai_base_url,
+        view._backup_base_url,
+        view._anthropic_base_url,
+        view._backup_anthropic_base_url,
+        view._local_llm_base_url,
+        view._backup_local_base_url,
+    )
+    assert all(field.visible for field in fields)
+    assert all(field.read_only for field in fields)
 
 
 def test_local_form_layout_is_identical_for_translation_and_backup(
@@ -424,13 +463,13 @@ def test_backup_provider_selection_commits_backup_edits(
     }
 
 
-def test_local_form_defaults_are_empty_and_errors_can_wrap(
+def test_local_form_default_model_is_empty_and_errors_can_wrap(
     monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
 ) -> None:
     view = _view(monkeypatch)
     settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
 
-    assert view._local_llm_base_url.value == ""
+    assert view._local_llm_base_url.value == settings_view.LOCAL_LLM_DEFAULT_BASE_URL
     assert view._local_llm_model.value == ""
     assert view._local_llm_base_url.error_max_lines == 4
     assert view._backup_local_base_url.error_max_lines == 4

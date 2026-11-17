@@ -86,6 +86,79 @@ def test_form_slot_row_selects_and_fills(
     assert view._openai_model.value == "saved-model"
 
 
+def test_form_slot_updates_mounted_fields_for_every_variant(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    updated = []
+    monkeypatch.setattr(
+        settings_view,
+        "_update_control_if_mounted",
+        lambda control: updated.append(control),
+    )
+    cases = (
+        (
+            "translation",
+            "openai_compatible",
+            ("_openai_provider", "_openai_base_url", "_openai_model"),
+        ),
+        ("backup", "openai_compatible", ("_backup_provider", "_backup_base_url", "_backup_model")),
+        (
+            "translation",
+            "anthropic",
+            ("_anthropic_provider", "_anthropic_base_url", "_anthropic_model"),
+        ),
+        (
+            "backup",
+            "anthropic",
+            ("_backup_anthropic_provider", "_backup_anthropic_base_url", "_backup_anthropic_model"),
+        ),
+        (
+            "translation",
+            "local_llm",
+            (
+                "_local_llm_provider",
+                "_local_llm_base_url",
+                "_local_llm_model",
+                "_local_llm_extra_body",
+            ),
+        ),
+        (
+            "backup",
+            "local_llm",
+            (
+                "_backup_local_provider",
+                "_backup_local_base_url",
+                "_backup_local_model",
+                "_backup_local_extra_body",
+            ),
+        ),
+    )
+
+    for card, variant, field_names in cases:
+        config = ProviderSlotConfig(
+            variant=variant,
+            provider_key="",
+            base_url="https://slot.example/v1",
+            model="saved-model",
+            extra_body_json="{}",
+            backend="ollama",
+        )
+        view._provider_slots_state[card] = ProviderCardSlots(
+            active=1,
+            slots=(config, None, None),
+        )
+        updated.clear()
+
+        view._on_form_slot_selected(card, 1)
+
+        for field_name in field_names:
+            assert getattr(view, field_name) in updated
+        assert getattr(view, field_names[1]).value == config.base_url
+        assert getattr(view, field_names[2]).value == config.model
+
+
 def test_quick_switch_applies_saved_slot(
     monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
 ) -> None:
@@ -210,6 +283,6 @@ def test_quick_switch_can_change_variant(
 
     view._on_quick_slot_selected("translation", 1)
 
-    assert view._local_llm_base_url.value == ""
+    assert view._local_llm_base_url.value == "http://127.0.0.1:11434"
     assert view._local_llm_model.value == "slot-model"
     assert view._provider_draft.local_llm_provider_key == "ollama"

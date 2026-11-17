@@ -188,7 +188,6 @@ from puripuly_heart.ui.components.settings.stt_engine_modal import (
 )
 from puripuly_heart.ui.components.provider_preset_modal import ProviderPresetModal
 from puripuly_heart.ui.components.provider_settings_window import (
-    ANTHROPIC_PROVIDER_WINDOW_HEIGHT,
     LOCAL_PROVIDER_WINDOW_HEIGHT,
     PROVIDER_WINDOW_HEIGHT,
 )
@@ -977,6 +976,7 @@ class SettingsView(ft.Column):
         *,
         title,
         provider,
+        base_url,
         model,
         fetch_btn,
         api_key,
@@ -988,10 +988,19 @@ class SettingsView(ft.Column):
             items.append(title)
         if slots_row is not None:
             items.append(slots_row)
+        items.append(ft.Container(height=4))
+        if provider is not None:
+            items.append(provider)
         items.extend(
             [
-                ft.Container(height=4),
-                provider,
+                ft.Row(
+                    [
+                        base_url,
+                        ft.Container(content=test_btn, height=64, alignment=ft.Alignment.CENTER),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
                 ft.Row(
                     [
                         model,
@@ -1001,7 +1010,6 @@ class SettingsView(ft.Column):
                     vertical_alignment=ft.CrossAxisAlignment.START,
                 ),
                 api_key,
-                test_btn,
             ]
         )
         return ft.Column(items, spacing=8, scroll=ft.ScrollMode.AUTO)
@@ -1017,28 +1025,16 @@ class SettingsView(ft.Column):
         slots_row=None,
         provider=None,
     ) -> ft.Column:
-        items: list[ft.Control] = []
-        if slots_row is not None:
-            items.append(slots_row)
-        if provider is not None:
-            items.append(provider)
-        items.extend(
-            [
-                ft.Container(height=4),
-                base_url,
-                ft.Row(
-                    [
-                        model,
-                        ft.Container(content=fetch_btn, height=64, alignment=ft.Alignment.CENTER),
-                    ],
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
-                ),
-                api_key,
-                test_btn,
-            ]
+        return self._compose_openai_form(
+            title=None,
+            slots_row=slots_row,
+            provider=provider,
+            base_url=base_url,
+            model=model,
+            fetch_btn=fetch_btn,
+            api_key=api_key,
+            test_btn=test_btn,
         )
-        return ft.Column(items, spacing=8, scroll=ft.ScrollMode.AUTO)
 
     def _compose_local_form(
         self,
@@ -1113,7 +1109,7 @@ class SettingsView(ft.Column):
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
             error_max_lines=4,
-            visible=False,
+            read_only=True,
             on_blur=self._on_openai_base_url_change_end,
             on_submit=self._on_openai_base_url_change_end,
         )
@@ -1173,6 +1169,7 @@ class SettingsView(ft.Column):
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
             error_max_lines=4,
+            read_only=True,
             on_blur=self._on_anthropic_base_url_change_end,
             on_submit=self._on_anthropic_base_url_change_end,
         )
@@ -1247,6 +1244,7 @@ class SettingsView(ft.Column):
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
             error_max_lines=4,
+            read_only=True,
             on_change=self._on_local_llm_field_change,
             on_blur=self._on_local_llm_base_url_change_end,
             on_submit=self._on_local_llm_base_url_change_end,
@@ -1350,6 +1348,7 @@ class SettingsView(ft.Column):
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
             error_max_lines=4,
+            read_only=True,
             on_blur=self._on_backup_anthropic_base_url_change_end,
             on_submit=self._on_backup_anthropic_base_url_change_end,
         )
@@ -1414,6 +1413,7 @@ class SettingsView(ft.Column):
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
             error_max_lines=4,
+            read_only=True,
             on_change=self._on_backup_local_field_change,
             on_blur=self._on_backup_local_base_url_change_end,
             on_submit=self._on_backup_local_base_url_change_end,
@@ -1527,7 +1527,7 @@ class SettingsView(ft.Column):
             text_size=24,
             color=COLOR_NEUTRAL_DARK,
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
-            visible=False,
+            read_only=True,
             on_blur=self._on_backup_base_url_change_end,
             on_submit=self._on_backup_base_url_change_end,
         )
@@ -1570,6 +1570,7 @@ class SettingsView(ft.Column):
             title=None,
             slots_row=self._backup_slots_row,
             provider=self._backup_provider_row,
+            base_url=self._backup_base_url,
             model=self._backup_model,
             fetch_btn=self._backup_fetch_btn,
             api_key=self._backup_api_key,
@@ -1680,6 +1681,7 @@ class SettingsView(ft.Column):
                 title=None,
                 slots_row=self._openai_slots_row,
                 provider=self._openai_provider_row,
+                base_url=self._openai_base_url,
                 model=self._openai_model,
                 fetch_btn=self._openai_fetch_btn,
                 api_key=self._openai_api_key,
@@ -1744,24 +1746,9 @@ class SettingsView(ft.Column):
             return
         display = self._provider_draft or self._provider_snapshot
         self._sync_translation_selection_controls(display)
-        self._local_llm_base_url.value = (
-            ""
-            if display.local_llm_base_url == LOCAL_LLM_DEFAULT_BASE_URL
-            else display.local_llm_base_url
-        )
-        self._local_llm_model.value = (
-            "" if display.local_llm_model == LOCAL_LLM_DEFAULT_MODEL else display.local_llm_model
-        )
-        self._anthropic_base_url.value = display.anthropic_base_url
-        self._anthropic_model.value = display.anthropic_model
-        self._backup_anthropic_base_url.value = display.backup_anthropic_base_url
-        self._backup_anthropic_model.value = display.backup_anthropic_model
-        self._local_llm_extra_body.value = display.local_llm_extra_body_json
         self._clear_local_llm_extra_body_error()
         self._clear_backup_local_extra_body_error()
-        if kind in {"translation_anthropic", "backup_anthropic"}:
-            window_height = ANTHROPIC_PROVIDER_WINDOW_HEIGHT
-        elif kind in {"translation_local", "backup_local"}:
+        if kind in {"translation_local", "backup_local"}:
             window_height = LOCAL_PROVIDER_WINDOW_HEIGHT
         window.open(
             schedule,
@@ -2118,6 +2105,7 @@ class SettingsView(ft.Column):
             base.value = config.base_url
             model.value = config.model
             extra.value = config.extra_body_json
+            controls = (provider, base, model, extra)
         elif config.variant == TranslationModel.ANTHROPIC.value:
             provider = self._backup_anthropic_provider if is_backup else self._anthropic_provider
             base = self._backup_anthropic_base_url if is_backup else self._anthropic_base_url
@@ -2125,6 +2113,7 @@ class SettingsView(ft.Column):
             provider.value = config.provider_key
             base.value = config.base_url
             model.value = config.model
+            controls = (provider, base, model)
         else:
             provider = self._backup_provider if is_backup else self._openai_provider
             base_url = self._backup_base_url if is_backup else self._openai_base_url
@@ -2134,12 +2123,15 @@ class SettingsView(ft.Column):
             )
             base_url.value = config.base_url
             model.value = config.model
+            controls = (provider, base_url, model)
+        for control in controls:
+            _update_control_if_mounted(control)
 
     def _local_slot_backend(self, config) -> str:
         if config.backend:
             return config.backend
         preset = load_provider_presets("local").get(config.provider_key)
-        return preset.backend if preset is not None else "ollama"
+        return preset.backend if preset is not None else "koboldcpp"
 
     def _apply_provider_slot_as_current(self, card: str, config) -> None:
         if card == "backup":
@@ -3408,6 +3400,7 @@ class SettingsView(ft.Column):
             title=None,
             slots_row=self._openai_slots_row,
             provider=self._openai_provider_row,
+            base_url=self._openai_base_url,
             model=self._openai_model,
             fetch_btn=self._openai_fetch_btn,
             api_key=self._openai_api_key,
@@ -4565,7 +4558,6 @@ class SettingsView(ft.Column):
             return
         raw_value = (self._local_llm_base_url.value or "").strip()
         if not raw_value:
-            # Masked display: an empty field means the default local endpoint.
             normalized = LOCAL_LLM_DEFAULT_BASE_URL
         else:
             try:
@@ -4576,12 +4568,13 @@ class SettingsView(ft.Column):
                 return
 
         self._local_llm_base_url.error = None
-        self._local_llm_base_url.value = (
-            "" if normalized == LOCAL_LLM_DEFAULT_BASE_URL else normalized
-        )
+        self._local_llm_base_url.value = normalized
         current = self._provider_draft or self._provider_snapshot
         selected = load_provider_presets("local").get(current.local_llm_provider_key)
-        url_changed = current.local_llm_base_url != normalized
+        current_base_url = current.local_llm_base_url or (
+            selected.base_url if selected is not None else ""
+        )
+        url_changed = current_base_url != normalized
         self._commit_local_field("base_url", normalized)
         if selected is None or selected.base_url != normalized:
             self._commit_local_field("provider_key", "")
@@ -4907,19 +4900,8 @@ class SettingsView(ft.Column):
             self._backup_translation_text,
             self._backup_display_label(display_provider),
         )
-        self._local_llm_base_url.value = (
-            ""
-            if display_provider.local_llm_base_url == LOCAL_LLM_DEFAULT_BASE_URL
-            else display_provider.local_llm_base_url
-        )
         self._local_llm_base_url.error = None
-        self._local_llm_model.value = (
-            ""
-            if display_provider.local_llm_model == LOCAL_LLM_DEFAULT_MODEL
-            else display_provider.local_llm_model
-        )
         self._local_llm_model.error = None
-        self._local_llm_extra_body.value = display_provider.local_llm_extra_body_json
         self._clear_local_llm_extra_body_error()
 
         # Audio Settings
@@ -5614,34 +5596,43 @@ class SettingsView(ft.Column):
             self._backup_translation_text,
             self._backup_display_label(settings),
         )
-        self._openai_base_url.value = settings.openai_compatible_base_url
-        self._openai_model.value = settings.openai_compatible_model
         self._openai_provider.value = self._provider_dropdown_value(
             settings.openai_compatible_provider_key,
             settings.openai_compatible_base_url,
         )
-        self._backup_base_url.value = settings.backup_base_url
-        self._backup_model.value = settings.backup_model
+        self._openai_base_url.value = settings.openai_compatible_base_url
+        self._openai_model.value = settings.openai_compatible_model
         self._backup_provider.value = self._provider_dropdown_value(
             settings.backup_provider_key,
             settings.backup_base_url,
         )
+        self._backup_base_url.value = settings.backup_base_url
+        self._backup_model.value = settings.backup_model
         self._anthropic_provider.value = self._provider_dropdown_value(
             settings.anthropic_provider_key,
             settings.anthropic_base_url,
             protocol="anthropic",
         )
+        self._anthropic_base_url.value = settings.anthropic_base_url
+        self._anthropic_model.value = settings.anthropic_model
         self._backup_anthropic_provider.value = self._provider_dropdown_value(
             settings.backup_anthropic_provider_key,
             settings.backup_anthropic_base_url,
             protocol="anthropic",
         )
+        self._backup_anthropic_base_url.value = settings.backup_anthropic_base_url
+        self._backup_anthropic_model.value = settings.backup_anthropic_model
         self._local_llm_provider.value = self._provider_dropdown_value(
             settings.local_llm_provider_key,
             settings.local_llm_base_url,
             protocol="local",
             backend=settings.local_llm_backend,
         )
+        self._local_llm_base_url.value = settings.local_llm_base_url
+        self._local_llm_model.value = (
+            "" if settings.local_llm_model == LOCAL_LLM_DEFAULT_MODEL else settings.local_llm_model
+        )
+        self._local_llm_extra_body.value = settings.local_llm_extra_body_json
         self._backup_local_provider.value = self._provider_dropdown_value(
             settings.backup_local_provider_key,
             settings.backup_local_base_url,
@@ -5651,6 +5642,19 @@ class SettingsView(ft.Column):
         self._backup_local_base_url.value = settings.backup_local_base_url
         self._backup_local_model.value = settings.backup_local_model
         self._backup_local_extra_body.value = settings.backup_local_extra_body_json
+        for protocol, provider, base_url in (
+            ("openai", self._openai_provider, self._openai_base_url),
+            ("openai", self._backup_provider, self._backup_base_url),
+            ("anthropic", self._anthropic_provider, self._anthropic_base_url),
+            ("anthropic", self._backup_anthropic_provider, self._backup_anthropic_base_url),
+            ("local", self._local_llm_provider, self._local_llm_base_url),
+            ("local", self._backup_local_provider, self._backup_local_base_url),
+        ):
+            if (base_url.value or "").strip():
+                continue
+            preset = load_provider_presets(protocol).get((provider.value or "").strip())
+            if preset is not None:
+                base_url.value = preset.base_url
         self._clear_backup_local_extra_body_error()
 
     def _provider_snapshot_with_translation(
@@ -6056,7 +6060,10 @@ class SettingsView(ft.Column):
         self._backup_local_base_url.value = normalized
         current = self._provider_draft or self._provider_snapshot
         selected = load_provider_presets("local").get(current.backup_local_provider_key)
-        url_changed = current.backup_local_base_url != normalized
+        current_base_url = current.backup_local_base_url or (
+            selected.base_url if selected is not None else ""
+        )
+        url_changed = current_base_url != normalized
         self._commit_backup_field("local_base_url", normalized)
         if selected is None or selected.base_url != normalized:
             self._commit_backup_field("local_provider_key", "")
@@ -6253,7 +6260,18 @@ class SettingsView(ft.Column):
                 protocol != "local" or not backend or preset.backend == backend
             ):
                 return candidate
-        if not base_url and protocol != "local":
+        if not base_url:
+            if protocol == "local" and backend:
+                for candidate, preset in presets.items():
+                    if preset.backend == backend:
+                        return candidate
+            default_key = {
+                "openai": "openai",
+                "anthropic": "anthropic",
+                "local": "koboldcpp",
+            }[protocol]
+            if default_key in presets:
+                return default_key
             return next(iter(presets), None)
         return None
 

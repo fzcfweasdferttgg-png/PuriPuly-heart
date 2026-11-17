@@ -305,7 +305,7 @@ def _provider_from_resolved_target(
 
     if target.provider == PROVIDER_LOCAL_LLM:
         api_key = (secrets.get("local_llm_api_key") or "").strip()
-        backend = str(target.provider_options.get("backend") or "ollama")
+        backend = str(target.provider_options.get("backend") or "koboldcpp")
         return LLMLibLocalLLMProvider(
             backend=backend,
             base_url=target.base_url or "http://127.0.0.1:11434",

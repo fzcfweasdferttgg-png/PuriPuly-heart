@@ -185,6 +185,20 @@ def test_local_provider_list_contains_twelve_llm_lib_addresses() -> None:
     assert all(info["backend"] == key for key, info in data["providers"].items())
 
 
+def test_bundled_provider_defaults_are_first() -> None:
+    expected = {
+        "openai": ("openai", "https://api.openai.com/v1"),
+        "anthropic": ("anthropic", "https://api.anthropic.com"),
+        "local": ("koboldcpp", "http://127.0.0.1:5001/v1"),
+    }
+
+    for protocol, (key, base_url) in expected.items():
+        path = providers_registry._bundled_providers_path(protocol)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert next(iter(data["providers"])) == key
+        assert data["providers"][key]["base_url"] == base_url
+
+
 def test_local_registry_crud_does_not_touch_other_registries(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

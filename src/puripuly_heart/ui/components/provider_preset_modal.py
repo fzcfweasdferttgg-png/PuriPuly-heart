@@ -81,8 +81,8 @@ class ProviderPresetModal:
                     ft.Container(height=12),
                     ft.Row(
                         [
-                            self._button(t("settings.cancel"), self._close),
-                            self._button(t("settings.delete"), self._delete),
+                            self._button(t("settings.provider_presets.cancel"), self._close),
+                            self._button(t("settings.provider_presets.delete"), self._delete),
                         ],
                         alignment=ft.MainAxisAlignment.END,
                     ),
@@ -121,8 +121,8 @@ class ProviderPresetModal:
                     ft.Container(height=8),
                     ft.Row(
                         [
-                            self._button(t("settings.cancel"), self._close),
-                            self._button(t("settings.save"), self._save),
+                            self._button(t("settings.provider_presets.cancel"), self._close),
+                            self._button(t("settings.provider_presets.save"), self._save),
                         ],
                         alignment=ft.MainAxisAlignment.END,
                     ),
