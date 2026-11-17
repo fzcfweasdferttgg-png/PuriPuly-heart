@@ -843,27 +843,30 @@ class SettingsView(ft.Column):
         preset = load_provider_presets(self._provider_protocol(card)).get(key)
         if preset is None:
             return
+        current = self._provider_draft or self._provider_snapshot
+        if current is None:
+            return
         old_backend = ""
         if card == "anthropic":
             base = self._anthropic_base_url
-            old_url = self._provider_draft.anthropic_base_url
+            old_url = current.anthropic_base_url
         elif card == "backup_anthropic":
             base = self._backup_anthropic_base_url
-            old_url = self._provider_draft.backup_anthropic_base_url
+            old_url = current.backup_anthropic_base_url
         elif card == "local":
             base = self._local_llm_base_url
-            old_url = self._provider_draft.local_llm_base_url
-            old_backend = self._provider_draft.local_llm_backend
+            old_url = current.local_llm_base_url
+            old_backend = current.local_llm_backend
         elif card == "backup_local":
             base = self._backup_local_base_url
-            old_url = self._provider_draft.backup_local_base_url
-            old_backend = self._provider_draft.backup_local_backend
+            old_url = current.backup_local_base_url
+            old_backend = current.backup_local_backend
         elif card == "backup":
             base = self._backup_base_url
-            old_url = self._provider_draft.backup_base_url
+            old_url = current.backup_base_url
         else:
             base = self._openai_base_url
-            old_url = self._provider_draft.openai_compatible_base_url
+            old_url = current.openai_compatible_base_url
         base.value = preset.base_url
         _update_control_if_mounted(base)
         if old_url != preset.base_url or old_backend != preset.backend:
@@ -1637,9 +1640,6 @@ class SettingsView(ft.Column):
                 or not other_window.is_open
             ):
                 continue
-            self._provider_dialog_kinds.pop(card, None)
-            self._provider_dialog_edits_before.pop(card, None)
-            self._provider_dialog_draft_before.pop(card, None)
             schedule(other_window.close)
 
     def _open_provider_settings_dialog(self, kind: str) -> None:
@@ -1664,8 +1664,14 @@ class SettingsView(ft.Column):
             return
         self._close_other_provider_settings_windows(card, kind, schedule)
         self._provider_dialog_kinds[card] = kind
-        self._provider_dialog_edits_before[card] = dict(self._provider_edits)
-        self._provider_dialog_draft_before[card] = self._provider_draft
+        # Keep the earliest baseline when a previous same-card dialog was
+        # abandoned by a variant switch: its close callback can no longer
+        # revert (the dialog kind changed), so the chain must survive until
+        # the next close-without-Accept discards everything staged since.
+        if card not in self._provider_dialog_edits_before:
+            self._provider_dialog_edits_before[card] = dict(self._provider_edits)
+        if card not in self._provider_dialog_draft_before:
+            self._provider_dialog_draft_before[card] = self._provider_draft
         window_height = PROVIDER_WINDOW_HEIGHT
         if kind == "translation_openai":
             self._build_openai_form_controls()
@@ -1772,30 +1778,69 @@ class SettingsView(ft.Column):
     def _commit_openai_fields_from_controls(self) -> None:
         if self._provider_snapshot is None:
             return
+        self._commit_openai_field("provider_key", self._openai_provider.value or "")
         self._commit_openai_field("base_url", self._openai_base_url.value or "")
         self._commit_openai_field("model", self._openai_model.value or "")
 
     def _commit_anthropic_fields_from_controls(self) -> None:
         if self._provider_snapshot is None:
             return
+        self._commit_anthropic_field("provider_key", self._anthropic_provider.value or "")
         self._commit_anthropic_field("base_url", self._anthropic_base_url.value or "")
         self._commit_anthropic_field("model", self._anthropic_model.value or "")
 
     def _commit_backup_fields_from_controls(self) -> None:
         if self._provider_snapshot is None:
             return
+        self._commit_backup_field("provider_key", self._backup_provider.value or "")
         self._commit_backup_field("base_url", self._backup_base_url.value or "")
         self._commit_backup_field("model", self._backup_model.value or "")
+        self._commit_backup_anthropic_field(
+            "provider_key", self._backup_anthropic_provider.value or ""
+        )
         self._commit_backup_anthropic_field(
             "base_url", self._backup_anthropic_base_url.value or ""
         )
         self._commit_backup_anthropic_field("model", self._backup_anthropic_model.value or "")
+
+    def _dialog_variant(self, card: str, kind: str | None) -> str | None:
+        """Variant a dialog Accept would write: dialog kind, or backup selection."""
+        kind = kind or self._provider_dialog_kinds.get(card, "")
+        if kind == "translation_local":
+            return TranslationModel.LOCAL_LLM.value
+        if kind == "translation_openai":
+            return TranslationModel.OPENAI_COMPATIBLE.value
+        if kind == "translation_anthropic":
+            return TranslationModel.ANTHROPIC.value
+        display = self._provider_draft or self._provider_snapshot
+        if display is None:
+            return None
+        return normalize_translation_model(display.backup_variant).value
 
     def _accept_provider_settings_dialog(
         self, card: str = "translation", kind: str | None = None
     ) -> None:
         """Accept button: save the slot, commit staged form values and apply them."""
         if kind is not None and self._provider_dialog_kinds.get(card) != kind:
+            return
+        self._ensure_provider_slots_loaded()
+        state = self._provider_slots_state.get(card)
+        active_slot = state.slot(state.active) if state is not None else None
+        variant = self._dialog_variant(card, kind)
+        if (
+            active_slot is not None
+            and not active_slot.is_empty
+            and variant is not None
+            and active_slot.variant != variant
+        ):
+            # Accept with an activated slot of a different variant: switch to
+            # that slot atomically (variant + fields) instead of overwriting
+            # its saved configuration with this dialog's fields.
+            self._provider_dialog_edits_before.pop(card, None)
+            self._provider_dialog_draft_before.pop(card, None)
+            self._provider_dialog_kinds.pop(card, None)
+            self._apply_provider_slot_to_controls(card, active_slot)
+            self._apply_provider_slot_as_current(card, active_slot)
             return
         self._save_dialog_slot(card)
         if card == "backup":
@@ -1935,7 +1980,7 @@ class SettingsView(ft.Column):
                 else self._local_llm_extra_body
             )
             provider.value = self._provider_dropdown_value(
-                config.provider_key, config.base_url, protocol="local"
+                config.provider_key, config.base_url, protocol="local", backend=config.backend
             )
             base.value = config.base_url
             model.value = config.model
@@ -2040,6 +2085,7 @@ class SettingsView(ft.Column):
                 else self._local_llm_extra_body
             )
             current = self._provider_draft or self._provider_snapshot
+            selected_preset = load_provider_presets("local").get((provider.value or "").strip())
             config = ProviderSlotConfig(
                 variant=variant,
                 provider_key=(provider.value or "").strip(),
@@ -2047,9 +2093,13 @@ class SettingsView(ft.Column):
                 model=(model.value or "").strip(),
                 extra_body_json=(extra.value or "").strip(),
                 backend=(
-                    current.backup_local_backend
-                    if is_backup
-                    else current.local_llm_backend
+                    selected_preset.backend
+                    if selected_preset is not None
+                    else (
+                        current.backup_local_backend
+                        if is_backup
+                        else current.local_llm_backend
+                    )
                 ),
             )
         else:
@@ -4390,11 +4440,16 @@ class SettingsView(ft.Column):
         )
         current = self._provider_draft or self._provider_snapshot
         selected = load_provider_presets("local").get(current.local_llm_provider_key)
+        url_changed = current.local_llm_base_url != normalized
         self._commit_local_field("base_url", normalized)
         if selected is None or selected.base_url != normalized:
             self._commit_local_field("provider_key", "")
             self._local_llm_provider.value = None
             _update_control_if_mounted(self._local_llm_provider)
+        if url_changed:
+            self._local_llm_model.value = ""
+            self._commit_local_field("model", "")
+            _update_control_if_mounted(self._local_llm_model)
         _update_control_if_mounted(self._local_llm_base_url)
 
     def _on_local_llm_model_change_end(self, e) -> None:
@@ -4483,7 +4538,14 @@ class SettingsView(ft.Column):
         current = self._provider_draft or self._provider_snapshot
         if current.llm_provider != LLMProviderName.LOCAL_LLM:
             return
+        provider_key = (self._local_llm_provider.value or "").strip()
+        selected = load_provider_presets("local").get(provider_key)
+        self._commit_local_field("provider_key", provider_key)
+        if selected is not None:
+            self._commit_local_field("backend", selected.backend)
+        model = self._local_llm_model.value
         self._on_local_llm_base_url_change_end(None)
+        self._local_llm_model.value = model
         self._on_local_llm_model_change_end(None)
         self._on_local_llm_extra_body_change_end(None)
 
@@ -4673,6 +4735,7 @@ class SettingsView(ft.Column):
         )
         self._update_api_visibility()
         self._sync_gpu_device_card()
+        self._sync_translation_selection_controls(display_provider)
 
         # LLM Provider
         self._set_unit_card_value_text(
@@ -5420,11 +5483,13 @@ class SettingsView(ft.Column):
             settings.local_llm_provider_key,
             settings.local_llm_base_url,
             protocol="local",
+            backend=settings.local_llm_backend,
         )
         self._backup_local_provider.value = self._provider_dropdown_value(
             settings.backup_local_provider_key,
             settings.backup_local_base_url,
             protocol="local",
+            backend=settings.backup_local_backend,
         )
         self._backup_local_base_url.value = settings.backup_local_base_url
         self._backup_local_model.value = settings.backup_local_model
@@ -5718,13 +5783,33 @@ class SettingsView(ft.Column):
         self.has_provider_changes = True
 
     def _on_openai_base_url_change_end(self, e) -> None:
-        self._commit_openai_field("base_url", getattr(e.control, "value", ""))
+        current = self._provider_draft or self._provider_snapshot
+        if current is None:
+            return
+        normalized = getattr(e.control, "value", "").strip()
+        selected = load_provider_presets().get(current.openai_compatible_provider_key)
+        self._commit_openai_field("base_url", normalized)
+        if current.openai_compatible_provider_key and (
+            selected is None or selected.base_url != normalized
+        ):
+            self._commit_openai_field("provider_key", "")
+            self._openai_provider.value = None
+            _update_control_if_mounted(self._openai_provider)
 
     def _on_openai_model_change_end(self, e) -> None:
         self._commit_openai_field("model", getattr(e.control, "value", ""))
 
     def _on_backup_base_url_change_end(self, e) -> None:
-        self._commit_backup_field("base_url", getattr(e.control, "value", ""))
+        current = self._provider_draft or self._provider_snapshot
+        if current is None:
+            return
+        normalized = getattr(e.control, "value", "").strip()
+        selected = load_provider_presets().get(current.backup_provider_key)
+        self._commit_backup_field("base_url", normalized)
+        if current.backup_provider_key and (selected is None or selected.base_url != normalized):
+            self._commit_backup_field("provider_key", "")
+            self._backup_provider.value = None
+            _update_control_if_mounted(self._backup_provider)
 
     def _on_backup_model_change_end(self, e) -> None:
         self._commit_backup_field("model", getattr(e.control, "value", ""))
@@ -5764,13 +5849,33 @@ class SettingsView(ft.Column):
         self.has_provider_changes = True
 
     def _on_anthropic_base_url_change_end(self, e) -> None:
-        self._commit_anthropic_field("base_url", getattr(e.control, "value", ""))
+        current = self._provider_draft or self._provider_snapshot
+        if current is None:
+            return
+        normalized = getattr(e.control, "value", "").strip()
+        selected = load_provider_presets("anthropic").get(current.anthropic_provider_key)
+        self._commit_anthropic_field("base_url", normalized)
+        if current.anthropic_provider_key and (selected is None or selected.base_url != normalized):
+            self._commit_anthropic_field("provider_key", "")
+            self._anthropic_provider.value = None
+            _update_control_if_mounted(self._anthropic_provider)
 
     def _on_anthropic_model_change_end(self, e) -> None:
         self._commit_anthropic_field("model", getattr(e.control, "value", ""))
 
     def _on_backup_anthropic_base_url_change_end(self, e) -> None:
-        self._commit_backup_anthropic_field("base_url", getattr(e.control, "value", ""))
+        current = self._provider_draft or self._provider_snapshot
+        if current is None:
+            return
+        normalized = getattr(e.control, "value", "").strip()
+        selected = load_provider_presets("anthropic").get(current.backup_anthropic_provider_key)
+        self._commit_backup_anthropic_field("base_url", normalized)
+        if current.backup_anthropic_provider_key and (
+            selected is None or selected.base_url != normalized
+        ):
+            self._commit_backup_anthropic_field("provider_key", "")
+            self._backup_anthropic_provider.value = None
+            _update_control_if_mounted(self._backup_anthropic_provider)
 
     def _on_backup_anthropic_model_change_end(self, e) -> None:
         self._commit_backup_anthropic_field("model", getattr(e.control, "value", ""))
@@ -5790,11 +5895,16 @@ class SettingsView(ft.Column):
         self._backup_local_base_url.value = normalized
         current = self._provider_draft or self._provider_snapshot
         selected = load_provider_presets("local").get(current.backup_local_provider_key)
+        url_changed = current.backup_local_base_url != normalized
         self._commit_backup_field("local_base_url", normalized)
         if selected is None or selected.base_url != normalized:
             self._commit_backup_field("local_provider_key", "")
             self._backup_local_provider.value = None
             _update_control_if_mounted(self._backup_local_provider)
+        if url_changed:
+            self._backup_local_model.value = ""
+            self._commit_backup_field("local_model", "")
+            _update_control_if_mounted(self._backup_local_model)
         _update_control_if_mounted(self._backup_local_base_url)
 
     def _on_backup_local_model_change_end(self, e) -> None:
@@ -5901,7 +6011,14 @@ class SettingsView(ft.Column):
             return
         if normalize_translation_model(current.backup_variant) != TranslationModel.LOCAL_LLM:
             return
+        provider_key = (self._backup_local_provider.value or "").strip()
+        selected = load_provider_presets("local").get(provider_key)
+        self._commit_backup_field("local_provider_key", provider_key)
+        if selected is not None:
+            self._commit_backup_field("local_backend", selected.backend)
+        model = self._backup_local_model.value
         self._on_backup_local_base_url_change_end(None)
+        self._backup_local_model.value = model
         self._on_backup_local_model_change_end(None)
         self._on_backup_local_extra_body_change_end(None)
 
@@ -5951,19 +6068,25 @@ class SettingsView(ft.Column):
             self.on_local_llm_secret_changed()
 
     def _provider_dropdown_value(
-        self, provider_key: str, base_url: str, *, protocol: str = "openai"
+        self, provider_key: str, base_url: str, *, protocol: str = "openai", backend: str = ""
     ) -> str | None:
         from puripuly_heart.config.providers_registry import load_provider_presets
 
         presets = load_provider_presets(protocol)
-        if provider_key in presets:
-            return provider_key
-        for key, preset in presets.items():
-            if preset.base_url == base_url:
+        key = provider_key.strip()
+        if key:
+            preset = presets.get(key)
+            if preset is not None and (not base_url or preset.base_url == base_url):
                 return key
-        if protocol == "local":
             return None
-        return next(iter(presets), None)
+        for candidate, preset in presets.items():
+            if preset.base_url == base_url and (
+                protocol != "local" or not backend or preset.backend == backend
+            ):
+                return candidate
+        if not base_url and protocol != "local":
+            return next(iter(presets), None)
+        return None
 
     def _on_openai_provider_change(self, e) -> None:
         value = getattr(e, "data", None) or getattr(getattr(e, "control", None), "value", None)

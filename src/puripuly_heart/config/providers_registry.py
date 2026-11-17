@@ -4,7 +4,8 @@ Each registry ships bundled and is copied to the user config directory on
 first use; the user copy is authoritative and may be edited or extended.
 The settings UI can add, rename, edit, and delete entries, with at most 50
 records. Format:
-{"version": "1.0", "providers": {key: {"label", "base_url"}}}.
+{"version": "1.0", "providers": {key: {"label", "base_url", "backend"?}}}.
+Writes are serialized across threads and processes and use unique temporary files.
 """
 
 from __future__ import annotations
@@ -13,8 +14,12 @@ import json
 import logging
 import re
 import shutil
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
+
+from filelock import FileLock
 
 from puripuly_heart.config.paths import user_config_dir
 from puripuly_heart.config.provider_values import normalize_local_llm_base_url
@@ -168,7 +173,7 @@ def _write_provider_document(path: Path, data: dict, providers: dict) -> None:
     global _PROVIDER_PRESETS_CACHE
 
     data["providers"] = providers
-    temporary = path.with_name(f"{path.name}.tmp")
+    temporary = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(
@@ -246,6 +251,13 @@ def _validated_backend(
     return DEFAULT_LOCAL_PROVIDER_BACKEND
 
 
+@contextmanager
+def _provider_write_transaction(protocol: str):
+    path = ensure_providers_file(protocol)
+    with FileLock(str(path) + ".lock"):
+        yield _provider_document_for_write(protocol)
+
+
 def add_provider_preset(
     label: str,
     base_url: str,
@@ -253,23 +265,23 @@ def add_provider_preset(
     protocol: str = "openai",
     backend: str | None = None,
 ) -> ProviderPreset:
-    path, data, providers = _provider_document_for_write(protocol)
-    if len(providers) >= MAX_PROVIDER_PRESETS:
-        raise ProviderPresetError("limit")
-    normalized_label, normalized_url = _validated_preset_fields(label, base_url, providers)
-    key = _new_provider_preset_key(normalized_label, providers)
-    normalized_backend = _validated_backend(protocol, backend, providers, current_key=key)
-    record = {"label": normalized_label, "base_url": normalized_url}
-    if normalized_backend:
-        record["backend"] = normalized_backend
-    providers[key] = record
-    _write_provider_document(path, data, providers)
-    return ProviderPreset(
-        key=key,
-        label=normalized_label,
-        base_url=normalized_url,
-        backend=normalized_backend,
-    )
+    with _provider_write_transaction(protocol) as (path, data, providers):
+        if len(providers) >= MAX_PROVIDER_PRESETS:
+            raise ProviderPresetError("limit")
+        normalized_label, normalized_url = _validated_preset_fields(label, base_url, providers)
+        key = _new_provider_preset_key(normalized_label, providers)
+        normalized_backend = _validated_backend(protocol, backend, providers, current_key=key)
+        record = {"label": normalized_label, "base_url": normalized_url}
+        if normalized_backend:
+            record["backend"] = normalized_backend
+        providers[key] = record
+        _write_provider_document(path, data, providers)
+        return ProviderPreset(
+            key=key,
+            label=normalized_label,
+            base_url=normalized_url,
+            backend=normalized_backend,
+        )
 
 
 def update_provider_preset(
@@ -280,35 +292,35 @@ def update_provider_preset(
     protocol: str = "openai",
     backend: str | None = None,
 ) -> ProviderPreset:
-    path, data, providers = _provider_document_for_write(protocol)
-    if key not in providers:
-        raise ProviderPresetError("not_found")
-    normalized_label, normalized_url = _validated_preset_fields(
-        label, base_url, providers, current_key=key
-    )
-    normalized_backend = _validated_backend(protocol, backend, providers, current_key=key)
-    record = {"label": normalized_label, "base_url": normalized_url}
-    if normalized_backend:
-        record["backend"] = normalized_backend
-    providers[key] = record
-    _write_provider_document(path, data, providers)
-    return ProviderPreset(
-        key=key,
-        label=normalized_label,
-        base_url=normalized_url,
-        backend=normalized_backend,
-    )
+    with _provider_write_transaction(protocol) as (path, data, providers):
+        if key not in providers:
+            raise ProviderPresetError("not_found")
+        normalized_label, normalized_url = _validated_preset_fields(
+            label, base_url, providers, current_key=key
+        )
+        normalized_backend = _validated_backend(protocol, backend, providers, current_key=key)
+        record = {"label": normalized_label, "base_url": normalized_url}
+        if normalized_backend:
+            record["backend"] = normalized_backend
+        providers[key] = record
+        _write_provider_document(path, data, providers)
+        return ProviderPreset(
+            key=key,
+            label=normalized_label,
+            base_url=normalized_url,
+            backend=normalized_backend,
+        )
 
 
 def delete_provider_preset(key: str, *, protocol: str = "openai") -> ProviderPreset:
-    path, data, providers = _provider_document_for_write(protocol)
-    if key not in providers:
-        raise ProviderPresetError("not_found")
-    info = providers.pop(key)
-    _write_provider_document(path, data, providers)
-    return ProviderPreset(
-        key=key,
-        label=str(info.get("label", key)),
-        base_url=str(info.get("base_url", "")),
-        backend=_loaded_backend(key, info, protocol),
-    )
+    with _provider_write_transaction(protocol) as (path, data, providers):
+        if key not in providers:
+            raise ProviderPresetError("not_found")
+        info = providers.pop(key)
+        _write_provider_document(path, data, providers)
+        return ProviderPreset(
+            key=key,
+            label=str(info.get("label", key)),
+            base_url=str(info.get("base_url", "")),
+            backend=_loaded_backend(key, info, protocol),
+        )

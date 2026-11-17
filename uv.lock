@@ -1028,6 +1028,7 @@ version = "2.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "filelock" },
     { name = "flet" },
     { name = "flet-desktop" },
     { name = "hf-xet" },
@@ -1082,6 +1083,7 @@ requires-dist = [
     { name = "anthropic", specifier = "==2.8.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.10.1" },
     { name = "cmake", marker = "extra == 'build'", specifier = ">=3.31" },
+    { name = "filelock", specifier = ">=3.20.3" },
     { name = "flet", specifier = "==1.0.5" },
     { name = "flet-cli", marker = "extra == 'build'", specifier = "==1.0.5" },
     { name = "flet-desktop", specifier = "==1.0.5" },

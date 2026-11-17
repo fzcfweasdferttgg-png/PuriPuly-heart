@@ -1,9 +1,9 @@
 """LLM provider factory.
 
-Only two translation backends remain in this build: LLM-lib local servers
-and the local managed Gemma runtime. The cloud
-providers (DeepSeek, Qwen, OpenAI, OpenRouter, ChatGPT plan, index-
-translate) and the managed OpenRouter release path were removed.
+Direct translation uses OpenAI-compatible and Anthropic SDK providers,
+LLM-lib local servers, or the managed Gemma runtime. Legacy cloud providers
+(DeepSeek, Qwen, OpenRouter, ChatGPT plan, index-translate) and the managed
+OpenRouter release path were removed.
 """
 
 from __future__ import annotations

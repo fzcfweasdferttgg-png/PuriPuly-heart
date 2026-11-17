@@ -75,6 +75,10 @@ protocol boundaries, and the pinned LLM-lib integration.
 
 ## Development
 
+Clone with Git LFS installed and run `git lfs pull`. The CUDA worker libraries
+are stored in Git LFS; a clone without those objects contains only pointer files.
+The LFS endpoint is configured in `.lfsconfig`.
+
 The project requires Python 3.14 and uses `pyproject.toml` and `uv.lock` for
 dependency management. The development environment is intentionally excluded
 from Git. To create it inside the portable folder with `uv`, use PowerShell:
@@ -163,7 +167,6 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 - [x] Add Anthropic entries to the primary and backup picker lists and connect their forms, gears, slots, and independent windows.
 - [x] Integrate commit-pinned LLM-lib only for Other servers, including native Ollama `/api/chat` and per-server backend selection.
 - [ ] Add configurable workload-to-backend assignment for self and peer speech recognition, allowing each channel to run on CPU, Vulkan, or CUDA and either share one model instance or use separate model instances.
-- [ ] ... ???
 
 ## License
 

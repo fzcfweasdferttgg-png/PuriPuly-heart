@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 import httpx
-from llm_lib import LLM, Settings
+from llm_lib import LLM
+from llm_lib.errors import status_error
+
+from puripuly_heart.core.llm.llm_lib_settings import (
+    ExplicitLLMLibSettings,
+    normalized_llm_lib_base_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,25 +99,42 @@ async def test_anthropic_connection(base_url: str, api_key: str = "") -> tuple[i
         await client.close()
 
 
-def _llm_lib_base_url(backend: str, base_url: str) -> str:
-    normalized = base_url.strip().rstrip("/")
-    if backend == "ollama" and normalized.endswith("/v1"):
-        return normalized[:-3]
-    return normalized
-
-
 def _llm_lib_discovery_client(backend: str, base_url: str, api_key: str) -> LLM:
     key = api_key.strip()
     headers = {"Authorization": f"Bearer {key}"} if backend == "ollama" and key else {}
     return LLM(
-        Settings(
+        ExplicitLLMLibSettings(
             provider=backend,
-            base_url=_llm_lib_base_url(backend, base_url),
-            api_key=key or None,
+            base_url=normalized_llm_lib_base_url(backend, base_url),
+            api_key=key,
             timeout=15.0,
             headers=headers,
         )
     )
+
+
+async def _list_llm_lib_models(client: LLM) -> list[str]:
+    settings = client.settings
+    base = settings.resolved_base_url()
+    headers = dict(settings.headers)
+    if key := settings.resolved_api_key():
+        headers["Authorization"] = f"Bearer {key}"
+    if settings.kind == "ollama":
+        response = await client.async_http.get(f"{base}/api/tags", headers=headers)
+        if response.status_code >= 400:
+            raise status_error(client.label, response.status_code, response.text)
+        data = response.json()
+        return sorted(
+            str(model["name"])
+            for model in data.get("models", [])
+            if isinstance(model, dict) and model.get("name")
+        )
+    response = await client.async_http.get(f"{base}/models", headers=headers)
+    if response.status_code >= 400:
+        raise status_error(client.label, response.status_code, response.text)
+    data = response.json()
+    items = data.get("data", data) if isinstance(data, dict) else data
+    return sorted(str(model["id"]) for model in items if isinstance(model, dict) and "id" in model)
 
 
 async def fetch_llm_lib_models(
@@ -122,7 +144,7 @@ async def fetch_llm_lib_models(
 ) -> list[str]:
     client = _llm_lib_discovery_client(backend, base_url, api_key)
     try:
-        return await asyncio.to_thread(client.list_models)
+        return await _list_llm_lib_models(client)
     except Exception as exc:
         logger.warning("[ModelDiscovery] LLM-lib failed to fetch models from %s: %s", base_url, exc)
         return []
@@ -137,7 +159,7 @@ async def test_llm_lib_connection(
 ) -> tuple[int, str]:
     client = _llm_lib_discovery_client(backend, base_url, api_key)
     try:
-        await asyncio.to_thread(client.list_models)
+        await _list_llm_lib_models(client)
         return 200, "ok"
     except Exception as exc:
         return getattr(exc, "status_code", 0) or 0, str(exc)[:200]

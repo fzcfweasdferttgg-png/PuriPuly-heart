@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -220,3 +221,35 @@ def test_local_registry_crud_does_not_touch_other_registries(
     assert providers_registry.load_provider_presets("local") == {}
     assert set(providers_registry.load_provider_presets()) == {"openai-custom"}
     assert set(providers_registry.load_provider_presets("anthropic")) == {"anthropic-custom"}
+
+
+def test_concurrent_registry_adds_lose_no_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "providers.json"
+    monkeypatch.setattr(providers_registry, "ensure_providers_file", lambda protocol="openai": path)
+    monkeypatch.setattr(providers_registry, "_PROVIDER_PRESETS_CACHE", None)
+    errors: list[str] = []
+    started = threading.Barrier(8, timeout=10)
+
+    def add(index: int) -> None:
+        try:
+            started.wait()
+            providers_registry.add_provider_preset(
+                f"Server {index}", f"http://127.0.0.1:50{index:02d}"
+            )
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=add, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    providers_registry._PROVIDER_PRESETS_CACHE = None
+    presets = providers_registry.load_provider_presets()
+
+    assert not errors, f"concurrent adds raised: {errors}"
+    assert len(presets) == 8, f"lost updates: only {len(presets)}/8 entries saved"

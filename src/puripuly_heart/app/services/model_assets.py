@@ -642,6 +642,11 @@ class ModelAssetsApplication:
                 return choice
         return None
 
+    def planned_model_id(self, file_name: str) -> str:
+        """Model id a future install of ``file_name`` would receive."""
+        registry = self._registry()
+        return registry.allocate_model_id(Path(file_name).stem, reserved=self._reserved_model_ids())
+
     def _reserved_model_ids(self) -> frozenset[str]:
         return frozenset(choice.model_id for choice in self.choices)
 

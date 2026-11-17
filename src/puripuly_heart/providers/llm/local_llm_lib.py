@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -12,6 +13,10 @@ from puripuly_heart.config.provider_values import (
     LOCAL_LLM_SENSITIVE_EXTRA_BODY_KEYS,
 )
 from puripuly_heart.core.llm.latency import current_attempt
+from puripuly_heart.core.llm.llm_lib_settings import (
+    ExplicitLLMLibSettings,
+    normalized_llm_lib_base_url,
+)
 from puripuly_heart.domain.models import Translation
 from puripuly_heart.providers.llm.error_details import LLMResponseError
 from puripuly_heart.providers.llm.messages import build_translation_user_message
@@ -66,13 +71,6 @@ def _settings_options(
     return options
 
 
-def _normalized_base_url(backend: str, base_url: str) -> str:
-    normalized = base_url.strip().rstrip("/")
-    if backend == "ollama" and normalized.endswith("/v1"):
-        return normalized[:-3]
-    return normalized
-
-
 def _build_system_prompt(*, system_prompt: str, source_language: str, target_language: str) -> str:
     return (
         system_prompt.format(source_language=source_language, target_language=target_language)
@@ -122,10 +120,13 @@ class LLMLibLocalLLMProvider:
     client: Any | None = None
     _internal_client: LLM | None = field(init=False, default=None, repr=False)
     _external_client_closed: bool = field(init=False, default=False, repr=False)
+    _client_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock, repr=False)
+    _active_tasks: set[asyncio.Task[object]] = field(init=False, default_factory=set, repr=False)
+    _closed: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self) -> None:
         self.backend = self.backend.strip()
-        self.base_url = _normalized_base_url(self.backend, self.base_url)
+        self.base_url = normalized_llm_lib_base_url(self.backend, self.base_url)
         self.model = self.model.strip()
         self.api_key = self.api_key.strip()
         if not self.backend or not self.base_url or not self.model:
@@ -139,23 +140,29 @@ class LLMLibLocalLLMProvider:
             if self.backend == "ollama" and self.api_key
             else {}
         )
-        return Settings(
+        return ExplicitLLMLibSettings(
             provider=self.backend,
             base_url=self.base_url,
             model=self.model,
-            api_key=self.api_key or None,
+            api_key=self.api_key,
             max_tokens=self.max_tokens,
             timeout=self.timeout,
             headers=headers,
             **options,
         )
 
-    def _client_for_call(self) -> Any:
-        if self.client is not None:
-            return self.client
-        if self._internal_client is None:
-            self._internal_client = LLM(self._settings())
-        return self._internal_client
+    async def _client_for_call(self, operation: asyncio.Task[object]) -> Any:
+        async with self._client_lock:
+            if self._closed:
+                raise asyncio.CancelledError
+            if self.client is not None:
+                client = self.client
+            else:
+                if self._internal_client is None:
+                    self._internal_client = LLM(self._settings())
+                client = self._internal_client
+            self._active_tasks.add(operation)
+            return client
 
     @staticmethod
     def _record_completion(observation: Any, completion: Completion) -> None:
@@ -179,28 +186,33 @@ class LLMLibLocalLLMProvider:
         scene_participant_count: int | None = None,
         max_output_tokens: int | None = None,
     ) -> Translation:
-        client = self._client_for_call()
-        messages = _messages(
-            text=text,
-            system_prompt=system_prompt,
-            source_language=source_language,
-            target_language=target_language,
-            context=context,
-            scene_participant_count=scene_participant_count,
-        )
-        observation = current_attempt()
-        if observation is not None:
-            observation.transport = "llm_lib"
-            observation.mark_sent()
+        operation = asyncio.current_task()
+        assert operation is not None
+        client = await self._client_for_call(operation)
+        try:
+            messages = _messages(
+                text=text,
+                system_prompt=system_prompt,
+                source_language=source_language,
+                target_language=target_language,
+                context=context,
+                scene_participant_count=scene_participant_count,
+            )
+            observation = current_attempt()
+            if observation is not None:
+                observation.transport = "llm_lib"
+                observation.mark_sent()
 
-        def on_event(event: Event) -> None:
-            if observation is not None and event.type == "content" and event.text:
-                observation.mark_first_text()
+            def on_event(event: Event) -> None:
+                if observation is not None and event.type == "content" and event.text:
+                    observation.mark_first_text()
 
-        params: dict[str, object] = {"on_event": on_event}
-        if max_output_tokens is not None:
-            params["max_tokens"] = max_output_tokens
-        completion = await client.achat(messages, **params)
+            params: dict[str, object] = {"on_event": on_event}
+            if max_output_tokens is not None:
+                params["max_tokens"] = max_output_tokens
+            completion = await client.achat(messages, **params)
+        finally:
+            self._active_tasks.discard(operation)
         if observation is not None:
             observation.actual_model = str(getattr(client, "model", self.model))
         self._record_completion(observation, completion)
@@ -224,8 +236,18 @@ class LLMLibLocalLLMProvider:
         )
 
     async def close(self) -> None:
-        internal = self._internal_client
-        self._internal_client = None
+        current = asyncio.current_task()
+        async with self._client_lock:
+            self._closed = True
+            internal = self._internal_client
+            self._internal_client = None
+            operations = tuple(
+                operation for operation in self._active_tasks if operation is not current
+            )
+        for operation in operations:
+            operation.cancel()
+        if operations:
+            await asyncio.gather(*operations, return_exceptions=True)
         if internal is not None:
             await internal.aclose()
         if self.client is not None and not self._external_client_closed:

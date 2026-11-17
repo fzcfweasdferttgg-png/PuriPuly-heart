@@ -1265,8 +1265,6 @@ class TranslatorApp:
 
     def _on_local_llm_secret_changed(self) -> None:
         async def _task():
-            if not self.application.local_llm_selected():
-                return
             await self.application.apply_providers(force_rebuild_llm=True)
 
         self._queue_settings_mutation_task(_task)

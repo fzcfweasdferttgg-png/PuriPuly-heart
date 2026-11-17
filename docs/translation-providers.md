@@ -86,7 +86,9 @@ are normalized to the native API root by the runtime adapter.
 `pyproject.toml` and `uv.lock`. It requires `httpx2>=2.13.1` and is licensed
 under Apache-2.0. It is used only by the Other servers runtime adapter and its
 model discovery. The OpenAI and Anthropic variants continue to use their
-official SDKs.
+official SDKs. Only explicitly saved API keys are sent; environment and preset
+placeholder keys are not used. Closing a provider cancels active translations,
+and cancelled discovery closes its client only after the worker finishes.
 
 The OpenAI-compatible label in LLM-lib describes only the wire protocols it
 implements. It does not imply compatibility with every official OpenAI API

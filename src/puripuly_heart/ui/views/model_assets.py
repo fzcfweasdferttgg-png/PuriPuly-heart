@@ -822,6 +822,13 @@ class ModelAssetsView(ft.Container):
                     return entry
         return None
 
+    def _planned_model_id(self, file_name: str) -> str:
+        """Model id the install of ``file_name`` really uses (collision-safe)."""
+        planned = getattr(self._application, "planned_model_id", None)
+        if callable(planned):
+            return planned(file_name)
+        return sanitize_model_id(Path(file_name).stem)
+
     def _target_path_label(self) -> str:
         """Concrete folder the selection would be saved into."""
         model_id = None
@@ -834,11 +841,11 @@ class ModelAssetsView(ft.Container):
                 quant = self._quant or self._default_quant(model)
                 download = model.download(quant) if quant else None
                 if download is not None:
-                    model_id = sanitize_model_id(Path(download.filename).stem)
+                    model_id = self._planned_model_id(download.filename)
         else:
             file = self._selected_file()
             if file is not None:
-                model_id = sanitize_model_id(Path(getattr(file, "name", "")).stem)
+                model_id = self._planned_model_id(getattr(file, "name", ""))
         if not model_id:
             return ""
         return str(default_local_stt_model_root() / model_id)

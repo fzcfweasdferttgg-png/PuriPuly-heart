@@ -186,15 +186,12 @@ class VrchatSceneLogTailer:
             status = path.stat()
         except OSError:
             raise
-        if (
-            self._identity is not None
-            and (
-                status.st_dev,
-                status.st_ino,
-                status.st_ctime,
-            )
-            != self._identity
-        ):
+        current_identity = (
+            (status.st_dev, status.st_ino, status.st_ctime)
+            if os.name == "nt"
+            else (status.st_dev, status.st_ino)
+        )
+        if self._identity is not None and current_identity != self._identity:
             raise VrchatSceneLogTruncated(str(path))
         if status.st_size < self._offset:
             raise VrchatSceneLogTruncated(str(path))
@@ -211,7 +208,11 @@ class VrchatSceneLogTailer:
             status = path.stat()
         except OSError:
             return
-        self._identity = (status.st_dev, status.st_ino, status.st_ctime)
+        self._identity = (
+            (status.st_dev, status.st_ino, status.st_ctime)
+            if os.name == "nt"
+            else (status.st_dev, status.st_ino)
+        )
         self._observed_mtime = status.st_mtime
 
     def _consume(self, path: Path, start: int) -> list[str]:

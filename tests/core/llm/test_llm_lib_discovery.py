@@ -15,7 +15,7 @@ async def test_llm_lib_model_discovery_uses_ollama_tags(monkeypatch) -> None:
 
     client = LLM(
         Settings(provider="ollama"),
-        transport=httpx2.MockTransport(handler),
+        async_transport=httpx2.MockTransport(handler),
     )
     monkeypatch.setattr(
         "puripuly_heart.core.llm.model_discovery._llm_lib_discovery_client",
