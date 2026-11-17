@@ -42,6 +42,8 @@ from puripuly_heart.app.ports.settings_view import (
     ImmediateSettingsIntent,
     LlmGpuDeviceEdit,
     LocaleSettingsIntent,
+    LocalLlmBackendEdit,
+    LocalLlmProviderKeyEdit,
     LocalLlmBaseUrlEdit,
     LocalLlmExtraBodyEdit,
     LocalLlmModelEdit,
@@ -75,8 +77,10 @@ from puripuly_heart.app.ports.settings_view import (
     OpenAICompatibleProviderKeyEdit,
     OpenAICompatibleBaseUrlEdit,
     OpenAICompatibleModelEdit,
+    AnthropicProviderKeyEdit,
     AnthropicBaseUrlEdit,
     AnthropicModelEdit,
+    BackupAnthropicProviderKeyEdit,
     BackupAnthropicBaseUrlEdit,
     BackupAnthropicModelEdit,
     BackupTranslationEnabledEdit,
@@ -84,6 +88,8 @@ from puripuly_heart.app.ports.settings_view import (
     BackupOpenAICompatibleProviderKeyEdit,
     BackupOpenAICompatibleBaseUrlEdit,
     BackupOpenAICompatibleModelEdit,
+    BackupLocalLlmBackendEdit,
+    BackupLocalLlmProviderKeyEdit,
     BackupLocalLlmBaseUrlEdit,
     BackupLocalLlmModelEdit,
     BackupLocalLlmExtraBodyEdit,
@@ -124,6 +130,7 @@ from puripuly_heart.config.provider_values import (
     normalize_local_llm_base_url,
     parse_openrouter_llm_model,
 )
+from puripuly_heart.config.providers_registry import MAX_PROVIDER_PRESETS, load_provider_presets
 from puripuly_heart.config.runtime_resolution import (
     LOCAL_LLM_DEFAULT_BASE_URL,
     LOCAL_LLM_DEFAULT_MODEL,
@@ -168,16 +175,20 @@ from puripuly_heart.ui.components.settings import (
 )
 from puripuly_heart.core.llm.model_discovery import (
     fetch_anthropic_models as _fetch_anthropic_models_default,
+    fetch_llm_lib_models as _fetch_llm_lib_models_default,
     fetch_models as _fetch_models_default,
     test_anthropic_connection as _test_anthropic_connection_default,
     test_connection as _test_connection_default,
+    test_llm_lib_connection as _test_llm_lib_connection_default,
 )
 from puripuly_heart.ui.components.settings.stt_engine_modal import (
     ENGINE_BACKENDS,
     SttEngineModal,
     build_backend_toggle,
 )
+from puripuly_heart.ui.components.provider_preset_modal import ProviderPresetModal
 from puripuly_heart.ui.components.provider_settings_window import (
+    ANTHROPIC_PROVIDER_WINDOW_HEIGHT,
     LOCAL_PROVIDER_WINDOW_HEIGHT,
     PROVIDER_WINDOW_HEIGHT,
 )
@@ -247,12 +258,16 @@ _DRAFT_PROVIDER_FIELDS: dict[type, str] = {
     BackupOpenAICompatibleProviderKeyEdit: "backup_provider_key",
     BackupOpenAICompatibleBaseUrlEdit: "backup_base_url",
     BackupOpenAICompatibleModelEdit: "backup_model",
+    BackupLocalLlmBackendEdit: "backup_local_backend",
+    BackupLocalLlmProviderKeyEdit: "backup_local_provider_key",
     BackupLocalLlmBaseUrlEdit: "backup_local_base_url",
     BackupLocalLlmModelEdit: "backup_local_model",
     BackupLocalLlmExtraBodyEdit: "backup_local_extra_body_json",
     QwenRegionEdit: "qwen_region",
     QwenBeijingApiHostEdit: "qwen_api_host_beijing",
     QwenSingaporeApiHostEdit: "qwen_api_host_singapore",
+    LocalLlmBackendEdit: "local_llm_backend",
+    LocalLlmProviderKeyEdit: "local_llm_provider_key",
     LocalLlmBaseUrlEdit: "local_llm_base_url",
     LocalLlmModelEdit: "local_llm_model",
     LocalLlmExtraBodyEdit: "local_llm_extra_body_json",
@@ -682,15 +697,18 @@ class SettingsView(ft.Column):
             on_hover=self._on_text_hover,
         )
 
-    def _build_provider_dropdown(self, on_select) -> ft.Dropdown:
-        from puripuly_heart.config.providers_registry import load_provider_presets
-
+    def _build_provider_dropdown(self, on_select, *, protocol: str = "openai") -> ft.Dropdown:
         options = [
             ft.dropdown.Option(key=key, text=preset.label)
-            for key, preset in load_provider_presets().items()
+            for key, preset in load_provider_presets(protocol).items()
         ]
+        label_key = (
+            "settings.local_llm.provider"
+            if protocol == "local"
+            else "settings.openai_compatible.provider"
+        )
         return ft.Dropdown(
-            label=t("settings.openai_compatible.provider"),
+            label=t(label_key),
             options=options,
             value=options[0].key if options else None,
             border_radius=12,
@@ -702,6 +720,253 @@ class SettingsView(ft.Column):
             label_style=ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
             on_select=on_select,
         )
+
+    @staticmethod
+    def _provider_protocol(card: str) -> str:
+        if card in {"anthropic", "backup_anthropic"}:
+            return "anthropic"
+        if card in {"local", "backup_local"}:
+            return "local"
+        return "openai"
+
+    def _build_provider_preset_row(self, card: str, dropdown: ft.Dropdown) -> ft.Row:
+        add = ft.IconButton(
+            icon=ft.Icons.ADD_ROUNDED,
+            tooltip=t("settings.provider_presets.add"),
+            on_click=lambda e, card=card: self._on_provider_preset_action("add", card, e),
+        )
+        edit = ft.IconButton(
+            icon=ft.Icons.EDIT_ROUNDED,
+            tooltip=t("settings.provider_presets.edit"),
+            on_click=lambda e, card=card: self._on_provider_preset_action("edit", card, e),
+        )
+        delete = ft.IconButton(
+            icon=ft.Icons.DELETE_OUTLINE,
+            tooltip=t("settings.provider_presets.delete"),
+            on_click=lambda e, card=card: self._on_provider_preset_action("delete", card, e),
+        )
+        if card == "translation":
+            self._openai_preset_add = add
+            self._openai_preset_edit = edit
+            self._openai_preset_delete = delete
+        elif card == "backup":
+            self._backup_preset_add = add
+            self._backup_preset_edit = edit
+            self._backup_preset_delete = delete
+        elif card == "anthropic":
+            self._anthropic_preset_add = add
+            self._anthropic_preset_edit = edit
+            self._anthropic_preset_delete = delete
+        elif card == "backup_anthropic":
+            self._backup_anthropic_preset_add = add
+            self._backup_anthropic_preset_edit = edit
+            self._backup_anthropic_preset_delete = delete
+        elif card == "local":
+            self._local_preset_add = add
+            self._local_preset_edit = edit
+            self._local_preset_delete = delete
+        else:
+            self._backup_local_preset_add = add
+            self._backup_local_preset_edit = edit
+            self._backup_local_preset_delete = delete
+        return ft.Row(
+            [dropdown, add, edit, delete],
+            spacing=2,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def _provider_dropdowns(self) -> dict[str, ft.Dropdown]:
+        return {
+            "translation": self._openai_provider,
+            "backup": self._backup_provider,
+            "anthropic": self._anthropic_provider,
+            "backup_anthropic": self._backup_anthropic_provider,
+            "local": self._local_llm_provider,
+            "backup_local": self._backup_local_provider,
+        }
+
+    def _on_provider_preset_action(self, action: str, card: str, event) -> None:
+        dropdown = self._provider_dropdowns()[card]
+        key = dropdown.value or ""
+        if action != "add" and not key:
+            return
+        page = getattr(getattr(event, "control", None), "page", None) or self.page
+        modal = ProviderPresetModal(
+            page,
+            lambda changed_action, changed_key: self._on_provider_presets_changed(
+                card, changed_action, changed_key
+            ),
+            protocol=self._provider_protocol(card),
+        )
+        if action == "add":
+            modal.open_add()
+        elif action == "edit":
+            modal.open_edit(key)
+        elif action == "delete":
+            modal.open_delete(key)
+
+    def _select_provider_preset(self, card: str, key: str) -> None:
+        if card == "translation":
+            self._on_openai_provider_selected(key)
+        elif card == "backup":
+            self._on_backup_provider_selected(key)
+        elif card == "anthropic":
+            self._on_anthropic_provider_selected(key)
+        elif card == "backup_anthropic":
+            self._on_backup_anthropic_provider_selected(key)
+        elif card == "local":
+            self._on_local_llm_provider_selected(key)
+        else:
+            self._on_backup_local_provider_selected(key)
+
+    def _on_provider_presets_changed(self, card: str, action: str, key: str) -> None:
+        protocol = self._provider_protocol(card)
+        presets = load_provider_presets(protocol)
+        dropdowns = self._provider_dropdowns()
+        if action == "add" and key in presets:
+            self._select_provider_preset(card, key)
+        elif action == "edit" and key in presets:
+            for candidate, dropdown in dropdowns.items():
+                if self._provider_protocol(candidate) == protocol and dropdown.value == key:
+                    self._apply_edited_provider_preset(candidate, key)
+        elif action == "delete":
+            for candidate, dropdown in dropdowns.items():
+                if self._provider_protocol(candidate) == protocol and dropdown.value == key:
+                    fallback = next(iter(presets), "")
+                    if fallback:
+                        self._select_provider_preset(candidate, fallback)
+                    else:
+                        self._clear_provider_preset_selection(candidate)
+        self._refresh_provider_dropdown_options()
+
+    def _apply_edited_provider_preset(self, card: str, key: str) -> None:
+        preset = load_provider_presets(self._provider_protocol(card)).get(key)
+        if preset is None:
+            return
+        old_backend = ""
+        if card == "anthropic":
+            base = self._anthropic_base_url
+            old_url = self._provider_draft.anthropic_base_url
+        elif card == "backup_anthropic":
+            base = self._backup_anthropic_base_url
+            old_url = self._provider_draft.backup_anthropic_base_url
+        elif card == "local":
+            base = self._local_llm_base_url
+            old_url = self._provider_draft.local_llm_base_url
+            old_backend = self._provider_draft.local_llm_backend
+        elif card == "backup_local":
+            base = self._backup_local_base_url
+            old_url = self._provider_draft.backup_local_base_url
+            old_backend = self._provider_draft.backup_local_backend
+        elif card == "backup":
+            base = self._backup_base_url
+            old_url = self._provider_draft.backup_base_url
+        else:
+            base = self._openai_base_url
+            old_url = self._provider_draft.openai_compatible_base_url
+        base.value = preset.base_url
+        _update_control_if_mounted(base)
+        if old_url != preset.base_url or old_backend != preset.backend:
+            self._select_provider_preset(card, key)
+
+    def _clear_provider_preset_selection(self, card: str) -> None:
+        if card == "anthropic":
+            provider = self._anthropic_provider
+            base = self._anthropic_base_url
+            model = self._anthropic_model
+            commit = self._commit_anthropic_field
+        elif card == "backup_anthropic":
+            provider = self._backup_anthropic_provider
+            base = self._backup_anthropic_base_url
+            model = self._backup_anthropic_model
+            commit = self._commit_backup_anthropic_field
+        elif card == "local":
+            provider = self._local_llm_provider
+            base = self._local_llm_base_url
+            model = self._local_llm_model
+            commit = self._commit_local_field
+        elif card == "backup_local":
+            provider = self._backup_local_provider
+            base = self._backup_local_base_url
+            model = self._backup_local_model
+
+            def commit(field, value):
+                self._commit_backup_field(f"local_{field}", value)
+        elif card == "backup":
+            provider = self._backup_provider
+            base = self._backup_base_url
+            model = self._backup_model
+            commit = self._commit_backup_field
+        else:
+            provider = self._openai_provider
+            base = self._openai_base_url
+            model = self._openai_model
+            commit = self._commit_openai_field
+        provider.value = None
+        base.value = ""
+        model.value = ""
+        commit("provider_key", "")
+        commit("base_url", "")
+        commit("model", "")
+
+    def _refresh_provider_dropdown_options(self) -> None:
+        controls = (
+            (
+                "openai",
+                self._openai_provider,
+                self._openai_preset_add,
+                self._openai_preset_edit,
+                self._openai_preset_delete,
+            ),
+            (
+                "openai",
+                self._backup_provider,
+                self._backup_preset_add,
+                self._backup_preset_edit,
+                self._backup_preset_delete,
+            ),
+            (
+                "anthropic",
+                self._anthropic_provider,
+                self._anthropic_preset_add,
+                self._anthropic_preset_edit,
+                self._anthropic_preset_delete,
+            ),
+            (
+                "anthropic",
+                self._backup_anthropic_provider,
+                self._backup_anthropic_preset_add,
+                self._backup_anthropic_preset_edit,
+                self._backup_anthropic_preset_delete,
+            ),
+            (
+                "local",
+                self._local_llm_provider,
+                self._local_preset_add,
+                self._local_preset_edit,
+                self._local_preset_delete,
+            ),
+            (
+                "local",
+                self._backup_local_provider,
+                self._backup_local_preset_add,
+                self._backup_local_preset_edit,
+                self._backup_local_preset_delete,
+            ),
+        )
+        for protocol, dropdown, add, edit, delete in controls:
+            presets = load_provider_presets(protocol)
+            dropdown.options = [
+                ft.dropdown.Option(key=key, text=preset.label)
+                for key, preset in presets.items()
+            ]
+            if dropdown.value is not None and dropdown.value not in presets:
+                dropdown.value = next(iter(presets), None)
+            add.disabled = len(presets) >= MAX_PROVIDER_PRESETS
+            edit.disabled = not presets
+            delete.disabled = not presets
+            for control in (dropdown, add, edit, delete):
+                _update_control_if_mounted(control)
 
     def _compose_openai_form(
         self,
@@ -746,10 +1011,13 @@ class SettingsView(ft.Column):
         api_key,
         test_btn,
         slots_row=None,
+        provider=None,
     ) -> ft.Column:
         items: list[ft.Control] = []
         if slots_row is not None:
             items.append(slots_row)
+        if provider is not None:
+            items.append(provider)
         items.extend(
             [
                 ft.Container(height=4),
@@ -772,6 +1040,7 @@ class SettingsView(ft.Column):
         self,
         *,
         title,
+        provider,
         base_url,
         test_btn,
         model,
@@ -791,6 +1060,7 @@ class SettingsView(ft.Column):
         items.extend(
             [
                 ft.Container(height=4),
+                provider,
                 ft.Row(
                     [
                         base_url,
@@ -825,6 +1095,9 @@ class SettingsView(ft.Column):
             color=COLOR_SECONDARY,
         )
         self._openai_provider = self._build_provider_dropdown(self._on_openai_provider_change)
+        self._openai_provider_row = self._build_provider_preset_row(
+            "translation", self._openai_provider
+        )
         self._openai_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url"),
             value="",
@@ -878,6 +1151,12 @@ class SettingsView(ft.Column):
         )
 
     def _build_anthropic_form_controls(self) -> None:
+        self._anthropic_provider = self._build_provider_dropdown(
+            self._on_anthropic_provider_change, protocol="anthropic"
+        )
+        self._anthropic_provider_row = self._build_provider_preset_row(
+            "anthropic", self._anthropic_provider
+        )
         self._anthropic_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url"),
             hint_text="https://api.anthropic.com",
@@ -931,6 +1210,7 @@ class SettingsView(ft.Column):
         )
         self._anthropic_form = self._compose_anthropic_form(
             slots_row=self._anthropic_slots_row,
+            provider=self._anthropic_provider_row,
             base_url=self._anthropic_base_url,
             model=self._anthropic_model,
             fetch_btn=self._anthropic_fetch_btn,
@@ -945,6 +1225,12 @@ class SettingsView(ft.Column):
             size=24,
             weight=ft.FontWeight.BOLD,
             color=COLOR_SECONDARY,
+        )
+        self._local_llm_provider = self._build_provider_dropdown(
+            self._on_local_llm_provider_change, protocol="local"
+        )
+        self._local_llm_provider_row = self._build_provider_preset_row(
+            "local", self._local_llm_provider
         )
         self._local_llm_base_url = ft.TextField(
             label=t("settings.local_llm.base_url"),
@@ -1042,6 +1328,12 @@ class SettingsView(ft.Column):
         self._backup_anthropic_slots_row = self._build_slot_row(
             "backup", slot_key="backup_anthropic"
         )
+        self._backup_anthropic_provider = self._build_provider_dropdown(
+            self._on_backup_anthropic_provider_change, protocol="anthropic"
+        )
+        self._backup_anthropic_provider_row = self._build_provider_preset_row(
+            "backup_anthropic", self._backup_anthropic_provider
+        )
         self._backup_anthropic_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url"),
             hint_text="https://api.anthropic.com",
@@ -1092,6 +1384,7 @@ class SettingsView(ft.Column):
         )
         self._backup_anthropic_group = self._compose_anthropic_form(
             slots_row=self._backup_anthropic_slots_row,
+            provider=self._backup_anthropic_provider_row,
             base_url=self._backup_anthropic_base_url,
             model=self._backup_anthropic_model,
             fetch_btn=self._backup_anthropic_fetch_btn,
@@ -1100,6 +1393,12 @@ class SettingsView(ft.Column):
         )
 
     def _build_backup_local_controls(self) -> None:
+        self._backup_local_provider = self._build_provider_dropdown(
+            self._on_backup_local_provider_change, protocol="local"
+        )
+        self._backup_local_provider_row = self._build_provider_preset_row(
+            "backup_local", self._backup_local_provider
+        )
         self._backup_local_base_url = ft.TextField(
             label=t("settings.local_llm.base_url"),
             value="",
@@ -1186,6 +1485,7 @@ class SettingsView(ft.Column):
         self._backup_local_group = self._compose_local_form(
             title=None,
             slots_row=self._backup_local_slots_row,
+            provider=self._backup_local_provider_row,
             base_url=self._backup_local_base_url,
             test_btn=self._backup_local_test_btn,
             model=self._backup_local_model,
@@ -1212,6 +1512,7 @@ class SettingsView(ft.Column):
             color=COLOR_SECONDARY,
         )
         self._backup_provider = self._build_provider_dropdown(self._on_backup_provider_change)
+        self._backup_provider_row = self._build_provider_preset_row("backup", self._backup_provider)
         self._backup_base_url = ft.TextField(
             label=t("settings.openai_compatible.base_url"),
             value="",
@@ -1264,7 +1565,7 @@ class SettingsView(ft.Column):
         self._backup_network_group = self._compose_openai_form(
             title=None,
             slots_row=self._backup_slots_row,
-            provider=self._backup_provider,
+            provider=self._backup_provider_row,
             model=self._backup_model,
             fetch_btn=self._backup_fetch_btn,
             api_key=self._backup_api_key,
@@ -1371,7 +1672,7 @@ class SettingsView(ft.Column):
             self._openai_form = self._compose_openai_form(
                 title=None,
                 slots_row=self._openai_slots_row,
-                provider=self._openai_provider,
+                provider=self._openai_provider_row,
                 model=self._openai_model,
                 fetch_btn=self._openai_fetch_btn,
                 api_key=self._openai_api_key,
@@ -1387,6 +1688,7 @@ class SettingsView(ft.Column):
             self._local_llm_form = self._compose_local_form(
                 title=None,
                 slots_row=self._local_llm_slots_row,
+                provider=self._local_llm_provider_row,
                 base_url=self._local_llm_base_url,
                 test_btn=self._local_llm_test_btn,
                 model=self._local_llm_model,
@@ -1450,7 +1752,9 @@ class SettingsView(ft.Column):
         self._local_llm_extra_body.value = display.local_llm_extra_body_json
         self._clear_local_llm_extra_body_error()
         self._clear_backup_local_extra_body_error()
-        if kind in {"translation_local", "backup_local"}:
+        if kind in {"translation_anthropic", "backup_anthropic"}:
+            window_height = ANTHROPIC_PROVIDER_WINDOW_HEIGHT
+        elif kind in {"translation_local", "backup_local"}:
             window_height = LOCAL_PROVIDER_WINDOW_HEIGHT
         window.open(
             schedule,
@@ -1622,6 +1926,7 @@ class SettingsView(ft.Column):
     def _apply_provider_slot_to_controls(self, card: str, config) -> None:
         is_backup = card == "backup"
         if config.variant == TranslationModel.LOCAL_LLM.value:
+            provider = self._backup_local_provider if is_backup else self._local_llm_provider
             base = self._backup_local_base_url if is_backup else self._local_llm_base_url
             model = self._backup_local_model if is_backup else self._local_llm_model
             extra = (
@@ -1629,12 +1934,17 @@ class SettingsView(ft.Column):
                 if is_backup
                 else self._local_llm_extra_body
             )
+            provider.value = self._provider_dropdown_value(
+                config.provider_key, config.base_url, protocol="local"
+            )
             base.value = config.base_url
             model.value = config.model
             extra.value = config.extra_body_json
         elif config.variant == TranslationModel.ANTHROPIC.value:
+            provider = self._backup_anthropic_provider if is_backup else self._anthropic_provider
             base = self._backup_anthropic_base_url if is_backup else self._anthropic_base_url
             model = self._backup_anthropic_model if is_backup else self._anthropic_model
+            provider.value = config.provider_key
             base.value = config.base_url
             model.value = config.model
         else:
@@ -1647,13 +1957,22 @@ class SettingsView(ft.Column):
             base_url.value = config.base_url
             model.value = config.model
 
+    def _local_slot_backend(self, config) -> str:
+        if config.backend:
+            return config.backend
+        preset = load_provider_presets("local").get(config.provider_key)
+        return preset.backend if preset is not None else "ollama"
+
     def _apply_provider_slot_as_current(self, card: str, config) -> None:
         if card == "backup":
             if config.variant == TranslationModel.LOCAL_LLM.value:
                 self._on_backup_local_base_url_change_end(None)
+                self._commit_backup_field("local_provider_key", config.provider_key)
+                self._commit_backup_field("local_backend", self._local_slot_backend(config))
                 self._on_backup_local_model_change_end(None)
                 self._on_backup_local_extra_body_change_end(None)
             elif config.variant == TranslationModel.ANTHROPIC.value:
+                self._commit_backup_anthropic_field("provider_key", config.provider_key)
                 self._commit_backup_anthropic_field("base_url", config.base_url)
                 self._commit_backup_anthropic_field("model", config.model)
             else:
@@ -1664,9 +1983,12 @@ class SettingsView(ft.Column):
         else:
             if config.variant == TranslationModel.LOCAL_LLM.value:
                 self._on_local_llm_base_url_change_end(None)
+                self._commit_local_field("provider_key", config.provider_key)
+                self._commit_local_field("backend", self._local_slot_backend(config))
                 self._on_local_llm_model_change_end(None)
                 self._on_local_llm_extra_body_change_end(None)
             elif config.variant == TranslationModel.ANTHROPIC.value:
+                self._commit_anthropic_field("provider_key", config.provider_key)
                 self._commit_anthropic_field("base_url", config.base_url)
                 self._commit_anthropic_field("model", config.model)
             else:
@@ -1699,14 +2021,17 @@ class SettingsView(ft.Column):
             variant = normalize_translation_model(display.backup_variant).value
         is_backup = card == "backup"
         if variant == TranslationModel.ANTHROPIC.value:
+            provider = self._backup_anthropic_provider if is_backup else self._anthropic_provider
             base = self._backup_anthropic_base_url if is_backup else self._anthropic_base_url
             model = self._backup_anthropic_model if is_backup else self._anthropic_model
             config = ProviderSlotConfig(
                 variant=variant,
+                provider_key=(provider.value or "").strip(),
                 base_url=(base.value or "").strip(),
                 model=(model.value or "").strip(),
             )
         elif variant == TranslationModel.LOCAL_LLM.value:
+            provider = self._backup_local_provider if is_backup else self._local_llm_provider
             base = self._backup_local_base_url if is_backup else self._local_llm_base_url
             model = self._backup_local_model if is_backup else self._local_llm_model
             extra = (
@@ -1714,11 +2039,18 @@ class SettingsView(ft.Column):
                 if is_backup
                 else self._local_llm_extra_body
             )
+            current = self._provider_draft or self._provider_snapshot
             config = ProviderSlotConfig(
                 variant=variant,
+                provider_key=(provider.value or "").strip(),
                 base_url=(base.value or "").strip(),
                 model=(model.value or "").strip(),
                 extra_body_json=(extra.value or "").strip(),
+                backend=(
+                    current.backup_local_backend
+                    if is_backup
+                    else current.local_llm_backend
+                ),
             )
         else:
             provider = self._backup_provider if is_backup else self._openai_provider
@@ -2846,6 +3178,7 @@ class SettingsView(ft.Column):
         self._local_llm_form = self._compose_local_form(
             title=None,
             slots_row=self._local_llm_slots_row,
+            provider=self._local_llm_provider_row,
             base_url=self._local_llm_base_url,
             test_btn=self._local_llm_test_btn,
             model=self._local_llm_model,
@@ -2883,7 +3216,7 @@ class SettingsView(ft.Column):
         self._openai_form = self._compose_openai_form(
             title=None,
             slots_row=self._openai_slots_row,
-            provider=self._openai_provider,
+            provider=self._openai_provider_row,
             model=self._openai_model,
             fetch_btn=self._openai_fetch_btn,
             api_key=self._openai_api_key,
@@ -4056,11 +4389,12 @@ class SettingsView(ft.Column):
             "" if normalized == LOCAL_LLM_DEFAULT_BASE_URL else normalized
         )
         current = self._provider_draft or self._provider_snapshot
-        if current.local_llm_base_url != normalized:
-            draft = self._ensure_provider_settings_draft()
-            self._provider_draft = replace(draft, local_llm_base_url=normalized)
-            self._record_provider_edit(LocalLlmBaseUrlEdit(self._provider_draft.local_llm_base_url))
-            self.has_provider_changes = True
+        selected = load_provider_presets("local").get(current.local_llm_provider_key)
+        self._commit_local_field("base_url", normalized)
+        if selected is None or selected.base_url != normalized:
+            self._commit_local_field("provider_key", "")
+            self._local_llm_provider.value = None
+            _update_control_if_mounted(self._local_llm_provider)
         _update_control_if_mounted(self._local_llm_base_url)
 
     def _on_local_llm_model_change_end(self, e) -> None:
@@ -5072,6 +5406,26 @@ class SettingsView(ft.Column):
             settings.backup_provider_key,
             settings.backup_base_url,
         )
+        self._anthropic_provider.value = self._provider_dropdown_value(
+            settings.anthropic_provider_key,
+            settings.anthropic_base_url,
+            protocol="anthropic",
+        )
+        self._backup_anthropic_provider.value = self._provider_dropdown_value(
+            settings.backup_anthropic_provider_key,
+            settings.backup_anthropic_base_url,
+            protocol="anthropic",
+        )
+        self._local_llm_provider.value = self._provider_dropdown_value(
+            settings.local_llm_provider_key,
+            settings.local_llm_base_url,
+            protocol="local",
+        )
+        self._backup_local_provider.value = self._provider_dropdown_value(
+            settings.backup_local_provider_key,
+            settings.backup_local_base_url,
+            protocol="local",
+        )
         self._backup_local_base_url.value = settings.backup_local_base_url
         self._backup_local_model.value = settings.backup_local_model
         self._backup_local_extra_body.value = settings.backup_local_extra_body_json
@@ -5323,6 +5677,24 @@ class SettingsView(ft.Column):
         self._record_provider_edit(edit_type(normalized))
         self.has_provider_changes = True
 
+    def _commit_local_field(self, field: str, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        normalized = value.strip()
+        draft = self._ensure_provider_settings_draft()
+        attr = f"local_llm_{field}"
+        if getattr(draft, attr) == normalized:
+            return
+        self._provider_draft = replace(draft, **{attr: normalized})
+        edit_type = {
+            "backend": LocalLlmBackendEdit,
+            "provider_key": LocalLlmProviderKeyEdit,
+            "base_url": LocalLlmBaseUrlEdit,
+            "model": LocalLlmModelEdit,
+        }[field]
+        self._record_provider_edit(edit_type(normalized))
+        self.has_provider_changes = True
+
     def _commit_backup_field(self, field: str, value: str) -> None:
         if self._provider_snapshot is None:
             return
@@ -5336,6 +5708,8 @@ class SettingsView(ft.Column):
             "provider_key": BackupOpenAICompatibleProviderKeyEdit,
             "base_url": BackupOpenAICompatibleBaseUrlEdit,
             "model": BackupOpenAICompatibleModelEdit,
+            "local_backend": BackupLocalLlmBackendEdit,
+            "local_provider_key": BackupLocalLlmProviderKeyEdit,
             "local_base_url": BackupLocalLlmBaseUrlEdit,
             "local_model": BackupLocalLlmModelEdit,
             "local_extra_body_json": BackupLocalLlmExtraBodyEdit,
@@ -5365,6 +5739,7 @@ class SettingsView(ft.Column):
             return
         self._provider_draft = replace(draft, **{attr: normalized})
         edit_type = {
+            "provider_key": AnthropicProviderKeyEdit,
             "base_url": AnthropicBaseUrlEdit,
             "model": AnthropicModelEdit,
         }[field]
@@ -5381,6 +5756,7 @@ class SettingsView(ft.Column):
             return
         self._provider_draft = replace(draft, **{attr: normalized})
         edit_type = {
+            "provider_key": BackupAnthropicProviderKeyEdit,
             "base_url": BackupAnthropicBaseUrlEdit,
             "model": BackupAnthropicModelEdit,
         }[field]
@@ -5412,7 +5788,13 @@ class SettingsView(ft.Column):
             return
         self._backup_local_base_url.error = None
         self._backup_local_base_url.value = normalized
+        current = self._provider_draft or self._provider_snapshot
+        selected = load_provider_presets("local").get(current.backup_local_provider_key)
         self._commit_backup_field("local_base_url", normalized)
+        if selected is None or selected.base_url != normalized:
+            self._commit_backup_field("local_provider_key", "")
+            self._backup_local_provider.value = None
+            _update_control_if_mounted(self._backup_local_provider)
         _update_control_if_mounted(self._backup_local_base_url)
 
     def _on_backup_local_model_change_end(self, e) -> None:
@@ -5568,15 +5950,19 @@ class SettingsView(ft.Column):
         if self.on_local_llm_secret_changed:
             self.on_local_llm_secret_changed()
 
-    def _provider_dropdown_value(self, provider_key: str, base_url: str) -> str | None:
+    def _provider_dropdown_value(
+        self, provider_key: str, base_url: str, *, protocol: str = "openai"
+    ) -> str | None:
         from puripuly_heart.config.providers_registry import load_provider_presets
 
-        presets = load_provider_presets()
+        presets = load_provider_presets(protocol)
         if provider_key in presets:
             return provider_key
         for key, preset in presets.items():
             if preset.base_url == base_url:
                 return key
+        if protocol == "local":
+            return None
         return next(iter(presets), None)
 
     def _on_openai_provider_change(self, e) -> None:
@@ -5629,16 +6015,129 @@ class SettingsView(ft.Column):
         self._backup_provider.value = value
         _update_control_if_mounted(self._backup_provider)
 
+    def _on_anthropic_provider_change(self, e) -> None:
+        value = getattr(e, "data", None) or getattr(getattr(e, "control", None), "value", None)
+        if value is not None:
+            self._on_anthropic_provider_selected(value)
+
+    def _on_anthropic_provider_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        self._commit_anthropic_field("provider_key", value)
+        preset = load_provider_presets("anthropic").get(value)
+        if preset is not None:
+            self._anthropic_base_url.value = preset.base_url
+            _update_control_if_mounted(self._anthropic_base_url)
+            current = self._provider_draft or self._provider_snapshot
+            if current.anthropic_base_url != preset.base_url:
+                self._commit_anthropic_field("base_url", preset.base_url)
+                self._commit_anthropic_field("model", "")
+            self._anthropic_model.value = ""
+            _update_control_if_mounted(self._anthropic_model)
+        self._anthropic_provider.value = value
+        _update_control_if_mounted(self._anthropic_provider)
+
+    def _on_backup_anthropic_provider_change(self, e) -> None:
+        value = getattr(e, "data", None) or getattr(getattr(e, "control", None), "value", None)
+        if value is not None:
+            self._on_backup_anthropic_provider_selected(value)
+
+    def _on_backup_anthropic_provider_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        self._commit_backup_anthropic_field("provider_key", value)
+        preset = load_provider_presets("anthropic").get(value)
+        if preset is not None:
+            self._backup_anthropic_base_url.value = preset.base_url
+            _update_control_if_mounted(self._backup_anthropic_base_url)
+            current = self._provider_draft or self._provider_snapshot
+            if current.backup_anthropic_base_url != preset.base_url:
+                self._commit_backup_anthropic_field("base_url", preset.base_url)
+                self._commit_backup_anthropic_field("model", "")
+            self._backup_anthropic_model.value = ""
+            _update_control_if_mounted(self._backup_anthropic_model)
+        self._backup_anthropic_provider.value = value
+        _update_control_if_mounted(self._backup_anthropic_provider)
+
+    def _on_local_llm_provider_change(self, e) -> None:
+        value = getattr(e, "data", None) or getattr(getattr(e, "control", None), "value", None)
+        if value is not None:
+            self._on_local_llm_provider_selected(value)
+
+    def _on_local_llm_provider_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        preset = load_provider_presets("local").get(value)
+        if preset is None:
+            return
+        current = self._provider_draft or self._provider_snapshot
+        selection_changed = current.local_llm_provider_key != value
+        backend_changed = current.local_llm_backend != preset.backend
+        url_changed = current.local_llm_base_url != preset.base_url
+        self._commit_local_field("provider_key", value)
+        self._commit_local_field("backend", preset.backend)
+        self._local_llm_base_url.value = preset.base_url
+        self._on_local_llm_base_url_change_end(None)
+        if selection_changed or backend_changed or url_changed:
+            self._local_llm_model.error = None
+            self._local_llm_model.value = ""
+            self._commit_local_field("model", "")
+        self._local_llm_provider.value = value
+        _update_control_if_mounted(self._local_llm_base_url)
+        _update_control_if_mounted(self._local_llm_model)
+        _update_control_if_mounted(self._local_llm_provider)
+
+    def _on_backup_local_provider_change(self, e) -> None:
+        value = getattr(e, "data", None) or getattr(getattr(e, "control", None), "value", None)
+        if value is not None:
+            self._on_backup_local_provider_selected(value)
+
+    def _on_backup_local_provider_selected(self, value: str) -> None:
+        if self._provider_snapshot is None:
+            return
+        preset = load_provider_presets("local").get(value)
+        if preset is None:
+            return
+        current = self._provider_draft or self._provider_snapshot
+        selection_changed = current.backup_local_provider_key != value
+        backend_changed = current.backup_local_backend != preset.backend
+        url_changed = current.backup_local_base_url != preset.base_url
+        self._commit_backup_field("local_provider_key", value)
+        self._commit_backup_field("local_backend", preset.backend)
+        self._backup_local_base_url.value = preset.base_url
+        self._on_backup_local_base_url_change_end(None)
+        if selection_changed or backend_changed or url_changed:
+            self._backup_local_model.error = None
+            self._backup_local_model.value = ""
+            self._commit_backup_field("local_model", "")
+        self._backup_local_provider.value = value
+        _update_control_if_mounted(self._backup_local_base_url)
+        _update_control_if_mounted(self._backup_local_model)
+        _update_control_if_mounted(self._backup_local_provider)
+
     async def _do_fetch_models(
-        self, *, base_url: str, api_key: str, on_model_picked, protocol: str = "openai"
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        on_model_picked,
+        protocol: str = "openai",
+        backend: str = "",
     ) -> None:
-        fetch = (
-            self.on_fetch_anthropic_models if protocol == "anthropic" else self.on_fetch_models
-        )
-        if fetch is None or not base_url:
+        if not base_url:
             return
         try:
-            model_ids = await fetch(base_url, api_key)
+            if protocol == "local":
+                model_ids = await _fetch_llm_lib_models_default(backend, base_url, api_key)
+            else:
+                fetch = (
+                    self.on_fetch_anthropic_models
+                    if protocol == "anthropic"
+                    else self.on_fetch_models
+                )
+                if fetch is None:
+                    return
+                model_ids = await fetch(base_url, api_key)
         except Exception:
             model_ids = []
         if not model_ids:
@@ -5659,14 +6158,26 @@ class SettingsView(ft.Column):
         ).open("")
 
     async def _do_test_connection(
-        self, *, base_url: str, api_key: str, protocol: str = "openai"
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        protocol: str = "openai",
+        backend: str = "",
     ) -> None:
-        test = (
-            self.on_test_anthropic_connection if protocol == "anthropic" else self.on_test_connection
-        )
-        if test is None or not base_url:
+        if not base_url:
             return
-        status, _body = await test(base_url, api_key)
+        if protocol == "local":
+            status, _body = await _test_llm_lib_connection_default(backend, base_url, api_key)
+        else:
+            test = (
+                self.on_test_anthropic_connection
+                if protocol == "anthropic"
+                else self.on_test_connection
+            )
+            if test is None:
+                return
+            status, _body = await test(base_url, api_key)
         if self.show_snackbar:
             if status == 200:
                 self.show_snackbar(t("settings.openai_compatible.test_ok"), COLOR_SECONDARY)
@@ -5754,10 +6265,13 @@ class SettingsView(ft.Column):
         )
 
     async def _on_fetch_backup_local_models(self, e) -> None:
+        current = self._provider_draft or self._provider_snapshot
         await self._do_fetch_models(
             base_url=(self._backup_local_base_url.value or "").strip(),
             api_key=(self._backup_local_api_key.value or "").strip(),
             on_model_picked=self._pick_backup_local_model,
+            protocol="local",
+            backend=current.backup_local_backend,
         )
 
     def _pick_backup_local_model(self, value: str) -> None:
@@ -5766,16 +6280,22 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(self._backup_local_model)
 
     async def _on_test_backup_local_connection(self, e) -> None:
+        current = self._provider_draft or self._provider_snapshot
         await self._do_test_connection(
             base_url=(self._backup_local_base_url.value or "").strip(),
             api_key=(self._backup_local_api_key.value or "").strip(),
+            protocol="local",
+            backend=current.backup_local_backend,
         )
 
     async def _on_fetch_local_llm_models(self, e) -> None:
+        current = self._provider_draft or self._provider_snapshot
         await self._do_fetch_models(
             base_url=(self._local_llm_base_url.value or "").strip() or LOCAL_LLM_DEFAULT_BASE_URL,
             api_key=(self._local_llm_api_key.value or "").strip(),
             on_model_picked=self._pick_local_llm_model,
+            protocol="local",
+            backend=current.local_llm_backend,
         )
 
     def _pick_local_llm_model(self, value: str) -> None:
@@ -5787,9 +6307,12 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(self._local_llm_model)
 
     async def _on_test_local_llm_connection(self, e) -> None:
+        current = self._provider_draft or self._provider_snapshot
         await self._do_test_connection(
             base_url=(self._local_llm_base_url.value or "").strip() or LOCAL_LLM_DEFAULT_BASE_URL,
             api_key=(self._local_llm_api_key.value or "").strip(),
+            protocol="local",
+            backend=current.local_llm_backend,
         )
 
     def _on_backup_translation_click(self, e) -> None:
@@ -7053,12 +7576,14 @@ class SettingsView(ft.Column):
         self._openai_api_key.apply_locale()
         self._openai_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
         self._openai_test_btn.content.value = t("settings.openai_compatible.test_connection")
+        self._anthropic_provider.label = t("settings.openai_compatible.provider")
         self._anthropic_base_url.label = t("settings.openai_compatible.base_url")
         self._anthropic_model.label = t("settings.openai_compatible.model")
         self._anthropic_model.hint_text = t("settings.openai_compatible.model_hint")
         self._anthropic_api_key.apply_locale()
         self._anthropic_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
         self._anthropic_test_btn.content.value = t("settings.openai_compatible.test_connection")
+        self._backup_anthropic_provider.label = t("settings.openai_compatible.provider")
         self._backup_anthropic_base_url.label = t("settings.openai_compatible.base_url")
         self._backup_anthropic_model.label = t("settings.openai_compatible.model")
         self._backup_anthropic_model.hint_text = t("settings.openai_compatible.model_hint")
@@ -7074,6 +7599,7 @@ class SettingsView(ft.Column):
         self._backup_api_key.apply_locale()
         self._backup_fetch_btn.tooltip = t("settings.openai_compatible.fetch_models")
         self._backup_test_btn.content.value = t("settings.openai_compatible.test_connection")
+        self._backup_local_provider.label = t("settings.local_llm.provider")
         self._backup_local_base_url.label = t("settings.local_llm.base_url")
         self._backup_local_model.label = t("settings.local_llm.model")
         self._backup_local_api_key.apply_locale()
@@ -7093,6 +7619,7 @@ class SettingsView(ft.Column):
             t("settings.http_extension.open"),
         )
         self._sync_http_extension_card()
+        self._local_llm_provider.label = t("settings.local_llm.provider")
         self._local_llm_base_url.label = t("settings.local_llm.base_url")
         self._local_llm_model.label = t("settings.local_llm.model")
         self._local_llm_api_key.apply_locale()

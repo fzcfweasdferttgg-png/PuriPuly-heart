@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "providers": {
+    "anthropic": {
+      "label": "Anthropic",
+      "base_url": "https://api.anthropic.com"
+    },
+    "openrouter": {
+      "label": "OpenRouter (Anthropic)",
+      "base_url": "https://openrouter.ai/api/anthropic"
+    },
+    "deepseek": {
+      "label": "DeepSeek (Anthropic)",
+      "base_url": "https://api.deepseek.com/anthropic"
+    },
+    "moonshot": {
+      "label": "Moonshot AI (Anthropic)",
+      "base_url": "https://api.moonshot.ai/anthropic"
+    },
+    "zhipu": {
+      "label": "Zhipu AI (Anthropic)",
+      "base_url": "https://open.bigmodel.cn/api/anthropic"
+    },
+    "minimax": {
+      "label": "MiniMax (Anthropic)",
+      "base_url": "https://api.minimaxi.com/anthropic"
+    }
+  }
+}

@@ -682,6 +682,14 @@ wheels = [
 ]
 
 [[package]]
+name = "llm-lib"
+version = "0.1.0"
+source = { git = "https://github.com/Tejasvedagiri/LLM-lib.git?rev=9784a0805c8bd6776b78a335e18237212d01368c#9784a0805c8bd6776b78a335e18237212d01368c" }
+dependencies = [
+    { name = "httpx2" },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1027,6 +1035,7 @@ dependencies = [
     { name = "httpx2", extra = ["socks"] },
     { name = "huggingface-hub" },
     { name = "janus" },
+    { name = "llm-lib" },
     { name = "modelscope" },
     { name = "numpy" },
     { name = "onnxruntime" },
@@ -1082,6 +1091,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = "==2.3.0" },
     { name = "janus", specifier = ">=2.0" },
     { name = "libclang", marker = "extra == 'build'", specifier = ">=18.1" },
+    { name = "llm-lib", git = "https://github.com/Tejasvedagiri/LLM-lib.git?rev=9784a0805c8bd6776b78a335e18237212d01368c" },
     { name = "modelscope", specifier = "==1.40.2" },
     { name = "nanobind", marker = "extra == 'build'", specifier = ">=2" },
     { name = "numpy", specifier = "==2.5.1" },

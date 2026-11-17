@@ -197,7 +197,9 @@ def test_quick_switch_can_change_variant(
         slots=(
             ProviderSlotConfig(
                 variant=TranslationModel.LOCAL_LLM.value,
-                base_url="http://127.0.0.1:2222/v1",
+                provider_key="ollama",
+                backend="ollama",
+                base_url="http://127.0.0.1:11434",
                 model="slot-model",
                 extra_body_json="{}",
             ),
@@ -208,5 +210,6 @@ def test_quick_switch_can_change_variant(
 
     view._on_quick_slot_selected("translation", 1)
 
-    assert view._local_llm_base_url.value == "http://127.0.0.1:2222/v1"
+    assert view._local_llm_base_url.value == ""
     assert view._local_llm_model.value == "slot-model"
+    assert view._provider_draft.local_llm_provider_key == "ollama"

@@ -323,12 +323,15 @@ class TranslationIntent:
 @dataclass(frozen=True, slots=True)
 class LocalLLMIntent:
     backend: str = "ollama"
-    base_url: str = "http://127.0.0.1:11434/v1"
+    base_url: str = "http://127.0.0.1:11434"
     model: str = "llama3.1:8b"
     extra_body: dict[str, object] = field(default_factory=_default_local_llm_extra_body)
+    provider_key: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "extra_body", _copy_local_llm_extra_body(self.extra_body))
+        provider_key = self.provider_key if isinstance(self.provider_key, str) else ""
+        object.__setattr__(self, "provider_key", provider_key.strip())
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,10 +351,13 @@ class OpenAICompatibleIntent:
 
 @dataclass(frozen=True, slots=True)
 class AnthropicIntent:
+    provider_key: str = ""
     base_url: str = ""
     model: str = ""
 
     def __post_init__(self) -> None:
+        provider_key = self.provider_key if isinstance(self.provider_key, str) else ""
+        object.__setattr__(self, "provider_key", provider_key.strip())
         base_url = self.base_url if isinstance(self.base_url, str) else ""
         object.__setattr__(self, "base_url", base_url.strip())
         model = self.model if isinstance(self.model, str) else ""

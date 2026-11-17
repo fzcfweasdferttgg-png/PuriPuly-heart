@@ -47,9 +47,8 @@ def test_backup_variant_selection_enables_network_backup(
     assert view._backup_config_card.visible is True
     assert view._backup_network_group.visible is True
     assert view._backup_local_group.visible is False
-    assert (
-        view._backup_translation_text.content.value
-        == settings_view.t("settings.translation_variant.openai_compatible")
+    assert view._backup_translation_text.content.value == settings_view.t(
+        "settings.translation_variant.openai_compatible"
     )
     pending = view.build_provider_apply_settings()
     assert pending is not None
@@ -73,10 +72,7 @@ def test_backup_variant_off_disables_backup(
     assert view._provider_draft.backup_enabled is False
     assert view._provider_draft.backup_variant == ""
     assert view._backup_config_card.visible is False
-    assert (
-        view._backup_translation_text.content.value
-        == settings_view.t("settings.not_selected")
-    )
+    assert view._backup_translation_text.content.value == settings_view.t("settings.not_selected")
 
 
 def test_network_form_commits_provider_and_model(
@@ -258,7 +254,7 @@ def test_value_text_scales_down_for_long_labels(
     view._set_unit_card_value_text(view._backup_translation_text, "Не выбрано")
     assert view._backup_translation_text.content.size == 28
 
-    view._set_unit_card_value_text(view._backup_translation_text, "Свой сервер")
+    view._set_unit_card_value_text(view._backup_translation_text, "Иные сервера")
     assert view._backup_translation_text.content.size == 28
 
     view._set_unit_card_value_text(view._backup_translation_text, "OpenAI-совместимые провайдеры")
@@ -384,9 +380,7 @@ def test_backup_local_form_commits_extra_body(
     view._backup_local_extra_body.value = '{"temperature": 0.2}'
     view._on_backup_local_extra_body_change_end(None)
 
-    assert _json.loads(view._provider_draft.backup_local_extra_body_json) == {
-        "temperature": 0.2
-    }
+    assert _json.loads(view._provider_draft.backup_local_extra_body_json) == {"temperature": 0.2}
     pending = view.build_provider_apply_settings()
     assert pending is not None
     assert BackupLocalLlmExtraBodyEdit in _edit_types(pending)
@@ -453,8 +447,8 @@ def test_local_forms_keep_buttons_at_top_and_content_scrollable(
     for form in (view._local_llm_form, view._backup_local_group):
         assert form.scroll == ft.ScrollMode.AUTO
         rows = [control for control in form.controls if type(control) is ft.Row]
-        assert len(rows) == 3
-        assert all(row.vertical_alignment == ft.CrossAxisAlignment.START for row in rows[1:])
+        assert len(rows) == 4
+        assert all(row.vertical_alignment == ft.CrossAxisAlignment.START for row in rows[2:])
 
 
 def test_api_key_optional_explanation_is_not_duplicated(
@@ -502,9 +496,287 @@ def test_action_buttons_are_centered_in_fixed_height_containers(
 
     for form in (view._local_llm_form, view._backup_local_group):
         rows = [control for control in form.controls if type(control) is ft.Row]
-        assert len(rows) == 3
-        for row in rows[1:]:
+        assert len(rows) == 4
+        for row in rows[2:]:
             action = row.controls[1]
             assert isinstance(action, ft.Container)
             assert action.height == 64
             assert action.alignment == ft.Alignment.CENTER
+
+
+def test_other_servers_variant_uses_renamed_picker_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = _view(monkeypatch)
+
+    option = next(
+        option
+        for option in view._translation_picker_options()
+        if option.value == TranslationModel.LOCAL_LLM.value
+    )
+
+    assert option.value == TranslationModel.LOCAL_LLM.value
+
+    from puripuly_heart.ui.i18n import t_for_locale
+
+    assert t_for_locale("ru", "settings.translation_variant.local_llm") == "Иные сервера"
+    assert t_for_locale("en", "settings.translation_variant.local_llm") == "Other servers"
+    assert t_for_locale("ru", "settings.translation_variant.local_llm.description") == (
+        "Поддерживаемый серверный API: адрес, ключ, список моделей"
+    )
+
+
+def test_provider_preset_changes_update_primary_and_backup_forms(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    import json
+
+    from puripuly_heart.config import providers_registry
+
+    path = tmp_path / "providers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "providers": {
+                    "first": {"label": "First", "base_url": "http://first.example/v1"},
+                    "second": {"label": "Second", "base_url": "http://second.example/v1"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(providers_registry, "ensure_providers_file", lambda protocol="openai": path)
+    monkeypatch.setattr(providers_registry, "_PROVIDER_PRESETS_CACHE", None)
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    view._on_openai_provider_selected("first")
+    view._on_backup_provider_selected("first")
+
+    added = providers_registry.add_provider_preset("Third", "http://third.example/v1")
+    view._on_provider_presets_changed("translation", "add", added.key)
+
+    assert view._provider_draft.openai_compatible_provider_key == added.key
+    assert view._provider_draft.backup_provider_key == "first"
+    assert len(view._openai_provider.options) == 3
+    assert len(view._backup_provider.options) == 3
+
+    view._on_backup_provider_selected(added.key)
+    view._commit_openai_field("model", "primary-model")
+    view._commit_backup_field("model", "backup-model")
+    providers_registry.update_provider_preset(added.key, "Third renamed", "http://third.example/v1")
+    view._on_provider_presets_changed("translation", "edit", added.key)
+
+    assert view._provider_draft.openai_compatible_model == "primary-model"
+    assert view._provider_draft.backup_model == "backup-model"
+    assert [option.text for option in view._openai_provider.options][-1] == "Third renamed"
+
+    providers_registry.update_provider_preset(added.key, "Third renamed", "https://new.example/v1")
+    view._on_provider_presets_changed("translation", "edit", added.key)
+
+    assert view._provider_draft.openai_compatible_base_url == "https://new.example/v1"
+    assert view._provider_draft.backup_base_url == "https://new.example/v1"
+    assert view._provider_draft.openai_compatible_model == ""
+    assert view._provider_draft.backup_model == ""
+
+    providers_registry.delete_provider_preset(added.key)
+    view._on_provider_presets_changed("translation", "delete", added.key)
+
+    assert view._provider_draft.openai_compatible_provider_key == "first"
+    assert view._provider_draft.backup_provider_key == "first"
+    assert view._provider_draft.openai_compatible_base_url == "http://first.example/v1"
+    assert view._provider_draft.backup_base_url == "http://first.example/v1"
+    assert len(view._openai_provider.options) == 2
+    assert len(view._backup_provider.options) == 2
+
+
+def test_provider_preset_buttons_open_add_edit_and_delete_modals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import types
+
+    view = _view(monkeypatch)
+    opened = []
+
+    class Modal:
+        def __init__(self, page, on_changed, *, protocol="openai") -> None:
+            self.page = page
+            self.on_changed = on_changed
+            self.protocol = protocol
+
+        def open_add(self) -> None:
+            opened.append(("add", self.page))
+
+        def open_edit(self, key: str) -> None:
+            opened.append(("edit", key))
+
+        def open_delete(self, key: str) -> None:
+            opened.append(("delete", key))
+
+    monkeypatch.setattr(settings_view, "ProviderPresetModal", Modal)
+    event = types.SimpleNamespace(control=types.SimpleNamespace(page=object()))
+
+    view._openai_preset_add.on_click(event)
+    view._openai_preset_edit.on_click(event)
+    view._backup_preset_delete.on_click(event)
+
+    assert opened[0][0] == "add"
+    assert opened[1] == ("edit", view._openai_provider.value)
+    assert opened[2] == ("delete", view._backup_provider.value)
+
+
+def test_anthropic_preset_changes_update_primary_and_backup_forms(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    import json
+
+    from puripuly_heart.config import providers_registry
+
+    path = tmp_path / "anthropic_providers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "providers": {
+                    "anthropic": {"label": "Anthropic", "base_url": "https://api.anthropic.com"},
+                    "openrouter": {
+                        "label": "OpenRouter",
+                        "base_url": "https://openrouter.ai/api/anthropic",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(providers_registry, "ensure_providers_file", lambda protocol="openai": path)
+    monkeypatch.setattr(providers_registry, "_PROVIDER_PRESETS_CACHE", None)
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    view._on_anthropic_provider_selected("anthropic")
+    view._on_backup_anthropic_provider_selected("anthropic")
+
+    added = providers_registry.add_provider_preset(
+        "Custom Claude", "http://127.0.0.1:5000", protocol="anthropic"
+    )
+    view._on_provider_presets_changed("anthropic", "add", added.key)
+
+    assert view._provider_draft.anthropic_provider_key == added.key
+    assert view._provider_draft.backup_anthropic_provider_key == "anthropic"
+    assert view._provider_draft.anthropic_base_url == "http://127.0.0.1:5000"
+
+    view._on_backup_anthropic_provider_selected(added.key)
+    view._commit_anthropic_field("model", "primary-claude")
+    view._commit_backup_anthropic_field("model", "backup-claude")
+    providers_registry.update_provider_preset(
+        added.key, "Custom Claude edited", "http://127.0.0.1:5000", protocol="anthropic"
+    )
+    view._on_provider_presets_changed("anthropic", "edit", added.key)
+
+    assert view._provider_draft.anthropic_model == "primary-claude"
+    assert view._provider_draft.backup_anthropic_model == "backup-claude"
+
+    providers_registry.update_provider_preset(
+        added.key, "Custom Claude edited", "https://new.example/anthropic", protocol="anthropic"
+    )
+    view._on_provider_presets_changed("anthropic", "edit", added.key)
+
+    assert view._provider_draft.anthropic_base_url == "https://new.example/anthropic"
+    assert view._provider_draft.backup_anthropic_base_url == "https://new.example/anthropic"
+    assert view._provider_draft.anthropic_model == ""
+    assert view._provider_draft.backup_anthropic_model == ""
+
+    providers_registry.delete_provider_preset(added.key, protocol="anthropic")
+    view._on_provider_presets_changed("anthropic", "delete", added.key)
+
+    assert view._provider_draft.anthropic_provider_key == "anthropic"
+    assert view._provider_draft.backup_anthropic_provider_key == "anthropic"
+    assert view._provider_draft.anthropic_base_url == "https://api.anthropic.com"
+    assert view._provider_draft.backup_anthropic_base_url == "https://api.anthropic.com"
+
+
+def test_local_preset_crud_updates_both_forms_and_preserves_namesake_models(
+    monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
+) -> None:
+    import json
+
+    from puripuly_heart.config import providers_registry
+
+    path = tmp_path / "local_providers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "providers": {
+                    "ollama": {
+                        "label": "Ollama",
+                        "base_url": "http://127.0.0.1:11434",
+                    },
+                    "llamacpp": {
+                        "label": "llama.cpp",
+                        "base_url": "http://127.0.0.1:8080/v1",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_ensure = providers_registry.ensure_providers_file
+    monkeypatch.setattr(
+        providers_registry,
+        "ensure_providers_file",
+        lambda protocol="openai": path if protocol == "local" else original_ensure(protocol),
+    )
+    monkeypatch.setattr(providers_registry, "_PROVIDER_PRESETS_CACHE", None)
+    view = _view(monkeypatch)
+    settings_events.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
+    view._on_local_llm_provider_selected("ollama")
+    view._on_backup_local_provider_selected("ollama")
+
+    added = providers_registry.add_provider_preset(
+        "Custom llama", "http://127.0.0.1:8081/v1", protocol="local"
+    )
+    view._on_provider_presets_changed("local", "add", added.key)
+
+    assert view._provider_draft.local_llm_provider_key == added.key
+    assert view._provider_draft.backup_local_provider_key == "ollama"
+    assert view._provider_draft.local_llm_base_url == "http://127.0.0.1:8081/v1"
+
+    view._on_backup_local_provider_selected(added.key)
+    view._commit_local_field("model", "primary-model")
+    view._commit_backup_field("local_model", "backup-model")
+    providers_registry.update_provider_preset(
+        added.key, "Custom llama renamed", "http://127.0.0.1:8081/v1", protocol="local"
+    )
+    view._on_provider_presets_changed("local", "edit", added.key)
+
+    assert view._provider_draft.local_llm_model == "primary-model"
+    assert view._provider_draft.backup_local_model == "backup-model"
+
+    providers_registry.update_provider_preset(
+        added.key, "Custom llama renamed", "http://127.0.0.1:8082/v1", protocol="local"
+    )
+    view._on_provider_presets_changed("local", "edit", added.key)
+
+    assert view._provider_draft.local_llm_base_url == "http://127.0.0.1:8082/v1"
+    assert view._provider_draft.backup_local_base_url == "http://127.0.0.1:8082/v1"
+    assert view._provider_draft.local_llm_model == ""
+    assert view._provider_draft.backup_local_model == ""
+
+    providers_registry.delete_provider_preset(added.key, protocol="local")
+    view._on_provider_presets_changed("local", "delete", added.key)
+
+    assert view._provider_draft.local_llm_provider_key == "ollama"
+    assert view._provider_draft.backup_local_provider_key == "ollama"
+    assert view._provider_draft.local_llm_base_url == "http://127.0.0.1:11434"
+    assert view._provider_draft.backup_local_base_url == "http://127.0.0.1:11434"
+    pending = view.build_provider_apply_settings()
+    assert pending is not None
+    applied = apply_provider_intent(settings_events.settings, pending)
+    assert applied.intent.local_llm.provider_key == "ollama"
+    assert applied.intent.backup_translation.local_llm.provider_key == "ollama"
+
+    view._local_llm_base_url.value = "http://10.0.0.8:9999/v1"
+    view._on_local_llm_base_url_change_end(None)
+
+    assert view._provider_draft.local_llm_provider_key == ""
+    assert view._local_llm_provider.value is None

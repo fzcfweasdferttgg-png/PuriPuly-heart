@@ -93,6 +93,7 @@ def build_llm_provider_signature(
         translation.deepseek.llm_model if provider_llm == "deepseek" else None,
         (
             (
+                local_llm.provider_key,
                 local_llm.backend,
                 local_llm.base_url,
                 local_llm.model,
@@ -111,7 +112,7 @@ def build_llm_provider_signature(
             else None
         ),
         (
-            (anthropic.base_url, anthropic.model)
+            (anthropic.provider_key, anthropic.base_url, anthropic.model)
             if provider_llm == "anthropic"
             else None
         ),
@@ -121,6 +122,8 @@ def build_llm_provider_signature(
                 backup.model if backup.enabled else None,
                 (
                     (
+                        backup.local_llm.provider_key,
+                        backup.local_llm.backend,
                         backup.local_llm.base_url,
                         backup.local_llm.model,
                         _canonical_json_signature(backup.local_llm.extra_body),
@@ -138,7 +141,11 @@ def build_llm_provider_signature(
                     else None
                 ),
                 (
-                    (backup.anthropic.base_url, backup.anthropic.model)
+                    (
+                        backup.anthropic.provider_key,
+                        backup.anthropic.base_url,
+                        backup.anthropic.model,
+                    )
                     if backup.enabled and backup.model == "anthropic"
                     else None
                 ),

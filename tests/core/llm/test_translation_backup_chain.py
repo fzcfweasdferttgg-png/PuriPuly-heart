@@ -182,6 +182,19 @@ def test_build_local_variant_requires_address_and_model() -> None:
     assert provider.model == "llama3.1:8b"
 
 
+def test_build_local_variant_resolves_preset_address() -> None:
+    provider = build_variant_provider(
+        "local_llm",
+        local_llm=UserLocalLLMRuntimeIntent(provider_key="llamacpp", model="local-model"),
+        openai_compatible=UserOpenAICompatibleRuntimeIntent(),
+        secrets=InMemorySecretStore(),
+    )
+
+    assert provider is not None
+    assert provider.base_url == "http://127.0.0.1:8080/v1"
+    assert provider.model == "local-model"
+
+
 def test_backup_provider_uses_backup_slots_with_primary_key_fallback() -> None:
     secrets = InMemorySecretStore()
     secrets.set(SECRET_OPENAI_COMPATIBLE_API_KEY, "primary-key")

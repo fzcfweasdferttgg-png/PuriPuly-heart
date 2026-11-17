@@ -1,0 +1,65 @@
+{
+  "version": "1.0",
+  "providers": {
+    "colibri": {
+      "label": "colibri",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "backend": "colibri"
+    },
+    "lmstudio": {
+      "label": "LM Studio",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "backend": "lmstudio"
+    },
+    "llamacpp": {
+      "label": "llama.cpp",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "backend": "llamacpp"
+    },
+    "vllm": {
+      "label": "vLLM",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "backend": "vllm"
+    },
+    "sglang": {
+      "label": "SGLang",
+      "base_url": "http://127.0.0.1:30000/v1",
+      "backend": "sglang"
+    },
+    "mlx": {
+      "label": "mlx-lm",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "backend": "mlx"
+    },
+    "koboldcpp": {
+      "label": "KoboldCpp",
+      "base_url": "http://127.0.0.1:5001/v1",
+      "backend": "koboldcpp"
+    },
+    "textgen": {
+      "label": "text-generation-webui",
+      "base_url": "http://127.0.0.1:5000/v1",
+      "backend": "textgen"
+    },
+    "tabbyapi": {
+      "label": "TabbyAPI",
+      "base_url": "http://127.0.0.1:5000/v1",
+      "backend": "tabbyapi"
+    },
+    "localai": {
+      "label": "LocalAI",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "backend": "localai"
+    },
+    "jan": {
+      "label": "Jan",
+      "base_url": "http://127.0.0.1:1337/v1",
+      "backend": "jan"
+    },
+    "ollama": {
+      "label": "Ollama",
+      "base_url": "http://127.0.0.1:11434",
+      "backend": "ollama"
+    }
+  }
+}

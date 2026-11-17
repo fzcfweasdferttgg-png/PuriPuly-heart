@@ -8,8 +8,10 @@ import pytest
 from puripuly_heart.app.ports.settings_view import (
     AnthropicBaseUrlEdit,
     AnthropicModelEdit,
+    AnthropicProviderKeyEdit,
     BackupAnthropicBaseUrlEdit,
     BackupAnthropicModelEdit,
+    BackupAnthropicProviderKeyEdit,
     BackupTranslationEnabledEdit,
     BackupVariantEdit,
     ProviderApplyIntent,
@@ -66,10 +68,12 @@ def _anthropic_settings() -> AppSettingsVNext:
                 _selection("anthropic"),
                 AnthropicBaseUrlEdit("https://anthropic.example.com"),
                 AnthropicModelEdit("claude-main"),
+                AnthropicProviderKeyEdit("openrouter"),
                 BackupTranslationEnabledEdit(True),
                 BackupVariantEdit("anthropic"),
                 BackupAnthropicBaseUrlEdit("https://backup-anthropic.example.com"),
                 BackupAnthropicModelEdit("claude-backup"),
+                BackupAnthropicProviderKeyEdit("moonshot"),
             )
         ),
         materialize_translation=lambda settings: settings,
@@ -83,8 +87,10 @@ def test_anthropic_intent_survives_materialize_merge_and_runtime_projection() ->
     runtime = user_translation_intent_from_vnext(merged)
 
     assert merged.intent.translation.model == "anthropic"
+    assert merged.intent.anthropic.provider_key == "openrouter"
     assert merged.intent.anthropic.base_url == "https://anthropic.example.com"
     assert merged.intent.anthropic.model == "claude-main"
+    assert runtime.backup.anthropic.provider_key == "moonshot"
     assert runtime.backup.anthropic.base_url == "https://backup-anthropic.example.com"
     assert runtime.backup.anthropic.model == "claude-backup"
 
@@ -206,7 +212,7 @@ def test_anthropic_window_remains_independent_from_the_openai_window(
     view._on_anthropic_gear_click(None)
     anthropic_content = anthropic_window.state["content"]
     assert anthropic_content is view._anthropic_form
-    assert anthropic_window.state["height"] == 450
+    assert anthropic_window.state["height"] == 550
     assert anthropic_window.state["title"].endswith(t("settings.translation_variant.anthropic"))
 
     view._on_llm_selected(TranslationModel.OPENAI_COMPATIBLE.value)
@@ -242,6 +248,7 @@ def test_anthropic_slot_roundtrip_uses_its_own_controls(
     state = view._provider_slots_state["translation"]
     assert state.slots[0] == ProviderSlotConfig(
         variant="anthropic",
+        provider_key="anthropic",
         base_url="https://slot-anthropic.example.com",
         model="claude-slot",
     )
@@ -252,3 +259,35 @@ def test_anthropic_slot_roundtrip_uses_its_own_controls(
     assert view._anthropic_base_url.value == "https://slot-anthropic.example.com"
     assert view._anthropic_model.value == "claude-slot"
     assert view._openai_model.value == ""
+
+
+def test_anthropic_presets_supply_urls_to_primary_and_backup_providers() -> None:
+    settings = materialize_provider_apply_intent(
+        AppSettingsVNext(),
+        ProviderApplyIntent(
+            (
+                _selection("anthropic"),
+                AnthropicProviderKeyEdit("openrouter"),
+                AnthropicModelEdit("claude-main"),
+                BackupTranslationEnabledEdit(True),
+                BackupVariantEdit("anthropic"),
+                BackupAnthropicProviderKeyEdit("moonshot"),
+                BackupAnthropicModelEdit("claude-backup"),
+            )
+        ),
+        materialize_translation=lambda current: current,
+    )
+    runtime = user_translation_intent_from_vnext(settings)
+    secrets = InMemorySecretStore()
+
+    primary = build_variant_provider(
+        "anthropic",
+        local_llm=runtime.local_llm,
+        openai_compatible=runtime.openai_compatible,
+        anthropic=runtime.anthropic,
+        secrets=secrets,
+    )
+    backup = build_backup_provider(runtime.backup, secrets=secrets)
+
+    assert primary.base_url == "https://openrouter.ai/api/anthropic"
+    assert backup.base_url == "https://api.moonshot.ai/anthropic"

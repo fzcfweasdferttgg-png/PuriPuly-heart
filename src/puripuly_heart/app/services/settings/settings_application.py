@@ -34,6 +34,8 @@ from puripuly_heart.app.ports.settings_view import (
     LocalLlmBaseUrlEdit,
     LocalLlmExtraBodyEdit,
     LocalLlmModelEdit,
+    LocalLlmBackendEdit,
+    LocalLlmProviderKeyEdit,
     OscConnectionSettingsIntent,
     OverlayCalibrationSettingsIntent,
     OverlayCalibrationSnapshot,
@@ -67,6 +69,7 @@ from puripuly_heart.app.ports.settings_view import (
     OpenAICompatibleModelEdit,
     AnthropicBaseUrlEdit,
     AnthropicModelEdit,
+    AnthropicProviderKeyEdit,
     BackupTranslationEnabledEdit,
     BackupVariantEdit,
     BackupOpenAICompatibleProviderKeyEdit,
@@ -74,9 +77,12 @@ from puripuly_heart.app.ports.settings_view import (
     BackupOpenAICompatibleModelEdit,
     BackupAnthropicBaseUrlEdit,
     BackupAnthropicModelEdit,
+    BackupAnthropicProviderKeyEdit,
     BackupLocalLlmBaseUrlEdit,
     BackupLocalLlmModelEdit,
     BackupLocalLlmExtraBodyEdit,
+    BackupLocalLlmBackendEdit,
+    BackupLocalLlmProviderKeyEdit,
     SttLocalModelEdit,
     SystemPromptEdit,
     TranslationHttpExtensionEdit,
@@ -290,6 +296,7 @@ def settings_view_surface_snapshots(
         openai_compatible_provider_key=intent.openai_compatible.provider_key,
         openai_compatible_base_url=intent.openai_compatible.base_url,
         openai_compatible_model=intent.openai_compatible.model,
+        anthropic_provider_key=intent.anthropic.provider_key,
         anthropic_base_url=intent.anthropic.base_url,
         anthropic_model=intent.anthropic.model,
         backup_enabled=intent.backup_translation.enabled,
@@ -297,8 +304,11 @@ def settings_view_surface_snapshots(
         backup_provider_key=intent.backup_translation.openai_compatible.provider_key,
         backup_base_url=intent.backup_translation.openai_compatible.base_url,
         backup_model=intent.backup_translation.openai_compatible.model,
+        backup_anthropic_provider_key=intent.backup_translation.anthropic.provider_key,
         backup_anthropic_base_url=intent.backup_translation.anthropic.base_url,
         backup_anthropic_model=intent.backup_translation.anthropic.model,
+        backup_local_provider_key=intent.backup_translation.local_llm.provider_key,
+        backup_local_backend=intent.backup_translation.local_llm.backend,
         backup_local_base_url=intent.backup_translation.local_llm.base_url,
         backup_local_model=intent.backup_translation.local_llm.model,
         backup_local_extra_body_json=json.dumps(
@@ -307,6 +317,8 @@ def settings_view_surface_snapshots(
             indent=2,
         ),
         qwen_region=QwenRegion(intent.translation.qwen.region),
+        local_llm_provider_key=intent.local_llm.provider_key,
+        local_llm_backend=intent.local_llm.backend,
         local_llm_base_url=intent.local_llm.base_url,
         local_llm_model=intent.local_llm.model,
         local_llm_extra_body_json=json.dumps(
@@ -811,6 +823,11 @@ def materialize_provider_apply_intent(
                 updated,
                 openai_compatible=replace(updated.intent.openai_compatible, model=edit.model),
             )
+        elif isinstance(edit, AnthropicProviderKeyEdit):
+            updated = _with_intent(
+                updated,
+                anthropic=replace(updated.intent.anthropic, provider_key=edit.provider_key),
+            )
         elif isinstance(edit, AnthropicBaseUrlEdit):
             updated = _with_intent(
                 updated,
@@ -866,6 +883,17 @@ def materialize_provider_apply_intent(
                     ),
                 ),
             )
+        elif isinstance(edit, BackupAnthropicProviderKeyEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    anthropic=replace(
+                        updated.intent.backup_translation.anthropic,
+                        provider_key=edit.provider_key,
+                    ),
+                ),
+            )
         elif isinstance(edit, BackupAnthropicBaseUrlEdit):
             updated = _with_intent(
                 updated,
@@ -885,6 +913,28 @@ def materialize_provider_apply_intent(
                     anthropic=replace(
                         updated.intent.backup_translation.anthropic,
                         model=edit.model,
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupLocalLlmBackendEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    local_llm=replace(
+                        updated.intent.backup_translation.local_llm,
+                        backend=edit.backend,
+                    ),
+                ),
+            )
+        elif isinstance(edit, BackupLocalLlmProviderKeyEdit):
+            updated = _with_intent(
+                updated,
+                backup_translation=replace(
+                    updated.intent.backup_translation,
+                    local_llm=replace(
+                        updated.intent.backup_translation.local_llm,
+                        provider_key=edit.provider_key,
                     ),
                 ),
             )
@@ -975,6 +1025,16 @@ def materialize_provider_apply_intent(
             updated = _with_qwen_api_host(updated, "beijing", edit.api_host)
         elif isinstance(edit, QwenSingaporeApiHostEdit):
             updated = _with_qwen_api_host(updated, "singapore", edit.api_host)
+        elif isinstance(edit, LocalLlmBackendEdit):
+            updated = _with_intent(
+                updated,
+                local_llm=replace(updated.intent.local_llm, backend=edit.backend),
+            )
+        elif isinstance(edit, LocalLlmProviderKeyEdit):
+            updated = _with_intent(
+                updated,
+                local_llm=replace(updated.intent.local_llm, provider_key=edit.provider_key),
+            )
         elif isinstance(edit, LocalLlmBaseUrlEdit):
             updated = _with_intent(
                 updated,

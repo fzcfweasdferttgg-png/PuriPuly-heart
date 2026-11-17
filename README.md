@@ -55,16 +55,23 @@ Prompt templates used by the application are located in `docs/prompts/`.
 ## Translation providers
 
 The primary and backup pickers currently offer **OpenAI-compatible server**,
-**Anthropic-compatible providers**, and **Own server**, with independent settings
+**Anthropic-compatible providers**, and **Other servers**, with independent settings
 and three configuration slots per form. The OpenAI-compatible variant uses the
-official `openai` SDK; Anthropic uses the official `anthropic` SDK; Own server
-uses `httpx` directly. All three currently send non-streaming requests.
+official `openai` SDK; Anthropic uses the official `anthropic` SDK; Other servers
+use LLM-lib. The OpenAI and Anthropic forms send non-streaming requests, while
+LLM-lib streams internally and returns the completed translation.
 
 The Custom HTTP backend exists in the runtime, but is not exposed in these
 pickers. Each card and provider variant has an independent settings window, six
-instances in total. See
+instances in total. The OpenAI-compatible registry has eight bundled providers
+and supports up to 50 entries with custom names and add/edit/delete controls.
+Anthropic-compatible forms use an independent `anthropic_providers.json` with
+six bundled providers and the same 50-entry CRUD workflow. Other servers use
+`local_providers.json` with twelve local-server addresses from LLM-lib and the
+same editable 50-entry registry in both primary and backup forms. Each preset
+also selects its LLM-lib backend; Ollama uses native `/api/chat`. See
 [Translation providers](docs/translation-providers.md) for the current behavior,
-protocol boundaries, and the evaluated LLM-lib expansion candidate.
+protocol boundaries, and the pinned LLM-lib integration.
 
 ## Development
 
@@ -154,7 +161,7 @@ development tree marked as version 2.10.0, not the author's official 2.10.0 rele
 - [ ] Stabilize and refine the model manager, OpenAI-compatible server, and local server concepts.
 - [x] Add the native Anthropic Messages API runtime adapter, provider addresses, and required dependencies.
 - [x] Add Anthropic entries to the primary and backup picker lists and connect their forms, gears, slots, and independent windows.
-- [ ] Decide on and implement broader local server connectivity; LLM-lib is the current evaluated candidate, not an integrated dependency.
+- [x] Integrate commit-pinned LLM-lib only for Other servers, including native Ollama `/api/chat` and per-server backend selection.
 - [ ] Add configurable workload-to-backend assignment for self and peer speech recognition, allowing each channel to run on CPU, Vulkan, or CUDA and either share one model instance or use separate model instances.
 - [ ] ... ???
 

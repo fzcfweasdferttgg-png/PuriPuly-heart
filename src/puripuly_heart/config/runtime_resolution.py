@@ -219,7 +219,7 @@ DEEPSEEK_MODEL_V4_FLASH: Final = "deepseek-flash"
 QWEN_MODEL_35_FLASH: Final = "qwen3.5-flash"
 QWEN_MODEL_38_FLASH: Final = "qwen3.8-flash"
 LOCAL_LLM_BACKEND_OLLAMA: Final = "ollama"
-LOCAL_LLM_DEFAULT_BASE_URL: Final = "http://127.0.0.1:11434/v1"
+LOCAL_LLM_DEFAULT_BASE_URL: Final = "http://127.0.0.1:11434"
 LOCAL_LLM_DEFAULT_MODEL: Final = "llama3.1:8b"
 MANAGED_GEMMA_MODEL: Final = "puripuly-gemma-4-e4b-q4"
 MANAGED_GEMMA_26B_MODEL: Final = "puripuly-gemma-4-26b-a4b-q4"
@@ -980,6 +980,7 @@ class UserOpenAICompatibleRuntimeIntent:
 
 @dataclass(frozen=True, slots=True)
 class UserAnthropicRuntimeIntent:
+    provider_key: str = ""
     base_url: str = ""
     model: str = ""
 
@@ -989,6 +990,8 @@ class UserLocalLLMRuntimeIntent:
     base_url: str = ""
     model: str = ""
     extra_body: dict[str, object] = field(default_factory=dict)
+    provider_key: str = ""
+    backend: str = ""
 
 
 @dataclass(frozen=True, slots=True)

@@ -113,10 +113,18 @@ def test_llm_provider_signature_tracks_all_runtime_inputs() -> None:
             local_llm=replace(local.intent.local_llm, extra_body={"enable_thinking": False}),
         ),
     )
+    changed_provider = replace(
+        local,
+        intent=replace(
+            local.intent,
+            local_llm=replace(local.intent.local_llm, provider_key="ollama"),
+        ),
+    )
 
     assert _signature(local) == _signature(same_json_different_order)
     assert _signature(local) != _signature(changed_model)
     assert _signature(local) != _signature(changed_body)
+    assert _signature(local) != _signature(changed_provider)
 
 
 def test_managed_gemma_signature_tracks_prefix_and_ignores_cloud_state() -> None:

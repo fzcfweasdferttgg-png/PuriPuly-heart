@@ -23,6 +23,7 @@ class ProviderSlotConfig:
     base_url: str = ""
     model: str = ""
     extra_body_json: str = ""
+    backend: str = ""
 
     @property
     def is_empty(self) -> bool:
@@ -32,6 +33,7 @@ class ProviderSlotConfig:
             or self.base_url
             or self.model
             or self.extra_body_json
+            or self.backend
         )
 
 
@@ -62,6 +64,7 @@ def _config_to_dict(config: ProviderSlotConfig | None) -> dict[str, str] | None:
         "base_url": config.base_url,
         "model": config.model,
         "extra_body_json": config.extra_body_json,
+        "backend": config.backend,
     }
 
 
@@ -74,6 +77,7 @@ def _config_from_dict(raw: object) -> ProviderSlotConfig | None:
         base_url=str(raw.get("base_url", "")),
         model=str(raw.get("model", "")),
         extra_body_json=str(raw.get("extra_body_json", "")),
+        backend=str(raw.get("backend", "")),
     )
     return None if config.is_empty else config
 
@@ -82,7 +86,7 @@ def load_provider_slots(path: Path) -> dict[str, ProviderCardSlots]:
     """Load card slot states from ``path``; missing or broken files give empty state."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     if not isinstance(raw, dict):
         return {}
@@ -116,9 +120,7 @@ def save_provider_slots(path: Path, state: dict[str, ProviderCardSlots]) -> None
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         pass
 

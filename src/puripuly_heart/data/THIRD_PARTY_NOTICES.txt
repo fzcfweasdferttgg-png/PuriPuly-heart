@@ -20,6 +20,7 @@ Runtime/bundled notice-sensitive components:
 - hf-xet 1.7.0 and its Windows native extension: Apache-2.0.
 - httpx2 2.16.0 and httpcore2 2.16.0: BSD-3-Clause. Their upstream license payloads remain in the packaged distribution metadata.
 - openai 3.51.0, anthropic 2.8.0, and opentelemetry-api 1.45.2: Apache-2.0. Their upstream license payloads remain in the packaged distribution metadata.
+- llm-lib 0.1.0, pinned to commit 9784a0805c8bd6776b78a335e18237212d01368c: Apache-2.0. Used only for the Other servers translation variant. Source: https://github.com/Tejasvedagiri/LLM-lib . The upstream license is packaged under puripuly_heart\data\licenses\LLM-LIB-0.1.0-LICENSE.txt.
 - docstring-parser 0.18.0 and jiter 0.19.0: MIT. Their upstream license payloads remain in the packaged distribution metadata.
 - Flet 1.0.5 and serious_python 5.0.0: Apache-2.0. Native Windows releases retain Flutter's generated dependency notices under data\flutter_assets\NOTICES.Z; the locked Python Flet wheel retains its upstream license metadata.
 - dart-bridge 1.10.0: MIT. The unmodified upstream license is packaged under puripuly_heart\data\licenses\DART-BRIDGE-1.10.0-LICENSE.txt. Source: https://github.com/flet-dev/dart-bridge/tree/v1.10.0 .

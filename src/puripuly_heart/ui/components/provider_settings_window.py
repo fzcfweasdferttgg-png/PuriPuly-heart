@@ -31,7 +31,8 @@ from puripuly_heart.ui.theme import (
 
 PROVIDER_WINDOW_WIDTH = 680
 PROVIDER_WINDOW_HEIGHT = 450
-LOCAL_PROVIDER_WINDOW_HEIGHT = 695
+ANTHROPIC_PROVIDER_WINDOW_HEIGHT = 550
+LOCAL_PROVIDER_WINDOW_HEIGHT = 765
 PROVIDER_CONTENT_PADDING = FOUNDATION_DESIGN_TOKENS.spacing.page
 RESIZE_GRIP_SIZE = 6
 RESIZE_CORNER_SIZE = 16
@@ -148,7 +149,11 @@ class ProviderSettingsWindow:
         self._accepted = False
         self._generation += 1
         generation = self._generation
-        self._task = schedule(lambda: self._run(generation))
+
+        async def run_generation() -> None:
+            await self._run(generation)
+
+        self._task = schedule(run_generation)
 
     def replace_content(
         self,

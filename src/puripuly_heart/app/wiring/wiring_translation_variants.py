@@ -1,8 +1,8 @@
 """User-facing translation variants and the backup translator.
 
 The two variant forms follow the old application: a network OpenAI-compatible
-endpoint (providers.json preset or own address) and a local OpenAI-compatible
-server, each with its key from the plaintext secret store and a model picked
+endpoint (providers.json preset or own address) and an LLM-lib local server,
+each with its key from the plaintext secret store and a model picked
 via API polling or typed by hand. The backup translator engages when the
 primary fails or stalls (SequentialFallbackLLMProvider).
 """
@@ -24,7 +24,7 @@ from puripuly_heart.core.llm.fallback_chain import (
 from puripuly_heart.core.llm.provider import LLMProvider
 from puripuly_heart.core.storage.secrets import SecretStore
 from puripuly_heart.providers.llm.anthropic import AnthropicLLMProvider
-from puripuly_heart.providers.llm.local_openai import LocalOpenAICompatibleLLMProvider
+from puripuly_heart.providers.llm.local_llm_lib import LLMLibLocalLLMProvider
 from puripuly_heart.providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 
 logger = logging.getLogger(__name__)
@@ -56,14 +56,24 @@ def _api_key(secrets: SecretStore, slot: str, fallback_slot: str | None = None) 
     return value
 
 
-def _preset_base_url(provider_key: str) -> str:
+def _preset_base_url(provider_key: str, *, protocol: str = "openai") -> str:
     key = provider_key.strip()
     if not key:
         return ""
     from puripuly_heart.config.providers_registry import load_provider_presets
 
-    preset = load_provider_presets().get(key)
+    preset = load_provider_presets(protocol).get(key)
     return preset.base_url if preset is not None else ""
+
+
+def _local_preset_backend(provider_key: str) -> str:
+    key = provider_key.strip()
+    if not key:
+        return ""
+    from puripuly_heart.config.providers_registry import load_provider_presets
+
+    preset = load_provider_presets("local").get(key)
+    return preset.backend if preset is not None else ""
 
 
 def build_variant_provider(
@@ -80,15 +90,23 @@ def build_variant_provider(
     anthropic_key_fallback_slot: str | None = None,
 ) -> LLMProvider | None:
     if variant == USER_VARIANT_LOCAL_LLM:
-        if not local_llm.base_url.strip() or not local_llm.model.strip():
+        base_url = local_llm.base_url.strip() or _preset_base_url(
+            local_llm.provider_key, protocol="local"
+        )
+        if not base_url or not local_llm.model.strip():
             return None
+        backend = (
+            local_llm.backend.strip() or _local_preset_backend(local_llm.provider_key) or "ollama"
+        )
         logger.info(
-            "[LLM] Building local translation provider: base_url=%s model=%s",
-            local_llm.base_url,
+            "[LLM] Building local translation provider: backend=%s base_url=%s model=%s",
+            backend,
+            base_url,
             local_llm.model,
         )
-        return LocalOpenAICompatibleLLMProvider(
-            base_url=local_llm.base_url,
+        return LLMLibLocalLLMProvider(
+            backend=backend,
+            base_url=base_url,
             model=local_llm.model,
             api_key=_api_key(secrets, local_key_slot),
             extra_body=local_llm.extra_body,
@@ -112,13 +130,16 @@ def build_variant_provider(
     if variant == USER_VARIANT_ANTHROPIC:
         if not anthropic.model.strip():
             return None
+        base_url = anthropic.base_url.strip() or _preset_base_url(
+            anthropic.provider_key, protocol="anthropic"
+        )
         logger.info(
             "[LLM] Building Anthropic provider: base_url=%s model=%s",
-            anthropic.base_url or "https://api.anthropic.com",
+            base_url or "https://api.anthropic.com",
             anthropic.model,
         )
         return AnthropicLLMProvider(
-            base_url=anthropic.base_url,
+            base_url=base_url,
             model=anthropic.model,
             api_key=_api_key(secrets, anthropic_key_slot, anthropic_key_fallback_slot),
         )
@@ -135,6 +156,8 @@ def build_backup_provider(
     provider = build_variant_provider(
         backup.model,
         local_llm=UserLocalLLMRuntimeIntent(
+            provider_key=backup.local_llm.provider_key,
+            backend=backup.local_llm.backend,
             base_url=backup.local_llm.base_url,
             model=backup.local_llm.model,
             extra_body=backup.local_llm.extra_body,
@@ -145,6 +168,7 @@ def build_backup_provider(
             model=backup.openai_compatible.model,
         ),
         anthropic=UserAnthropicRuntimeIntent(
+            provider_key=backup.anthropic.provider_key,
             base_url=backup.anthropic.base_url,
             model=backup.anthropic.model,
         ),

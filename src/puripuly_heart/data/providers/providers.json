@@ -21,10 +21,6 @@
       "label": "Qwen (Alibaba)",
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
     },
-    "cerebras": {
-      "label": "Cerebras",
-      "base_url": "https://api.cerebras.ai/v1"
-    },
     "groq": {
       "label": "Groq",
       "base_url": "https://api.groq.com/openai/v1"
@@ -36,18 +32,6 @@
     "together": {
       "label": "Together AI",
       "base_url": "https://api.together.xyz/v1"
-    },
-    "fireworks": {
-      "label": "Fireworks AI",
-      "base_url": "https://api.fireworks.ai/inference/v1"
-    },
-    "chutes": {
-      "label": "Chutes AI",
-      "base_url": "https://llm.chutes.ai/v1"
-    },
-    "venice": {
-      "label": "Venice AI",
-      "base_url": "https://api.venice.ai/api/v1"
     }
   }
 }

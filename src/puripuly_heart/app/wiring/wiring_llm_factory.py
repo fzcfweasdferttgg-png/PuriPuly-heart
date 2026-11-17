@@ -1,7 +1,7 @@
 """LLM provider factory.
 
-Only two translation backends remain in this build: the local OpenAI-
-compatible endpoint and the local managed Gemma runtime. The cloud
+Only two translation backends remain in this build: LLM-lib local servers
+and the local managed Gemma runtime. The cloud
 providers (DeepSeek, Qwen, OpenAI, OpenRouter, ChatGPT plan, index-
 translate) and the managed OpenRouter release path were removed.
 """
@@ -42,7 +42,7 @@ from puripuly_heart.core.observability import ProviderObservationPort
 from puripuly_heart.core.storage.secrets import SecretStore
 from puripuly_heart.core.translation_policy import FIXED_TRANSLATION_POLICY
 from puripuly_heart.domain.models import Translation
-from puripuly_heart.providers.llm.local_openai import LocalOpenAICompatibleLLMProvider
+from puripuly_heart.providers.llm.local_llm_lib import LLMLibLocalLLMProvider
 from puripuly_heart.providers.llm.managed_gemma import ManagedGemmaLLMProvider
 
 MANAGED_OPENROUTER_RELEASE_SERVICE_REQUIRED_ERROR = (
@@ -121,10 +121,13 @@ def user_translation_intent_from_vnext(settings: AppSettingsVNext):
             model=openai_compatible.model,
         ),
         anthropic=UserAnthropicRuntimeIntent(
+            provider_key=anthropic.provider_key,
             base_url=anthropic.base_url,
             model=anthropic.model,
         ),
         local_llm=UserLocalLLMRuntimeIntent(
+            provider_key=local_llm.provider_key,
+            backend=local_llm.backend,
             base_url=local_llm.base_url,
             model=local_llm.model,
             extra_body=local_llm.extra_body,
@@ -138,10 +141,13 @@ def user_translation_intent_from_vnext(settings: AppSettingsVNext):
                 model=backup.openai_compatible.model,
             ),
             anthropic=UserAnthropicRuntimeIntent(
+                provider_key=backup.anthropic.provider_key,
                 base_url=backup.anthropic.base_url,
                 model=backup.anthropic.model,
             ),
             local_llm=UserLocalLLMRuntimeIntent(
+                provider_key=backup.local_llm.provider_key,
+                backend=backup.local_llm.backend,
                 base_url=backup.local_llm.base_url,
                 model=backup.local_llm.model,
                 extra_body=backup.local_llm.extra_body,
@@ -244,9 +250,7 @@ def _plain_resolved_option_value(value: object) -> object:
     return value
 
 
-def _resolved_option_mapping(
-    options: Mapping[str, object], key: str
-) -> dict[str, object] | None:
+def _resolved_option_mapping(options: Mapping[str, object], key: str) -> dict[str, object] | None:
     value = options.get(key)
     if isinstance(value, Mapping):
         return {str(k): _plain_resolved_option_value(v) for k, v in value.items()}
@@ -301,8 +305,10 @@ def _provider_from_resolved_target(
 
     if target.provider == PROVIDER_LOCAL_LLM:
         api_key = (secrets.get("local_llm_api_key") or "").strip()
-        return LocalOpenAICompatibleLLMProvider(
-            base_url=target.base_url or "http://127.0.0.1:11434/v1",
+        backend = str(target.provider_options.get("backend") or "ollama")
+        return LLMLibLocalLLMProvider(
+            backend=backend,
+            base_url=target.base_url or "http://127.0.0.1:11434",
             model=target.model,
             extra_body=_resolved_option_mapping(target.provider_options, "extra_body"),
             api_key=api_key,

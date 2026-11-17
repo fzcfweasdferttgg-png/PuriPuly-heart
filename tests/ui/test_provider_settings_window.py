@@ -198,7 +198,7 @@ def test_gear_opens_dialog_with_form_and_titles(
     assert fake2.opened["height"] == 450
 
 
-def test_local_server_dialogs_use_695_pixel_height(
+def test_local_server_dialogs_use_765_pixel_height(
     monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
 ) -> None:
     view = _view(monkeypatch)
@@ -211,11 +211,11 @@ def test_local_server_dialogs_use_695_pixel_height(
 
     view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
     view._on_local_llm_gear_click(None)
-    assert fake_t.opened["height"] == 695
+    assert fake_t.opened["height"] == 765
 
     view._on_backup_variant_selected(TranslationModel.LOCAL_LLM.value)
     view._on_backup_gear_click(None)
-    assert fake_b.opened["height"] == 695
+    assert fake_b.opened["height"] == 765
 
 
 def test_dialog_accept_applies_staged_edits(
@@ -306,7 +306,7 @@ def test_translation_variants_use_distinct_windows_without_live_replacement(
     assert fake_local.window.is_open is True
     assert fake_local.opened["content"] is view._local_llm_form
     assert view._local_llm_form.controls[0] is view._local_llm_slots_row
-    assert fake_local.opened["height"] == 695
+    assert fake_local.opened["height"] == 765
 
 
 def test_backup_dialog_shows_only_the_selected_variant_form(
@@ -485,7 +485,8 @@ def test_all_six_provider_windows_route_to_independent_instances(
         }[suffix]
         assert fakes[kind].window.is_open is True
         assert fakes[kind].opened["content"] is expected_group
-        assert fakes[kind].opened["height"] == (695 if suffix == "local" else 450)
+        expected_height = 765 if suffix == "local" else 550 if suffix == "anthropic" else 450
+        assert fakes[kind].opened["height"] == expected_height
 
 
 def test_stale_window_close_does_not_revert_the_new_variant(
@@ -643,3 +644,28 @@ async def test_stale_session_finish_does_not_clear_the_replacement_page() -> Non
 
     await window.close()
     assert closed == ["old", "new"]
+
+
+async def test_open_schedules_a_flet_compatible_coroutine_function() -> None:
+    import inspect
+
+    handlers = []
+    window = ProviderSettingsWindow(app_runner=_hanging_app_runner)
+
+    def schedule(handler):
+        assert inspect.iscoroutinefunction(handler)
+        handlers.append(handler)
+        return asyncio.get_running_loop().create_task(handler())
+
+    window.open(
+        schedule,
+        title="test",
+        content=object(),
+        on_accept=lambda: None,
+        on_close_request=lambda: None,
+    )
+    await asyncio.sleep(0)
+
+    assert len(handlers) == 1
+    assert window.is_open
+    await window.close()

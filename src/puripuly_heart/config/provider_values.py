@@ -212,7 +212,19 @@ class DeepSeekLLMModel(str, Enum):
 
 
 class LocalLLMBackend(str, Enum):
+    COLIBRI = "colibri"
+    LMSTUDIO = "lmstudio"
+    LLAMACPP = "llamacpp"
+    VLLM = "vllm"
+    SGLANG = "sglang"
+    MLX = "mlx"
+    KOBOLDCPP = "koboldcpp"
+    TEXTGEN = "textgen"
+    TABBYAPI = "tabbyapi"
+    LOCALAI = "localai"
+    JAN = "jan"
     OLLAMA = "ollama"
+    OPENAI_COMPATIBLE = "openai-compatible"
 
 
 class OpenRouterSelectionAlias(str, Enum):

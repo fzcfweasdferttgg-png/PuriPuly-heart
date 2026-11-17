@@ -7,7 +7,7 @@ The primary and backup translation pickers currently expose the same choices:
 - **Not selected** (or **Off** for the backup) leaves the corresponding channel unused.
 - **OpenAI-compatible server** uses a provider preset or a custom base URL and model.
 - **Anthropic-compatible providers** use the Anthropic Messages API with a custom base URL and model.
-- **Own server** uses a custom base URL, model, and additional JSON request-body fields.
+- **Other servers** uses a local-server preset or custom base URL, a model, and additional JSON request-body fields.
 
 Each form has three independently saved configuration slots. Primary and backup
 settings are separate. When the backup is enabled and configured, it is used
@@ -19,7 +19,7 @@ these two pickers.
 After a provider is selected, its card shows a gear button and quick-switch
 buttons `1–3`. The gear opens the settings window owned by that specific card
 and provider variant; it does not select a provider. There are six independent
-window instances: OpenAI-compatible, Own server, and Anthropic for each of the
+window instances: OpenAI-compatible, Other servers, and Anthropic for each of the
 primary and backup cards. Opening another variant of the same card closes its
 previous window without replacing that window's mounted content. Primary and
 backup windows remain independent. Each settings window repeats the three slot
@@ -33,32 +33,66 @@ its form, gear, slots, and dedicated window in the same way as the other variant
 | --- | --- | --- |
 | OpenAI-compatible server | Official `openai` SDK | Non-streaming OpenAI Chat Completions |
 | Anthropic-compatible providers | Official `anthropic` SDK | Non-streaming Anthropic Messages API |
-| Own server | Direct `httpx` client | Non-streaming OpenAI Chat Completions with extra body fields |
+| Other servers | LLM-lib | Server-specific streaming protocol with completed-text output |
 
 The OpenAI-compatible variant supports provider presets, custom endpoints,
 model discovery, and connection checks. The Anthropic runtime adapter also
 supports custom endpoints and SDK model discovery. An API key is optional for
 local servers that do not require one.
 
-"Own server" currently means an OpenAI-compatible HTTP endpoint. It does not
-yet provide separate native adapters for the KoboldCpp, llama.cpp,
-text-generation-webui, or TabbyAPI text-completion protocols. The default
-address points to Ollama's OpenAI-compatible API rather than its native API.
+"Other servers" is the only variant that uses LLM-lib. Ollama uses its native
+`/api/chat` NDJSON protocol and `/api/tags` discovery. The other bundled local
+servers use LLM-lib's OpenAI Chat Completions transport, not the official
+OpenAI SDK. This does not add separate native adapters for the KoboldCpp,
+llama.cpp, text-generation-webui, or TabbyAPI text-completion protocols.
+Requests stream internally and the adapter returns the completed translation.
 
-## Evaluated expansion candidate
+## Provider registry
 
-[LLM-lib](https://github.com/Tejasvedagiri/LLM-lib) was evaluated as a possible
-shared client for broader own-server connectivity. It covers KoboldCpp,
-llama.cpp, Ollama, text-generation-webui, and TabbyAPI, and also has presets
-for vLLM, SGLang, LM Studio, mlx-lm, LocalAI, Jan, and colibri.
+The OpenAI-compatible dropdown has eight bundled presets: OpenAI, OpenRouter,
+Google Gemini, DeepSeek, Qwen, Groq, Mistral AI, and Together AI. The user copy
+of `providers.json` remains authoritative and is not destructively migrated.
+Primary and backup forms provide add, edit, and delete buttons next to the
+provider dropdown. Entries have editable custom names and base URLs; the
+registry accepts at most 50 records. Deleting a selected entry moves the form to
+the first remaining preset, or clears the selection when none remain.
 
-Ollama uses its native `/api/chat` protocol. The other named servers use their
-OpenAI-compatible interfaces. Generic OpenAI-compatible configuration can
-cover additional servers, including Aphrodite, when that interface is enabled.
+Anthropic-compatible primary and backup forms use the separate
+`anthropic_providers.json` registry with six bundled presets: Anthropic,
+OpenRouter, DeepSeek, Moonshot AI, Zhipu AI, and MiniMax. It has the same CRUD
+controls and 50-entry limit, while its `provider_key` is persisted in settings,
+provider slots, runtime signatures, and provider construction. Deleting a
+selected preset applies the same fallback behavior.
 
-LLM-lib is **not integrated** and is not a project dependency. Evaluation used
-commit `9784a0805c8bd6776b78a335e18237212d01368c` on Python 3.14.7: its 101
-tests and Ruff checks passed, and loopback protocol checks succeeded for all
-five primary server types. It requires `httpx2>=2.13.1` and is licensed under
-Apache-2.0. The project is very new, has no PyPI release, and would require a
-commit-pinned Git dependency and further acceptance testing before integration.
+Other-server primary and backup forms use the independent
+`local_providers.json` registry with twelve bundled presets: colibri, LM Studio,
+llama.cpp, vLLM, SGLang, mlx-lm, KoboldCpp, text-generation-webui, TabbyAPI,
+LocalAI, Jan, and Ollama. Their addresses and backend identifiers follow
+LLM-lib's local-server presets. Both forms provide the same add/edit/delete
+workflow, custom names, URL validation, and 50-entry limit. Custom entries also
+allow selecting the LLM-lib backend, including native Ollama or generic
+OpenAI-compatible transport. The selected `provider_key` and `backend` are
+persisted in settings, slots, runtime signatures, and provider construction.
+Changing the selected server, backend, or URL clears the model; renaming a
+preset without changing either preserves it. A manually entered address that no
+longer matches the selected preset clears the preset selection instead of
+displaying a misleading server name. Legacy Ollama addresses ending in `/v1`
+are normalized to the native API root by the runtime adapter.
+
+## Integrated dependency
+
+[LLM-lib](https://github.com/Tejasvedagiri/LLM-lib) is pinned to commit
+`9784a0805c8bd6776b78a335e18237212d01368c` as a direct Git dependency in
+`pyproject.toml` and `uv.lock`. It requires `httpx2>=2.13.1` and is licensed
+under Apache-2.0. It is used only by the Other servers runtime adapter and its
+model discovery. The OpenAI and Anthropic variants continue to use their
+official SDKs.
+
+The OpenAI-compatible label in LLM-lib describes only the wire protocols it
+implements. It does not imply compatibility with every official OpenAI API
+method or with the official OpenAI SDK. Generic OpenAI-compatible configuration
+can cover additional servers, including Aphrodite, when that interface is
+enabled. Live per-server acceptance testing remains necessary rather than
+relying on that label. Project loopback tests cover native Ollama NDJSON and
+OpenAI SSE requests, Ollama `/api/tags` discovery, extra-body mapping, and
+provider delegation.

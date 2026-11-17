@@ -126,6 +126,7 @@ class ProviderSettingsSnapshot:
     openai_compatible_provider_key: str = ""
     openai_compatible_base_url: str = ""
     openai_compatible_model: str = ""
+    anthropic_provider_key: str = ""
     anthropic_base_url: str = ""
     anthropic_model: str = ""
     backup_enabled: bool = False
@@ -133,11 +134,16 @@ class ProviderSettingsSnapshot:
     backup_provider_key: str = ""
     backup_base_url: str = ""
     backup_model: str = ""
+    backup_anthropic_provider_key: str = ""
     backup_anthropic_base_url: str = ""
     backup_anthropic_model: str = ""
     backup_local_base_url: str = ""
     backup_local_model: str = ""
     backup_local_extra_body_json: str = ""
+    local_llm_provider_key: str = ""
+    backup_local_provider_key: str = ""
+    local_llm_backend: str = "ollama"
+    backup_local_backend: str = "ollama"
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,6 +423,16 @@ class QwenSingaporeApiHostEdit:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalLlmBackendEdit:
+    backend: str
+
+
+@dataclass(frozen=True, slots=True)
+class LocalLlmProviderKeyEdit:
+    provider_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class LocalLlmBaseUrlEdit:
     base_url: str
 
@@ -472,6 +488,11 @@ class OpenAICompatibleModelEdit:
 
 
 @dataclass(frozen=True, slots=True)
+class AnthropicProviderKeyEdit:
+    provider_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class AnthropicBaseUrlEdit:
     base_url: str
 
@@ -507,6 +528,11 @@ class BackupOpenAICompatibleModelEdit:
 
 
 @dataclass(frozen=True, slots=True)
+class BackupAnthropicProviderKeyEdit:
+    provider_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class BackupAnthropicBaseUrlEdit:
     base_url: str
 
@@ -514,6 +540,16 @@ class BackupAnthropicBaseUrlEdit:
 @dataclass(frozen=True, slots=True)
 class BackupAnthropicModelEdit:
     model: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupLocalLlmBackendEdit:
+    backend: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupLocalLlmProviderKeyEdit:
+    provider_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -548,6 +584,8 @@ ProviderSettingsEdit: TypeAlias = (
     | QwenRegionEdit
     | QwenBeijingApiHostEdit
     | QwenSingaporeApiHostEdit
+    | LocalLlmBackendEdit
+    | LocalLlmProviderKeyEdit
     | LocalLlmBaseUrlEdit
     | LocalLlmModelEdit
     | LocalLlmExtraBodyEdit
@@ -557,6 +595,7 @@ ProviderSettingsEdit: TypeAlias = (
     | OpenAICompatibleProviderKeyEdit
     | OpenAICompatibleBaseUrlEdit
     | OpenAICompatibleModelEdit
+    | AnthropicProviderKeyEdit
     | AnthropicBaseUrlEdit
     | AnthropicModelEdit
     | BackupTranslationEnabledEdit
@@ -564,8 +603,11 @@ ProviderSettingsEdit: TypeAlias = (
     | BackupOpenAICompatibleProviderKeyEdit
     | BackupOpenAICompatibleBaseUrlEdit
     | BackupOpenAICompatibleModelEdit
+    | BackupAnthropicProviderKeyEdit
     | BackupAnthropicBaseUrlEdit
     | BackupAnthropicModelEdit
+    | BackupLocalLlmBackendEdit
+    | BackupLocalLlmProviderKeyEdit
     | BackupLocalLlmBaseUrlEdit
     | BackupLocalLlmModelEdit
     | BackupLocalLlmExtraBodyEdit
@@ -614,6 +656,8 @@ __all__ = [
     "GeneralSettingsSnapshot",
     "ImmediateSettingsIntent",
     "LlmGpuDeviceEdit",
+    "LocalLlmBackendEdit",
+    "LocalLlmProviderKeyEdit",
     "LocalLlmBaseUrlEdit",
     "LocalLlmExtraBodyEdit",
     "LocalLlmModelEdit",
@@ -637,6 +681,7 @@ __all__ = [
     "OpenAICompatibleProviderKeyEdit",
     "OpenAICompatibleBaseUrlEdit",
     "OpenAICompatibleModelEdit",
+    "AnthropicProviderKeyEdit",
     "AnthropicBaseUrlEdit",
     "AnthropicModelEdit",
     "BackupTranslationEnabledEdit",
@@ -644,8 +689,11 @@ __all__ = [
     "BackupOpenAICompatibleProviderKeyEdit",
     "BackupOpenAICompatibleBaseUrlEdit",
     "BackupOpenAICompatibleModelEdit",
+    "BackupAnthropicProviderKeyEdit",
     "BackupAnthropicBaseUrlEdit",
     "BackupAnthropicModelEdit",
+    "BackupLocalLlmBackendEdit",
+    "BackupLocalLlmProviderKeyEdit",
     "BackupLocalLlmBaseUrlEdit",
     "BackupLocalLlmModelEdit",
     "BackupLocalLlmExtraBodyEdit",
