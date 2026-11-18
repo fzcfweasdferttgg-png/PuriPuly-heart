@@ -63,13 +63,15 @@ def _preset_base_url(
     *,
     protocol: str = "openai",
 ) -> str:
+    from puripuly_heart.config.provider_values import base_url_addresses_match
     from puripuly_heart.config.providers_registry import load_provider_presets
 
     stored = base_url.strip()
     presets = load_provider_presets(protocol)
     selected = presets.get(provider_key.strip())
     if selected is not None and (
-        not stored or any(preset.base_url == stored for preset in presets.values())
+        not stored
+        or any(base_url_addresses_match(preset.base_url, stored) for preset in presets.values())
     ):
         return selected.base_url
     return stored
@@ -110,9 +112,8 @@ def build_variant_provider(
         if llm_lib_backend_capabilities(backend).model_required and not local_llm.model.strip():
             return None
         logger.info(
-            "[LLM] Building local translation provider: backend=%s base_url=%s model=%s",
+            "[LLM] Building local translation provider: backend=%s model=%s",
             backend,
-            base_url,
             local_llm.model,
         )
         return LLMLibLocalLLMProvider(
@@ -127,8 +128,7 @@ def build_variant_provider(
         if not base_url or not openai_compatible.model.strip():
             return None
         logger.info(
-            "[LLM] Building OpenAI-compatible provider: base_url=%s model=%s",
-            base_url,
+            "[LLM] Building OpenAI-compatible provider: model=%s",
             openai_compatible.model,
         )
         return OpenAICompatibleLLMProvider(
@@ -143,8 +143,7 @@ def build_variant_provider(
             anthropic.provider_key, anthropic.base_url, protocol="anthropic"
         )
         logger.info(
-            "[LLM] Building Anthropic provider: base_url=%s model=%s",
-            base_url or "https://api.anthropic.com",
+            "[LLM] Building Anthropic provider: model=%s",
             anthropic.model,
         )
         return AnthropicLLMProvider(

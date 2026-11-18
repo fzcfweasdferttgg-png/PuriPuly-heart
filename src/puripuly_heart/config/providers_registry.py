@@ -168,6 +168,7 @@ def is_placeholder_base_url(base_url: str, protocol: str = "openai") -> bool:
     stored = (base_url or "").strip()
     if not stored:
         return True
+    from puripuly_heart.config.provider_values import base_url_addresses_match
     from puripuly_heart.config.settings_vnext.schema import (
         AnthropicIntent,
         LocalLLMIntent,
@@ -179,9 +180,12 @@ def is_placeholder_base_url(base_url: str, protocol: str = "openai") -> bool:
         "anthropic": AnthropicIntent().base_url,
         "local": LocalLLMIntent().base_url,
     }.get(protocol, "")
-    if stored == schema_default:
+    if base_url_addresses_match(stored, schema_default):
         return True
-    return any(preset.base_url == stored for preset in load_provider_presets(protocol).values())
+    return any(
+        base_url_addresses_match(preset.base_url, stored)
+        for preset in load_provider_presets(protocol).values()
+    )
 
 
 def _provider_document_for_write(protocol: str = "openai") -> tuple[Path, dict, dict]:

@@ -50,14 +50,19 @@ def test_first_use_concurrent_adds_do_not_overwrite_committed_preset(
     second_copy_started = threading.Event()
     release_second_copy = threading.Event()
     real_copy2 = shutil.copy2
+    arrival_lock = threading.Lock()
+    arrived: list[threading.Thread] = []
 
     def coordinated_copy2(src, dst):
-        if threading.current_thread().name == "second-add":
-            second_copy_started.set()
-            assert release_second_copy.wait(timeout=10)
-        else:
+        with arrival_lock:
+            arrived.append(threading.current_thread())
+            is_first_arrival = len(arrived) == 1
+        if is_first_arrival:
             first_copy_started.set()
             assert allow_first_copy.wait(timeout=10)
+        else:
+            second_copy_started.set()
+            assert release_second_copy.wait(timeout=10)
         return real_copy2(src, dst)
 
     monkeypatch.setattr(providers_registry.shutil, "copy2", coordinated_copy2)
@@ -82,9 +87,14 @@ def test_first_use_concurrent_adds_do_not_overwrite_committed_preset(
     if not initialization_is_locked:
         assert second_copy_started.wait(timeout=10)
     allow_first_copy.set()
+    with arrival_lock:
+        first_arriver = arrived[0] if arrived else None
+    if first_arriver is not None and first_arriver is not threading.current_thread():
+        first_arriver.join(timeout=10)
+        assert not first_arriver.is_alive()
+    release_second_copy.set()
     first.join(timeout=10)
     assert not first.is_alive()
-    release_second_copy.set()
     second.join(timeout=10)
     assert not second.is_alive()
 

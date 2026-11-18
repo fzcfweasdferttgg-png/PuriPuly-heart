@@ -82,8 +82,10 @@ allow selecting the LLM-lib backend, including native Ollama or generic
 OpenAI-compatible transport. The selected `provider_key` and `backend` are
 persisted in settings, slots, runtime signatures, and provider construction.
 Changing the selected server, backend, or URL resets the primary model to its
-built-in default and clears the backup model. A backup with an empty model is
-not applied until a replacement is entered. Slot restoration preserves the
+built-in default and clears the backup model. A non-empty model is required
+only for backends that require one (Ollama); for the other bundled backends an
+empty primary or backup model is applied and resolved by LLM-lib at request
+time. Slot restoration preserves the
 slot's saved model and backend. Renaming a preset or reselecting it without
 changing its backend or URL preserves the model. Across all three registries,
 the Base URL field in the settings form is read-only; custom addresses are

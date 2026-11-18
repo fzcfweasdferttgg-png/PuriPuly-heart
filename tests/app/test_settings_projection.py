@@ -9,6 +9,8 @@ from puripuly_heart.app.services.settings.settings_application import (
     settings_view_surface_snapshots,
 )
 from puripuly_heart.app.services.settings.settings_projection import SettingsProjectionOwner
+from puripuly_heart.config.provider_values import OpenRouterLLMModel
+from puripuly_heart.config.runtime_resolution import OpenRouterRuntimeIntent
 from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
 
 
@@ -110,3 +112,20 @@ def test_pkce_refresh_uses_specialized_projection_path() -> None:
     assert refreshes == [(provider, prompt, Path("settings.json"))]
     assert captured.can_rebase is True
     assert captured.values_by_path == {}
+
+
+def test_unsupported_openrouter_values_consistently_use_current_defaults() -> None:
+    settings = AppSettingsVNext()
+    translation = replace(
+        settings.intent.translation,
+        openrouter_model="deepseek/deepseek-v4-flash",
+        openrouter_selection_alias="gemma4_managed",
+    )
+    settings = replace(settings, intent=replace(settings.intent, translation=translation))
+
+    provider, _general, _prompt, _overlay = settings_view_surface_snapshots(settings)
+
+    assert provider.openrouter_llm_model is OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
+    assert provider.openrouter_selection_alias is None
+    runtime = OpenRouterRuntimeIntent(model=translation.openrouter_model)
+    assert runtime.model == provider.openrouter_llm_model.value

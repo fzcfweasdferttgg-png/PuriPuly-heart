@@ -232,11 +232,12 @@ def _optional_translation_model(value: object) -> TranslationModel | None:
 def _openrouter_selection_alias(value: object) -> OpenRouterSelectionAlias | None:
     if value is None or value == "":
         return None
-    return (
-        value
-        if isinstance(value, OpenRouterSelectionAlias)
-        else OpenRouterSelectionAlias(str(value))
-    )
+    if isinstance(value, OpenRouterSelectionAlias):
+        return value
+    try:
+        return OpenRouterSelectionAlias(str(value))
+    except ValueError:
+        return None
 
 
 def _verified(entry: object) -> bool:

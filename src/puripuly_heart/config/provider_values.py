@@ -190,7 +190,10 @@ class OpenRouterLLMModel(str, Enum):
 def parse_openrouter_llm_model(value: object) -> OpenRouterLLMModel:
     if isinstance(value, OpenRouterLLMModel):
         return value
-    return OpenRouterLLMModel(value.strip() if isinstance(value, str) else value)  # type: ignore[arg-type]
+    try:
+        return OpenRouterLLMModel(value.strip() if isinstance(value, str) else value)
+    except TypeError, ValueError:
+        return OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
 
 
 class OpenRouterCredentialSource(str, Enum):
@@ -259,6 +262,16 @@ def normalize_local_llm_base_url(value: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
 
 
+def base_url_addresses_match(left: str, right: str) -> bool:
+    """True when two base addresses are the same modulo trailing slashes.
+
+    Registry preset addresses are normalized with normalize_local_llm_base_url
+    (trailing slashes stripped) and transports strip trailing slashes too, so
+    address comparisons must not treat a trailing slash as a custom address.
+    """
+    return (left or "").strip().rstrip("/") == (right or "").strip().rstrip("/")
+
+
 __all__ = [
     "DeepSeekLLMModel",
     "GeminiLLMModel",
@@ -284,4 +297,5 @@ __all__ = [
     "is_custom_stt_provider",
     "is_qwen_cloud_stt_provider",
     "normalize_local_llm_base_url",
+    "base_url_addresses_match",
 ]

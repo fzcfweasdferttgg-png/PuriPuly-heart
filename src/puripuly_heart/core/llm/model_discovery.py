@@ -13,7 +13,10 @@ from puripuly_heart.core.llm.llm_lib_settings import (
     llm_lib_backend_capabilities,
     normalized_llm_lib_base_url,
 )
-from puripuly_heart.providers.llm.error_details import record_probe_failure
+from puripuly_heart.providers.llm.error_details import (
+    record_probe_cleanup_failure,
+    record_probe_failure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +42,7 @@ async def fetch_models(base_url: str, api_key: str = "") -> list[str]:
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:
-        logger.warning("[ModelDiscovery] Failed to fetch models from %s: %s", base_url, exc)
+        logger.warning("[ModelDiscovery] Failed to fetch models: error_type=%s", type(exc).__name__)
         return []
     if not isinstance(data, dict):
         return []
@@ -52,17 +55,32 @@ async def fetch_models(base_url: str, api_key: str = "") -> list[str]:
 async def test_connection(base_url: str, api_key: str = "") -> tuple[int, str]:
     """Ping GET /models and return (status_code, short body or error text)."""
     url = _models_url(base_url)
+    client = None
+    primary_failure = None
+    status = 0
+    detail = ""
     try:
-        async with httpx.AsyncClient(timeout=_TEST_TIMEOUT_S) as client:
-            resp = await client.get(url, headers=_auth_headers(api_key))
-            if resp.status_code >= 400:
-                record_probe_failure(
-                    None, provider="openai_compatible", status_code=resp.status_code
-                )
-            return resp.status_code, resp.text[:200]
+        client = httpx.AsyncClient(timeout=_TEST_TIMEOUT_S)
+        resp = await client.get(url, headers=_auth_headers(api_key))
+        status, detail = resp.status_code, resp.text[:200]
+        if resp.status_code >= 400:
+            primary_failure = record_probe_failure(
+                None, provider="openai_compatible", status_code=resp.status_code
+            )
     except Exception as exc:
-        record_probe_failure(exc, provider="openai_compatible")
-        return 0, str(exc)
+        primary_failure = record_probe_failure(exc, provider="openai_compatible")
+        status, detail = 0, str(exc)
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception as exc:
+                record_probe_cleanup_failure(
+                    exc, provider="openai_compatible", primary_failure=primary_failure
+                )
+                if primary_failure is None:
+                    status, detail = 0, str(exc)
+    return status, detail
 
 
 def _anthropic_client(base_url: str, api_key: str):
@@ -87,7 +105,8 @@ async def fetch_anthropic_models(base_url: str, api_key: str = "") -> list[str]:
         return sorted(model_ids)
     except Exception as exc:
         logger.warning(
-            "[ModelDiscovery] Failed to fetch Anthropic models from %s: %s", base_url, exc
+            "[ModelDiscovery] Failed to fetch Anthropic models: error_type=%s",
+            type(exc).__name__,
         )
         return []
     finally:
@@ -96,15 +115,24 @@ async def fetch_anthropic_models(base_url: str, api_key: str = "") -> list[str]:
 
 async def test_anthropic_connection(base_url: str, api_key: str = "") -> tuple[int, str]:
     client = _anthropic_client(base_url, api_key)
+    primary_failure = None
+    status = 0
+    detail = ""
     try:
         async for _ in client.models.list(limit=1):
             break
-        return 200, "ok"
+        status, detail = 200, "ok"
     except Exception as exc:
-        record_probe_failure(exc, provider="anthropic")
-        return getattr(exc, "status_code", 0) or 0, str(exc)[:200]
+        primary_failure = record_probe_failure(exc, provider="anthropic")
+        status, detail = getattr(exc, "status_code", 0) or 0, str(exc)[:200]
     finally:
-        await client.close()
+        try:
+            await client.close()
+        except Exception as exc:
+            record_probe_cleanup_failure(exc, provider="anthropic", primary_failure=primary_failure)
+            if primary_failure is None:
+                status, detail = 0, str(exc)
+    return status, detail
 
 
 def _llm_lib_discovery_client(backend: str, base_url: str, api_key: str) -> LLM:
@@ -154,7 +182,10 @@ async def fetch_llm_lib_models(
     try:
         return await _list_llm_lib_models(client)
     except Exception as exc:
-        logger.warning("[ModelDiscovery] LLM-lib failed to fetch models from %s: %s", base_url, exc)
+        logger.warning(
+            "[ModelDiscovery] LLM-lib failed to fetch models: error_type=%s",
+            type(exc).__name__,
+        )
         return []
     finally:
         await client.aclose()
@@ -166,11 +197,20 @@ async def test_llm_lib_connection(
     api_key: str = "",
 ) -> tuple[int, str]:
     client = _llm_lib_discovery_client(backend, base_url, api_key)
+    primary_failure = None
+    status = 0
+    detail = ""
     try:
         await _list_llm_lib_models(client)
-        return 200, "ok"
+        status, detail = 200, "ok"
     except Exception as exc:
-        record_probe_failure(exc, provider="local_llm")
-        return getattr(exc, "status_code", 0) or 0, str(exc)[:200]
+        primary_failure = record_probe_failure(exc, provider="local_llm")
+        status, detail = getattr(exc, "status_code", 0) or 0, str(exc)[:200]
     finally:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception as exc:
+            record_probe_cleanup_failure(exc, provider="local_llm", primary_failure=primary_failure)
+            if primary_failure is None:
+                status, detail = 0, str(exc)
+    return status, detail

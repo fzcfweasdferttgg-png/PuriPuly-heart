@@ -124,6 +124,7 @@ from puripuly_heart.config.provider_values import (
     OpenRouterSelectionAlias,
     QwenRegion,
     STTProviderName,
+    base_url_addresses_match,
     display_stt_provider,
     is_custom_stt_provider,
     is_qwen_cloud_stt_provider,
@@ -1800,12 +1801,16 @@ class SettingsView(ft.Column):
     def _dialog_variant(self, card: str, kind: str | None) -> str | None:
         """Variant a dialog Accept would write: dialog kind, or backup selection."""
         kind = kind or self._provider_dialog_kinds.get(card, "")
-        if kind == "translation_local":
-            return TranslationModel.LOCAL_LLM.value
-        if kind == "translation_openai":
-            return TranslationModel.OPENAI_COMPATIBLE.value
-        if kind == "translation_anthropic":
-            return TranslationModel.ANTHROPIC.value
+        variants = {
+            "translation_local": TranslationModel.LOCAL_LLM.value,
+            "translation_openai": TranslationModel.OPENAI_COMPATIBLE.value,
+            "translation_anthropic": TranslationModel.ANTHROPIC.value,
+            "backup_local": TranslationModel.LOCAL_LLM.value,
+            "backup_openai": TranslationModel.OPENAI_COMPATIBLE.value,
+            "backup_anthropic": TranslationModel.ANTHROPIC.value,
+        }
+        if kind in variants:
+            return variants[kind]
         display = self._provider_draft or self._provider_snapshot
         if display is None:
             return None
@@ -2125,6 +2130,11 @@ class SettingsView(ft.Column):
             base.value = config.base_url
             model.value = config.model
             extra.value = config.extra_body_json
+            backend = self._local_slot_backend(config)
+            if is_backup:
+                self._commit_backup_field("local_backend", backend)
+            else:
+                self._commit_local_field("backend", backend)
             controls = (provider, base, model, extra)
             protocol = "local"
         elif config.variant == TranslationModel.ANTHROPIC.value:
@@ -2242,18 +2252,9 @@ class SettingsView(ft.Column):
             ProviderSlotConfig,
         )
 
-        kind = self._provider_dialog_kinds.get(card, "")
-        if kind == "translation_local":
-            variant = TranslationModel.LOCAL_LLM.value
-        elif kind == "translation_openai":
-            variant = TranslationModel.OPENAI_COMPATIBLE.value
-        elif kind == "translation_anthropic":
-            variant = TranslationModel.ANTHROPIC.value
-        else:
-            display = self._provider_draft or self._provider_snapshot
-            if display is None:
-                return
-            variant = normalize_translation_model(display.backup_variant).value
+        variant = self._dialog_variant(card, self._provider_dialog_kinds.get(card, ""))
+        if variant is None:
+            return
         is_backup = card == "backup"
         if variant == TranslationModel.ANTHROPIC.value:
             provider = self._backup_anthropic_provider if is_backup else self._anthropic_provider
@@ -4770,7 +4771,12 @@ class SettingsView(ft.Column):
         return self._prompt_snapshot.system_prompt
 
     def _build_provider_apply_intent(self) -> ProviderApplyIntent | None:
-        if not self._validate_and_commit_local_form("translation"):
+        current = self._provider_draft or self._provider_snapshot
+        if (
+            current is not None
+            and current.translation.model == TranslationModel.LOCAL_LLM
+            and not self._validate_and_commit_local_form("translation")
+        ):
             return None
         current = self._provider_draft or self._provider_snapshot
         if (
@@ -6018,7 +6024,7 @@ class SettingsView(ft.Column):
             _update_control_if_mounted(control)
         self._commit_openai_field("base_url", normalized)
         if current.openai_compatible_provider_key and (
-            selected is None or selected.base_url != normalized
+            selected is None or not base_url_addresses_match(selected.base_url, normalized)
         ):
             self._commit_openai_field("provider_key", "")
             self._openai_provider.value = None
@@ -6039,7 +6045,9 @@ class SettingsView(ft.Column):
             control.value = normalized
             _update_control_if_mounted(control)
         self._commit_backup_field("base_url", normalized)
-        if current.backup_provider_key and (selected is None or selected.base_url != normalized):
+        if current.backup_provider_key and (
+            selected is None or not base_url_addresses_match(selected.base_url, normalized)
+        ):
             self._commit_backup_field("provider_key", "")
             self._backup_provider.value = None
             _update_control_if_mounted(self._backup_provider)
@@ -6093,7 +6101,9 @@ class SettingsView(ft.Column):
             control.value = normalized
             _update_control_if_mounted(control)
         self._commit_anthropic_field("base_url", normalized)
-        if current.anthropic_provider_key and (selected is None or selected.base_url != normalized):
+        if current.anthropic_provider_key and (
+            selected is None or not base_url_addresses_match(selected.base_url, normalized)
+        ):
             self._commit_anthropic_field("provider_key", "")
             self._anthropic_provider.value = None
             _update_control_if_mounted(self._anthropic_provider)
@@ -6114,7 +6124,7 @@ class SettingsView(ft.Column):
             _update_control_if_mounted(control)
         self._commit_backup_anthropic_field("base_url", normalized)
         if current.backup_anthropic_provider_key and (
-            selected is None or selected.base_url != normalized
+            selected is None or not base_url_addresses_match(selected.base_url, normalized)
         ):
             self._commit_backup_anthropic_field("provider_key", "")
             self._backup_anthropic_provider.value = None
@@ -6690,13 +6700,12 @@ class SettingsView(ft.Column):
         )
 
     async def _on_fetch_backup_local_models(self, e) -> None:
-        current = self._provider_draft or self._provider_snapshot
         await self._do_fetch_models(
             base_url=(self._backup_local_base_url.value or "").strip(),
             api_key=(self._backup_local_api_key.value or "").strip(),
             on_model_picked=self._pick_backup_local_model,
             protocol="local",
-            backend=current.backup_local_backend,
+            backend=self._local_backend_for_card("backup"),
         )
 
     def _pick_backup_local_model(self, value: str) -> None:
@@ -6705,22 +6714,20 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(self._backup_local_model)
 
     async def _on_test_backup_local_connection(self, e) -> None:
-        current = self._provider_draft or self._provider_snapshot
         await self._do_test_connection(
             base_url=(self._backup_local_base_url.value or "").strip(),
             api_key=(self._backup_local_api_key.value or "").strip(),
             protocol="local",
-            backend=current.backup_local_backend,
+            backend=self._local_backend_for_card("backup"),
         )
 
     async def _on_fetch_local_llm_models(self, e) -> None:
-        current = self._provider_draft or self._provider_snapshot
         await self._do_fetch_models(
             base_url=(self._local_llm_base_url.value or "").strip() or LOCAL_LLM_DEFAULT_BASE_URL,
             api_key=(self._local_llm_api_key.value or "").strip(),
             on_model_picked=self._pick_local_llm_model,
             protocol="local",
-            backend=current.local_llm_backend,
+            backend=self._local_backend_for_card("translation"),
         )
 
     def _pick_local_llm_model(self, value: str) -> None:
@@ -6732,12 +6739,11 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(self._local_llm_model)
 
     async def _on_test_local_llm_connection(self, e) -> None:
-        current = self._provider_draft or self._provider_snapshot
         await self._do_test_connection(
             base_url=(self._local_llm_base_url.value or "").strip() or LOCAL_LLM_DEFAULT_BASE_URL,
             api_key=(self._local_llm_api_key.value or "").strip(),
             protocol="local",
-            backend=current.local_llm_backend,
+            backend=self._local_backend_for_card("translation"),
         )
 
     def _on_backup_translation_click(self, e) -> None:
