@@ -36,20 +36,30 @@ def _auth_headers(api_key: str) -> dict[str, str]:
 async def fetch_models(base_url: str, api_key: str = "") -> list[str]:
     """Return the sorted model ids the endpoint exposes via GET /models."""
     url = _models_url(base_url)
+    client = None
     try:
-        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_S) as client:
-            resp = await client.get(url, headers=_auth_headers(api_key))
-            resp.raise_for_status()
-            data = resp.json()
+        client = httpx.AsyncClient(timeout=_FETCH_TIMEOUT_S)
+        resp = await client.get(url, headers=_auth_headers(api_key))
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return []
+        entries = data.get("data")
+        if not isinstance(entries, list):
+            return []
+        return sorted({str(m.get("id")) for m in entries if isinstance(m, dict) and m.get("id")})
     except Exception as exc:
         logger.warning("[ModelDiscovery] Failed to fetch models: error_type=%s", type(exc).__name__)
         return []
-    if not isinstance(data, dict):
-        return []
-    entries = data.get("data")
-    if not isinstance(entries, list):
-        return []
-    return sorted({str(m.get("id")) for m in entries if isinstance(m, dict) and m.get("id")})
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception as exc:
+                logger.warning(
+                    "[ModelDiscovery] Model fetch cleanup failed: error_type=%s",
+                    type(exc).__name__,
+                )
 
 
 async def test_connection(base_url: str, api_key: str = "") -> tuple[int, str]:
@@ -108,7 +118,13 @@ async def fetch_anthropic_models(base_url: str, api_key: str = "") -> list[str]:
         )
         return []
     finally:
-        await client.close()
+        try:
+            await client.close()
+        except Exception as exc:
+            logger.warning(
+                "[ModelDiscovery] Anthropic model fetch cleanup failed: error_type=%s",
+                type(exc).__name__,
+            )
 
 
 async def test_anthropic_connection(base_url: str, api_key: str = "") -> tuple[int, str]:
@@ -184,7 +200,13 @@ async def fetch_llm_lib_models(
         )
         return []
     finally:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception as exc:
+            logger.warning(
+                "[ModelDiscovery] LLM-lib model fetch cleanup failed: error_type=%s",
+                type(exc).__name__,
+            )
 
 
 async def test_llm_lib_connection(

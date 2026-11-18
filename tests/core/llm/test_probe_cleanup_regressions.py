@@ -293,3 +293,84 @@ async def test_llm_lib_probe_cancelled_close_propagates_without_diagnostic(
         await model_discovery.test_llm_lib_connection("ollama", "http://localhost")
 
     assert _records(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_openai_fetch_preserves_models_when_close_fails(monkeypatch, caplog) -> None:
+    class Client:
+        async def get(self, *_args, **_kwargs):
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "model"}]},
+                request=httpx.Request("GET", "http://localhost/v1/models"),
+            )
+
+        async def aclose(self):
+            raise OSError("PRIVATE_CLOSE")
+
+    monkeypatch.setattr(model_discovery.httpx, "AsyncClient", lambda **_kwargs: Client())
+    caplog.set_level(logging.WARNING)
+
+    result = await model_discovery.fetch_models("http://localhost/v1")
+
+    assert result == ["model"]
+    assert "cleanup failed" in caplog.text
+    assert "PRIVATE_" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_openai_fetch_client_construction_failure_returns_empty(monkeypatch, caplog) -> None:
+    def fail_client(**_kwargs):
+        raise RuntimeError("PRIVATE_CONSTRUCTOR")
+
+    monkeypatch.setattr(model_discovery.httpx, "AsyncClient", fail_client)
+    caplog.set_level(logging.WARNING)
+
+    result = await model_discovery.fetch_models("http://localhost/v1")
+
+    assert result == []
+    assert "error_type=RuntimeError" in caplog.text
+    assert "cleanup failed" not in caplog.text
+    assert "PRIVATE_" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_anthropic_fetch_preserves_models_when_close_fails(monkeypatch, caplog) -> None:
+    class Models:
+        async def list(self, *, limit: int):
+            yield type("Model", (), {"id": "model", "lifecycle": "active"})()
+
+    class Client:
+        models = Models()
+
+        async def close(self):
+            raise OSError("PRIVATE_CLOSE")
+
+    monkeypatch.setattr(model_discovery, "_anthropic_client", lambda *_args: Client())
+    caplog.set_level(logging.WARNING)
+
+    result = await model_discovery.fetch_anthropic_models("", "")
+
+    assert result == ["model"]
+    assert "cleanup failed" in caplog.text
+    assert "PRIVATE_" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_llm_lib_fetch_preserves_models_when_close_fails(monkeypatch, caplog) -> None:
+    class Client:
+        async def aclose(self):
+            raise OSError("PRIVATE_CLOSE")
+
+    async def list_models(_client):
+        return ["model"]
+
+    monkeypatch.setattr(model_discovery, "_llm_lib_discovery_client", lambda *_args: Client())
+    monkeypatch.setattr(model_discovery, "_list_llm_lib_models", list_models)
+    caplog.set_level(logging.WARNING)
+
+    result = await model_discovery.fetch_llm_lib_models("ollama", "http://localhost")
+
+    assert result == ["model"]
+    assert "cleanup failed" in caplog.text
+    assert "PRIVATE_" not in caplog.text
