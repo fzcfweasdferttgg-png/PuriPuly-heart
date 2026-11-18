@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -326,66 +325,6 @@ def inspect_gemma_install(
     return GemmaInstallState(status="ready", install_dir=resolved, manifest=manifest)
 
 
-RETIRED_MANAGED_GEMMA_INSTALLS: tuple[tuple[str, str], ...] = (
-    ("gemma-4-12b-it-qat-ud-q4-k-xl", "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"),
-)
-
-
-def remove_retired_managed_gemma_installs(
-    models_dir: Path | None = None,
-    *,
-    on_failure: Callable[[Path, OSError], None] | None = None,
-) -> tuple[Path, ...]:
-    root = models_dir or default_models_dir()
-    removed: list[Path] = []
-    for model_id, model_filename in RETIRED_MANAGED_GEMMA_INSTALLS:
-        candidates: list[tuple[Path, bool]] = [(root / model_id, True)]
-        candidates.extend(
-            (path, False)
-            for pattern in (f"{model_id}.staging-*", f"{model_id}.backup-*")
-            for path in sorted(root.glob(pattern))
-        )
-        for candidate, require_retired_payload in candidates:
-            if not candidate.is_symlink() and not candidate.exists():
-                continue
-            if require_retired_payload and not _holds_retired_install(
-                candidate,
-                model_id=model_id,
-                model_filename=model_filename,
-            ):
-                continue
-            try:
-                _remove_path(candidate)
-            except OSError as exc:
-                if on_failure is not None:
-                    on_failure(candidate, exc)
-                continue
-            removed.append(candidate)
-    return tuple(removed)
-
-
-def _holds_retired_install(install_dir: Path, *, model_id: str, model_filename: str) -> bool:
-    if not install_dir.is_dir():
-        return False
-    if (install_dir / model_filename).is_file():
-        return True
-    manifest_path = install_dir / GEMMA_INSTALLED_MANIFEST_FILENAME
-    if not manifest_path.is_file():
-        return False
-    try:
-        value = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    except OSError, UnicodeDecodeError, json.JSONDecodeError:
-        return False
-    return isinstance(value, dict) and value.get("model_id") == model_id
-
-
-def _remove_path(path: Path) -> None:
-    if path.is_symlink() or not path.is_dir():
-        path.unlink(missing_ok=True)
-        return
-    shutil.rmtree(path)
-
-
 __all__ = [
     "GEMMA_26B_MODEL_ID",
     "GEMMA_26B_REPO_ID",
@@ -404,7 +343,6 @@ __all__ = [
     "GEMMA_UPSTREAM_REPO_ID",
     "GEMMA_LICENSE",
     "GEMMA_LICENSE_URL",
-    "RETIRED_MANAGED_GEMMA_INSTALLS",
     "GemmaAsset",
     "GemmaAssetSource",
     "GemmaAssetError",
@@ -417,7 +355,6 @@ __all__ = [
     "e4b_gemma_spec",
     "gemma_26b_spec",
     "inspect_gemma_install",
-    "remove_retired_managed_gemma_installs",
     "resolve_gemma_spec",
     "validate_gemma_install",
 ]

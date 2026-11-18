@@ -22,7 +22,6 @@ from puripuly_heart.config.llm_profiles import (
     OPENROUTER_MODEL_GPT_6_LUNA,
     OPENROUTER_MODEL_QWEN_35_FLASH_02_23,
     get_openrouter_llm_profile,
-    normalize_legacy_openrouter_model,
     openrouter_alias_for_fields,
 )
 from puripuly_heart.config.provider_values import normalize_stt_provider
@@ -43,7 +42,6 @@ from puripuly_heart.config.resolved import (
     ResolvedOverlayConfig,
     ResolvedSTTConfig,
     is_valid_vad_onset_threshold,
-    normalize_legacy_vad_onset_threshold,
 )
 
 TRANSLATION_MODEL_INDEX_TRANSLATE_35B: Final = "index_translate_35b"
@@ -214,7 +212,6 @@ LLM_PROVIDERS: Final[tuple[str, ...]] = (
 INDEX_TRANSLATE_MODEL: Final = "Index-Translate-35B-A3B"
 OPENAI_MODEL_GPT_6_LUNA: Final = "gpt-6-luna"
 GEMINI_MODEL_FLASH: Final = "gemini-3.8-flash"
-LEGACY_GEMINI_MODEL_31_FLASH_LITE: Final = "gemini-3.1-flash-lite"
 DEEPSEEK_MODEL_V4_FLASH: Final = "deepseek-flash"
 QWEN_MODEL_35_FLASH: Final = "qwen3.5-flash"
 QWEN_MODEL_38_FLASH: Final = "qwen3.8-flash"
@@ -401,18 +398,6 @@ def _default_translation_connection(model: TranslationModelName) -> TranslationC
 
 
 def _normalize_translation_model(value: object) -> TranslationModelName:
-    if isinstance(value, str):
-        legacy_value = value.strip()
-        value = {
-            "gemini3_flash": TRANSLATION_MODEL_GEMINI_FLASH,
-            "gemini31_flash_lite": TRANSLATION_MODEL_GEMINI_FLASH,
-            "gemini-3.1-flash-lite": TRANSLATION_MODEL_GEMINI_FLASH,
-            "gemini37_flash": TRANSLATION_MODEL_GEMINI_FLASH,
-            "qwen35_plus": TRANSLATION_MODEL_QWEN_38_FLASH,
-            "qwen3.5-plus": TRANSLATION_MODEL_QWEN_38_FLASH,
-            "gemma4": TRANSLATION_MODEL_GEMMA4_26B_31B,
-            "gemma4_31b": TRANSLATION_MODEL_GEMMA4_26B_31B,
-        }.get(legacy_value, legacy_value)
     return cast(
         TranslationModelName,
         _normalize_allowed(
@@ -479,7 +464,6 @@ def _explicit_openrouter_source(value: object) -> OpenRouterSource | None:
 
 
 def _normalize_openrouter_model(value: object) -> str:
-    value = normalize_legacy_openrouter_model(value)
     return _normalize_allowed(
         value,
         allowed=_OPENROUTER_MODELS,
@@ -488,13 +472,6 @@ def _normalize_openrouter_model(value: object) -> str:
 
 
 def _normalize_gemini_model(value: object) -> str:
-    if isinstance(value, str) and value.strip() in {
-        "gemini-3-flash",
-        "gemini-3-flash-preview",
-        "gemini-3.7-flash",
-        LEGACY_GEMINI_MODEL_31_FLASH_LITE,
-    }:
-        return GEMINI_MODEL_FLASH
     return _normalize_allowed(
         value,
         allowed=(GEMINI_MODEL_FLASH,),
@@ -518,8 +495,6 @@ def _normalize_openrouter_managed_credential_kind(
 
 
 def _normalize_openrouter_provider_routing(value: object) -> str:
-    if value in ("gemma4_31b_latency", "gemma4_26b_latency"):
-        return "gemma4_26b_31b_latency"
     return _normalize_allowed(value, allowed=_OPENROUTER_PROVIDER_ROUTINGS, default="default")
 
 
@@ -548,12 +523,8 @@ _CUSTOM_STT_COMPATIBILITIES_BY_MODE: Final[Mapping[str, tuple[str, ...]]] = {
 
 
 def _normalize_custom_stt_mode(value: object) -> str:
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"streaming", "realtime", "real-time"}:
-            return "realtime"
-        if normalized == "offline":
-            return "offline"
+    if isinstance(value, str) and value.strip().lower() == "realtime":
+        return "realtime"
     return "offline"
 
 
@@ -612,24 +583,6 @@ def _qwen_connection(region: str, connection: AlibabaConnection | None) -> Aliba
     return resolve_alibaba_connection(
         cast(Literal["beijing", "singapore"], region), AlibabaRegionalSettings()
     )
-
-
-def _translation_connection_from_openrouter_source(
-    selected_source: OpenRouterSource,
-    *,
-    model: TranslationModelName,
-    provider_routing: str,
-) -> TranslationConnectionName:
-    if selected_source == OPENROUTER_SOURCE_MANAGED:
-        if model == TRANSLATION_MODEL_DEEPSEEK_V4_FLASH and provider_routing in {
-            "deepseek_only",
-            "deepseek_v4_flash_china",
-        }:
-            return TRANSLATION_CONNECTION_MANAGED_CHINA
-        return TRANSLATION_CONNECTION_MANAGED
-    if selected_source == OPENROUTER_SOURCE_BYOK:
-        return TRANSLATION_CONNECTION_OPENROUTER
-    return _default_translation_connection(model)
 
 
 @dataclass(frozen=True, slots=True)
@@ -721,8 +674,6 @@ class DirectProviderRuntimeIntent:
             self, "gemini_flash_model", _normalize_gemini_model(self.gemini_flash_model)
         )
         qwen_model = self.qwen_38_flash_model
-        if isinstance(qwen_model, str) and qwen_model.strip() == "qwen3.5-plus":
-            qwen_model = QWEN_MODEL_38_FLASH
         object.__setattr__(
             self,
             "qwen_38_flash_model",
@@ -850,13 +801,12 @@ class STTRuntimeIntent:
             "drain_timeout_s",
             self.drain_timeout_s if self.drain_timeout_s > 0 else STT_DEFAULT_DRAIN_TIMEOUT_S,
         )
-        normalized_vad_threshold = normalize_legacy_vad_onset_threshold(self.vad_speech_threshold)
         object.__setattr__(
             self,
             "vad_speech_threshold",
             (
-                normalized_vad_threshold
-                if is_valid_vad_onset_threshold(normalized_vad_threshold)
+                self.vad_speech_threshold
+                if is_valid_vad_onset_threshold(self.vad_speech_threshold)
                 else STT_DEFAULT_VAD_SPEECH_THRESHOLD
             ),
         )
@@ -1096,178 +1046,6 @@ def normalize_openrouter_runtime_intent(
             managed_credential_kind
         ),
         broker_base_url=_normalize_openrouter_broker_base_url(broker_base_url),
-    )
-
-
-def derive_translation_runtime_intent_from_compatibility(
-    *,
-    provider_llm: object,
-    openrouter_model: object = None,
-    openrouter_selected_source: object = None,
-    openrouter_provider_routing: object = None,
-    gemini_model: object = None,
-    qwen_model: object = None,
-    concurrency_limit: object = None,
-) -> TranslationRuntimeIntent:
-    provider = _normalize_allowed(
-        provider_llm,
-        allowed=LLM_PROVIDERS,
-        default=PROVIDER_GEMINI,
-    )
-    openrouter_model_value = _normalize_openrouter_model(openrouter_model)
-    openrouter_source = _normalize_openrouter_source(
-        openrouter_selected_source,
-        default=_default_openrouter_source_for_provider(provider),
-    )
-    provider_routing = _normalize_openrouter_provider_routing(openrouter_provider_routing)
-    concurrency = _normalize_positive_int(concurrency_limit, default=10)
-
-    if provider == PROVIDER_INDEX_TRANSLATE:
-        return TranslationRuntimeIntent(
-            model=TRANSLATION_MODEL_INDEX_TRANSLATE_35B,
-            connection=TRANSLATION_CONNECTION_PUBLIC_API,
-            concurrency_limit=concurrency,
-        )
-    if provider == PROVIDER_OPENROUTER:
-        if provider_routing == "gemma4_26b_31b_latency":
-            return TranslationRuntimeIntent(
-                model=TRANSLATION_MODEL_GEMMA4_26B_31B,
-                connection=_translation_connection_from_openrouter_source(
-                    openrouter_source,
-                    model=TRANSLATION_MODEL_GEMMA4_26B_31B,
-                    provider_routing=provider_routing,
-                ),
-                concurrency_limit=concurrency,
-            )
-        if openrouter_model_value in (
-            OPENROUTER_MODEL_GEMMA_4_26B_A4B_IT,
-            OPENROUTER_MODEL_GEMMA_4_31B_IT,
-        ):
-            return TranslationRuntimeIntent(
-                model=TRANSLATION_MODEL_GEMMA4_26B_31B,
-                connection=_translation_connection_from_openrouter_source(
-                    openrouter_source,
-                    model=TRANSLATION_MODEL_GEMMA4_26B_31B,
-                    provider_routing=provider_routing,
-                ),
-                concurrency_limit=concurrency,
-            )
-        if openrouter_model_value == OPENROUTER_MODEL_DEEPSEEK_V4_FLASH:
-            connection = _translation_connection_from_openrouter_source(
-                openrouter_source,
-                model=TRANSLATION_MODEL_DEEPSEEK_V4_FLASH,
-                provider_routing=provider_routing,
-            )
-            model = TRANSLATION_MODEL_DEEPSEEK_V4_FLASH
-            if connection in (
-                TRANSLATION_CONNECTION_MANAGED,
-                TRANSLATION_CONNECTION_MANAGED_CHINA,
-            ):
-                model = TRANSLATION_MODEL_DEEPSEEK_V4_FLASH_41
-            return TranslationRuntimeIntent(
-                model=model,
-                connection=connection,
-                concurrency_limit=concurrency,
-            )
-        if openrouter_model_value == OPENROUTER_MODEL_DEEPSEEK_V4_FLASH_41:
-            return TranslationRuntimeIntent(
-                model=TRANSLATION_MODEL_DEEPSEEK_V4_FLASH_41,
-                connection=_translation_connection_from_openrouter_source(
-                    openrouter_source,
-                    model=TRANSLATION_MODEL_DEEPSEEK_V4_FLASH_41,
-                    provider_routing=provider_routing,
-                ),
-                concurrency_limit=concurrency,
-            )
-        if openrouter_model_value == OPENROUTER_MODEL_QWEN_35_FLASH_02_23:
-            return TranslationRuntimeIntent(
-                model=TRANSLATION_MODEL_OPENROUTER_QWEN_35_FLASH,
-                connection=_translation_connection_from_openrouter_source(
-                    openrouter_source,
-                    model=TRANSLATION_MODEL_OPENROUTER_QWEN_35_FLASH,
-                    provider_routing=provider_routing,
-                ),
-                concurrency_limit=concurrency,
-            )
-        if openrouter_model_value == OPENROUTER_MODEL_GPT_6_LUNA:
-            return TranslationRuntimeIntent(
-                model=TRANSLATION_MODEL_GPT_6_LUNA,
-                connection=TRANSLATION_CONNECTION_OPENROUTER,
-                concurrency_limit=concurrency,
-            )
-        if openrouter_model_value == OPENROUTER_MODEL_GEMINI_FLASH:
-            return TranslationRuntimeIntent(
-                model=TRANSLATION_MODEL_GEMINI_FLASH,
-                connection=_translation_connection_from_openrouter_source(
-                    openrouter_source,
-                    model=TRANSLATION_MODEL_GEMINI_FLASH,
-                    provider_routing=provider_routing,
-                ),
-                concurrency_limit=concurrency,
-            )
-        return TranslationRuntimeIntent(
-            model=TRANSLATION_MODEL_DEEPSEEK_V4_FLASH,
-            connection=_default_translation_connection(TRANSLATION_MODEL_DEEPSEEK_V4_FLASH),
-            concurrency_limit=concurrency,
-        )
-    if provider == PROVIDER_OPENAI:
-        return TranslationRuntimeIntent(
-            model=TRANSLATION_MODEL_GPT_6_LUNA,
-            connection=TRANSLATION_CONNECTION_OFFICIAL_BYOK,
-            concurrency_limit=concurrency,
-        )
-
-    if provider == PROVIDER_MANAGED_GEMMA:
-        return TranslationRuntimeIntent(
-            model=TRANSLATION_MODEL_MANAGED_GEMMA,
-            connection=TRANSLATION_CONNECTION_CPU,
-            concurrency_limit=concurrency,
-        )
-
-    if provider == PROVIDER_LOCAL_LLM:
-        return TranslationRuntimeIntent(
-            model=TRANSLATION_MODEL_LOCAL_LLM,
-            connection=TRANSLATION_CONNECTION_OLLAMA,
-            concurrency_limit=concurrency,
-        )
-
-    if provider == PROVIDER_DEEPSEEK:
-        return TranslationRuntimeIntent(
-            model=TRANSLATION_MODEL_DEEPSEEK_V4_FLASH_41,
-            connection=TRANSLATION_CONNECTION_OFFICIAL_BYOK,
-            concurrency_limit=concurrency,
-        )
-
-    if provider == PROVIDER_QWEN:
-        if (
-            _normalize_allowed(
-                qwen_model,
-                allowed=(QWEN_MODEL_35_FLASH, QWEN_MODEL_38_FLASH),
-                default=QWEN_MODEL_38_FLASH,
-            )
-            == QWEN_MODEL_35_FLASH
-        ):
-            return TranslationRuntimeIntent(
-                model=TRANSLATION_MODEL_DEEPSEEK_V4_FLASH,
-                connection=_default_translation_connection(TRANSLATION_MODEL_DEEPSEEK_V4_FLASH),
-                concurrency_limit=concurrency,
-            )
-        return TranslationRuntimeIntent(
-            model=TRANSLATION_MODEL_QWEN_38_FLASH,
-            connection=TRANSLATION_CONNECTION_OFFICIAL_BYOK,
-            concurrency_limit=concurrency,
-        )
-
-    if _normalize_gemini_model(gemini_model) == GEMINI_MODEL_FLASH:
-        return TranslationRuntimeIntent(
-            model=TRANSLATION_MODEL_GEMINI_FLASH,
-            connection=TRANSLATION_CONNECTION_OFFICIAL_BYOK,
-            concurrency_limit=concurrency,
-        )
-    return TranslationRuntimeIntent(
-        model=TRANSLATION_MODEL_GEMINI_FLASH,
-        connection=TRANSLATION_CONNECTION_OFFICIAL_BYOK,
-        concurrency_limit=concurrency,
     )
 
 
@@ -1898,7 +1676,6 @@ __all__ = [
     "TranslationConnectionName",
     "TranslationModelName",
     "TranslationRuntimeIntent",
-    "derive_translation_runtime_intent_from_compatibility",
     "normalize_openrouter_runtime_intent",
     "normalize_translation_runtime_intent",
     "resolve_overlay_config",

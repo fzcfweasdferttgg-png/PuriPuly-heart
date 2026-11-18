@@ -19,7 +19,6 @@ from puripuly_heart.config.llm_profiles import (
     OPENROUTER_SELECTION_ALIAS_GPT_6_LUNA_BYOK,
     OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_BYOK,
     OPENROUTER_SELECTION_ALIAS_QWEN35_FLASH_MANAGED,
-    normalize_legacy_openrouter_model,
 )
 
 MAX_CUSTOM_VOCAB_TERMS = 100
@@ -191,10 +190,7 @@ class OpenRouterLLMModel(str, Enum):
 def parse_openrouter_llm_model(value: object) -> OpenRouterLLMModel:
     if isinstance(value, OpenRouterLLMModel):
         return value
-    if isinstance(value, str):
-        normalized = normalize_legacy_openrouter_model(value.strip())
-        return OpenRouterLLMModel(normalized)
-    return OpenRouterLLMModel(value)  # type: ignore[arg-type]
+    return OpenRouterLLMModel(value.strip() if isinstance(value, str) else value)  # type: ignore[arg-type]
 
 
 class OpenRouterCredentialSource(str, Enum):

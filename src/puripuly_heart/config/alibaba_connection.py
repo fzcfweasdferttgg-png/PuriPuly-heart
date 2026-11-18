@@ -25,12 +25,11 @@ _WORKSPACE_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", re.ASCII)
 
 def alibaba_credential_sources(
     region: AlibabaRegion,
-) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[str, tuple[str, ...]]:
     if region not in _CREDENTIAL_REFS:
         raise ValueError("Invalid Alibaba region")
     return (
         f"alibaba_api_key_{region}",
-        ("alibaba_api_key",),
         (f"ALIBABA_API_KEY_{region.upper()}", "ALIBABA_API_KEY", "DASHSCOPE_API_KEY"),
     )
 

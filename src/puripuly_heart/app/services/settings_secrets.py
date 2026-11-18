@@ -41,21 +41,8 @@ SettingsSecretStoreFactory = Callable[[], SettingsSecretStorePort]
 def _load_value(
     store: SettingsSecretStorePort,
     key: str,
-    *,
-    legacy_keys: tuple[str, ...] = (),
 ) -> str:
-    value = store.get(key) or ""
-    if value or not legacy_keys:
-        return value
-    for legacy_key in legacy_keys:
-        legacy_value = store.get(legacy_key) or ""
-        if legacy_value:
-            try:
-                store.set(key, legacy_value)
-            except Exception as exc:
-                _secret_diagnostics("legacy_secret_migration", exc)
-            return legacy_value
-    return ""
+    return store.get(key) or ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +110,6 @@ class SettingsSecretsOwner:
                 alibaba_api_key_beijing=_load_value(
                     store,
                     "alibaba_api_key_beijing",
-                    legacy_keys=("alibaba_api_key",),
                 ),
             )
             snapshot = replace(
@@ -131,7 +117,6 @@ class SettingsSecretsOwner:
                 alibaba_api_key_singapore=_load_value(
                     store,
                     "alibaba_api_key_singapore",
-                    legacy_keys=("alibaba_api_key",),
                 ),
             )
         except Exception as exc:

@@ -469,7 +469,7 @@ async def test_gemma_osc_inputs_restore_connection_and_publish_canonical_after_r
         assert save_vnext_settings(config_path, value).ok
         saved.append(to_dict(value))
         result = load_vnext_settings(config_path)
-        assert result.ok and result.settings is not None and not result.migrated
+        assert result.ok and result.settings is not None
         current[0] = result.settings
 
     def start_owner(sender: FakeSender) -> OscControlIntegrationOwner:
@@ -500,7 +500,7 @@ async def test_gemma_osc_inputs_restore_connection_and_publish_canonical_after_r
     await owner.close()
 
     loaded = load_vnext_settings(config_path)
-    assert loaded.ok and loaded.settings is not None and not loaded.migrated
+    assert loaded.ok and loaded.settings is not None
     current[0] = loaded.settings
     restarted_sender = FakeSender()
     restarted = start_owner(restarted_sender)

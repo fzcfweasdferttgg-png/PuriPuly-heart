@@ -35,7 +35,7 @@ class RecordingSecretStore:
         self.delete_calls.append(key)
 
 
-def test_settings_secret_snapshot_projects_named_values_and_legacy_fallbacks() -> None:
+def test_settings_secret_snapshot_projects_named_values_without_legacy_fallbacks() -> None:
     store = RecordingSecretStore(
         {
             "google_api_key": "google-secret",
@@ -67,10 +67,9 @@ def test_settings_secret_snapshot_projects_named_values_and_legacy_fallbacks() -
     assert result.snapshot.local_llm_api_key == "local-secret"
     assert result.snapshot.custom_stt_api_key == "custom-secret"
     assert result.snapshot.alibaba_api_key_beijing == "beijing-secret"
-    assert result.snapshot.alibaba_api_key_singapore == "legacy-alibaba-secret"
-    assert store.set_calls == [
-        ("alibaba_api_key_singapore", "legacy-alibaba-secret"),
-    ]
+    assert result.snapshot.alibaba_api_key_singapore == ""
+    assert store.set_calls == []
+    assert store.values["alibaba_api_key"] == "legacy-alibaba-secret"
     assert "google-secret" not in repr(result)
     assert "legacy-alibaba-secret" not in repr(result)
 

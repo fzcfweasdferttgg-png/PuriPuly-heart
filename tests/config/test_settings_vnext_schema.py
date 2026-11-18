@@ -117,9 +117,6 @@ def test_vnext_schema_excludes_runtime_only_legacy_ui_state() -> None:
 
     leaf_paths = _dataclass_leaf_paths(schema.AppSettingsVNext())
 
-    assert schema.RUNTIME_ONLY_LEGACY_SETTINGS_PATHS == frozenset(
-        {"ui.overlay_enabled", "ui.peer_translation_enabled"}
-    )
     assert "intent.ui.overlay_enabled" not in leaf_paths
     assert "state.ui.overlay_enabled" not in leaf_paths
     assert "intent.ui.peer_translation_enabled" not in leaf_paths

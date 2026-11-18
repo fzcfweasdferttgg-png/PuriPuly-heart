@@ -12,7 +12,6 @@ from pathlib import Path
 from puripuly_heart.app.adapters.settings_vnext_canonical_persistence import (
     SettingsVNextCanonicalPersistenceAdapter,
 )
-from puripuly_heart.app.ports.application_runtime_logging import ApplicationRuntimeLoggingPort
 from puripuly_heart.app.ports.canonical_settings_persistence import (
     CanonicalSettingsPersistenceError,
     CanonicalSettingsPersistencePort,
@@ -200,20 +199,13 @@ class CanonicalSettingsPatchRepository:
             self.owner._release_publication(publication)
 
 
-def compose_canonical_settings_persistence(
-    *,
-    retired_asset_cleanup_logging: ApplicationRuntimeLoggingPort | None = None,
-) -> CanonicalSettingsPersistencePort:
-    return SettingsVNextCanonicalPersistenceAdapter(
-        retired_asset_cleanup_logging=retired_asset_cleanup_logging
-    )
+def compose_canonical_settings_persistence() -> CanonicalSettingsPersistencePort:
+    return SettingsVNextCanonicalPersistenceAdapter()
 
 
 @dataclass(frozen=True, slots=True)
 class SettingsOwnerStartResult:
     settings: AppSettingsVNext
-    migrated: bool
-    backup_path: Path | None
 
 
 @dataclass(slots=True)
@@ -296,8 +288,6 @@ class SettingsOwner:
         if self._started:
             return SettingsOwnerStartResult(
                 settings=self.require_committed(),
-                migrated=False,
-                backup_path=None,
             )
         if self.commit_listener is not None and self._commit_loop is None:
             try:
@@ -308,23 +298,19 @@ class SettingsOwner:
         if not self.path.exists():
             self.canonical = new_settings_for_first_run()
             self.persistence.persist(self.path, self.canonical)
-            loaded = self.persistence.load_active(self.path, startup=True)
+            loaded = self.persistence.load_active(self.path)
             self.canonical = loaded.canonical_settings
             self._started = True
             self._publish_commit(copy.deepcopy(self.canonical))
             return SettingsOwnerStartResult(
                 settings=self.canonical,
-                migrated=False,
-                backup_path=None,
             )
-        loaded = self.persistence.load_active(self.path, startup=True)
+        loaded = self.persistence.load_active(self.path)
         self.canonical = loaded.canonical_settings
         self._started = True
         self._publish_commit(copy.deepcopy(self.canonical))
         return SettingsOwnerStartResult(
             settings=self.canonical,
-            migrated=loaded.migrated,
-            backup_path=loaded.backup_path,
         )
 
     def _publish_commit(self, snapshot: AppSettingsVNext) -> None:
@@ -1014,16 +1000,10 @@ def materialize_canonical_translation_settings(settings: AppSettingsVNext) -> Ap
     )
 
 
-def compose_settings_owner(
-    path: Path,
-    *,
-    retired_asset_cleanup_logging: ApplicationRuntimeLoggingPort | None = None,
-) -> SettingsOwner:
+def compose_settings_owner(path: Path) -> SettingsOwner:
     return SettingsOwner(
         path=path,
-        persistence=compose_canonical_settings_persistence(
-            retired_asset_cleanup_logging=retired_asset_cleanup_logging
-        ),
+        persistence=compose_canonical_settings_persistence(),
     )
 
 

@@ -289,7 +289,6 @@ SETTINGS_FIELDS = (
             "osc.connection",
             "custom_vocabulary",
             "languages",
-            "telemetry.enabled",
         }
     )
 )
@@ -303,7 +302,6 @@ BOOLEAN_FIELDS = frozenset(
         "overlay.peer_original.enabled",
         "overlay.swap_caption_languages",
         "stt.soniox.enable_speaker_diarization",
-        "telemetry.enabled",
     }
 )
 NUMBER_FIELDS = frozenset(

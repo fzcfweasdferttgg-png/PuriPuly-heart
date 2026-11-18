@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -97,7 +96,6 @@ def test_capture_target_persistence_rejects_unreadable_existing_settings_without
     [
         compat.SettingsPersistenceStatus.PARSE_FAILED,
         compat.SettingsPersistenceStatus.MIGRATION_FAILED,
-        compat.SettingsPersistenceStatus.BACKUP_FAILED,
     ],
 )
 def test_capture_target_persistence_never_overwrites_a_failed_existing_load(

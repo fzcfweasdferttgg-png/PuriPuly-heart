@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import os
 from pathlib import Path
 
@@ -63,44 +62,6 @@ def _get_secret(
     if env:
         return env
     return None
-
-
-def _get_secret_any(
-    secrets: SecretStore,
-    *,
-    key: str,
-    env_vars: tuple[str, ...],
-    legacy_keys: tuple[str, ...] = (),
-) -> str | None:
-    value = secrets.get(key)
-    if value:
-        return value
-    for legacy_key in legacy_keys:
-        legacy_value = secrets.get(legacy_key)
-        if legacy_value:
-            # Backfill to the new key so subsequent runs do not rely on fallback.
-            with contextlib.suppress(Exception):
-                secrets.set(key, legacy_value)
-            return legacy_value
-    for env_var in env_vars:
-        env = os.getenv(env_var)
-        if env:
-            return env
-    return None
-
-
-def require_secret_any(
-    secrets: SecretStore,
-    *,
-    key: str,
-    env_vars: tuple[str, ...],
-    legacy_keys: tuple[str, ...] = (),
-) -> str:
-    value = _get_secret_any(secrets, key=key, env_vars=env_vars, legacy_keys=legacy_keys)
-    if value:
-        return value
-    env_list = ", ".join(env_vars)
-    raise ValueError(f"Missing secret `{key}` (or env vars {env_list})")
 
 
 def require_secret(

@@ -552,10 +552,7 @@ def compose_application_runtime(
     )
     runtime_logging.control_event_sink = control_events.publish
     control_events.diagnostic_recorder = runtime_logging.emit_failure
-    settings = compose_settings_owner(
-        config_path,
-        retired_asset_cleanup_logging=runtime_logging,
-    )
+    settings = compose_settings_owner(config_path)
 
     managed_gemma_basic_state: tuple[str, str | None, str | None] | None = None
 

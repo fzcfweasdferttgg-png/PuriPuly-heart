@@ -83,43 +83,22 @@ def get_prompts_dir() -> Path:
     return current_runtime_layout().resource("prompts")
 
 
-def list_prompts() -> list[str]:
-    """List available prompt file names (without extension)."""
-    prompts_dir = get_prompts_dir()
-    if not prompts_dir.exists():
-        return []
-
-    return sorted([f.stem for f in prompts_dir.glob("*.md")])
-
-
 def load_prompt(name: str = "default") -> str:
     """Load a prompt from file.
 
     Args:
-        name: Prompt file name (without .txt extension)
+        name: Prompt file name (without .md extension)
 
     Returns:
         Prompt content, or empty string if not found
     """
     prompts_dir = get_prompts_dir()
 
-    # Try .md first
     prompt_file = prompts_dir / f"{name}.md"
     if prompt_file.exists():
         return prompt_file.read_text(encoding="utf-8").strip()
 
-    # Fallback to .txt
-    prompt_file = prompts_dir / f"{name}.txt"
-    if prompt_file.exists():
-        return prompt_file.read_text(encoding="utf-8").strip()
-
-    # Fallback to default
     default_file = prompts_dir / "default.md"
-    if default_file.exists():
-        return default_file.read_text(encoding="utf-8").strip()
-
-    # Legacy default.txt
-    default_file = prompts_dir / "default.txt"
     if default_file.exists():
         return default_file.read_text(encoding="utf-8").strip()
 

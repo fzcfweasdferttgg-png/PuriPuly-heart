@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import json
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -23,7 +22,6 @@ from puripuly_heart.app.ports.canonical_settings_persistence import (
 )
 from puripuly_heart.app.services.canonical_settings_persistence import (
     SettingsOwner,
-    compose_settings_owner,
     materialize_canonical_translation_settings,
 )
 from puripuly_heart.app.services.provider.provider_settings import (
@@ -300,101 +298,12 @@ def test_canonical_delta_requires_bound_evidence_and_preserves_invalidation() ->
     assert invalidated.state.provider_verification.openrouter.status == "unknown"
 
 
-def _seed_retired_managed_gemma_install(models_dir: Path) -> Path:
-    from puripuly_heart.core.local_translation import assets
-
-    retired_id, retired_filename = assets.RETIRED_MANAGED_GEMMA_INSTALLS[0]
-    install_dir = models_dir / retired_id
-    install_dir.mkdir(parents=True, exist_ok=True)
-    (install_dir / retired_filename).write_bytes(b"retired-weights")
-    return install_dir
 
 
-def _write_v42_managed_gemma_12b_settings(path: Path) -> None:
-    from puripuly_heart.config.settings_vnext import serialization
-
-    raw = serialization.to_dict(AppSettingsVNext())
-    raw["settings_version"] = 42
-    raw["intent"]["translation"].update({"model": "managed_gemma_12b", "connection": "gpu"})
-    path.write_text(json.dumps(raw), encoding="utf-8")
 
 
-def test_settings_migration_removes_retired_managed_gemma_install_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from puripuly_heart.core.local_translation import assets
-
-    models_dir = tmp_path / "models"
-    monkeypatch.setattr(assets, "default_models_dir", lambda: models_dir)
-    path = tmp_path / "settings.json"
-    _write_v42_managed_gemma_12b_settings(path)
-    install_dir = _seed_retired_managed_gemma_install(models_dir)
-
-    started = compose_settings_owner(path).start()
-
-    assert started.migrated is True
-    assert started.settings.intent.translation.model == "managed_gemma"
-    assert not install_dir.exists()
-
-    leftover = _seed_retired_managed_gemma_install(models_dir)
-
-    steady_state = compose_settings_owner(path).start()
-
-    assert steady_state.migrated is False
-    assert leftover.is_dir()
 
 
-def test_retired_managed_gemma_sweep_emits_safe_bounded_runtime_receipt(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from puripuly_heart.core.local_translation import assets
-
-    class RuntimeLogging:
-        def __init__(self) -> None:
-            self.messages: list[str] = []
-
-        def emit_basic(self, message: str, **_kwargs: object) -> None:
-            self.messages.append(message)
-
-        def emit_diagnostic(self, _message: str, **_kwargs: object) -> bool:
-            return False
-
-    models_dir = tmp_path / "private-models"
-    monkeypatch.setattr(assets, "default_models_dir", lambda: models_dir)
-    path = tmp_path / "settings.json"
-    _write_v42_managed_gemma_12b_settings(path)
-    retired_id, _retired_filename = assets.RETIRED_MANAGED_GEMMA_INSTALLS[0]
-    install_dir = _seed_retired_managed_gemma_install(models_dir)
-    locked = models_dir / f"{retired_id}.staging-private-token"
-    locked.mkdir()
-    real_rmtree = assets.shutil.rmtree
-
-    def flaky_rmtree(target, *args, **kwargs):
-        if str(target) == str(locked):
-            raise OSError("private cleanup failure")
-        return real_rmtree(target, *args, **kwargs)
-
-    monkeypatch.setattr(assets.shutil, "rmtree", flaky_rmtree)
-    runtime_logging = RuntimeLogging()
-
-    started = compose_settings_owner(
-        path,
-        retired_asset_cleanup_logging=runtime_logging,
-    ).start()
-
-    assert started.migrated is True
-    assert not install_dir.exists()
-    assert locked.is_dir()
-    assert len(runtime_logging.messages) == 1
-    receipt = runtime_logging.messages[0]
-    assert "outcome=partial" in receipt
-    assert "removed=1" in receipt
-    assert "failed=1" in receipt
-    assert "failure_types=OSError" in receipt
-    assert str(models_dir) not in receipt
-    assert "private cleanup failure" not in receipt
 
 
 def test_settings_owner_roundtrips_verification_transitions(tmp_path: Path) -> None:

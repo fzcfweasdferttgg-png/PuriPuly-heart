@@ -257,9 +257,7 @@ def test_existing_flat_settings_reset_defaults_to_not_selected(
     result = compose_settings_owner(path).start()
 
     translation = result.settings.intent.translation
-    assert result.migrated
-    assert result.backup_path is not None
-    assert result.backup_path.read_bytes() == original_bytes
+    assert path.read_bytes() == original_bytes
     assert result.settings.intent.ui.locale == ui_locale
     assert translation.model == ""
     assert translation.connection == ""

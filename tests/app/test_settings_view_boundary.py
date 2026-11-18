@@ -553,25 +553,3 @@ def test_prompt_intent_preserves_latest_languages_and_provider_selection() -> No
         )
         == "qwen"
     )
-
-
-def test_legacy_deepseek_openrouter_model_still_builds_provider_snapshot() -> None:
-    from puripuly_heart.config.provider_values import OpenRouterLLMModel
-
-    baseline = AppSettingsVNext()
-    legacy = replace(
-        baseline,
-        intent=replace(
-            baseline.intent,
-            translation=replace(
-                baseline.intent.translation,
-                openrouter_model="deepseek/deepseek-v4-flash",
-                openrouter_selected_source="byok",
-                openrouter_selection_alias="deepseek_v4_flash_byok",
-            ),
-        ),
-    )
-
-    provider, _general, _prompt, _overlay = settings_view_surface_snapshots(legacy)
-
-    assert provider.openrouter_llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH

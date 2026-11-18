@@ -22,10 +22,6 @@ def is_valid_vad_onset_threshold(value: float) -> bool:
     return VAD_ONSET_MIN <= value <= VAD_ONSET_MAX
 
 
-def normalize_legacy_vad_onset_threshold(value: float) -> float:
-    return VAD_ONSET_MIN if 0.0 <= value < VAD_ONSET_MIN else value
-
-
 def vad_exit_threshold(onset_threshold: float) -> float:
     return max(VAD_ONSET_MIN, onset_threshold - VAD_EXIT_OFFSET)
 
@@ -521,6 +517,5 @@ __all__ = [
     "VAD_ONSET_MAX",
     "VAD_ONSET_MIN",
     "is_valid_vad_onset_threshold",
-    "normalize_legacy_vad_onset_threshold",
     "vad_exit_threshold",
 ]

@@ -86,11 +86,10 @@ class AlibabaWorkspaceOwner:
     async def _key(self, region: AlibabaRegion) -> tuple[str | None, bool]:
         current = self._current()
         store = self.provider_settings.secret_store_factory(current)
-        regional_key, legacy_keys, env_vars = alibaba_credential_sources(region)
-        for name in (regional_key, *legacy_keys):
-            secret = await store.snapshot_secret(name)
-            if secret.value:
-                return secret.value, True
+        regional_key, env_vars = alibaba_credential_sources(region)
+        secret = await store.snapshot_secret(regional_key)
+        if secret.value:
+            return secret.value, True
         for name in env_vars:
             value = os.getenv(name)
             if value:

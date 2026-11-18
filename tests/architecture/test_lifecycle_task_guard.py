@@ -320,11 +320,6 @@ TASK_CREATION_REVIEWS = (
         "AudioTestCaptureRuntime is the named lifecycle owner for each audio test channel's tasks",
     ),
     *_reviews(
-        "core/runtime/oauth.py",
-        {"OAuthRuntime.create_auth_task": 1},
-        "OAuthRuntime is the named lifecycle owner for managed-auth tasks",
-    ),
-    *_reviews(
         "core/runtime/output.py",
         {"OutputRuntime._submit_peer_overlay_event": 1, "OutputRuntime._create_task": 1},
         "OutputRuntime is the named lifecycle owner for chatbox flush, overlay delivery, and UI bridge tasks",
@@ -408,56 +403,6 @@ TASK_CREATION_REVIEWS = (
         classification="legacy_exception",
     ),
     *_reviews(
-        "providers/llm/chatgpt_plan.py",
-        {
-            "ChatGptPlanLLMProvider._maintain": 1,
-            "ChatGptPlanLLMProvider._start_opening": 1,
-            "ChatGptPlanLLMProvider.close": 1,
-            "ChatGptPlanLLMProvider._run_reserved": 1,
-            "ChatGptPlanLLMProvider._current_token_generation": 1,
-        },
-        "ChatGPT plan provider retains maintenance, opening, request and auth tasks; shielded close drains those sets before closing the connection pool",
-    ),
-    *_reviews(
-        "providers/llm/index_translate.py",
-        {"IndexTranslateProvider.close": 1},
-        "Index provider retains one client-close task, shields and drains it despite repeated caller cancellation, and releases its client reference only after terminal cleanup",
-    ),
-    *_reviews(
-        "providers/stt/custom.py",
-        {
-            "_OfflineOpenAITranscriptionSession.seal_turn": 1,
-            "_StreamingOpenAIRealtimeSession.start": 1,
-            "_StreamingOpenAIRealtimeSession.seal_turn": 1,
-        },
-        "Custom provider sessions retain transcription, websocket receive and final-timeout tasks under provider session close semantics",
-        classification="legacy_exception",
-    ),
-    *_reviews(
-        "providers/stt/deepgram.py",
-        {
-            "_DeepgramSDKSession.start": 1,
-            "_DeepgramSDKSession._run": 3,
-            "_DeepgramSDKSession.seal_turn": 1,
-        },
-        "Deepgram session retains SDK, send, receive, keepalive and drain tasks; _run finally and close cancel plus gather the task sets",
-    ),
-    *_reviews(
-        "providers/stt/elevenlabs_scribe.py",
-        {"_ElevenLabsScribeSession.start": 2},
-        "ElevenLabs Scribe session owns its connection-event drain and keepalive tasks under provider session close semantics",
-        classification="legacy_exception",
-    ),
-    *_reviews(
-        "providers/stt/gemini_transcribe.py",
-        {
-            "_GeminiTranscribeLiveSession.start": 3,
-            "_GeminiTranscribeLiveSession._start_teardown": 1,
-        },
-        "Gemini Transcribe Live session owns send, receive, cancellable handshake-enter and single teardown tasks and cancels plus joins them through the session teardown owner on close, failure, timeout and replacement; obsolete finalize-timeout debt is removed",
-        classification="legacy_exception",
-    ),
-    *_reviews(
         "providers/stt/local_cpp.py",
         {"LocalCppSTTBackend._settle": 2},
         "CPU request calls retain and shield their operation and cancellation-drain tasks; load/decode locks prevent resource release until both settle despite repeated cancellation",
@@ -476,26 +421,6 @@ TASK_CREATION_REVIEWS = (
         "providers/stt/local_session.py",
         {"LocalOfflineSTTSession.seal_turn": 1},
         "Local offline session retains per-job decode watchdogs and cancels plus gathers the watchdog set on close",
-    ),
-    *_reviews(
-        "providers/stt/qwen_audio.py",
-        {
-            "_QwenAudioSession._ready": 1,
-            "_QwenAudioSession._seal": 1,
-            "_QwenAudioSession._schedule_slot_retirement": 1,
-        },
-        "Each Qwen channel retains two logical slot receivers, per-task final watchdogs and at most one retiring transport task per slot; stop and abort join active and retiring cleanup",
-    ),
-    *_reviews(
-        "providers/stt/sdk_network.py",
-        {"ExternalScribeRealtime._connect_audio": 1},
-        "External Scribe adapter transfers the message task into RealtimeConnection._message_task; the pinned SDK connection close cancels and awaits it",
-    ),
-    *_reviews(
-        "providers/stt/soniox.py",
-        {"_SonioxSession.start": 3},
-        "Soniox session owns send/receive/keepalive tasks under provider session close semantics",
-        classification="legacy_exception",
     ),
     *_reviews(
         "release_evidence/cli_control_speech.py",

@@ -6,57 +6,8 @@ from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
 from puripuly_heart.config.settings_vnext.serialization import from_dict, to_dict, to_json_text
 
 
-def _legacy_raw(
-    *,
-    self_provider: str = "local_qwen_gpu",
-    peer_provider: str = "local_qwen_gpu",
-    gpu_device_id: str = "auto",
-) -> dict:
-    raw = to_dict(AppSettingsVNext())
-    stt = raw["intent"]["stt"]
-    peer = raw["intent"]["peer_stt"]
-    for key in ("gpu_backend", "shared_engine"):
-        stt.pop(key, None)
-    for key in ("gpu_backend", "gpu_device_id"):
-        peer.pop(key, None)
-    stt["provider"] = self_provider
-    stt["gpu_device_id"] = gpu_device_id
-    peer["provider"] = peer_provider
-    return raw
-
-
-def test_legacy_cpu_device_migrates_to_cpu_backend_without_device() -> None:
-    settings = from_dict(_legacy_raw(gpu_device_id="cpu"))
-
-    assert settings.intent.stt.gpu_backend == "cpu"
-    assert settings.intent.stt.gpu_device_id == "auto"
-    assert settings.intent.peer_stt.gpu_backend == "cpu"
-    assert settings.intent.peer_stt.gpu_device_id == "auto"
-
-
-def test_legacy_gpu_device_migrates_to_vulkan_backend_keeping_device() -> None:
-    settings = from_dict(_legacy_raw(gpu_device_id="vulkan-index-0"))
-
-    assert settings.intent.stt.gpu_backend == "vulkan"
-    assert settings.intent.stt.gpu_device_id == "vulkan-index-0"
-    assert settings.intent.peer_stt.gpu_backend == "vulkan"
-    assert settings.intent.peer_stt.gpu_device_id == "vulkan-index-0"
-
-
-def test_legacy_two_local_channels_migrate_to_shared_engine() -> None:
-    settings = from_dict(_legacy_raw())
-
-    assert settings.intent.stt.shared_engine is True
-
-
-def test_legacy_single_local_channel_stays_independent() -> None:
-    settings = from_dict(_legacy_raw(peer_provider=""))
-
-    assert settings.intent.stt.shared_engine is False
-
-
 def test_saved_engine_fields_are_not_rewritten() -> None:
-    raw = _legacy_raw(gpu_device_id="vulkan-index-0")
+    raw = to_dict(AppSettingsVNext())
     stt = raw["intent"]["stt"]
     peer = raw["intent"]["peer_stt"]
     stt["gpu_backend"] = "cuda"
@@ -75,14 +26,22 @@ def test_saved_engine_fields_are_not_rewritten() -> None:
 
 
 def test_roundtrip_preserves_engine_fields() -> None:
-    migrated = from_dict(_legacy_raw(gpu_device_id="cpu"))
+    raw = to_dict(AppSettingsVNext())
+    raw["intent"]["stt"].update(
+        gpu_backend="cpu",
+        gpu_device_id="auto",
+        shared_engine=True,
+    )
+    raw["intent"]["peer_stt"].update(gpu_backend="cpu", gpu_device_id="auto")
+    settings = from_dict(raw)
 
-    reloaded = from_dict(json.loads(to_json_text(migrated)))
+    reloaded = from_dict(json.loads(to_json_text(settings)))
 
     assert reloaded.intent.stt.gpu_backend == "cpu"
     assert reloaded.intent.stt.gpu_device_id == "auto"
     assert reloaded.intent.stt.shared_engine is True
     assert reloaded.intent.peer_stt.gpu_backend == "cpu"
+    assert reloaded.intent.peer_stt.gpu_device_id == "auto"
 
 
 def test_unknown_backend_value_normalizes_to_vulkan() -> None:

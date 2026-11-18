@@ -64,12 +64,13 @@ def test_loading_and_writing_old_referral_settings_preserves_managed_authority(t
     assert saved.ok
     written = json.loads(path.read_text(encoding="utf-8"))
     managed = written["state"]["managed_connection"]
-    assert managed == {
-        **json.loads(json.dumps(serialization.to_dict(settings)))["state"]["managed_connection"],
-        "unrelated_extension": {"retained": True},
-    }
-    assert written["managed_identity"] == {"unrelated_extension": "identity"}
-    assert written["managed_connection"] == {"unrelated_extension": "connection"}
+    assert (
+        managed
+        == json.loads(json.dumps(serialization.to_dict(settings)))["state"]["managed_connection"]
+    )
+    assert "unrelated_extension" not in managed
+    assert "managed_identity" not in written
+    assert "managed_connection" not in written
     assert not set(obsolete).intersection(managed)
     reloaded = compat.load_vnext_settings(path)
     assert reloaded.settings is not None

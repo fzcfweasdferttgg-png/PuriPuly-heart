@@ -64,7 +64,7 @@ def test_owner_normalizes_missing_legacy_policies_to_fixed_defaults(tmp_path: Pa
     assert result.settings.state.integrated_context.bootstrapped is False
 
 
-def test_owner_backs_up_canonical_false_policies_before_normalizing(tmp_path: Path) -> None:
+def test_owner_normalizes_canonical_false_policies_without_rewrite(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     raw = serialization.to_dict(AppSettingsVNext())
     raw["intent"]["stt"]["low_latency_mode"] = False
@@ -73,11 +73,10 @@ def test_owner_backs_up_canonical_false_policies_before_normalizing(tmp_path: Pa
 
     result = compose_settings_owner(path).start()
 
-    assert result.migrated is True
-    assert result.backup_path is not None
-    assert result.backup_path.read_bytes() == original
     assert result.settings.intent.stt.low_latency_mode is True
     assert result.settings.intent.integrated_context.enabled is True
+    assert path.read_bytes() == original
+    assert list(tmp_path.glob("*.bak")) == []
 
 
 def test_owner_does_not_rewrite_already_canonical_fixed_policies(tmp_path: Path) -> None:
@@ -87,8 +86,7 @@ def test_owner_does_not_rewrite_already_canonical_fixed_policies(tmp_path: Path)
 
     result = compose_settings_owner(path).start()
 
-    assert result.migrated is False
-    assert result.backup_path is None
+    assert result.settings is not None
     assert path.read_bytes() == original
     assert list(tmp_path.glob("*.bak")) == []
 
@@ -172,29 +170,3 @@ def test_owner_legacy_delta_projection_is_side_effect_free(tmp_path: Path) -> No
     assert candidate.intent.stt.low_latency_mode is False
     assert projected.intent.translation.concurrency_limit == 3
     assert projected.intent.stt.low_latency_mode is True
-
-
-def test_owner_persist_round_trips_unknown_compatibility_extensions(tmp_path: Path) -> None:
-    path = tmp_path / "settings.json"
-    raw = serialization.to_dict(AppSettingsVNext())
-    raw["future_product_flag"] = True
-    raw["intent"]["ui"]["future_toggle"] = "keep-me"
-    _write_json(path, raw)
-    owner = compose_settings_owner(path)
-    loaded = owner.start()
-    changed = _with_locale(loaded.settings, "ja")
-
-    owner.begin()
-    owner.apply_canonical_delta(loaded.settings, changed)
-    owner.persist()
-    owner.complete()
-
-    reloaded = json.loads(path.read_text(encoding="utf-8"))
-    assert reloaded["future_product_flag"] is True
-    assert reloaded["intent"]["ui"]["future_toggle"] == "keep-me"
-    assert reloaded["intent"]["ui"]["locale"] == "ja"
-    restarted = compose_settings_owner(path).start()
-    persisted = serialization.to_dict(restarted.settings)
-    assert persisted["future_product_flag"] is True
-    assert persisted["intent"]["ui"]["future_toggle"] == "keep-me"
-    assert persisted["intent"]["ui"]["locale"] == "ja"

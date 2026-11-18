@@ -10,7 +10,6 @@ from puripuly_heart.config.prompts import (
     get_default_prompt,
     get_prompts_dir,
     get_translation_prompt_template,
-    list_prompts,
     load_prompt_for_provider,
     normalize_system_prompt_override,
     render_translation_prompt_template,
@@ -219,17 +218,6 @@ def test_get_prompts_dir_prefers_env(tmp_path, monkeypatch) -> None:
     assert get_prompts_dir() == prompts_dir
 
 
-def test_list_prompts_returns_sorted_names(tmp_path, monkeypatch) -> None:
-    prompts_dir = tmp_path / "prompts"
-    prompts_dir.mkdir()
-    (prompts_dir / "b.md").write_text("B", encoding="utf-8")
-    (prompts_dir / "a.md").write_text("A", encoding="utf-8")
-
-    monkeypatch.setenv("PURIPULY_HEART_PROMPTS_DIR", str(prompts_dir))
-
-    assert list_prompts() == ["a", "b"]
-
-
 def test_load_prompt_for_provider_requires_translation_prompt_for_llm_provider(
     tmp_path, monkeypatch
 ) -> None:
@@ -241,13 +229,6 @@ def test_load_prompt_for_provider_requires_translation_prompt_for_llm_provider(
 
     with pytest.raises(FileNotFoundError):
         load_prompt_for_provider("gemini")
-
-
-def test_list_prompts_returns_empty_when_missing(monkeypatch, tmp_path) -> None:
-    missing_dir = tmp_path / "missing"
-    monkeypatch.setattr(prompts_module, "get_prompts_dir", lambda: missing_dir)
-
-    assert list_prompts() == []
 
 
 def test_get_default_prompt_reads_translation_prompt(tmp_path, monkeypatch) -> None:

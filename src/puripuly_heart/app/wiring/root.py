@@ -90,7 +90,6 @@ from .wiring_secrets_factory import (
     SECRETS_PASSPHRASE_ENV,
     create_secret_store,
     require_secret,
-    require_secret_any,
 )
 from .wiring_stt_factory import (
     ResolvedPeerSTTConfig,
@@ -118,19 +117,6 @@ from .wiring_stt_factory import (
     resolve_peer_stt_runtime_config,
     resolve_peer_stt_runtime_config_from_vnext,
     resolve_self_stt_runtime_config,
-)
-
-_WIRING_SECRET_KEYS_FOR_COMPATIBILITY_GUARD = (
-    "google_api_key",
-    "openai_api_key",
-    "deepseek_api_key",
-    "deepgram_api_key",
-    "soniox_api_key",
-    "alibaba_api_key_beijing",
-    "alibaba_api_key_singapore",
-    "alibaba_api_key",
-    "local_llm_api_key",
-    "custom_stt_api_key",
 )
 
 
@@ -259,7 +245,6 @@ __all__ = (
     "create_sync_secret_store_adapter",
     "create_stt_backend_from_resolved_config",
     "require_secret",
-    "require_secret_any",
     "overlay_runtime_intent_from_vnext",
     "resolve_overlay_config",
     "resolve_overlay_config_from_vnext",

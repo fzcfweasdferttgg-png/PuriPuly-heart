@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 from puripuly_heart.config import llm_profiles, runtime_resolution
-from puripuly_heart.config.settings_vnext import migration, serialization
-from puripuly_heart.config.settings_vnext.schema import (
-    VNEXT_SETTINGS_SCHEMA_VERSION,
-    AppSettingsVNext,
-)
 
 
 def _runtime_input(
@@ -21,7 +16,7 @@ def _runtime_input(
     )
 
 
-def test_gemma_catalog_exposes_combined_profiles_and_normalizes_retired_aliases() -> None:
+def test_gemma_catalog_exposes_combined_profiles_and_ignores_retired_aliases() -> None:
     models = (
         llm_profiles.OPENROUTER_MODEL_GEMMA_4_26B_A4B_IT,
         llm_profiles.OPENROUTER_MODEL_GEMMA_4_31B_IT,
@@ -32,12 +27,13 @@ def test_gemma_catalog_exposes_combined_profiles_and_normalizes_retired_aliases(
     }
     for source in ("managed", "byok"):
         canonical = f"gemma4_26b_31b_{source}"
-        for alias in (canonical, f"gemma4_{source}", f"gemma4_31b_{source}"):
-            profile = llm_profiles.get_openrouter_llm_profile(alias)
-            assert profile is not None
-            assert profile.alias == canonical
-            assert profile.openrouter_source == source
-            assert profile.openrouter_models == models
+        profile = llm_profiles.get_openrouter_llm_profile(canonical)
+        assert profile is not None
+        assert profile.alias == canonical
+        assert profile.openrouter_source == source
+        assert profile.openrouter_models == models
+        for retired in (f"gemma4_{source}", f"gemma4_31b_{source}"):
+            assert llm_profiles.get_openrouter_llm_profile(retired) is None
     assert not {"gemma4", "gemma4_31b"} & set(runtime_resolution.TRANSLATION_MODELS)
 
 
@@ -67,41 +63,6 @@ def test_retired_gemma_product_intents_resolve_to_the_combined_pool() -> None:
             )
             assert config.attempts[2].target.model == llm_profiles.OPENROUTER_MODEL_GEMMA_4_31B_IT
             assert config.attempts[2].target.credential.source == credential_source
-
-
-def test_retired_aliases_preserve_credential_source_and_derive_combined_product() -> None:
-    for source, opposite in (("managed", "byok"), ("byok", "managed")):
-        for alias in (f"gemma4_{source}", f"gemma4_31b_{source}"):
-            router = runtime_resolution.normalize_openrouter_runtime_intent(
-                provider_llm="openrouter",
-                selected_source=opposite,
-                selection_alias=alias,
-                provider_routing="gemma4_31b_latency",
-            )
-            translation = runtime_resolution.derive_translation_runtime_intent_from_compatibility(
-                provider_llm="openrouter",
-                openrouter_model=router.model,
-                openrouter_selected_source=router.selected_source,
-                openrouter_provider_routing=router.provider_routing,
-            )
-            resolved = runtime_resolution.resolve_llm_config(
-                runtime_resolution.RuntimeResolutionInput(
-                    translation=translation,
-                    openrouter=router,
-                )
-            )
-            assert router.selection_alias == f"gemma4_26b_31b_{source}"
-            assert router.selected_source == source
-            assert router.provider_routing == "gemma4_26b_31b_latency"
-            assert translation.model == "gemma4_26b_31b"
-            assert translation.connection == ("managed" if source == "managed" else "openrouter")
-            assert resolved.primary.models == (
-                llm_profiles.OPENROUTER_MODEL_GEMMA_4_26B_A4B_IT,
-                llm_profiles.OPENROUTER_MODEL_GEMMA_4_31B_IT,
-            )
-            assert resolved.primary.credential.reference == (
-                "openrouter:managed" if source == "managed" else "openrouter:byok"
-            )
 
 
 def test_dormant_gemma_alias_cannot_override_active_non_gemma_product() -> None:
@@ -143,16 +104,3 @@ def test_runtime_resolves_three_stage_plan_without_deduplicating_targets() -> No
     assert config.attempts[2].target.model == llm_profiles.OPENROUTER_MODEL_GEMMA_4_31B_IT
     assert config.attempts[2].target.provider_routing == "gemma4_31b_modelrun_only"
     assert config.loser_grace_ms == 50
-
-
-def test_vnext_gemma_migration_is_idempotent_after_round_trip() -> None:
-    raw = serialization.to_dict(AppSettingsVNext())
-    raw["settings_version"] = 31
-    raw["intent"]["translation"]["model"] = "gemma4"
-
-    once = serialization.to_dict(migration.from_dict(raw))
-    twice = serialization.to_dict(migration.from_dict(once))
-
-    assert once == twice
-    assert once["intent"]["translation"]["model"] == "gemma4_26b_31b"
-    assert once["settings_version"] == VNEXT_SETTINGS_SCHEMA_VERSION

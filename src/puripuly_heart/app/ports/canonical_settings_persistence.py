@@ -31,8 +31,6 @@ class CanonicalSettingsPersistenceError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class CanonicalSettingsLoadResult:
     canonical_settings: AppSettingsVNext
-    migrated: bool
-    backup_path: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +45,7 @@ class ProviderVerificationBinding:
 
 @runtime_checkable
 class CanonicalSettingsPersistencePort(Protocol):
-    def load_active(self, path: Path, *, startup: bool = False) -> CanonicalSettingsLoadResult: ...
+    def load_active(self, path: Path) -> CanonicalSettingsLoadResult: ...
 
     def persist(self, path: Path, settings: AppSettingsVNext) -> None: ...
 

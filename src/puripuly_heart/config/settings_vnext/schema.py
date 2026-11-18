@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 import ntpath
 import re
-import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from datetime import date
 from typing import Final, Literal
 
 from puripuly_heart.config.alibaba_connection import AlibabaRegionalSettings, normalize_api_host
@@ -17,7 +15,6 @@ from puripuly_heart.config.provider_values import (
     normalize_cloud_free_tier_providers,
     normalize_stt_provider,
 )
-from puripuly_heart.config.resolved import normalize_legacy_vad_onset_threshold
 from puripuly_heart.core.translation_policy import (
     FIXED_TRANSLATION_POLICY,
     TranslationRuntimePolicy,
@@ -52,10 +49,6 @@ MANAGED_OPERATION_RECOGNIZED_STATES: Final = frozenset(
         "ACTIVE",
         "FAILED",
     }
-)
-
-RUNTIME_ONLY_LEGACY_SETTINGS_PATHS: Final = frozenset(
-    {"ui.overlay_enabled", "ui.peer_translation_enabled"}
 )
 
 _LOCAL_LLM_RESERVED_EXTRA_BODY_KEYS: Final = frozenset(
@@ -173,12 +166,6 @@ def _is_secret_bearing_provider_verification_metadata_key(key: str) -> bool:
     return any(fragment in key for fragment in _PROVIDER_VERIFICATION_SECRET_BEARING_KEY_FRAGMENTS)
 
 
-def is_safe_compatibility_extension_key(key: object) -> bool:
-    if not isinstance(key, str):
-        return False
-    return not _is_secret_bearing_provider_verification_metadata_key(_normalize_extra_body_key(key))
-
-
 def _copy_provider_verification_metadata_value(value: object) -> object:
     if value is None or isinstance(value, str | int | float | bool):
         return value
@@ -200,32 +187,6 @@ def _copy_provider_verification_metadata(values: Mapping[object, object]) -> dic
         json.dumps(copied, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise ValueError("provider verification metadata must be JSON serializable") from exc
-    return copied
-
-
-def _copy_compatibility_extension_value(value: object) -> object:
-    if value is None or isinstance(value, str | int | float | bool):
-        return value
-    if isinstance(value, Mapping):
-        return _copy_compatibility_extensions(value)
-    if isinstance(value, list | tuple):
-        return [_copy_compatibility_extension_value(item) for item in value]
-    raise TypeError("compatibility extension values must be JSON-compatible")
-
-
-def _copy_compatibility_extensions(values: Mapping[object, object]) -> dict[str, object]:
-    copied: dict[str, object] = {}
-    for raw_key, raw_value in values.items():
-        if not isinstance(raw_key, str):
-            raise ValueError("compatibility extension keys must be strings")
-        key = _normalize_extra_body_key(raw_key)
-        if _is_secret_bearing_provider_verification_metadata_key(key):
-            raise ValueError(f"secret-bearing compatibility key is not allowed: {raw_key}")
-        copied[raw_key] = _copy_compatibility_extension_value(raw_value)
-    try:
-        json.dumps(copied, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("compatibility extensions must be finite JSON values") from exc
     return copied
 
 
@@ -456,11 +417,6 @@ class STTIntent:
                 provider.value
                 for provider in normalize_cloud_free_tier_providers(self.cloud_free_tier_providers)
             ],
-        )
-        object.__setattr__(
-            self,
-            "vad_speech_threshold",
-            normalize_legacy_vad_onset_threshold(self.vad_speech_threshold),
         )
 
 
@@ -694,13 +650,6 @@ class DesktopAudioIntent:
     vad_speech_threshold: float = 0.4
     vad_hangover_ms: int = 500
     vad_pre_roll_ms: int = 500
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "vad_speech_threshold",
-            normalize_legacy_vad_onset_threshold(self.vad_speech_threshold),
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1045,14 +994,6 @@ class AppSettingsVNext:
     settings_version: int = VNEXT_SETTINGS_SCHEMA_VERSION
     intent: UserIntentSettings = field(default_factory=UserIntentSettings)
     state: PersistedOperationalState = field(default_factory=PersistedOperationalState)
-    compatibility_extensions: dict[str, object] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "compatibility_extensions",
-            _copy_compatibility_extensions(self.compatibility_extensions),
-        )
 
 
 def with_translation_runtime_policy(
@@ -1116,7 +1057,6 @@ __all__ = [
     "GeminiTranslationIntent",
     "IntegratedContextIntent",
     "IntegratedContextState",
-    "is_safe_compatibility_extension_key",
     "LanguageIntent",
     "LocalLLMIntent",
     "MainInputHintState",
@@ -1136,7 +1076,6 @@ __all__ = [
     "ProviderVerificationEntry",
     "ProviderVerificationState",
     "QwenTranslationIntent",
-    "RUNTIME_ONLY_LEGACY_SETTINGS_PATHS",
     "STTIntent",
     "SecretsIntent",
     "SonioxSTTIntent",
