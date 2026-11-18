@@ -10,6 +10,7 @@ from llm_lib.errors import status_error
 
 from puripuly_heart.core.llm.llm_lib_settings import (
     ExplicitLLMLibSettings,
+    llm_lib_backend_capabilities,
     normalized_llm_lib_base_url,
 )
 
@@ -119,7 +120,7 @@ async def _list_llm_lib_models(client: LLM) -> list[str]:
     headers = dict(settings.headers)
     if key := settings.resolved_api_key():
         headers["Authorization"] = f"Bearer {key}"
-    if settings.kind == "ollama":
+    if llm_lib_backend_capabilities(settings.provider).discovery_api == "ollama":
         response = await client.async_http.get(f"{base}/api/tags", headers=headers)
         if response.status_code >= 400:
             raise status_error(client.label, response.status_code, response.text)

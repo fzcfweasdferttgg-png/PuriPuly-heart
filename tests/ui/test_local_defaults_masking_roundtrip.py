@@ -1,7 +1,7 @@
 """Default local-LLM values must survive discovery and commit round-trips.
 
 The base URL remains visible and is resolved from the selected preset when the
-stored value is empty. Only the default model keeps its masked empty display.
+stored value is empty. The model is empty by default and is not masked.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from puripuly_heart.ui.views import settings as settings_view
 from tests.helpers.settings_view import SettingsIntentRecorder, apply_provider_intent
 
 DEFAULT_BASE_URL = "http://127.0.0.1:5001/v1"
-DEFAULT_MODEL = "llama3.1:8b"
+DEFAULT_MODEL = ""
 
 
 @pytest.fixture

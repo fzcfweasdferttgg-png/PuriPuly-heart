@@ -405,7 +405,7 @@ def test_overlay_runtime_resolution_maps_desktop_options_without_legacy_name() -
             "ollama",
             "byok",
             "local_llm",
-            "llama3.1:8b",
+            "",
             "none",
             None,
             None,

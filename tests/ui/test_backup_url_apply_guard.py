@@ -25,6 +25,7 @@ def test_backup_url_typo_fix_blocks_apply_until_model_is_replaced(
     view = _view(monkeypatch)
     recorder.load(view, AppSettingsVNext(), config_path=tmp_path / "settings.json")
     view._on_backup_variant_selected("local_llm")
+    view._on_backup_local_provider_selected("ollama")
 
     view._backup_local_base_url.value = "http://127.0.0.1:11434"
     view._on_backup_local_base_url_change_end(None)

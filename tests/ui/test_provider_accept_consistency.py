@@ -12,7 +12,6 @@ from puripuly_heart.config.provider_slots import load_provider_slots
 from puripuly_heart.config.runtime_resolution import LOCAL_LLM_DEFAULT_MODEL
 from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
 from puripuly_heart.config.translation_values import TranslationModel
-from puripuly_heart.ui.views import settings as settings_view
 from tests.helpers.provider_settings import (
     attach_provider_windows,
     create_settings_view,
@@ -121,13 +120,7 @@ def test_accept_manual_local_url_without_blur_does_not_restore_stale_model(
         view._local_llm_base_url.value = "http://127.0.0.1:9999/v1"
 
     accepted = view._accept_provider_settings_dialog(card)
-    if card == "backup":
-        assert accepted is False
-        assert view.build_provider_apply_settings() is None
-        assert view._backup_local_model.error == settings_view.t(
-            "settings.local_llm.model.required"
-        )
-        return
+    assert accepted is True
 
     pending = view.build_provider_apply_settings()
     assert pending is not None
@@ -137,7 +130,7 @@ def test_accept_manual_local_url_without_blur_does_not_restore_stale_model(
         if card == "backup"
         else applied.intent.local_llm
     )
-    expected_model = "" if card == "backup" else LOCAL_LLM_DEFAULT_MODEL
+    expected_model = LOCAL_LLM_DEFAULT_MODEL
     assert (intent.provider_key, intent.base_url, intent.model) == (
         "",
         "http://127.0.0.1:9999/v1",

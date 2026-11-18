@@ -160,3 +160,98 @@ async def test_llm_lib_openai_server_chat_loopback() -> None:
     assert result.text == "translated"
     assert captured[0].url.path == "/v1/chat/completions"
     assert json.loads(captured[0].content)["stream"] is True
+
+
+async def test_empty_default_model_uses_single_server_model() -> None:
+    from puripuly_heart.app.wiring.wiring_llm_factory import user_translation_intent_from_vnext
+    from puripuly_heart.app.wiring.wiring_translation_variants import build_variant_provider
+    from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
+    from puripuly_heart.core.storage.secrets import InMemorySecretStore
+
+    settings = AppSettingsVNext()
+    runtime = user_translation_intent_from_vnext(settings)
+    provider = build_variant_provider(
+        "local_llm",
+        local_llm=runtime.local_llm,
+        openai_compatible=runtime.openai_compatible,
+        anthropic=runtime.anthropic,
+        secrets=InMemorySecretStore(),
+    )
+    assert provider is not None
+    assert provider.model == ""
+    captured = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/v1/models":
+            return httpx2.Response(200, json={"data": [{"id": "server-model"}]})
+        captured.append(request)
+        chunk = {
+            "choices": [{"delta": {"content": "translated"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 8, "completion_tokens": 2},
+        }
+        return httpx2.Response(200, text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n")
+
+    provider.client = LLM(
+        provider._settings(),
+        transport=httpx2.MockTransport(handler),
+        async_transport=httpx2.MockTransport(handler),
+    )
+    result = await provider.translate(
+        utterance_id=uuid4(),
+        text="source",
+        system_prompt="translate",
+        source_language="en",
+        target_language="ru",
+    )
+    await provider.close()
+
+    assert result.text == "translated"
+    assert settings.intent.local_llm.model == ""
+    assert captured[0].url.path == "/v1/chat/completions"
+    assert json.loads(captured[0].content)["model"] == "server-model"
+
+
+def test_ollama_requires_model_before_creating_provider() -> None:
+    from puripuly_heart.app.wiring.wiring_translation_variants import build_variant_provider
+    from puripuly_heart.config.runtime_resolution import (
+        UserLocalLLMRuntimeIntent,
+        UserOpenAICompatibleRuntimeIntent,
+    )
+    from puripuly_heart.core.storage.secrets import InMemorySecretStore
+
+    provider = build_variant_provider(
+        "local_llm",
+        local_llm=UserLocalLLMRuntimeIntent(
+            provider_key="ollama",
+            backend="ollama",
+            base_url="http://127.0.0.1:11434",
+            model="",
+        ),
+        openai_compatible=UserOpenAICompatibleRuntimeIntent(),
+        secrets=InMemorySecretStore(),
+    )
+
+    assert provider is None
+
+
+def test_colibri_penalties_are_not_forwarded() -> None:
+    provider = LLMLibLocalLLMProvider(
+        backend="colibri",
+        base_url="http://127.0.0.1:8000/v1",
+        model="server-model",
+        extra_body={
+            "frequency_penalty": 0.2,
+            "presence_penalty": 0.3,
+            "repeat_penalty": 1.1,
+            "repetition_penalty": 1.2,
+            "temperature": 0.4,
+        },
+    )
+
+    settings = provider._settings()
+
+    assert settings.frequency_penalty is None
+    assert settings.repetition_penalty is None
+    assert "presence_penalty" not in settings.extra
+    assert "repeat_penalty" not in settings.extra
+    assert settings.temperature == 0.4

@@ -177,7 +177,9 @@ async def test_unconfigured_openai_compatible_selection_is_graceful(
 
 
 @pytest.mark.asyncio
-async def test_unconfigured_local_llm_selection_is_graceful(tmp_path: Path) -> None:
+async def test_empty_local_llm_model_uses_default_server_and_auto_resolution(
+    tmp_path: Path,
+) -> None:
     registry = HttpExtensionRegistry(tmp_path)
     registry.reload()
     handle = ProviderRuntimeHandle(name="llm-unconfigured-local")
@@ -197,9 +199,9 @@ async def test_unconfigured_local_llm_selection_is_graceful(tmp_path: Path) -> N
         _context(empty_local, handle), propagate_failure=True
     )
 
-    assert result is False
-    assert handle.provider is None
-    assert sinks.availability == [True]
+    assert result is True
+    assert handle.provider is not None
+    assert sinks.availability == [False]
     await handle.close()
 
 

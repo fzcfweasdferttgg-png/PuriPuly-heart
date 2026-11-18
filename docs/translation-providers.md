@@ -46,6 +46,11 @@ servers use LLM-lib's OpenAI Chat Completions transport, not the official
 OpenAI SDK. This does not add separate native adapters for the KoboldCpp,
 llama.cpp, text-generation-webui, or TabbyAPI text-completion protocols.
 Requests stream internally and the adapter returns the completed translation.
+The default model is empty. Backend capabilities control whether it may stay
+empty: Ollama requires an explicit model, while the other bundled backends let
+LLM-lib resolve a single offered model or omit the field. The GUI shows the
+corresponding model hint and validation. colibri penalty fields are rejected in
+the form and omitted at the runtime boundary.
 
 ## Provider registry
 

@@ -809,6 +809,10 @@ def test_local_preset_crud_updates_both_forms_and_preserves_namesake_models(
     assert view._provider_draft.backup_local_provider_key == "ollama"
     assert view._provider_draft.local_llm_base_url == "http://127.0.0.1:11434"
     assert view._provider_draft.backup_local_base_url == "http://127.0.0.1:11434"
+    view._local_llm_model.value = "fallback-primary"
+    view._on_local_llm_model_change_end(None)
+    view._backup_local_model.value = "fallback-backup"
+    view._on_backup_local_model_change_end(None)
     pending = view.build_provider_apply_settings()
     assert pending is not None
     applied = apply_provider_intent(settings_events.settings, pending)

@@ -285,7 +285,7 @@ class TranslationIntent:
 class LocalLLMIntent:
     backend: str = "koboldcpp"
     base_url: str = "http://127.0.0.1:5001/v1"
-    model: str = "llama3.1:8b"
+    model: str = ""
     extra_body: dict[str, object] = field(default_factory=_default_local_llm_extra_body)
     provider_key: str = "koboldcpp"
 

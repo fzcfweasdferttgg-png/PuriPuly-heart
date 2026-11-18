@@ -21,6 +21,7 @@ from puripuly_heart.core.llm.fallback_chain import (
     DEFAULT_PRIMARY_WAIT_S,
     SequentialFallbackLLMProvider,
 )
+from puripuly_heart.core.llm.llm_lib_settings import llm_lib_backend_capabilities
 from puripuly_heart.core.llm.provider import LLMProvider
 from puripuly_heart.core.storage.secrets import SecretStore
 from puripuly_heart.providers.llm.anthropic import AnthropicLLMProvider
@@ -99,13 +100,15 @@ def build_variant_provider(
 ) -> LLMProvider | None:
     if variant == USER_VARIANT_LOCAL_LLM:
         base_url = _preset_base_url(local_llm.provider_key, local_llm.base_url, protocol="local")
-        if not base_url or not local_llm.model.strip():
+        if not base_url:
             return None
         backend = (
             local_llm.backend.strip()
             or _local_preset_backend(local_llm.provider_key)
             or "koboldcpp"
         )
+        if llm_lib_backend_capabilities(backend).model_required and not local_llm.model.strip():
+            return None
         logger.info(
             "[LLM] Building local translation provider: backend=%s base_url=%s model=%s",
             backend,

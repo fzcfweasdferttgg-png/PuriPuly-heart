@@ -177,7 +177,7 @@ class ResolvedLLMTarget:
 
     def __post_init__(self) -> None:
         models = tuple(self.models) if self.models else (self.model,)
-        if not models or any(not model for model in models):
+        if self.provider != "local_llm" and (not models or any(not model for model in models)):
             raise ValueError("models must contain non-empty model identifiers")
         if models[0] != self.model:
             raise ValueError("model must match the first models entry")

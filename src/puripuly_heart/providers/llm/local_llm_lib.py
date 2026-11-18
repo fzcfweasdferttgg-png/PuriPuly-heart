@@ -15,6 +15,7 @@ from puripuly_heart.config.provider_values import (
 from puripuly_heart.core.llm.latency import current_attempt
 from puripuly_heart.core.llm.llm_lib_settings import (
     ExplicitLLMLibSettings,
+    llm_lib_backend_capabilities,
     normalized_llm_lib_base_url,
 )
 from puripuly_heart.domain.models import Translation
@@ -54,7 +55,8 @@ def _settings_options(
     extra_body: Mapping[str, object],
 ) -> dict[str, Any]:
     _assert_extra_body_is_safe(extra_body)
-    extra = dict(extra_body)
+    unsupported = llm_lib_backend_capabilities(backend).unsupported_extra_body_keys
+    extra = {key: value for key, value in extra_body.items() if key.lower() not in unsupported}
     options: dict[str, Any] = {}
     for name in _SAMPLING_FIELDS:
         if name in extra:
@@ -140,8 +142,10 @@ class LLMLibLocalLLMProvider:
         self.base_url = normalized_llm_lib_base_url(self.backend, self.base_url)
         self.model = self.model.strip()
         self.api_key = self.api_key.strip()
-        if not self.backend or not self.base_url or not self.model:
-            raise ValueError("local LLM backend, base URL, and model are required")
+        if not self.backend or not self.base_url:
+            raise ValueError("local LLM backend and base URL are required")
+        if llm_lib_backend_capabilities(self.backend).model_required and not self.model:
+            raise ValueError(f"model is required for {self.backend}")
         _assert_extra_body_is_safe(self.extra_body)
 
     def _settings(self) -> Settings:

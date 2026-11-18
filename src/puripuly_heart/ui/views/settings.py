@@ -131,10 +131,7 @@ from puripuly_heart.config.provider_values import (
     parse_openrouter_llm_model,
 )
 from puripuly_heart.config.providers_registry import MAX_PROVIDER_PRESETS, load_provider_presets
-from puripuly_heart.config.runtime_resolution import (
-    LOCAL_LLM_DEFAULT_BASE_URL,
-    LOCAL_LLM_DEFAULT_MODEL,
-)
+from puripuly_heart.config.runtime_resolution import LOCAL_LLM_DEFAULT_BASE_URL
 from puripuly_heart.config.resolved import (
     OVERLAY_TARGET_DESKTOP,
     OVERLAY_TARGET_STEAMVR,
@@ -152,6 +149,7 @@ from puripuly_heart.config.translation_values import (
 )
 from puripuly_heart.core.http_extensions import http_extension_secret_key
 from puripuly_heart.core.language import get_stt_compatibility_warning
+from puripuly_heart.core.llm.llm_lib_settings import llm_lib_backend_capabilities
 from puripuly_heart.core.local_asr.local_stt_assets import LOCAL_STT_MODEL_IDS
 from puripuly_heart.core.local_asr.model_registry import (
     ModelRegistryError,
@@ -1820,8 +1818,11 @@ class SettingsView(ft.Column):
         preserve_model_on_url_change: bool = False,
         fallback_backend: str = "",
     ) -> bool:
+        model_required = llm_lib_backend_capabilities(
+            self._local_backend_for_card(card)
+        ).model_required
         if card == "backup":
-            if not (self._backup_local_model.value or "").strip():
+            if model_required and not (self._backup_local_model.value or "").strip():
                 self._backup_local_model.error = t("settings.local_llm.model.required")
                 _update_control_if_mounted(self._backup_local_model)
                 return False
@@ -1829,7 +1830,7 @@ class SettingsView(ft.Column):
                 preserve_model_on_url_change=preserve_model_on_url_change,
                 fallback_backend=fallback_backend,
             )
-            if not (self._backup_local_model.value or "").strip():
+            if model_required and not (self._backup_local_model.value or "").strip():
                 self._backup_local_model.error = t("settings.local_llm.model.required")
                 _update_control_if_mounted(self._backup_local_model)
                 return False
@@ -1838,6 +1839,10 @@ class SettingsView(ft.Column):
             preserve_model_on_url_change=preserve_model_on_url_change,
             fallback_backend=fallback_backend,
         )
+        if model_required and not (self._local_llm_model.value or "").strip():
+            self._local_llm_model.error = t("settings.local_llm.model.required")
+            _update_control_if_mounted(self._local_llm_model)
+            return False
         return not self._local_llm_extra_body_error.visible
 
     def _accept_provider_settings_dialog(
@@ -2150,6 +2155,34 @@ class SettingsView(ft.Column):
                 base.value = preset.base_url
         for control in controls:
             _update_control_if_mounted(control)
+        if config.variant == TranslationModel.LOCAL_LLM.value:
+            self._sync_local_model_hints()
+
+    def _local_backend_for_card(self, card: str) -> str:
+        is_backup = card == "backup"
+        provider = self._backup_local_provider if is_backup else self._local_llm_provider
+        preset = load_provider_presets("local").get((provider.value or "").strip())
+        if preset is not None:
+            return preset.backend
+        current = self._provider_draft or self._provider_snapshot
+        if current is None:
+            return "koboldcpp"
+        return current.backup_local_backend if is_backup else current.local_llm_backend
+
+    def _sync_local_model_hints(self) -> None:
+        for card, field in (
+            ("translation", self._local_llm_model),
+            ("backup", self._backup_local_model),
+        ):
+            required = llm_lib_backend_capabilities(
+                self._local_backend_for_card(card)
+            ).model_required
+            field.hint_text = t(
+                "settings.local_llm.model_hint.required"
+                if required
+                else "settings.local_llm.model_hint.optional"
+            )
+            _update_control_if_mounted(field)
 
     def _local_slot_backend(self, config) -> str:
         if config.backend:
@@ -4616,12 +4649,8 @@ class SettingsView(ft.Column):
         if self._provider_snapshot is None:
             return
         model = (self._local_llm_model.value or "").strip()
-        if not model:
-            # Masked display: an empty field means the default local model.
-            model = LOCAL_LLM_DEFAULT_MODEL
-
         self._local_llm_model.error = None
-        self._local_llm_model.value = "" if model == LOCAL_LLM_DEFAULT_MODEL else model
+        self._local_llm_model.value = model
         current = self._provider_draft or self._provider_snapshot
         if current.local_llm_model != model:
             draft = self._ensure_provider_settings_draft()
@@ -4663,6 +4692,15 @@ class SettingsView(ft.Column):
             self._show_local_llm_extra_body_error(
                 "settings.local_llm.extra_body.sensitive_key",
                 key=sorted(sensitive)[0],
+            )
+            return
+
+        capabilities = llm_lib_backend_capabilities(self._local_backend_for_card("translation"))
+        unsupported = capabilities.unsupported_extra_body_keys.intersection(lowered)
+        if unsupported:
+            self._show_local_llm_extra_body_error(
+                "settings.local_llm.extra_body.unsupported_key",
+                key=sorted(unsupported)[0],
             )
             return
 
@@ -5654,9 +5692,7 @@ class SettingsView(ft.Column):
             backend=settings.local_llm_backend,
         )
         self._local_llm_base_url.value = settings.local_llm_base_url
-        self._local_llm_model.value = (
-            "" if settings.local_llm_model == LOCAL_LLM_DEFAULT_MODEL else settings.local_llm_model
-        )
+        self._local_llm_model.value = settings.local_llm_model
         self._local_llm_extra_body.value = settings.local_llm_extra_body_json
         self._backup_local_provider.value = self._provider_dropdown_value(
             settings.backup_local_provider_key,
@@ -5680,6 +5716,7 @@ class SettingsView(ft.Column):
             preset = load_provider_presets(protocol).get((provider.value or "").strip())
             if preset is not None:
                 base_url.value = preset.base_url
+        self._sync_local_model_hints()
         self._clear_backup_local_extra_body_error()
 
     def _provider_snapshot_with_translation(
@@ -6194,6 +6231,14 @@ class SettingsView(ft.Column):
                 key=sorted(sensitive)[0],
             )
             return
+        capabilities = llm_lib_backend_capabilities(self._local_backend_for_card("backup"))
+        unsupported = capabilities.unsupported_extra_body_keys.intersection(lowered)
+        if unsupported:
+            self._show_backup_local_extra_body_error(
+                "settings.local_llm.extra_body.unsupported_key",
+                key=sorted(unsupported)[0],
+            )
+            return
         try:
             json.dumps(parsed, allow_nan=False)
         except (TypeError, ValueError):
@@ -6462,6 +6507,7 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(self._local_llm_base_url)
         _update_control_if_mounted(self._local_llm_model)
         _update_control_if_mounted(self._local_llm_provider)
+        self._sync_local_model_hints()
 
     def _on_backup_local_provider_change(self, e) -> None:
         value = getattr(e, "data", None) or getattr(getattr(e, "control", None), "value", None)
@@ -6492,6 +6538,7 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(self._backup_local_base_url)
         _update_control_if_mounted(self._backup_local_model)
         _update_control_if_mounted(self._backup_local_provider)
+        self._sync_local_model_hints()
 
     async def _do_fetch_models(
         self,
@@ -8000,6 +8047,7 @@ class SettingsView(ft.Column):
         self._local_llm_provider.label = t("settings.local_llm.provider")
         self._local_llm_base_url.label = t("settings.local_llm.base_url")
         self._local_llm_model.label = t("settings.local_llm.model")
+        self._sync_local_model_hints()
         self._local_llm_api_key.apply_locale()
         self._local_llm_extra_body.label = t("settings.local_llm.extra_body")
         self._local_llm_extra_body_helper.value = t("settings.local_llm.extra_body.description")

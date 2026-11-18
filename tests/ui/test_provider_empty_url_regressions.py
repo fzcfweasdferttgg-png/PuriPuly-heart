@@ -292,3 +292,54 @@ def test_rename_preset_with_empty_url_and_unchanged_backend_keeps_model(
     current = view._provider_draft or view._provider_snapshot
     assert current.local_llm_model == "saved-model"
     assert view._local_llm_model.value == "saved-model"
+
+
+@pytest.mark.parametrize("card", ["translation", "backup"])
+def test_model_hint_and_validation_follow_selected_backend(
+    monkeypatch, settings_events, tmp_path: Path, card: str
+) -> None:
+    from puripuly_heart.ui.views.settings import t
+
+    view = _view(monkeypatch, settings_events, tmp_path)
+    if card == "backup":
+        view._on_backup_variant_selected(TranslationModel.LOCAL_LLM.value)
+        select = view._on_backup_local_provider_selected
+        model = view._backup_local_model
+    else:
+        view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
+        select = view._on_local_llm_provider_selected
+        model = view._local_llm_model
+
+    select("ollama")
+    assert model.hint_text == t("settings.local_llm.model_hint.required")
+    assert view._validate_and_commit_local_form(card) is False
+    assert model.error == t("settings.local_llm.model.required")
+
+    select("koboldcpp")
+    assert model.hint_text == t("settings.local_llm.model_hint.optional")
+    assert view._validate_and_commit_local_form(card) is True
+
+
+@pytest.mark.parametrize("card", ["translation", "backup"])
+def test_colibri_unsupported_extra_body_is_rejected_in_form(
+    monkeypatch, settings_events, tmp_path: Path, card: str
+) -> None:
+    view = _view(monkeypatch, settings_events, tmp_path)
+    if card == "backup":
+        view._on_backup_variant_selected(TranslationModel.LOCAL_LLM.value)
+        view._on_backup_local_provider_selected("colibri")
+        field = view._backup_local_extra_body
+        error = view._backup_local_extra_body_error
+        commit = view._on_backup_local_extra_body_change_end
+    else:
+        view._on_llm_selected(TranslationModel.LOCAL_LLM.value)
+        view._on_local_llm_provider_selected("colibri")
+        field = view._local_llm_extra_body
+        error = view._local_llm_extra_body_error
+        commit = view._on_local_llm_extra_body_change_end
+    field.value = '{"frequency_penalty": 0.2}'
+
+    commit(None)
+
+    assert error.visible is True
+    assert "frequency_penalty" in error.value
