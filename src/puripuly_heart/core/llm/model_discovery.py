@@ -13,6 +13,7 @@ from puripuly_heart.core.llm.llm_lib_settings import (
     llm_lib_backend_capabilities,
     normalized_llm_lib_base_url,
 )
+from puripuly_heart.providers.llm.error_details import record_probe_failure
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,13 @@ async def test_connection(base_url: str, api_key: str = "") -> tuple[int, str]:
     try:
         async with httpx.AsyncClient(timeout=_TEST_TIMEOUT_S) as client:
             resp = await client.get(url, headers=_auth_headers(api_key))
+            if resp.status_code >= 400:
+                record_probe_failure(
+                    None, provider="openai_compatible", status_code=resp.status_code
+                )
             return resp.status_code, resp.text[:200]
     except Exception as exc:
+        record_probe_failure(exc, provider="openai_compatible")
         return 0, str(exc)
 
 
@@ -95,6 +101,7 @@ async def test_anthropic_connection(base_url: str, api_key: str = "") -> tuple[i
             break
         return 200, "ok"
     except Exception as exc:
+        record_probe_failure(exc, provider="anthropic")
         return getattr(exc, "status_code", 0) or 0, str(exc)[:200]
     finally:
         await client.close()
@@ -163,6 +170,7 @@ async def test_llm_lib_connection(
         await _list_llm_lib_models(client)
         return 200, "ok"
     except Exception as exc:
+        record_probe_failure(exc, provider="local_llm")
         return getattr(exc, "status_code", 0) or 0, str(exc)[:200]
     finally:
         await client.aclose()

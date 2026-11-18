@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
+import httpx2
+import openai
 import pytest
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage as ChoiceMessage
 
+from puripuly_heart.core.error_messages import provider_failure_report
 from puripuly_heart.providers.llm.error_details import LLMResponseError
 from puripuly_heart.providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 
@@ -19,6 +22,8 @@ class Completions:
 
     async def create(self, **kwargs):
         self.calls.append(kwargs)
+        if isinstance(self.response, BaseException):
+            raise self.response
         return self.response
 
 
@@ -94,6 +99,31 @@ async def test_openai_sdk_adapter_rejects_length_finish() -> None:
             target_language="en",
         )
     await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_openai_sdk_adapter_preserves_transport_failure_diagnostics() -> None:
+    error = openai.APIConnectionError(
+        request=httpx2.Request("POST", "http://localhost/v1/chat/completions")
+    )
+    client = Client(error)
+    provider = OpenAICompatibleLLMProvider(
+        base_url="https://api.example.com/v1", model="gpt-test", client=client
+    )
+
+    with pytest.raises(LLMResponseError, match="OpenAI-compatible request failed") as caught:
+        await provider.translate(
+            utterance_id=uuid4(),
+            text="hello",
+            system_prompt="",
+            source_language="ja",
+            target_language="en",
+        )
+    await provider.close()
+
+    report = provider_failure_report(caught.value, provider="llm", operation="translate")
+    assert report.diagnostics.fields["provider"] == "openai_compatible"
+    assert report.diagnostics.category == "network"
 
 
 def test_openai_owned_client_uses_base_url_and_disables_retries() -> None:

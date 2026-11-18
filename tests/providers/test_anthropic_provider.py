@@ -8,6 +8,7 @@ import httpx2
 import pytest
 from anthropic.types import Message, TextBlock, Usage
 
+from puripuly_heart.core.error_messages import provider_failure_report
 from puripuly_heart.providers.llm.anthropic import (
     ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
     AnthropicLLMProvider,
@@ -124,9 +125,13 @@ async def test_anthropic_provider_wraps_sdk_failures() -> None:
     client = Client(error)
     provider = AnthropicLLMProvider(model="claude-test", client=client)
 
-    with pytest.raises(LLMResponseError, match="Anthropic request failed"):
+    with pytest.raises(LLMResponseError, match="Anthropic request failed") as caught:
         await translate(provider)
     await provider.close()
+
+    report = provider_failure_report(caught.value, provider="llm", operation="translate")
+    assert report.diagnostics.fields["provider"] == "anthropic"
+    assert report.diagnostics.category == "network"
 
 
 @pytest.mark.asyncio

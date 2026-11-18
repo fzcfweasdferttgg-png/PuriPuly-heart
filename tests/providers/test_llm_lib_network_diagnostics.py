@@ -7,6 +7,7 @@ import pytest
 from llm_lib import LLM
 
 from puripuly_heart.core.error_messages import provider_failure_report
+from puripuly_heart.providers.llm.error_details import LLMResponseError
 from puripuly_heart.providers.llm.local_llm_lib import LLMLibLocalLLMProvider
 
 
@@ -35,7 +36,7 @@ async def test_llm_lib_transport_failures_keep_diagnostic_category(
         async_transport=httpx2.MockTransport(handler),
     )
 
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(LLMResponseError) as caught:
         await provider.translate(
             utterance_id=uuid4(),
             text="source",
@@ -47,7 +48,8 @@ async def test_llm_lib_transport_failures_keep_diagnostic_category(
 
     report = provider_failure_report(
         caught.value,
-        provider="local_llm",
-        operation="translation",
+        provider="llm",
+        operation="translate",
     )
+    assert report.diagnostics.fields["provider"] == "local_llm"
     assert report.diagnostics.category == expected_category

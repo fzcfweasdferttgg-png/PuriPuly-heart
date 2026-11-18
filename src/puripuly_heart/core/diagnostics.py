@@ -212,6 +212,8 @@ _ENUM_FIELDS = {
             "qwen_asr",
             "alibaba",
             "openai",
+            "openai_compatible",
+            "anthropic",
             "openrouter",
             "gemini",
             "deepseek",

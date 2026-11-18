@@ -6,8 +6,10 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from typing import Final, Literal, TypeAlias
 
+import anthropic
 import httpx
 import httpx2
+import openai
 from requests import exceptions as requests_errors
 from urllib3 import exceptions as urllib3_errors
 
@@ -132,6 +134,8 @@ def classify_transport_error(exc: BaseException) -> TransportErrorKind | None:
                 TimeoutError,
                 httpx.TimeoutException,
                 httpx2.TimeoutException,
+                openai.APITimeoutError,
+                anthropic.APITimeoutError,
                 requests_errors.Timeout,
                 urllib3_errors.TimeoutError,
             ),
@@ -143,6 +147,8 @@ def classify_transport_error(exc: BaseException) -> TransportErrorKind | None:
             (
                 httpx.TransportError,
                 httpx2.TransportError,
+                openai.APIConnectionError,
+                anthropic.APIConnectionError,
                 ConnectionError,
                 OSError,
                 urllib3_errors.ProtocolError,

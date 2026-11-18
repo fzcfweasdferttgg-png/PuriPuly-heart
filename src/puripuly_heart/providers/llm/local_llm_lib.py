@@ -228,7 +228,16 @@ class LLMLibLocalLLMProvider:
             }
             if max_output_tokens is not None:
                 params["max_tokens"] = max_output_tokens
-            completion = await client.achat(messages, **params)
+            try:
+                completion = await client.achat(messages, **params)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                raise LLMResponseError(
+                    "Local LLM request failed",
+                    provider="local_llm",
+                    diagnostic_category="unknown",
+                ) from exc
         finally:
             self._active_tasks.discard(operation)
         if observation is not None:

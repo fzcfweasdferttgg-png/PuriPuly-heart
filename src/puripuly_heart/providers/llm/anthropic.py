@@ -127,6 +127,7 @@ class AnthropicLLMProvider:
                 "Anthropic request failed",
                 provider="anthropic",
                 status_code=getattr(exc, "status_code", None),
+                diagnostic_category="unknown",
             ) from exc
         finally:
             if operation is not None:
