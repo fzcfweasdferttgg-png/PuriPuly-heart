@@ -124,6 +124,37 @@ async def test_openai_sdk_adapter_preserves_transport_failure_diagnostics() -> N
     report = provider_failure_report(caught.value, provider="llm", operation="translate")
     assert report.diagnostics.fields["provider"] == "openai_compatible"
     assert report.diagnostics.category == "network"
+    assert report.message.key == "error.network_error"
+
+
+@pytest.mark.asyncio
+async def test_openai_sdk_adapter_presents_http_authentication_failure() -> None:
+    request = httpx2.Request("POST", "https://api.example.com/v1/chat/completions")
+    error = openai.AuthenticationError(
+        "neutral",
+        response=httpx2.Response(401, request=request),
+        body=None,
+    )
+    provider = OpenAICompatibleLLMProvider(
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        client=Client(error),
+    )
+
+    with pytest.raises(LLMResponseError) as caught:
+        await provider.translate(
+            utterance_id=uuid4(),
+            text="hello",
+            system_prompt="",
+            source_language="ja",
+            target_language="en",
+        )
+    await provider.close()
+
+    report = provider_failure_report(caught.value, provider="llm", operation="translate")
+    assert report.message.key == "error.openai.authentication_rejected"
+    assert report.diagnostics.category == "auth"
+    assert report.diagnostics.status_code == 401
 
 
 def test_openai_owned_client_uses_base_url_and_disables_retries() -> None:
@@ -136,3 +167,41 @@ def test_openai_owned_client_uses_base_url_and_disables_retries() -> None:
     assert client.max_retries == 0
     assert str(client.base_url) == "https://api.example.com/v1/"
     asyncio.run(provider.close())
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai_compatible"])
+@pytest.mark.parametrize(
+    ("status_code", "diagnostic_category", "category", "message_key"),
+    [
+        (400, "unknown", "invalid_response", "error.openai.request_rejected"),
+        (401, "unknown", "auth", "error.openai.authentication_rejected"),
+        (403, "unknown", "auth", "error.openai.permission_denied"),
+        (404, "unknown", "invalid_response", "error.openai.model_unavailable"),
+        (402, "unknown", "quota", "error.openai.quota"),
+        (429, "unknown", "rate_limit", "error.openai.rate_limit"),
+        (429, "quota", "quota", "error.openai.quota"),
+        (503, "unknown", "service_unavailable", "error.openai.service_unavailable"),
+        (None, "timeout", "timeout", "error.network_timeout"),
+        (None, "network", "network", "error.network_error"),
+    ],
+)
+def test_openai_api_failures_share_status_category_message_mapping(
+    provider: str,
+    status_code: int | None,
+    diagnostic_category: str,
+    category: str,
+    message_key: str,
+) -> None:
+    error = LLMResponseError(
+        "neutral",
+        provider=provider,
+        status_code=status_code,
+        diagnostic_category=diagnostic_category,
+    )
+
+    report = provider_failure_report(error, provider="llm", operation="translate")
+
+    assert report.message.key == message_key
+    assert report.diagnostics.category == category
+    assert report.diagnostics.status_code == status_code
+    assert report.diagnostics.fields["provider"] == provider

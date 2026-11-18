@@ -14,7 +14,6 @@ class ExplicitLLMLibSettings(Settings):
 @dataclass(frozen=True, slots=True)
 class LLMLibBackendCapabilities:
     model_required: bool = False
-    auto_select_single_model: bool = True
     discovery_api: str = "openai"
     unsupported_extra_body_keys: frozenset[str] = frozenset()
 
@@ -39,7 +38,6 @@ _CAPABILITIES = {
     "openai-compatible": _GENERIC,
     "ollama": LLMLibBackendCapabilities(
         model_required=True,
-        auto_select_single_model=False,
         discovery_api="ollama",
     ),
 }

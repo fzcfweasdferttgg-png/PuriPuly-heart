@@ -247,13 +247,9 @@ async def require_local_llm_server(
     model: str,
     api_key: str = "",
     extra_body: Mapping[str, object] | None = None,
-    verify_connection: Callable[..., Awaitable[bool] | bool] | None = None,
+    verify_connection: Callable[..., Awaitable[bool] | bool],
 ) -> None:
     require_local_llm_loopback(base_url)
-    if verify_connection is None:
-        from puripuly_heart.providers.llm.local_openai import LocalOpenAICompatibleLLMProvider
-
-        verify_connection = LocalOpenAICompatibleLLMProvider.verify_connection
     result = verify_connection(
         base_url=base_url,
         model=model,

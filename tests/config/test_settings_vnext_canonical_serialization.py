@@ -868,3 +868,85 @@ def test_repeated_schema_loading_preserves_independent_mutable_settings() -> Non
     assert raw["intent"]["local_llm"]["extra_body"] == {"options": {"labels": ["alpha"]}}
     assert "synthetic-model" not in second.intent.translation.connection_history
     assert "synthetic-model" not in raw["intent"]["translation"]["connection_history"]
+
+
+def _structured_records(caplog):
+    from puripuly_heart.core.diagnostics import DIAGNOSTIC_RECORD_ATTRIBUTE
+
+    return [
+        getattr(record, DIAGNOSTIC_RECORD_ATTRIBUTE)
+        for record in caplog.records
+        if hasattr(record, DIAGNOSTIC_RECORD_ATTRIBUTE)
+    ]
+
+
+def test_pre_vnext_input_resets_to_defaults_with_single_safe_diagnostic(
+    tmp_path: Path, caplog
+) -> None:
+    import logging
+
+    compat = _compat()
+    secret_marker = "SECRET_MARKER_9f2c"
+    raw_text = (
+        '{"some_legacy_key": "legacy-value", "api_key": "'
+        + secret_marker
+        + '", "nested": {"url": "http://legacy.invalid/v1"}}'
+    )
+    path = tmp_path / "distinctive-pre-vnext-name.json"
+    original_bytes = raw_text.encode("utf-8")
+    path.write_bytes(original_bytes)
+    caplog.set_level(logging.WARNING)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.SUCCESS
+    assert result.settings is not None
+    assert result.settings == compat.defaults.new_settings_for_reset()
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.bak"))
+
+    records = _structured_records(caplog)
+    assert len(records) == 1
+    diagnostics, severity, disposition, stage, _exception = records[0]
+    assert severity == "warning"
+    assert disposition == "degraded"
+    assert stage == "load"
+    assert diagnostics.component == "settings_repository"
+    assert diagnostics.operation == "load"
+    assert diagnostics.category == "transaction"
+    assert diagnostics.visibility == "basic"
+    assert diagnostics.content_policy == "metadata_only"
+    assert diagnostics.status_code is None
+    dumped = repr(diagnostics)
+    assert secret_marker not in dumped
+    assert "legacy-value" not in dumped
+    assert "legacy.invalid" not in dumped
+    assert path.name not in dumped
+    assert str(path) not in dumped
+
+
+def test_unsupported_canonical_version_fails_explicitly_without_reset_or_backup(
+    tmp_path: Path, caplog
+) -> None:
+    import logging
+
+    compat = _compat()
+    path = tmp_path / "future-version-settings.json"
+    raw_bytes = _write_json_bytes(
+        path,
+        {
+            "settings_version": VNEXT_SETTINGS_SCHEMA_VERSION + 1,
+            "intent": {},
+            "state": {},
+        },
+    )
+    caplog.set_level(logging.WARNING)
+
+    result = compat.load_vnext_settings(path)
+
+    assert result.status == compat.SettingsPersistenceStatus.MIGRATION_FAILED
+    assert result.settings is None
+    assert result.error is not None
+    assert path.read_bytes() == raw_bytes
+    assert not list(tmp_path.glob("*.bak"))
+    assert _structured_records(caplog) == []

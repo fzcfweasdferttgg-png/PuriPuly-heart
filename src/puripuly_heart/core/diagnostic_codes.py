@@ -142,6 +142,7 @@ DOMAIN_CODES = (
             "settings_failure_notification_failed",
             "settings_parse_failed",
             "settings_migration_failed",
+            "settings_pre_vnext_reset",
             "settings_backup_failed",
             "settings_restore_failed",
             "settings_apply_result_missing",

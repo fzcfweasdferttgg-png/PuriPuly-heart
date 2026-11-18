@@ -269,7 +269,7 @@ async def test_queue_coalesces_rapid_toggles_and_keeps_fields_on_disable(
 
 
 class _FakeLLM:
-    """Mirrors HttpxLocalOpenAIClient close semantics: cancel active operations."""
+    """Mirrors local LLM client close semantics: cancel active operations."""
 
     def __init__(self, name: str, delay: float = 0.0) -> None:
         self.name = name

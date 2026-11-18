@@ -134,3 +134,45 @@ def test_provider_preset_modal_uses_its_explicit_protocol(
     assert providers_registry.load_provider_presets("local") == {}
     assert not paths["openai"].exists()
     assert not paths["anthropic"].exists()
+
+
+def test_provider_preset_modal_delete_failure_shows_error_and_stays_open(monkeypatch) -> None:
+    preset = providers_registry.ProviderPreset(
+        key="custom-server", label="Custom server", base_url="http://localhost/v1"
+    )
+    monkeypatch.setattr(
+        "puripuly_heart.ui.components.provider_preset_modal.load_provider_presets",
+        lambda _protocol: {"custom-server": preset},
+    )
+
+    def fail_delete(*_args, **_kwargs):
+        raise providers_registry.ProviderPresetError("write_failed")
+
+    monkeypatch.setattr(
+        "puripuly_heart.ui.components.provider_preset_modal.delete_provider_preset", fail_delete
+    )
+    monkeypatch.setattr(
+        "puripuly_heart.ui.components.provider_preset_modal.t",
+        lambda key, **kwargs: (
+            "Could not save providers.json"
+            if key == "settings.provider_presets.error.write_failed"
+            else key
+        ),
+    )
+    page = FakePage()
+    changes = []
+    modal = ProviderPresetModal(page, lambda action, key: changes.append((action, key)))
+    modal.open_delete("custom-server")
+    dialog = modal.dialog
+    body = dialog.content.content.controls[-1]
+    delete_button = body.controls[-1].controls[-1]
+
+    delete_button.on_click(None)
+
+    assert changes == []
+    assert page.pop_calls == 0
+    assert page.dialog is dialog
+    assert modal._error_text is not None
+    assert modal._error_text in body.controls
+    assert modal._error_text.value == "Could not save providers.json"
+    assert modal._error_text.visible is True

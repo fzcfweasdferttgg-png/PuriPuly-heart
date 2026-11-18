@@ -142,22 +142,21 @@ async def test_self_capture_failed_warmup_keeps_actual_capture_running() -> None
 
 @pytest.mark.asyncio
 async def test_local_probe_primary_status_survives_secondary_close(monkeypatch, caplog) -> None:
-    from puripuly_heart.providers.llm import local_openai
+    from puripuly_heart.core.llm import model_discovery
     from puripuly_heart.providers.llm.error_details import LLMResponseError
 
     class Client:
-        def __init__(self, **kwargs):
-            pass
-
-        async def translate(self, **kwargs):
-            raise LLMResponseError("PRIVATE_PROBE_BODY", provider="local_llm", status_code=503)
-
-        async def close(self):
+        async def aclose(self):
             raise OSError("PRIVATE_PROBE_CLOSE")
 
-    monkeypatch.setattr(local_openai, "HttpxLocalOpenAIClient", Client)
+    async def fail_listing(_client):
+        raise LLMResponseError("PRIVATE_PROBE_BODY", provider="local_llm", status_code=503)
+
+    monkeypatch.setattr(model_discovery, "_llm_lib_discovery_client", lambda *_args: Client())
+    monkeypatch.setattr(model_discovery, "_list_llm_lib_models", fail_listing)
     caplog.set_level(logging.WARNING)
-    assert await local_openai.LocalOpenAICompatibleLLMProvider.verify_connection() is False
+    status, _detail = await model_discovery.test_llm_lib_connection("ollama", "http://localhost")
+    assert status == 503
     records = native_records(caplog)
     primary = next(item for item, _, _, stage, _ in records if stage == "probe")
     secondary = next(item for item, _, _, stage, _ in records if stage == "cleanup")

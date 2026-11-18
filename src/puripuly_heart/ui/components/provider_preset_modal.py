@@ -72,6 +72,7 @@ class ProviderPresetModal:
         if preset is None:
             return
         self._key = key
+        self._error_text = ft.Text("", size=14, color=COLOR_ERROR, visible=False)
         content = self._surface(
             title=t("settings.provider_presets.delete"),
             body=ft.Column(
@@ -79,6 +80,7 @@ class ProviderPresetModal:
                     ft.Text(preset.label, size=22, weight=ft.FontWeight.BOLD),
                     ft.Text(preset.base_url, size=16, color=COLOR_SECONDARY),
                     ft.Container(height=12),
+                    self._error_text,
                     ft.Row(
                         [
                             self._button(t("settings.provider_presets.cancel"), self._close),
@@ -89,7 +91,7 @@ class ProviderPresetModal:
                 ],
                 spacing=12,
             ),
-            height=250,
+            height=280,
         )
         self._show(content)
 
@@ -203,7 +205,13 @@ class ProviderPresetModal:
     def _delete(self, _event: object) -> None:
         try:
             delete_provider_preset(self._key, protocol=self._protocol)
-        except ProviderPresetError:
+        except ProviderPresetError as exc:
+            if self._error_text is not None:
+                self._error_text.value = t(
+                    f"settings.provider_presets.error.{exc.code}", default=exc.code
+                )
+                self._error_text.visible = True
+                update_control_if_mounted(self._error_text)
             return
         self._on_changed("delete", self._key)
         self._close()

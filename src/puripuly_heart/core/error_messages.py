@@ -101,18 +101,18 @@ def provider_failure_report(
         operation=operation,
         extra_fields={},
     )
-    if report.diagnostics.fields.get("provider") == "openai":
+    if report.diagnostics.fields.get("provider") in {"openai", "openai_compatible"}:
         return replace(
             report,
             message=replace(
                 report.message,
-                key=_openai_message_key(report.diagnostics),
+                key=_openai_api_message_key(report.diagnostics),
             ),
         )
     return report
 
 
-def _openai_message_key(diagnostics: ErrorDiagnostics) -> str:
+def _openai_api_message_key(diagnostics: ErrorDiagnostics) -> str:
     if diagnostics.status_code in (400, 422):
         if diagnostics.fields.get("openai_error_code") == "model_not_found":
             return "error.openai.model_unavailable"
@@ -578,6 +578,7 @@ def _retry_after_ms(exc: BaseException | None) -> int | None:
         if type(diagnostic_retry_after) is int and 0 <= diagnostic_retry_after < 2**31:
             return diagnostic_retry_after
     return None
+
 
 def _managed_diagnostic_fields(exc: BaseException | None) -> dict[str, DiagnosticFieldValue]:
     fields: dict[str, DiagnosticFieldValue] = {}

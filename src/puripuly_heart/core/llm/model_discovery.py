@@ -78,8 +78,6 @@ async def test_connection(base_url: str, api_key: str = "") -> tuple[int, str]:
                 record_probe_cleanup_failure(
                     exc, provider="openai_compatible", primary_failure=primary_failure
                 )
-                if primary_failure is None:
-                    status, detail = 0, str(exc)
     return status, detail
 
 
@@ -130,8 +128,6 @@ async def test_anthropic_connection(base_url: str, api_key: str = "") -> tuple[i
             await client.close()
         except Exception as exc:
             record_probe_cleanup_failure(exc, provider="anthropic", primary_failure=primary_failure)
-            if primary_failure is None:
-                status, detail = 0, str(exc)
     return status, detail
 
 
@@ -211,6 +207,4 @@ async def test_llm_lib_connection(
             await client.aclose()
         except Exception as exc:
             record_probe_cleanup_failure(exc, provider="local_llm", primary_failure=primary_failure)
-            if primary_failure is None:
-                status, detail = 0, str(exc)
     return status, detail

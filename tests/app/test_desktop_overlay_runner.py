@@ -171,7 +171,6 @@ def _run_isolated_cli_import_probe(
         "puripuly_heart.providers.llm.deepseek",
         "puripuly_heart.providers.llm.openrouter",
         "puripuly_heart.providers.llm.gemini",
-        "puripuly_heart.providers.llm.local_openai",
         "puripuly_heart.providers.llm.qwen_async",
         "puripuly_heart.providers.stt.deepgram",
         "puripuly_heart.providers.stt.local_parakeet_sherpa",

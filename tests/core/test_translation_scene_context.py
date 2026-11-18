@@ -447,33 +447,34 @@ async def test_lazy_factory_provider_forwards_scene_count() -> None:
     )
     assert inner.scene_calls == [5]
 
+
 @pytest.mark.asyncio
 async def test_llm_outer_providers_forward_scene_to_inner_client() -> None:
-    from puripuly_heart.providers.llm.local_openai import LocalOpenAICompatibleLLMProvider
+    from llm_lib import Completion, Usage
+
+    from puripuly_heart.providers.llm.local_llm_lib import LLMLibLocalLLMProvider
 
     @dataclass
     class CapturingInner:
-        calls: list[int | None] = field(default_factory=list)
+        model = "fake-model"
+        calls: list[str] = field(default_factory=list)
 
-        async def translate(
-            self,
-            *,
-            text: str,
-            system_prompt: str,
-            source_language: str,
-            target_language: str,
-            context: str = "",
-            scene_participant_count: int | None = None,
-        ) -> str:
-            self.calls.append(scene_participant_count)
-            return "ok"
+        async def achat(self, messages, **params):
+            self.calls.append(messages[1]["content"])
+            params["on_event"](type("Event", (), {"type": "content", "text": "ok"})())
+            return Completion(text=" ok ", usage=Usage(10, 2))
 
-        async def close(self) -> None:
+        async def aclose(self) -> None:
             return None
 
     inners: list[CapturingInner] = []
     providers = [
-        LocalOpenAICompatibleLLMProvider(client=(inners.append(CapturingInner()) or inners[-1])),
+        LLMLibLocalLLMProvider(
+            backend="ollama",
+            base_url="http://127.0.0.1:11434",
+            model="fake-model",
+            client=(inners.append(CapturingInner()) or inners[-1]),
+        ),
     ]
     for provider in providers:
         result = await provider.translate(
@@ -486,7 +487,13 @@ async def test_llm_outer_providers_forward_scene_to_inner_client() -> None:
             scene_participant_count=2,
         )
         assert result.text == "ok"
-    assert [inner.calls for inner in inners] == [[2]] * len(inners)
+    assert [inner.calls for inner in inners] == [
+        [
+            "<context>\nprior\n</context>\n\n"
+            "<scene>\nPeople: 2\n</scene>\n\n"
+            "<input>\nhello\n</input>"
+        ]
+    ] * len(inners)
 
 
 @pytest.mark.parametrize("effective_backend", ["cpu", "vulkan"])
