@@ -49,8 +49,9 @@ jaraco.context, jaraco.functools, more-itertools.
 ## 클라우드 번역 제공자
 
 DeepSeek, Qwen(DashScope), OpenAI, OpenRouter, ChatGPT 백엔드, 공개
-index-translate API: 제공자 어댑터 모듈이 제거되었습니다. 번역은 로컬
-OpenAI 호환 엔드포인트 또는 로컬 Gemma 런타임으로 동작합니다.
+index-translate API: 제공자 어댑터 모듈이 제거되었습니다. 번역은 OpenAI
+호환, Anthropic 호환, Other servers 서버 양식(사용자 자체 키를 쓰는 클라우드
+엔드포인트 포함) 또는 로컬 Gemma 런타임으로 동작합니다.
 의존성: 없음(코드만).
 
 ## 유료 클라우드 음성 인식

@@ -6577,6 +6577,12 @@ class SettingsView(ft.Column):
         _update_control_if_mounted(self._backup_local_provider)
         self._sync_local_model_hints()
 
+    def _draft_provider_key(self, attr: str) -> str:
+        current = self._provider_draft or self._provider_snapshot
+        if current is None:
+            return ""
+        return (getattr(current, attr, "") or "").strip()
+
     async def _do_fetch_models(
         self,
         *,
@@ -6586,9 +6592,14 @@ class SettingsView(ft.Column):
         protocol: str = "openai",
         backend: str = "",
         current_base_url: Callable[[], str] | None = None,
+        current_backend: Callable[[], str] | None = None,
+        current_provider_key: Callable[[], str] | None = None,
     ) -> None:
         if not base_url:
             return
+        expected_provider_key = (
+            (current_provider_key() or "").strip() if current_provider_key is not None else None
+        )
         try:
             if protocol == "local":
                 model_ids = await _fetch_llm_lib_models_default(backend, base_url, api_key)
@@ -6603,7 +6614,17 @@ class SettingsView(ft.Column):
                 model_ids = await fetch(base_url, api_key)
         except Exception:
             model_ids = []
-        if current_base_url is not None and (current_base_url() or "").strip() != base_url.strip():
+        if current_base_url is not None and not base_url_addresses_match(
+            current_base_url() or "", base_url
+        ):
+            return
+        if current_backend is not None and (current_backend() or "").strip() != backend.strip():
+            return
+        if (
+            expected_provider_key is not None
+            and current_provider_key is not None
+            and (current_provider_key() or "").strip() != expected_provider_key
+        ):
             return
         if not model_ids:
             if self.show_snackbar:
@@ -6655,6 +6676,9 @@ class SettingsView(ft.Column):
             api_key=(self._openai_api_key.value or "").strip(),
             on_model_picked=self._pick_openai_model,
             current_base_url=lambda: (self._openai_base_url.value or "").strip(),
+            current_provider_key=lambda: self._draft_provider_key(
+                "openai_compatible_provider_key"
+            ),
         )
 
     def _pick_openai_model(self, value: str) -> None:
@@ -6677,6 +6701,7 @@ class SettingsView(ft.Column):
             protocol="anthropic",
             current_base_url=lambda: (self._anthropic_base_url.value or "").strip()
             or "https://api.anthropic.com",
+            current_provider_key=lambda: self._draft_provider_key("anthropic_provider_key"),
         )
 
     def _pick_anthropic_model(self, value: str) -> None:
@@ -6701,6 +6726,9 @@ class SettingsView(ft.Column):
             protocol="anthropic",
             current_base_url=lambda: (self._backup_anthropic_base_url.value or "").strip()
             or "https://api.anthropic.com",
+            current_provider_key=lambda: self._draft_provider_key(
+                "backup_anthropic_provider_key"
+            ),
         )
 
     def _pick_backup_anthropic_model(self, value: str) -> None:
@@ -6722,6 +6750,7 @@ class SettingsView(ft.Column):
             api_key=(self._backup_api_key.value or "").strip(),
             on_model_picked=self._pick_backup_model,
             current_base_url=lambda: (self._backup_base_url.value or "").strip(),
+            current_provider_key=lambda: self._draft_provider_key("backup_provider_key"),
         )
 
     def _pick_backup_model(self, value: str) -> None:
@@ -6743,6 +6772,8 @@ class SettingsView(ft.Column):
             protocol="local",
             backend=self._local_backend_for_card("backup"),
             current_base_url=lambda: (self._backup_local_base_url.value or "").strip(),
+            current_backend=lambda: self._local_backend_for_card("backup"),
+            current_provider_key=lambda: self._draft_provider_key("backup_local_provider_key"),
         )
 
     def _pick_backup_local_model(self, value: str) -> None:
@@ -6767,6 +6798,8 @@ class SettingsView(ft.Column):
             backend=self._local_backend_for_card("translation"),
             current_base_url=lambda: (self._local_llm_base_url.value or "").strip()
             or LOCAL_LLM_DEFAULT_BASE_URL,
+            current_backend=lambda: self._local_backend_for_card("translation"),
+            current_provider_key=lambda: self._draft_provider_key("local_llm_provider_key"),
         )
 
     def _pick_local_llm_model(self, value: str) -> None:

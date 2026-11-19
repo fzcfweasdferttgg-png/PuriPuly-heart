@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 from pathlib import Path
 
@@ -309,3 +310,108 @@ def test_provider_preset_cache_is_independent_per_protocol(
             assert set(providers_registry.load_provider_presets(protocol)) == {"preset"}
 
     assert reads == list(paths.values())
+
+
+def test_first_use_reader_initialization_does_not_overwrite_committed_preset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A locked CRUD write must survive a concurrent unlocked first-use reader.
+
+    ``load_provider_presets`` / ``is_placeholder_base_url`` create the user copy
+    through ``ensure_providers_file`` without the registry lock, so their
+    bundled-copy replace can revert a preset committed between the reader's
+    existence check and its replace.
+    """
+    destination = tmp_path / "user" / "providers.json"
+    bundled = tmp_path / "bundled.json"
+    bundled.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "providers": {
+                    "bundled": {"label": "Bundled", "base_url": "http://127.0.0.1:8000/v1"}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        providers_registry, "user_providers_path", lambda protocol="openai": destination
+    )
+    monkeypatch.setattr(
+        providers_registry, "_bundled_providers_path", lambda protocol="openai": bundled
+    )
+    monkeypatch.setattr(providers_registry, "_PROVIDER_PRESETS_CACHE", None)
+
+    reader_copy_started = threading.Event()
+    allow_reader_copy = threading.Event()
+    real_copy2 = shutil.copy2
+
+    def coordinated_copy2(src, dst):
+        if threading.current_thread().name == "reader-init":
+            reader_copy_started.set()
+            assert allow_reader_copy.wait(timeout=10)
+        return real_copy2(src, dst)
+
+    monkeypatch.setattr(providers_registry.shutil, "copy2", coordinated_copy2)
+    errors: list[str] = []
+
+    def read() -> None:
+        try:
+            providers_registry.load_provider_presets()
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    def add() -> None:
+        try:
+            providers_registry.add_provider_preset("First custom", "http://127.0.0.1:5001")
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    reader = threading.Thread(target=read, name="reader-init")
+    writer = threading.Thread(target=add, name="writer-add")
+    reader.start()
+    assert reader_copy_started.wait(timeout=10)
+    writer.start()
+    writer.join(timeout=1.0)
+    allow_reader_copy.set()
+    reader.join(timeout=10)
+    assert not reader.is_alive()
+    writer.join(timeout=10)
+    assert not writer.is_alive()
+    assert not errors, f"operations raised: {errors}"
+
+    providers_registry._PROVIDER_PRESETS_CACHE = None
+    saved = providers_registry.load_provider_presets()
+    assert (
+        "first-custom" in saved
+    ), f"reader first-use clobbered the committed preset, saved={sorted(saved)}"
+
+
+def test_duplicate_label_check_matches_display_label_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The duplicate-name scan must use the same label fallback as the loader.
+
+    A hand-edited record without a ``label`` displays as its key, so adding a
+    preset named after that key must be rejected as a duplicate.
+    """
+    path = tmp_path / "providers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "providers": {"myserver": {"base_url": "http://127.0.0.1:5000"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(providers_registry, "ensure_providers_file", lambda protocol="openai": path)
+    monkeypatch.setattr(providers_registry, "_PROVIDER_PRESETS_CACHE", None)
+
+    assert providers_registry.load_provider_presets()["myserver"].label == "myserver"
+
+    with pytest.raises(providers_registry.ProviderPresetError, match="duplicate_name"):
+        providers_registry.add_provider_preset("myserver", "http://127.0.0.1:5001")

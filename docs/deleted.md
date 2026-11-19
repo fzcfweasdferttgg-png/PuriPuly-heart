@@ -54,7 +54,9 @@ jaraco.context, jaraco.functools, more-itertools.
 
 DeepSeek, Qwen (DashScope), OpenAI, OpenRouter, the ChatGPT plan backend and
 the public index-translate API: provider adapter modules removed. Translation
-works through the local OpenAI-compatible endpoint or the local Gemma runtime.
+works through the OpenAI-compatible, Anthropic-compatible and Other servers
+forms (any endpoint, including cloud servers with the user's own key) or
+through the local Gemma runtime.
 Dependencies: none (code only).
 
 ## Paid cloud speech recognition

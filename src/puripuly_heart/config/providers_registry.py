@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import shutil
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,6 +90,16 @@ def ensure_providers_file(protocol: str = "openai") -> Path:
     dest = user_providers_path(protocol)
     if dest.exists():
         return dest
+    if _in_registry_transaction():
+        return _create_providers_file(protocol)
+    with FileLock(str(dest) + ".lock"):
+        return _create_providers_file(protocol)
+
+
+def _create_providers_file(protocol: str = "openai") -> Path:
+    dest = user_providers_path(protocol)
+    if dest.exists():
+        return dest
     src = _bundled_providers_path(protocol)
     if not src.exists():
         logger.warning("[Providers] Bundled providers.json not found at %s", src)
@@ -102,6 +113,12 @@ def ensure_providers_file(protocol: str = "openai") -> Path:
 
 
 _PROVIDER_PRESETS_CACHE: dict[str, tuple[Path, int, int, dict[str, ProviderPreset]]] | None = None
+
+_registry_transaction_state = threading.local()
+
+
+def _in_registry_transaction() -> bool:
+    return bool(getattr(_registry_transaction_state, "active", False))
 
 
 def _loaded_backend(key: str, info: dict, protocol: str) -> str:
@@ -244,7 +261,7 @@ def _validated_preset_fields(
     except ValueError as exc:
         raise ProviderPresetError("invalid_url") from exc
     duplicate = any(
-        str(info.get("label", "")).strip().casefold() == normalized_label.casefold()
+        (str(info.get("label") or key).strip() or key).casefold() == normalized_label.casefold()
         and key != current_key
         for key, info in providers.items()
         if isinstance(info, dict)
@@ -290,7 +307,12 @@ def _validated_backend(
 def _provider_write_transaction(protocol: str):
     path = user_providers_path(protocol)
     with FileLock(str(path) + ".lock"):
-        yield _provider_document_for_write(protocol)
+        previous = getattr(_registry_transaction_state, "active", False)
+        _registry_transaction_state.active = True
+        try:
+            yield _provider_document_for_write(protocol)
+        finally:
+            _registry_transaction_state.active = previous
 
 
 def add_provider_preset(

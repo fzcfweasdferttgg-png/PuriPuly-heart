@@ -52,8 +52,10 @@ jaraco.context, jaraco.functools, more-itertools.
 ## Облачные провайдеры перевода
 
 DeepSeek, Qwen (DashScope), OpenAI, OpenRouter, бэкенд ChatGPT и публичный
-API index-translate: модули провайдеров удалены. Перевод работает через
-локальный OpenAI-совместимый endpoint или локальный рантайм Gemma.
+API index-translate: модули провайдеров удалены. Перевод работает через формы
+OpenAI-совместимых, Anthropic-совместимых и «Other servers» серверов (любой
+endpoint, включая облачные с ключом пользователя) или через локальный рантайм
+Gemma.
 Зависимости: нет (только код).
 
 ## Платное облачное распознавание речи
