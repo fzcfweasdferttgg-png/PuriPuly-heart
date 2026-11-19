@@ -168,14 +168,15 @@ def test_custom_local_values_still_commit_and_display(
     assert applied.intent.local_llm.model == "my-model"
 
 
-def test_backup_local_empty_fields_keep_required_validation(
+def test_backup_local_empty_fields_keep_ollama_required_validation(
     monkeypatch: pytest.MonkeyPatch, settings_events, tmp_path: Path
 ) -> None:
-    """Explicitly empty backup fields remain invalid after preset resolution."""
+    """Explicitly empty backup fields remain invalid for Ollama."""
     view = _view(monkeypatch)
     _load(view, settings_events, tmp_path)
     view._on_backup_variant_selected("local_llm")
     assert view._backup_local_base_url.value == DEFAULT_BASE_URL
+    view._on_backup_local_provider_selected("ollama")
 
     view._backup_local_base_url.value = ""
     view._on_backup_local_base_url_change_end(None)

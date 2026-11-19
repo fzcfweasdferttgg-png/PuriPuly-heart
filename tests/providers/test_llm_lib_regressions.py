@@ -102,6 +102,36 @@ async def test_close_cancels_in_flight_llm_lib_translation() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("owned", [False, True])
+async def test_close_failure_can_be_retried(owned: bool) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise RuntimeError("temporary close failure")
+
+    client = Client()
+    provider = LLMLibLocalLLMProvider(
+        backend="llamacpp",
+        base_url="http://127.0.0.1:8080/v1",
+        model="test-model",
+    )
+    if owned:
+        provider._internal_client = client
+    else:
+        provider.client = client
+
+    with pytest.raises(RuntimeError, match="temporary close failure"):
+        await provider.close()
+    await provider.close()
+
+    assert client.close_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_cancelled_discovery_closes_after_async_request_finishes(monkeypatch) -> None:
     started = asyncio.Event()
     finished = asyncio.Event()

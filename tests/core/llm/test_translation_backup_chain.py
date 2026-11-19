@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from uuid import uuid4
 
 from puripuly_heart.app.wiring.wiring_translation_variants import (
@@ -84,6 +85,19 @@ async def test_primary_error_falls_back_to_backup() -> None:
     assert primary.calls == 1
     assert backup.calls == 1
     assert used == [True]
+
+
+async def test_primary_error_log_does_not_include_exception_text(caplog) -> None:
+    primary = FakeProvider(error=RuntimeError("PRIVATE_PRIMARY_RESPONSE"))
+    backup = FakeProvider()
+    caplog.set_level(logging.WARNING)
+
+    result = await _translate(_chain(primary, backup))
+
+    assert result.text == "ok"
+    assert backup.calls == 1
+    assert "error_type=RuntimeError" in caplog.text
+    assert "PRIVATE_PRIMARY_RESPONSE" not in caplog.text
 
 
 async def test_primary_stall_falls_back_after_wait_threshold() -> None:

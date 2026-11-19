@@ -64,8 +64,8 @@ class SequentialFallbackLLMProvider(LLMProvider):
             raise
         except Exception as exc:
             logger.warning(
-                "[LLM] Primary provider failed (%s) \u2014 trying fallback",
-                exc,
+                "[LLM] Primary provider failed: error_type=%s; trying fallback",
+                type(exc).__name__,
             )
         if self.on_fallback_used is not None:
             try:

@@ -276,10 +276,14 @@ class LLMLibLocalLLMProvider:
         if operations:
             await asyncio.gather(*operations, return_exceptions=True)
         if internal is not None:
-            await internal.aclose()
+            try:
+                await internal.aclose()
+            except BaseException:
+                self._internal_client = internal
+                raise
         if self.client is not None and not self._external_client_closed:
-            self._external_client_closed = True
             await self.client.aclose()
+            self._external_client_closed = True
 
 
 __all__ = ["LLMLibLocalLLMProvider"]

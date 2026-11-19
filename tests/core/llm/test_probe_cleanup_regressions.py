@@ -374,3 +374,79 @@ async def test_llm_lib_fetch_preserves_models_when_close_fails(monkeypatch, capl
     assert result == ["model"]
     assert "cleanup failed" in caplog.text
     assert "PRIVATE_" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_anthropic_fetch_client_construction_failure_returns_empty(
+    monkeypatch, caplog
+) -> None:
+    def fail_client(*_args):
+        raise RuntimeError("PRIVATE_CONSTRUCTOR")
+
+    monkeypatch.setattr(model_discovery, "_anthropic_client", fail_client)
+    caplog.set_level(logging.WARNING)
+
+    result = await model_discovery.fetch_anthropic_models("", "")
+
+    assert result == []
+    assert "error_type=RuntimeError" in caplog.text
+    assert "cleanup failed" not in caplog.text
+    assert "PRIVATE_" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_anthropic_probe_client_construction_failure_returns_status(
+    monkeypatch, caplog
+) -> None:
+    def fail_client(*_args):
+        raise RuntimeError("PRIVATE_CONSTRUCTOR")
+
+    monkeypatch.setattr(model_discovery, "_anthropic_client", fail_client)
+    caplog.set_level(logging.ERROR)
+
+    status, _detail = await model_discovery.test_anthropic_connection("", "")
+
+    assert status == 0
+    records = _records(caplog)
+    assert [(record[1], record[2], record[3]) for record in records] == [
+        ("error", "failed", "probe")
+    ]
+    assert records[0][0].fields["provider"] == "anthropic"
+    assert "PRIVATE_" not in repr(records[0][0])
+
+
+@pytest.mark.asyncio
+async def test_llm_lib_fetch_client_construction_failure_returns_empty(monkeypatch, caplog) -> None:
+    def fail_client(*_args):
+        raise RuntimeError("PRIVATE_CONSTRUCTOR")
+
+    monkeypatch.setattr(model_discovery, "_llm_lib_discovery_client", fail_client)
+    caplog.set_level(logging.WARNING)
+
+    result = await model_discovery.fetch_llm_lib_models("ollama", "http://localhost")
+
+    assert result == []
+    assert "error_type=RuntimeError" in caplog.text
+    assert "cleanup failed" not in caplog.text
+    assert "PRIVATE_" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_llm_lib_probe_client_construction_failure_returns_status(
+    monkeypatch, caplog
+) -> None:
+    def fail_client(*_args):
+        raise RuntimeError("PRIVATE_CONSTRUCTOR")
+
+    monkeypatch.setattr(model_discovery, "_llm_lib_discovery_client", fail_client)
+    caplog.set_level(logging.ERROR)
+
+    status, _detail = await model_discovery.test_llm_lib_connection("ollama", "http://localhost")
+
+    assert status == 0
+    records = _records(caplog)
+    assert [(record[1], record[2], record[3]) for record in records] == [
+        ("error", "failed", "probe")
+    ]
+    assert records[0][0].fields["provider"] == "local_llm"
+    assert "PRIVATE_" not in repr(records[0][0])

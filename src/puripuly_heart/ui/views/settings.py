@@ -878,7 +878,10 @@ class SettingsView(ft.Column):
             old_url = current.openai_compatible_base_url
         base.value = preset.base_url
         _update_control_if_mounted(base)
-        if old_url != preset.base_url or old_backend != preset.backend:
+        if (
+            not base_url_addresses_match(old_url, preset.base_url)
+            or old_backend != preset.backend
+        ):
             self._select_provider_preset(card, key)
 
     def _clear_provider_preset_selection(self, card: str) -> None:
@@ -4633,9 +4636,11 @@ class SettingsView(ft.Column):
         current_base_url = stored_base_url or (
             selected.base_url if selected is not None else ""
         )
-        url_changed = bool(stored_base_url) and current_base_url != normalized
+        url_changed = bool(stored_base_url) and not base_url_addresses_match(
+            current_base_url, normalized
+        )
         self._commit_local_field("base_url", normalized)
-        if selected is None or selected.base_url != normalized:
+        if selected is None or not base_url_addresses_match(selected.base_url, normalized):
             self._commit_local_field("provider_key", "")
             self._local_llm_provider.value = None
             _update_control_if_mounted(self._local_llm_provider)
@@ -6152,9 +6157,11 @@ class SettingsView(ft.Column):
         current_base_url = stored_base_url or (
             selected.base_url if selected is not None else ""
         )
-        url_changed = bool(stored_base_url) and current_base_url != normalized
+        url_changed = bool(stored_base_url) and not base_url_addresses_match(
+            current_base_url, normalized
+        )
         self._commit_backup_field("local_base_url", normalized)
-        if selected is None or selected.base_url != normalized:
+        if selected is None or not base_url_addresses_match(selected.base_url, normalized):
             self._commit_backup_field("local_provider_key", "")
             self._backup_local_provider.value = None
             _update_control_if_mounted(self._backup_local_provider)
@@ -6169,7 +6176,9 @@ class SettingsView(ft.Column):
         if self._provider_snapshot is None:
             return
         model = (self._backup_local_model.value or "").strip()
-        if not model:
+        if not model and llm_lib_backend_capabilities(
+            self._local_backend_for_card("backup")
+        ).model_required:
             self._backup_local_model.error = t("settings.local_llm.model.required")
             _update_control_if_mounted(self._backup_local_model)
             return
@@ -6349,11 +6358,13 @@ class SettingsView(ft.Column):
         key = provider_key.strip()
         if key:
             preset = presets.get(key)
-            if preset is not None and (not base_url or preset.base_url == base_url):
+            if preset is not None and (
+                not base_url or base_url_addresses_match(preset.base_url, base_url)
+            ):
                 return key
             return None
         for candidate, preset in presets.items():
-            if preset.base_url == base_url and (
+            if base_url_addresses_match(preset.base_url, base_url) and (
                 protocol != "local" or not backend or preset.backend == backend
             ):
                 return candidate
@@ -6390,9 +6401,12 @@ class SettingsView(ft.Column):
         if preset is not None:
             self._openai_base_url.value = preset.base_url
             _update_control_if_mounted(self._openai_base_url)
-            url_changed = _effective_base_url(
-                current.openai_compatible_base_url, current.openai_compatible_provider_key
-            ) != preset.base_url
+            url_changed = not base_url_addresses_match(
+                _effective_base_url(
+                    current.openai_compatible_base_url, current.openai_compatible_provider_key
+                ),
+                preset.base_url,
+            )
             if url_changed:
                 self._commit_openai_field("base_url", preset.base_url)
                 self._commit_openai_field("model", "")
@@ -6420,9 +6434,10 @@ class SettingsView(ft.Column):
         if preset is not None:
             self._backup_base_url.value = preset.base_url
             _update_control_if_mounted(self._backup_base_url)
-            url_changed = _effective_base_url(
-                current.backup_base_url, current.backup_provider_key
-            ) != preset.base_url
+            url_changed = not base_url_addresses_match(
+                _effective_base_url(current.backup_base_url, current.backup_provider_key),
+                preset.base_url,
+            )
             if url_changed:
                 self._commit_backup_field("base_url", preset.base_url)
                 self._commit_backup_field("model", "")
@@ -6447,9 +6462,12 @@ class SettingsView(ft.Column):
         if preset is not None:
             self._anthropic_base_url.value = preset.base_url
             _update_control_if_mounted(self._anthropic_base_url)
-            url_changed = _effective_base_url(
-                current.anthropic_base_url, current.anthropic_provider_key, protocol="anthropic"
-            ) != preset.base_url
+            url_changed = not base_url_addresses_match(
+                _effective_base_url(
+                    current.anthropic_base_url, current.anthropic_provider_key, protocol="anthropic"
+                ),
+                preset.base_url,
+            )
             if url_changed:
                 self._commit_anthropic_field("base_url", preset.base_url)
                 self._commit_anthropic_field("model", "")
@@ -6474,11 +6492,14 @@ class SettingsView(ft.Column):
         if preset is not None:
             self._backup_anthropic_base_url.value = preset.base_url
             _update_control_if_mounted(self._backup_anthropic_base_url)
-            url_changed = _effective_base_url(
-                current.backup_anthropic_base_url,
-                current.backup_anthropic_provider_key,
-                protocol="anthropic",
-            ) != preset.base_url
+            url_changed = not base_url_addresses_match(
+                _effective_base_url(
+                    current.backup_anthropic_base_url,
+                    current.backup_anthropic_provider_key,
+                    protocol="anthropic",
+                ),
+                preset.base_url,
+            )
             if url_changed:
                 self._commit_backup_anthropic_field("base_url", preset.base_url)
                 self._commit_backup_anthropic_field("model", "")
@@ -6502,9 +6523,12 @@ class SettingsView(ft.Column):
         current = self._provider_draft or self._provider_snapshot
         selection_changed = current.local_llm_provider_key != value
         backend_changed = current.local_llm_backend != preset.backend
-        url_changed = _effective_base_url(
-            current.local_llm_base_url, current.local_llm_provider_key, protocol="local"
-        ) != preset.base_url
+        url_changed = not base_url_addresses_match(
+            _effective_base_url(
+                current.local_llm_base_url, current.local_llm_provider_key, protocol="local"
+            ),
+            preset.base_url,
+        )
         self._commit_local_field("provider_key", value)
         self._commit_local_field("backend", preset.backend)
         self._local_llm_base_url.value = preset.base_url
@@ -6533,9 +6557,12 @@ class SettingsView(ft.Column):
         current = self._provider_draft or self._provider_snapshot
         selection_changed = current.backup_local_provider_key != value
         backend_changed = current.backup_local_backend != preset.backend
-        url_changed = _effective_base_url(
-            current.backup_local_base_url, current.backup_local_provider_key, protocol="local"
-        ) != preset.base_url
+        url_changed = not base_url_addresses_match(
+            _effective_base_url(
+                current.backup_local_base_url, current.backup_local_provider_key, protocol="local"
+            ),
+            preset.base_url,
+        )
         self._commit_backup_field("local_provider_key", value)
         self._commit_backup_field("local_backend", preset.backend)
         self._backup_local_base_url.value = preset.base_url
@@ -6558,6 +6585,7 @@ class SettingsView(ft.Column):
         on_model_picked,
         protocol: str = "openai",
         backend: str = "",
+        current_base_url: Callable[[], str] | None = None,
     ) -> None:
         if not base_url:
             return
@@ -6575,6 +6603,8 @@ class SettingsView(ft.Column):
                 model_ids = await fetch(base_url, api_key)
         except Exception:
             model_ids = []
+        if current_base_url is not None and (current_base_url() or "").strip() != base_url.strip():
+            return
         if not model_ids:
             if self.show_snackbar:
                 self.show_snackbar(t("settings.openai_compatible.fetch_failed"), COLOR_WARNING)
@@ -6624,6 +6654,7 @@ class SettingsView(ft.Column):
             base_url=(self._openai_base_url.value or "").strip(),
             api_key=(self._openai_api_key.value or "").strip(),
             on_model_picked=self._pick_openai_model,
+            current_base_url=lambda: (self._openai_base_url.value or "").strip(),
         )
 
     def _pick_openai_model(self, value: str) -> None:
@@ -6644,6 +6675,8 @@ class SettingsView(ft.Column):
             api_key=(self._anthropic_api_key.value or "").strip(),
             on_model_picked=self._pick_anthropic_model,
             protocol="anthropic",
+            current_base_url=lambda: (self._anthropic_base_url.value or "").strip()
+            or "https://api.anthropic.com",
         )
 
     def _pick_anthropic_model(self, value: str) -> None:
@@ -6666,6 +6699,8 @@ class SettingsView(ft.Column):
             api_key=(self._backup_anthropic_api_key.value or "").strip(),
             on_model_picked=self._pick_backup_anthropic_model,
             protocol="anthropic",
+            current_base_url=lambda: (self._backup_anthropic_base_url.value or "").strip()
+            or "https://api.anthropic.com",
         )
 
     def _pick_backup_anthropic_model(self, value: str) -> None:
@@ -6686,6 +6721,7 @@ class SettingsView(ft.Column):
             base_url=(self._backup_base_url.value or "").strip(),
             api_key=(self._backup_api_key.value or "").strip(),
             on_model_picked=self._pick_backup_model,
+            current_base_url=lambda: (self._backup_base_url.value or "").strip(),
         )
 
     def _pick_backup_model(self, value: str) -> None:
@@ -6706,6 +6742,7 @@ class SettingsView(ft.Column):
             on_model_picked=self._pick_backup_local_model,
             protocol="local",
             backend=self._local_backend_for_card("backup"),
+            current_base_url=lambda: (self._backup_local_base_url.value or "").strip(),
         )
 
     def _pick_backup_local_model(self, value: str) -> None:
@@ -6728,6 +6765,8 @@ class SettingsView(ft.Column):
             on_model_picked=self._pick_local_llm_model,
             protocol="local",
             backend=self._local_backend_for_card("translation"),
+            current_base_url=lambda: (self._local_llm_base_url.value or "").strip()
+            or LOCAL_LLM_DEFAULT_BASE_URL,
         )
 
     def _pick_local_llm_model(self, value: str) -> None:

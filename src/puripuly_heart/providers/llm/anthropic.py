@@ -162,10 +162,14 @@ class AnthropicLLMProvider:
         owned = self._owned_client
         self._owned_client = None
         if owned is not None:
-            await owned.close()
+            try:
+                await owned.close()
+            except BaseException:
+                self._owned_client = owned
+                raise
         if self.client is not None and not self._external_client_closed:
-            self._external_client_closed = True
             await self.client.close()
+            self._external_client_closed = True
 
 
 __all__ = [

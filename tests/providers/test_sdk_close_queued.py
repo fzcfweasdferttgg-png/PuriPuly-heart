@@ -93,3 +93,35 @@ async def test_anthropic_close_does_not_admit_queued_translation() -> None:
     client = AnthropicClient()
     provider = AnthropicLLMProvider(model="test-model", client=client)
     await _check_queued_close(provider, client, client.messages)
+
+
+class RetryCloseClient:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        if self.close_calls == 1:
+            raise RuntimeError("temporary close failure")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["openai", "anthropic"])
+@pytest.mark.parametrize("owned", [False, True])
+async def test_sdk_close_failure_can_be_retried(kind: str, owned: bool) -> None:
+    client = RetryCloseClient()
+    provider = (
+        OpenAICompatibleLLMProvider(base_url="http://localhost/v1", model="test-model")
+        if kind == "openai"
+        else AnthropicLLMProvider(model="test-model")
+    )
+    if owned:
+        provider._owned_client = client
+    else:
+        provider.client = client
+
+    with pytest.raises(RuntimeError, match="temporary close failure"):
+        await provider.close()
+    await provider.close()
+
+    assert client.close_calls == 2

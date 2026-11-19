@@ -10,7 +10,7 @@ from pathlib import Path
 
 from puripuly_heart.config.settings_vnext import defaults, migration, serialization
 from puripuly_heart.config.settings_vnext.schema import AppSettingsVNext
-from puripuly_heart.core.diagnostics import safe_exception_fields
+from puripuly_heart.core.diagnostics import emit_failure, safe_exception_fields
 from puripuly_heart.core.messages import ErrorDiagnostics
 
 logger = logging.getLogger(__name__)
@@ -142,6 +142,9 @@ def load_vnext_settings(path: Path) -> VNextSettingsLoadResult:
             error=_error(SettingsPersistenceStatus.MIGRATION_FAILED, exc),
         )
 
+    if source_shape == "pre_vnext":
+        _log_pre_vnext_reset()
+
     return VNextSettingsLoadResult(
         status=SettingsPersistenceStatus.SUCCESS,
         settings=settings,
@@ -222,6 +225,26 @@ def _log_load_failure(
         "settings_load source_shape=%s status=failure failure_category=%s",
         source_shape,
         status.value,
+    )
+
+
+def _log_pre_vnext_reset() -> None:
+    emit_failure(
+        logger,
+        ErrorDiagnostics(
+            component="settings_repository",
+            operation="load",
+            code="settings_pre_vnext_reset",
+            category="transaction",
+            visibility="basic",
+            content_policy="metadata_only",
+            status_code=None,
+            retry_after_ms=None,
+            fields={"phase": "load"},
+        ),
+        severity="warning",
+        disposition="degraded",
+        stage="load",
     )
 
 
