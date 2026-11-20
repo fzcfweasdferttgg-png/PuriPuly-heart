@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import httpx
+import httpx2
 from llm_lib import LLM
 from llm_lib.errors import status_error
 
@@ -99,6 +100,11 @@ def _anthropic_client(base_url: str, api_key: str):
         base_url=base_url.strip() or "https://api.anthropic.com",
         max_retries=0,
         timeout=_FETCH_TIMEOUT_S,
+        http_client=httpx2.AsyncClient(
+            timeout=_FETCH_TIMEOUT_S,
+            trust_env=False,
+            follow_redirects=False,
+        ),
     )
 
 

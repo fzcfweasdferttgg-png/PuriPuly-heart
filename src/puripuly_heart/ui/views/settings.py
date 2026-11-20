@@ -6409,8 +6409,8 @@ class SettingsView(ft.Column):
             )
             if url_changed:
                 self._commit_openai_field("base_url", preset.base_url)
-                self._commit_openai_field("model", "")
             if selection_changed or url_changed:
+                self._commit_openai_field("model", "")
                 self._openai_model.value = ""
                 _update_control_if_mounted(self._openai_model)
         self._openai_provider.value = value
@@ -6440,8 +6440,8 @@ class SettingsView(ft.Column):
             )
             if url_changed:
                 self._commit_backup_field("base_url", preset.base_url)
-                self._commit_backup_field("model", "")
             if selection_changed or url_changed:
+                self._commit_backup_field("model", "")
                 self._backup_model.value = ""
                 _update_control_if_mounted(self._backup_model)
         self._backup_provider.value = value
@@ -6470,8 +6470,8 @@ class SettingsView(ft.Column):
             )
             if url_changed:
                 self._commit_anthropic_field("base_url", preset.base_url)
-                self._commit_anthropic_field("model", "")
             if selection_changed or url_changed:
+                self._commit_anthropic_field("model", "")
                 self._anthropic_model.value = ""
                 _update_control_if_mounted(self._anthropic_model)
         self._anthropic_provider.value = value
@@ -6502,8 +6502,8 @@ class SettingsView(ft.Column):
             )
             if url_changed:
                 self._commit_backup_anthropic_field("base_url", preset.base_url)
-                self._commit_backup_anthropic_field("model", "")
             if selection_changed or url_changed:
+                self._commit_backup_anthropic_field("model", "")
                 self._backup_anthropic_model.value = ""
                 _update_control_if_mounted(self._backup_anthropic_model)
         self._backup_anthropic_provider.value = value
